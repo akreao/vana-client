@@ -534,6 +534,11 @@ pub struct ZoneRenderer {
     /// A streamed zone (the world's): mips wait for the frame budget, textures and geometry still to go up
     /// (geometry by byte offset), the last mip job of its textures, and (bytes before, RGBA bytes, count) for the log.
     budgeted: bool,
+    /// Faded actors are composited later, by render_faded_after (the world: after the effects, as retail's sorted
+    /// transparent list puts them over what is behind them); others draw them at the end of render.
+    pub defer_faded: bool,
+    /// The shine slots render used, for render_faded_after's.
+    faded_slot: std::cell::Cell<u64>,
     pending: std::collections::VecDeque<(usize, crate::dat::zone::Texture, Option<upload::TexUp>)>,
     geo_pending: Option<(std::sync::Arc<ZoneGeometry>, u64)>,
     mips_seq: u64,
@@ -826,6 +831,8 @@ pub struct ActorGpu {
     skin: Option<Skinned>,
     /// Model colour alpha, 1 = opaque (actor fades); goes into the vertex alpha.
     pub alpha: f32,
+    /// render left it for the faded composite (`defer_faded`): render_faded_after draws it.
+    faded_pending: std::cell::Cell<bool>,
     /// Retail's no-shadow latch (+0x12c bits 10 / 11): no real shadow either.
     pub shadow_off: bool,
     /// Model colour RGB, 1 = 0x80 (scheduler op 0x29): the material colour of the lit terms.
@@ -2633,6 +2640,8 @@ impl ZoneRenderer {
             models: HashMap::new(),
             builds: Vec::new(),
             budgeted,
+            defer_faded: false,
+            faded_slot: Default::default(),
             pending: std::collections::VecDeque::new(),
             geo_pending: None,
             mips_seq: 0,
@@ -3453,6 +3462,7 @@ impl ZoneRenderer {
                 mapped_at_creation: false,
             });
             let actor = ActorGpu {
+                faded_pending: Default::default(),
                 textures: vec![self.magenta.clone(); ch.textures.len() + 1],
                 slot,
                 vertices: None,
@@ -3629,6 +3639,7 @@ impl ZoneRenderer {
             mapped_at_creation: false,
         });
         ActorGpu {
+            faded_pending: Default::default(),
             textures,
             slot,
             vertices: None,
@@ -4069,6 +4080,9 @@ impl ZoneRenderer {
             _ => Vec::new(),
         };
         let solid = |i: usize| !faded.contains(&i);
+        for (i, a) in actors.iter().enumerate() {
+            a.faded_pending.set(self.defer_faded && faded.contains(&i));
+        }
         let mut slot = 0u64;
         if let Some((_, group, _)) = &self.pose_gpu {
             pass.set_pipeline(&self.skin_pipeline);
@@ -4125,9 +4139,33 @@ impl ZoneRenderer {
             }
         }
         drop(pass);
+        if self.defer_faded {
+            self.faded_slot.set(slot);
+            return;
+        }
         let mut list: Vec<&ActorGpu> = faded.iter().map(|&i| actors[i]).collect();
         list.sort_by(|a, b| b.origin.distance(camera.eye).total_cmp(&a.origin.distance(camera.eye)));
         self.render_faded(gpu, encoder, color, depth, &list, slot);
+    }
+
+    /// The faded actors render left out (`defer_faded`), farthest first, over everything drawn since: what stands
+    /// behind them (effects, refracting actors, ground shadows) shows through, and their depth hides nothing drawn
+    /// before. `actors`: any list holding them; the others are skipped.
+    pub fn render_faded_after(
+        &self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        color: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
+        camera: &Camera,
+        actors: &[&ActorGpu],
+    ) {
+        let mut list: Vec<&ActorGpu> = actors.iter().copied().filter(|a| a.faded_pending.replace(false)).collect();
+        if list.is_empty() {
+            return;
+        }
+        list.sort_by(|a, b| b.origin.distance(camera.eye).total_cmp(&a.origin.distance(camera.eye)));
+        self.render_faded(gpu, encoder, color, depth, &list, self.faded_slot.get());
     }
 
     /// One actor posed this frame drawn alone into `color` / `depth` (cleared to `clear`, premultiplied) from `camera`,

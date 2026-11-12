@@ -18361,6 +18361,8 @@ fn cross_capture(cx: &mut WorldDraw, gfx: &Gfx, fg: &FrameGpu, w: &mut World, r:
                 .filter_map(|(_, a)| a.gpu.as_ref())
                 .collect();
             let mut enc = gfx.gpu.device.create_command_encoder(&Default::default());
+            // A snapshot alone: its faded actors drawn at once.
+            r.defer_faded = false;
             r.render(&gfx.gpu, &mut enc, target, &scene_depth, &cam, aspect, &actors);
             gfx.gpu.queue.submit([enc.finish()]);
         }
@@ -19406,8 +19408,10 @@ fn draw_scene(
         steps,
         crate::dat::zone::SWAY_TAGS.iter().position(|t| *t == crate::dat::weather::weather_tag(w.weather)),
     );
-    // FUN_1001d240's helper target for faded actors (drawn opaque, then blended as one quad).
+    // FUN_1001d240's helper target for faded actors (drawn opaque, then blended as one quad), composited after the
+    // effects (draw_effects' end) as retail's sorted transparent list puts them over what is behind them.
     r.prepare_faded(&gfx.gpu, &scene_tex);
+    r.defer_faded = true;
     // The point-light slot leak for this view (render/leak.rs).
     r.update_leak(&gfx.gpu, camera, aspect);
     perf::timed(
@@ -19629,6 +19633,9 @@ fn draw_effects(
         );
         fg.mark("fx draw");
     }
+    // The faded actors render left out, over the effects and everything else behind them.
+    let faded: Vec<&crate::render::ActorGpu> = w.actors.values().filter_map(|a| a.gpu.as_ref()).collect();
+    r.render_faded_after(&gfx.gpu, &mut fg.encoder, &scene_raw, &scene_depth, camera, &faded);
 }
 
 /// Over the finished scene: the mods' shapes and post passes, layout mode's lines, the held zone frame and the

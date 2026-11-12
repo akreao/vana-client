@@ -21748,6 +21748,15 @@ Checked in Steven's unpacked FFXiMain.dll (sha256 8097dbf8..., 2026-11-03); note
   dozens of full-screen passes a frame for a crowd fading in at 1440p and up. Test faded_rect_grows_and_clamps; seen
   live: Lnxcsfix under Invisible draws whole and faded.
 
+- Ours (2026-11-12): the world composites its faded actors after the effects (`ZoneRenderer::defer_faded`,
+  `render_faded_after` at the end of draw_effects), not right after the opaque actors. Their offscreen pass writes the
+  scene depth (the actor hides its own back parts), so anything drawn after it behind the actor failed the depth test:
+  effects, refracting actors and ground shadows behind a faded character vanished and only the scenery showed through
+  (user's report: a trust standing behind the camera in Qufim). Retail's translucent actors go through the sorted
+  transparent list (DAT_1047bc94) with the effects, so what is behind them is already drawn; ours now puts them last,
+  which matches for the near-camera fade (the actor nearest the camera) *(inf: an effect in front of a faded actor is
+  now drawn under it)*. The op 0x10 crossfade snapshot and the select / shot tools still draw them at once.
+
 ## Footsteps: areas 704..706 give surface 3 surface 2's sound (2026-11-03)
 
 - Retail (FFXiMain.dll, docs/re/notes/2026-11-03-modlog-gaps-batch12.md item 72): the alt-name flag is scene +0x1cf.
