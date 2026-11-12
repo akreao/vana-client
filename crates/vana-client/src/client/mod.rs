@@ -98,7 +98,6 @@ mod chatctrl;
 mod cmdhint;
 mod concierge;
 mod currencies;
-mod durations;
 mod equipsets;
 mod equipwin;
 mod esedit;
@@ -3018,7 +3017,7 @@ fn world_hud(
                 egui::Key::T
                     if !modifiers.ctrl
                         && !modifiers.alt
-                        && world.lua.timers_panels().iter().any(Option::is_some)
+                        && world.lua.has_timers()
                         && world.win.is_none()
                         && world.menu.is_none()
                         && world.config.is_none()
@@ -11201,7 +11200,6 @@ impl App {
                     camera::face(world, f.x.atan2(f.z));
                     world.my_id = char_id;
                     world.name = name;
-                    timers::on_zone(world);
                     seacom::zone_in(world);
                     world.entities.clear();
                     world.entity_index.clear();
@@ -11265,7 +11263,6 @@ impl App {
                             world.actors.remove(&e.id);
                             world.rests.remove(&e.id);
                             world.effects.forget_actor(e.id);
-                            timers::on_gone(world, e.id, false);
                         }
                         continue;
                     }
@@ -11467,10 +11464,6 @@ impl App {
                         && let Some(a) = world.actors.get_mut(&e.id)
                     {
                         combat::die(a, sd);
-                    }
-                    // Effects end with a death.
-                    if died {
-                        world.timers.died(e.id);
                     }
                     if let Some((old, new)) = status_change.filter(|_| !quiet) {
                         combat::status_schedulers(&mut world.effects, &world.actors, e.id, old, new, sd);
@@ -11697,14 +11690,13 @@ impl App {
                 }
                 NetEvent::PartyEffects(rows) => {
                     world.party_buffs = rows.into_iter().collect();
-                    timers::on_party_effects(world);
+                    world.lua.raise("party_buffs", vec![]);
                 }
                 NetEvent::Battle(m) => {
                     world.lua.raise(
                         "battle_message",
                         vec![m.actor.into(), m.target.into(), m.message.into(), m.data[0].into(), m.data[1].into()],
                     );
-                    timers::on_message(world, m.target, m.data[0] as u32, m.message);
                     combat::on_battle_message(world, &m);
                 }
                 NetEvent::Event(s) => event::queue(world, s),
@@ -11749,7 +11741,7 @@ impl App {
                 NetEvent::EmoteUnlocks { jobs, chairs } => (world.emote_jobs, world.emote_chairs) = (jobs, chairs),
                 NetEvent::GmCatalog(p) => world.gm.on_catalog(&p),
                 NetEvent::GmResult(p) => world.gm.on_result(&p),
-                NetEvent::PetSync(p) => (world.timers.pet_tp, world.pet_sync) = (p.map(|p| p.tp), p),
+                NetEvent::PetSync(p) => world.pet_sync = p,
                 NetEvent::MountRecast(s) => {
                     world.mount_recast = (s > 0).then(|| Instant::now() + std::time::Duration::from_secs(s as u64))
                 }
@@ -11868,7 +11860,6 @@ impl App {
                 NetEvent::SkillBase(s) => world.skill_base = Some(s),
                 NetEvent::Action(a) => {
                     world.lua.raise("action", vec![lua::action_json(&a)]);
-                    timers::on_action(world, &a);
                     combat::on_action(world, &a);
                 }
                 NetEvent::Scheduler { actor, target, name } => combat::on_scheduler(world, actor, target, name),

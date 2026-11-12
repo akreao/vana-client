@@ -113,7 +113,7 @@ Some things hold for all of them:
 | --- | --- |
 | [Lifecycle](#lifecycle) | [`load`](#load), [`unload`](#unload), [`login`](#login), [`logout`](#logout), [`lobby_screen`](#lobby_screen), [`frame`](#frame) |
 | [Character](#character) | [`hp_change`](#hp_change), [`mp_change`](#mp_change), [`tp_change`](#tp_change), [`hpp_change`](#hpp_change), [`mpp_change`](#mpp_change), [`status_change`](#status_change), [`job_change`](#job_change), [`level_up`](#level_up), [`level_down`](#level_down), [`buff_gain`](#buff_gain), [`buff_lose`](#buff_lose), [`target_change`](#target_change) |
-| [Party](#party) | [`party_change`](#party_change), [`party_invite`](#party_invite) |
+| [Party](#party) | [`party_change`](#party_change), [`party_buffs`](#party_buffs), [`party_invite`](#party_invite) |
 | [Combat](#combat) | [`action`](#action), [`battle_message`](#battle_message), [`damage`](#damage), [`suggestions`](#suggestions) |
 | [Chat](#chat) | [`chat_message`](#chat_message), [`emote`](#emote), [`examined`](#examined) |
 | [Crafting](#crafting) | [`synth_amount`](#synth_amount), [`synth_result`](#synth_result) |
@@ -411,6 +411,22 @@ No arguments.
 ```lua
 events.on("party_change", function()
   print("Party and alliance: " .. #game.party() .. " members")
+end)
+```
+
+## `party_buffs`
+
+The server sent our party's status effects (the other members' lists, as their party window icons show them). Read
+`game.party()`: each member's `buffs` holds them. It comes whenever the server sends the lists, also when nothing
+changed.
+
+No arguments.
+
+```lua
+events.on("party_buffs", function()
+  for _, m in ipairs(game.party()) do
+    if m.slot > 0 then print(m.name, #m.buffs .. " effects") end
+  end
 end)
 ```
 

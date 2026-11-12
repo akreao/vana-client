@@ -139,16 +139,28 @@ A bar filled from 0 to 1, with a label and a text. It is not a cursor stop.
 
 ### timers
 
-A section of the client's timers, drawn as the Timers draw it: recasts as rows with their bars, effects as icon cells
-by who bears them. It shows in an edge window standing in for that section's panel (`panel = "timers_recasts"` and so
-on); in the classic UI the three panels make the one Timers window with three sections. It is not a cursor stop, and
-an edge window whose sections are empty is not drawn.
+Timer rows in groups, drawn as the Timers draw them: in the `recasts` section as rows with their bars, in the others
+as icon cells by group (the modern UI; the classic UI draws rows in all three). It shows in an edge window standing in
+for that section's panel (`panel = "timers_recasts"` and so on); in the classic UI the three panels make the one
+Timers window with three sections. It is not a cursor stop, and an edge window whose sections are empty is not drawn.
+The rows are the mod's, in the order it gives them; the client only counts them down and draws them. The Timers mod
+fills its three windows this way.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `id` | `string` | `""` | Optional. |
+| `id` | `string` | `""` | Optional; `ui.update` with `groups` replaces the rows. |
 | `section` | `string` | `"recasts"` | `"recasts"`, `"buffs"` or `"debuffs"`. |
-| `builtin` | `boolean` | `true` | The client's own rows too (our recasts and effects, the effects we put on others); the mods' [`timers.add`](timers.md) rows show either way. |
+| `groups` | `table[]` | `{}` | The groups in order: `{name, rows}`, `name` the heading (none: the rows alone). |
+
+Each row:
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | `string` | `""` | The row's text. |
+| `left` | `number` | `0` | Seconds left when given: the client counts it down from then. At or below 0 the row is dimmed (its end is awaited). |
+| `total` | `number` | `0` | The gauge's whole length in seconds; 0: no gauge, the time shows `--:--`. |
+| `fills` | `boolean` | `false` | `true`: the gauge fills toward ready (recasts); `false`: it drains, and the icon dims and brightens in the last 15 seconds as the status icons do. |
+| `icon` | `table` | none | `{kind = "status" (default) \| "spell" \| "ability", id}`: a status icon, or a spell's or ability's list icon. |
 
 ### separator
 

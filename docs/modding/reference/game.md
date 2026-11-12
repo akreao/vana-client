@@ -519,6 +519,7 @@ Seconds left before you can use spells and abilities again, and how long each ru
 | `spells` | `table<integer, number>` | Seconds left, by spell id. |
 | `abilities` | `table<integer, number>` | Seconds left, by recast id (an ability's `recast_id` in `res.ability`). |
 | `totals` | `table` | `totals.spells` and `totals.abilities`: each running recast's whole length in seconds, with the same keys. |
+| `calc` | `table<integer, table>` | By recast id, the server's two adjustments to an ability's recast: `{calc1, calc2}`. `calc1`'s low 6 bits take that many sixtieths off the whole recast, `calc2` adds seconds. The charge abilities (Quick Draw, Stratagems, Ready) share their recast between their charges by them. |
 
 `totals` is the recast as it started: the length the server gave, with gear, merits and job points already in. A recast
 that was already running when you logged in has its base length (`res.ability`'s `recast`) when that is longer than
@@ -938,6 +939,7 @@ Capacity points and job points for every job.
 | `capacity` | `integer` | Capacity points. |
 | `points` | `integer` | Job points you have to spend. |
 | `spent` | `integer` | Job points spent on this job. |
+| `upgrades` | `table<integer, integer>` | Each of the job's job point upgrades' level, by the upgrade's id (the job is in the id's upper bits: `id >> 5`). Empty until the server has sent them. |
 
 **Errors** "game state is not available here" in the lobby or a chat filter.
 

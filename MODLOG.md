@@ -13723,6 +13723,12 @@ From the research notes:
   it; the drawer in folds all three; config timers_out / timers_folded keep the folds), the recasts' window in the one
   window's saved place, modes and pins that named "timers" naming the three; the classic UI keeps the one window with
   three sections, drawn from the panels that are open.
+- Since 2026-11-11 (Timers mod 2.0.0) all of it is the mod's Lua: the tracking (engine.lua), LSB's lengths
+  (durations.lua, the tables now assets/mods/timers/data/*.tsv) and the rows (rows.lua). client/durations.rs is gone;
+  client/timers.rs keeps the classic dock (place, drawer, sections, drawing) and the retail charge rule for /recast.
+  The `timers` element takes the mod's rows (`groups`: name, rows {name, left, total, fills, icon}) and counts them
+  down from when it got them; the `timers` namespace calls the mod's service. The rules below are the mod's now, as
+  they were the client's; where they name timers.rs / durations.rs, read engine.lua / durations.lua / rows.lua.
 - Retail's charge abilities (/recast's "[%s] %s (%d)", now done too): FUN_10222c90 maps an ability (or the sub-list
   row opening it, record +0xe 9 / 0xf / 0x12, via FUN_10222c10) by its kind (+2): 9 Quick Draw (COR main or sub;
   2 charges from level 0x28; full 0x78 s), 0xf Stratagems (SCH main or sub; (level - 10) / 0x14 + 1; full 0xf0 s),

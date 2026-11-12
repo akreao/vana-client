@@ -1244,7 +1244,8 @@ pub fn facts(w: &World) -> Facts {
         TargetFact {
             name: super::monstrosity::name(e).to_string(),
             hpp: e.hpp,
-            ours: w.timers.on.get(&t).map_or(Vec::new(), |b| b.effects.iter().map(|x| x.status).collect()),
+            // Our effects on it were the Timers engine's, now the Timers mod's: none until Suggestions is ported.
+            ours: Vec::new(),
             hitting_me: hit == Some(w.my_id),
             hitting: hit
                 .filter(|&h| h != w.my_id)

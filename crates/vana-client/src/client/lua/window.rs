@@ -89,6 +89,24 @@ impl Row {
     }
 }
 
+/// A timers element's group: a heading (none: the rows alone) and its rows in the mod's order.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TimerGroup {
+    pub name: Option<String>,
+    pub rows: Vec<TimerRow>,
+}
+
+/// A timer row: seconds left when given (at or below 0: dimmed, waiting), the whole length (0: no gauge), and whether
+/// the gauge fills toward ready (recasts) or drains.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TimerRow {
+    pub icon: Option<Icon>,
+    pub name: String,
+    pub left: f32,
+    pub total: f32,
+    pub fills: bool,
+}
+
 /// A list column: its heading, width (0: a share of what is left) and alignment.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Col {
@@ -183,12 +201,13 @@ pub enum Elem {
         label: String,
         open: bool,
     },
-    /// One section of the client's timers (0 recasts, 1 buffs, 2 debuffs): the mods' timers.add rows, and with
-    /// `builtin` the client's own (our recasts and effects, the effects we put on others), drawn as the Timers draw them.
+    /// Timer rows in groups, drawn as the Timers' sections (0 recasts: rows; 1 buffs, 2 debuffs: icon cells by group).
+    /// Each row counts down from `at`, when the mod gave it.
     Timers {
         id: String,
         section: usize,
-        builtin: bool,
+        groups: Vec<TimerGroup>,
+        at: std::time::Instant,
     },
     /// A region `w` x `h` the mod draws in (local units: classic pixels, modern points); a click sends where.
     Canvas {
