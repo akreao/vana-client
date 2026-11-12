@@ -183,7 +183,7 @@ Built (client/lua/, modern/modwin.rs), each checked live:
 - **Actions** (`actions`: only while handling the player's input, a typed command or a window event; `automation`:
   any time; a coroutine keeps how it began across sleeps; `commands.run` of a game command is an action too):
   - `cast`, `ability` / `weaponskill`, `ranged`, `use_item`, `use_slot`, `attack`, `disengage`, `assist`, `target`,
-    `lock`, `heal`, each through the menus' and text commands' own code (checks, refusal lines, packets)
+    `lock`, `heal`, each through the menus' and text commands' code (checks, refusal lines, packets)
   - `equip` (one piece or a set table, by id or bag slot; worn pieces stay), `unequip`, `equip_set`, `move`, `sort`,
     `drop`, `lot`, `pass`, `cancel`, `choose` (an event menu option), `talk`, `scan`, `track`, `untrack`
   - movement on autorun: `run`, `run_to`, `follow`, `walk`, `stop`, `turn` (headings as entity.heading)
@@ -260,7 +260,7 @@ named API call**. Ashita survey section 9 and Windower survey section 14 are the
 ## 2. How other games do it, and what we take
 
 - **WoW:** the default UI is built from the same addon API as third-party addons. Mod windows look native because
-  they are made the same way. → Our own Extras windows will move onto the mod API (dogfooding).
+  they are made the same way. → Our Extras windows will move onto the mod API (dogfooding).
 - **Factorio:** mod GUIs are trees of the base game's element types with the game's named styles. → Mods describe
   windows as a tree, and we draw it.
 - **BG3 Script Extender:**
@@ -610,7 +610,7 @@ mute music. The chime.
   - **ahpro-like:** driving a native window.
   - **ZoneLines:** world-space drawing.
   - **Timers:** a service used by other mods.
-- **Dogfooding:** at least one of our own Extras (`/dps`, the training regime window or Timers) moves to a bundled
+- **Dogfooding:** at least one of our Extras (`/dps`, the training regime window or Timers) moves to a bundled
   Lua mod, drawn in both themes.
 
 ## 6. Phases
@@ -631,5 +631,5 @@ mute music. The chime.
 1. **Lua 5.4** through mlua. Not Luau, not LuaJIT.
 2. **Permissions:** the table in 3.5 as it stands, with `automation` a single grant.
 3. **Mods folder:** shared with the DAT overlay mods: `mods/<id>/`, and one package can carry both.
-4. **Our Extras become mods:** every Extra moves onto the mod API over time and ships as a bundled mod, so our own
+4. **Our Extras become mods:** every Extra moves onto the mod API over time and ships as a bundled mod, so our
    features prove the API (WoW's model).

@@ -7324,7 +7324,7 @@ fn permission_text(p: &str) -> (&'static str, &'static str) {
         "multibox" => ("Allow multibox", "Talks to your other game windows on this computer."),
         "ui.native" => (
             "Allow game windows",
-            "Opens, hides, moves, scales and reskins the game's own windows and panels, and drives them.",
+            "Opens, hides, moves, scales and reskins the game's windows and panels, and drives them.",
         ),
         "process" => ("Allow process settings", "Sets which CPU cores the game runs on, and its priority."),
         "devices" => ("Allow devices", "Talks to USB devices directly (G-keys, Stream Decks and the like)."),

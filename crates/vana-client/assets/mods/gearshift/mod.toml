@@ -23,19 +23,19 @@ label = "Level Cap"
 help = "The level cap the best-in-slot references are for: Auto takes 75 up to level 75 and 99 above it."
 
 [commands.gs]
-help = "GearSwap's own commands, for the loaded GearSwap file."
+help = "GearSwap's commands, for the loaded GearSwap file."
 args = "<command>"
 
 [commands.lac]
-help = "LuAshitacast's own commands, for the loaded profile."
+help = "LuAshitacast's commands, for the loaded profile."
 args = "<command>"
 
 [commands.ac]
-help = "Ashitacast's own commands, for the loaded profile."
+help = "Ashitacast's commands, for the loaded profile."
 args = "<command>"
 
 [commands.spellcast]
-help = "Spellcast's own commands, for the loaded file."
+help = "Spellcast's commands, for the loaded file."
 args = "<command>"
 
 [commands.gearshift]

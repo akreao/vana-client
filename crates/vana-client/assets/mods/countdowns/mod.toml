@@ -1,6 +1,6 @@
 name = "Countdowns"
 version = "1.0.1"
-description = "Your own countdowns as rows in the Timers windows, with a line when each is up (the timer add-ons)."
+description = "Your countdowns as rows in the Timers windows, with a line when each is up (the timer add-ons)."
 permissions = []
 
 [settings.on]

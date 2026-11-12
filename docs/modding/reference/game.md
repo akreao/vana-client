@@ -400,7 +400,7 @@ end
 game.can_wear(item) -> boolean
 ```
 
-Whether our character can wear the item now, by the client's own rule (the one that colours wearable gear yellow in
+Whether our character can wear the item now, by the client's rule (the one that colours wearable gear yellow in
 shops): the item's races, our main job and its level, the superior level, and no encumbrance on the item's slots.
 
 **Parameters**
@@ -639,7 +639,7 @@ print("Weather:", res.weather(w), el and res.element(el) or "no element")
 game.usable(kind, id) -> boolean, integer?
 ```
 
-Whether a spell or an ability can be used now, as the game's own magic and ability lists decide: your status (asleep,
+Whether a spell or an ability can be used now, as the game's magic and ability lists decide: your status (asleep,
 fishing, mounted ...), the recast, your jobs and levels, MP, TP, a blue spell being set.
 
 **Parameters**

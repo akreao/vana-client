@@ -714,7 +714,7 @@
           "help": "Starts a countdown: 90, 5m, 1h30m or 2:30."
         }
       },
-      "description": "Your own countdowns as rows in the Timers windows, with a line when each is up (the timer add-ons).",
+      "description": "Your countdowns as rows in the Timers windows, with a line when each is up (the timer add-ons).",
       "files": [
         {
           "path": "init.lua",
@@ -724,8 +724,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "a9831ed30e4ed383258b2326f518161108abc6f49041609b9c0021fa9e4dcbd2",
-          "size": 607,
+          "sha256": "49a1926d2cfc70097a3cc9d925159bb062f15db19dcaa6cea48ff4690de62652",
+          "size": 603,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/countdowns/mod.toml"
         }
       ],
@@ -860,7 +860,7 @@
           "help": "Lists the names you changed."
         }
       },
-      "description": "Renames characters and monsters on your screen, hides your own name plate, and sets your size (the renamer and name plate add-ons). Only you see it.",
+      "description": "Renames characters and monsters on your screen, hides your name plate, and sets your size (the renamer and name plate add-ons). Only you see it.",
       "files": [
         {
           "path": "init.lua",
@@ -870,8 +870,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "6395532acbbd0596c94e14f7ef812a1c3b8e7e202d507635e674b4783dcccbad",
-          "size": 1024,
+          "sha256": "220ad49e707bada2b5fc840d1889c7d1f79b11a9e239009e011af9baee2f2bab",
+          "size": 1016,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/entity-styles/mod.toml"
         }
       ],
@@ -1044,7 +1044,7 @@
           "help": "Opens or closes the Gear Stats window."
         }
       },
-      "description": "The totals of the stats on everything you wear, from the items' own descriptions and their augments (the gear stat add-ons).",
+      "description": "The totals of the stats on everything you wear, from the items' descriptions and their augments (the gear stat add-ons).",
       "files": [
         {
           "path": "init.lua",
@@ -1054,8 +1054,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "23538f755bb0452dbb470ea5bd83beede2de1e67df8e0a2975a2d6076524d0bb",
-          "size": 519,
+          "sha256": "3d080ddff8198ee8b77707c4c8c8247a305af9b91a1adb8306a812d8bad365d1",
+          "size": 515,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/gear-stats/mod.toml"
         }
       ],
@@ -1069,7 +1069,7 @@
       "commands": {
         "ac": {
           "args": "<command>",
-          "help": "Ashitacast's own commands, for the loaded profile."
+          "help": "Ashitacast's commands, for the loaded profile."
         },
         "gearshift": {
           "args": "",
@@ -1091,15 +1091,15 @@
         },
         "gs": {
           "args": "<command>",
-          "help": "GearSwap's own commands, for the loaded GearSwap file."
+          "help": "GearSwap's commands, for the loaded GearSwap file."
         },
         "lac": {
           "args": "<command>",
-          "help": "LuAshitacast's own commands, for the loaded profile."
+          "help": "LuAshitacast's commands, for the loaded profile."
         },
         "spellcast": {
           "args": "<command>",
-          "help": "Spellcast's own commands, for the loaded file."
+          "help": "Spellcast's commands, for the loaded file."
         }
       },
       "description": "Swaps gear around your actions from GearSwap job files and LuAshitacast and Ashitacast XML profiles, unchanged (the gear-swap add-ons), or builds every set of your job from the gear you hold (//gearshift).",
@@ -1112,8 +1112,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "4b1c948191709d7b8892df1036e935eceda38e3d9c1ed708f7f4ba44e7350ee2",
-          "size": 1896,
+          "sha256": "206085e0e27b5e666ed15f8e2e0ceb83eb0485357f29cafea76c32815daf4092",
+          "size": 1880,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/gearshift/mod.toml"
         },
         {
@@ -1302,7 +1302,7 @@
             },
             {
               "args": "wipestock",
-              "help": "Empties the game's own macro palette (it can be restored)."
+              "help": "Empties the game's macro palette (it can be restored)."
             },
             {
               "args": "restorestock",
@@ -1322,8 +1322,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "7ad3eaf2902e3ec7ed83185bef0a68ed31b5b35629e861b8d2cb551879d57f7c",
-          "size": 1985,
+          "sha256": "ea3c8d5f477dffcfce059ea4863649e43638e1a6c63e7665559d0b962147e7fc",
+          "size": 1977,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/mod.toml"
         },
         {
@@ -2216,8 +2216,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "f37f404149897a9ce4278186bff417ce8548514d0de1fc343ef5714d8f063a3e",
-          "size": 989,
+          "sha256": "9dcbb2740f7bf0b7bcc0197600e9cc8386e6c2f049512f01bab7502669a04f6f",
+          "size": 985,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/music-picker/mod.toml"
         }
       ],
@@ -2616,7 +2616,7 @@
           "help": "Lists your screen notes."
         }
       },
-      "description": "Puts your own notes on the screen by command, where you drag them (the text add-ons).",
+      "description": "Puts your notes on the screen by command, where you drag them (the text add-ons).",
       "files": [
         {
           "path": "init.lua",
@@ -2626,8 +2626,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "587adb89b19afc479baf349aac43535b49a0ff31dc157f79d9a239e11662db82",
-          "size": 551,
+          "sha256": "4ad9d1e6258067ca2d77128b80acd661cfc02c5b6c1496bb512b68f71cf07664",
+          "size": 547,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/screen-notes/mod.toml"
         }
       ],

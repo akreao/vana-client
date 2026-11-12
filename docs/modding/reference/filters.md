@@ -143,7 +143,7 @@ filters.battle(filter) -> integer
 ```
 
 Adds a battle message filter: `filter` is called for each battle message the log is about to print (an action's
-lines, s2c 0x029 and 0x02D messages), after the game's own Chat Filters have let it through, with what the message is
+lines, s2c 0x029 and 0x02D messages), after the game's Chat Filters have let it through, with what the message is
 about. It can colour the names in it, replace its lines or drop it. The bundled Battle Text mod is written with it.
 
 **Parameters**

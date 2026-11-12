@@ -461,7 +461,7 @@ your target and its distance over its head. See [reference/draw.md](reference/dr
 rows of the list on screen. With the `ui.native` permission it can also hide HUD pieces: the party list, the target
 bar, the compass and so on. See [reference/ui.native.md](reference/ui.native.md).
 
-### Changing the game's own interface
+### Changing the game's interface
 
 A mod can change the built-in interface as well as add to it. In the modern UI, with the `ui.native` permission:
 
@@ -474,7 +474,7 @@ A mod can change the built-in interface as well as add to it. In the modern UI, 
 - **Reskin** it: replace its sprites with your PNGs, set its palette colours, or give its windows a new frame
   (`ui.skin.sprite`, `ui.skin.colour`, `ui.skin.frame`). Every panel, and every mod's window, draws with them.
 
-All of it is undone when your mod unloads. In the classic UI the HUD pieces hide; its art is the game's own and is
+All of it is undone when your mod unloads. In the classic UI the HUD pieces hide; its art is the game's and is
 replaced with a DAT overlay mod. See [reference/ui.native.md](reference/ui.native.md#modern-panels) and
 [reference/ui.skin.md](reference/ui.skin.md).
 
