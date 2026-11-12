@@ -2110,9 +2110,9 @@ fn attack(w: &mut World, args: &[String], mode: Mode) -> Done {
     Ok(())
 }
 
-/// Table 0x1036f7a8 {group, id, slot}, group 0x17's rows: slot name id -> equipment slot. (Group 0x18's alternate
-/// spellings, ids 0..0x13, have no file mapped in ours.)
-const SLOT_OF: [u8; 16] = [0, 1, 2, 3, 4, 9, 11, 12, 5, 6, 13, 14, 15, 10, 7, 8];
+/// Table 0x1036f7a8 {group, id, slot}: slot name id -> equipment slot, group 0x17's rows (0..15) and group 0x18's
+/// (the same, then ear1, ear2, ring1, ring2).
+const SLOT_OF: [u8; 20] = [0, 1, 2, 3, 4, 9, 11, 12, 5, 6, 13, 14, 15, 10, 7, 8, 11, 12, 13, 14];
 
 /// The bags /equip looks in, and its third argument's choices ("0" inventory, "1" wardrobe 8, "2".."8" 10..16).
 const EQUIP_BAGS: [u8; 9] = [0, 8, 10, 11, 12, 13, 14, 15, 16];
@@ -2279,7 +2279,9 @@ fn equip(w: &mut World, args: &[String]) -> Done {
     }
     let bt = w.battle.clone().ok_or(())?;
     let want = args.get(1).ok_or(())?;
-    let k = (0..16).find(|&k| bt.slot_name(k).is_some_and(|n| n.eq_ignore_ascii_case(want))).ok_or(())?;
+    let named = |n: Option<String>| n.is_some_and(|n| n.eq_ignore_ascii_case(want));
+    let k =
+        (0..16).find(|&k| named(bt.slot_name(k))).or_else(|| (0..20).find(|&k| named(bt.slot_name_alt(k)))).ok_or(())?;
     let slot = SLOT_OF[k];
     // FUN_100e48d0: SAVE_CONF byte 1 bits 3..4 (s2c 0x0B4, session +0x2cfd9) silence the success lines.
     let quiet = w.conf_sys[1] >> 3 & 3 != 0;

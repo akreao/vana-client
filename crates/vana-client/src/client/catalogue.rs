@@ -401,6 +401,10 @@ mod tests {
                 if e.file_name().to_string_lossy().starts_with('.') {
                     continue;
                 }
+                // A mod's tests (tests/ beside mod.toml) stay in the repository.
+                if p.is_dir() && dir == root && e.file_name() == "tests" {
+                    continue;
+                }
                 if p.is_dir() {
                     walk(root, &p, out);
                 } else {

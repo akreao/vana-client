@@ -23157,10 +23157,11 @@ From FFXiMain.dll (Steven's unpacked copy), full_text.asm, FUN_100a7b80.
 ## Suggestion tests from recorded game states (ours, 2026-11-02)
 
 - suggest.rs (plan G): `Facts` and `Suggestion` serialize; a `Case` is a game state with what the rules made of it
-  (`rule`, `note`, `facts`, `expect`). Cases live in client/suggest_cases/*.json and `recorded_cases` replays each one
-  against the rules (the whole list must match); `every_rule_has_a_case` checks each name in `RULES` (raise, shadows,
-  ailment, curaga, cure, waltz, burst, close, provoke, job_ability, ninja_stance, samba, debuff, open_chain,
-  strongest_ws, renew, between) has one.
+  (`rule`, `note`, `facts`, `expect`). Cases live in client/suggest_cases/*.json (since 2026-11-12 the Suggestions
+  mod's tests/cases/*.json, replayed by its tests/cases.lua) and `recorded_cases` replays each one against the rules
+  (the whole list must match); `every_rule_has_a_case` checks each name in `RULES` (raise, shadows, ailment,
+  curaga, cure, waltz, burst, close, provoke, job_ability, ninja_stance, samba, debuff, open_chain, strongest_ws,
+  renew, between) has one.
 - Recording: with `VANA_SUGGEST_RECORD=<folder>` the client writes each new non-empty set of battle-menu
   suggestions with its facts there (suggest-<ms>.json); fill in `rule` and `note`, replace the real player names in
   the facts, and move it under suggest_cases/.
@@ -23865,6 +23866,78 @@ All of it is the mod's Lua over the general API; the client gained nothing.
 - Scripted `ctrl+` keys now carry `command` as egui-winit gives them off macOS, so a driven window hits the same
   shortcuts a keyboard does. Checked at the login screen with Interface Size 125 %: before, Ctrl+0 took the form to
   100 % and Ctrl+Minus below; now neither changes it.
+
+## Gearshift: weapon skill sets first, refused swaps resent, usable gear kept; /equip's other slot names (2026-11-12)
+
+- User report (Nine, RDM/NIN): Vorpal Blade's set sometimes went on only after the weapon skill and then stayed until
+  the next trigger. Seen on Lnxcsfix (RDM 75, hand picks: TP Peacock Charm + Morion Tathlum, WS Spike Necklace +
+  Tiphia Sting): the builder sent the WS set after the 0x01A (as a spell's midcast); LSB's 0x01A handler enters
+  CWeaponSkillState at once (ai_container enterState; the weapon skill itself runs on the next zone tick), and
+  charutils::EquipItem refuses main / sub / ranged / ammo while that state is current (until the skill's animation
+  time has passed). So the WS ammo never went on, and the restore's weapons or ammo just after the finish were
+  refused too; nothing sent them again, so the slot kept the WS piece until the next wear.
+- Ours: the builder wears a weapon skill's (category 7) or an ability's (9) set before the action packet; spells and
+  shots keep precast before, midcast after. core.worn notes a sent change still unconfirmed after SENT_HOLD (2 s)
+  whose slot still holds what it held (was_bag / was_index): refused; core.retry (Gearshift's 0.4 s timer) sends
+  each again, up to 4 times. A slot holding something else is the player's change and is left. Seen: Tiphia Sting on
+  for the weapon skill; the TP ammo refused once, then on 4 s after the finish.
+- User report: an Empress Band or a Warp Ring put on by hand came off about 3 s later with an idle set on. The bag
+  scan (every 3 s) put "a" in its signature for an item whose augments were decoded; equipping an enchantment item
+  changes its extdata (its use timer), so the signature changed twice (undecoded, then decoded), each rebuilding every
+  set, and the status set was worn half built (hand picks only) and again built, over the ring. Now: the signature
+  holds the decoded augment lines only when there are some; the status set is not worn while it is being built; and
+  a worn item with charges (max_charges > 0) the set does not name keeps its slot until an item use (action category
+  5, param = the item id) or until it is taken off. Seen: the Warp Ring kept through four scans; the Empress Band used,
+  and the idle Defending Ring back 0.3 s later.
+- /equip: FUN_1007b390's slot names come from table 0x1036f7a8 {group, id, slot}: group 0x17 (l.ear, r.ear, l.ring,
+  r.ring ...) and group 0x18, which FUN_10153b70 loads from the fixed file 0xd8af (55471) in every language: the same
+  16 names, then ear1, ear2, ring1, ring2 (slots 11..14). Ours had only group 0x17, so `/equip ring1 ...` (as the
+  Hotbar mod's equip command writes it) was a command error. dat/battle.rs slot_name_alt reads 0xd8af.
+- User report after that (0.2.2): the WS set "sometimes doesn't switch at all". Two causes:
+  - Gearshift: a bag change (a loot) rebuilt every set from nothing (run.rebuild cleared state.built), so a weapon
+    skill before its set came round again had no set and no swap. Now the sets built stay in use until each is built
+    again (state.fresh marks those built since the rebuild began; another job's are still dropped), and the set an
+    action or the status asks for is built first. 0.2.3.
+  - The look: FUN_10095dd0 holds a changed look while its actor is busy (ops 0x1f / 0x20 / 0x59), and a newer look
+    replaces the held one. The WS set's look arrives during the weapon skill's hold; if the status set's comes before
+    the hold ends, the WS look is never shown, otherwise it shows after the weapon skill. The gear itself is on at the
+    server before the weapon skill runs (same datagram, ahead of it); the model is as retail draws it.
+- Ours (user, 2026-11-12: "have it print a line"): with the builder wearing sets, a chat line before each weapon
+  skill names the set put on and how many slots it changed ("already on" for none, "no set" when the job has none);
+  setting ws_line (Weapon Skill Line), on. 0.2.4.
+- User report: "Gearshift ran past its time budget", and the log puts nearly every one on a /ws. A packet hook has
+  FILTER_CAP (20 ms), and the builder's action hook ran past it with full bags: run.lua read every item record
+  through res.item uncached (owned_named looked up every owned piece once per candidate name for the gorget, belt
+  and obi), and core.resolve read the worn piece's whole bag once per wanted slot. Stopped mid-way, the hook left
+  the weapon skill without its set. Now pick.item caches records, the scan keeps each piece's name, and resolve
+  reads each bag once. Measured on Lnxcsfix with 320 pieces in four wardrobes: 19.4 ms before, 1.4 / 1.6 ms after;
+  the 3 s bag scan about 2 ms. 0.2.5.
+- Review (Steve, #248), 0.2.6: keep_usable froze charged gear the builder itself picked (Maat's Cap in a TP set
+  pinned the head for every later set): core.mine now records what we last put in each slot, and only a piece not
+  ours keeps its slot. A refusal is retried only if no later wear overtook it (core.gen, bumped by each resolve) and
+  it was sent within LOCK (6 s) of a weapon skill or a shot (core.note_action from the outgoing hook), so a
+  permanent refusal (NeedDualWield, Requires2HForGrip) prints once. Only using a worn charged piece of the player's
+  restores the status set (not a potion). Tests: gearshift/tests/refused_swaps_resent.lua and builder_sets.lua.
+- Review (Steve, #249), 0.2.7: core.worn forgets a slot's core.mine entry once the slot is seen without that piece,
+  so our piece taken off and put back by hand is the player's (kept by keep_usable).
+
+## Mods test themselves: tests/ in each mod, one harness in the client (2026-11-12)
+
+- User: "MODS ARE SUPPOSED TO BE SELF CONTAINED". The client's lua/mod.rs held 40 tests for 26 repository mods
+  and BUNDLED, a list of every mod's files compiled into the test build. Now each mod keeps its tests in
+  assets/mods/<id>/tests/*.lua, and the client has one test, `mod_tests`, that runs each file in a fresh VM of its
+  mod loaded from its folder (vm::Source::Dir), naming no mod. VANA_MOD_TEST=<id> or <id>/<file stem> filters; a
+  filter that matches no test fails.
+- What a mod test gets beyond the mod API (TEST, tests only, naming no mod): game_items() (the game's equipment
+  records, nil without the game's files), zone_text(zone), source(path) / list(path) (the mod's files), grant(perm),
+  window(id).
+- The catalogue leaves a mod's tests/ out (catalogue.rs walk), so players never download them and a test change
+  needs no version bump. The Suggestions cases moved from client/suggest_cases to the mod's tests/cases; its test
+  fakes Skillchain's rules call with a copy of that mod's chain table.
+- Gone: BUNDLED, bundled!, bundled_manifest, Host::load_bundled and vm::Source::Bundled (test-only; no build used
+  it). The all-mods checks walk assets/mods (repo_mods): repo_commands_declared, repo_commands_unique, repo_mods_load.
+- Mod names still in client code (behaviour, left for now): migrate_regime, the timers.* API's mods.call("timers"),
+  the edge panels a mod may stand in for (regime, timers, minimap).
 
 ## Covered mesh parts: hair under hats, lower legs in boots (2026-11-12)
 - Every 0x2A mesh material (0x8010 record) has a part number: byte @15 low nibble. Equipment is 0; faces use 1..4
