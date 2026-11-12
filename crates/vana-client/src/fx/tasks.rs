@@ -5090,7 +5090,11 @@ mod skillchain_tests {
             }));
             fx.spawn_task((g, proc_), Who::Actor(1), Who::Actor(2), Some(ctx), 1.0, None);
             let (mut prints, mut reacts, mut holds) = (Vec::new(), Vec::new(), Vec::<(u32, u8)>::new());
-            for _ in 0..600 {
+            // The file loads in the background: a busy machine gets more ticks, until the task ends (10 s at most).
+            let start = std::time::Instant::now();
+            let mut n = 0;
+            while n < 600 || (burst && fx.releases.len() < 2 && start.elapsed().as_secs() < 10) {
+                n += 1;
                 fx.tick(&f, &Pair);
                 prints.extend(fx.action_prints.drain(..).map(|p| (p.1, p.2)));
                 reacts.extend(fx.reacts.drain(..).map(|r| r.reactor));
