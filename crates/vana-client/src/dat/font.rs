@@ -541,11 +541,27 @@ pub fn strip_codes(s: &str) -> String {
 /// position + byte, so encode_sjis gives the block back.
 pub const PHRASE_BASE: u32 = 0x10_0000;
 
+/// The byte a char keeps for a byte Shift-JIS has no character for, or of a variable auto-translate block.
+pub fn raw_byte(c: char) -> Option<u8> {
+    (BYTE_BASE..BYTE_BASE + 0x100).contains(&(c as u32)).then_some(c as u32 as u8)
+}
+
 pub fn decode_sjis(sjis: &[u8]) -> String {
     let mut out = String::with_capacity(sjis.len());
     let mut i = 0;
     while i < sjis.len() {
         let b = sjis[i];
+        // A variable auto-translate block, FD 06 x x x nn <nn bytes> x (FUN_101adbb0: nn + 7 bytes, nn a signed
+        // byte): every byte is kept as it is for autotrans::Dictionary::expand, and encode_sjis gives them back.
+        if b == 0xFD
+            && sjis.get(i + 1) == Some(&6)
+            && let Some(&nn) = sjis.get(i + 5).filter(|&&n| n < 0x80)
+            && let Some(block) = sjis.get(i..i + nn as usize + 7)
+        {
+            out.extend(block.iter().map(|&x| char::from_u32(BYTE_BASE + x as u32).unwrap()));
+            i += block.len();
+            continue;
+        }
         if b == 0xFD && sjis.get(i + 5) == Some(&0xFD) {
             for (k, &x) in sjis[i + 1..i + 5].iter().enumerate() {
                 out.push(char::from_u32(PHRASE_BASE + 0x100 * k as u32 + x as u32).unwrap());

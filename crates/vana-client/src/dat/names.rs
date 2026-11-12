@@ -140,6 +140,11 @@ pub trait NameSource: Send + Sync {
     fn key_item_definite(&self, _id: u32) -> bool {
         false
     }
+    /// The item's name in an auto-translate phrase: the record cache's (FUN_1015d210, record +0x1b4), the record's
+    /// first string and not the log noun.
+    fn item_name(&self, id: u32) -> Option<String> {
+        self.item(id).map(|n| n.bare)
+    }
 }
 
 /// All tables of one language.
@@ -296,6 +301,10 @@ pub fn item_noun(it: super::items::Item) -> Noun {
 impl NameSource for Names {
     fn item(&self, id: u32) -> Option<Noun> {
         self.items.noun(id)
+    }
+
+    fn item_name(&self, id: u32) -> Option<String> {
+        self.items.cached_name(id)
     }
 
     fn key_item(&self, id: u32) -> Option<Noun> {

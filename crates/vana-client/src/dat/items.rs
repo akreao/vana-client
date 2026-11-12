@@ -410,6 +410,61 @@ pub struct Items {
     paths: Vec<Option<(std::path::PathBuf, usize)>>,
     /// `noun`'s answers: event and battle text ask on the UI thread.
     nouns: std::sync::Mutex<std::collections::HashMap<u32, Option<super::names::Noun>>>,
+    recent: std::sync::Mutex<Recent>,
+}
+
+/// The item record cache (DAT_10602620: 200 records of 0x294 bytes, id +0, name +0x1b4): FUN_1015d210 answers a
+/// lookup from it (FUN_1015b580) or reads the record into the next slot round robin (FUN_1015b5c0: DAT_106229cc is
+/// stepped first, so slot 1 fills first). The auto-translate Items group is built from it (FUN_101bc880). Ours keeps
+/// only the id and the name; `held` finds an id's slot; `seen` remembers names so a lookup our own caches answer
+/// still counts.
+#[derive(Default)]
+struct Recent {
+    slots: Vec<(u32, String)>,
+    at: usize,
+    held: std::collections::HashMap<u32, usize>,
+    seen: std::collections::HashMap<u32, String>,
+}
+
+/// The cache's slots.
+pub const RECENT: usize = 200;
+
+impl Recent {
+    fn touch(&mut self, id: u32, name: &str) {
+        if id == 0 || self.held.contains_key(&id) {
+            return;
+        }
+        if self.slots.is_empty() {
+            self.slots = vec![(0, String::new()); RECENT];
+        }
+        self.at = (self.at + 1) % RECENT;
+        // The name is copied with strncpy(.., 0x20) and cut at +0x1d2: 30 bytes.
+        let mut cut = String::new();
+        let mut n = 0;
+        for ch in name.chars() {
+            n += super::font::encode_sjis(ch.encode_utf8(&mut [0u8; 4])).len();
+            if n > 30 {
+                break;
+            }
+            cut.push(ch);
+        }
+        let old = std::mem::replace(&mut self.slots[self.at], (id, cut));
+        self.held.remove(&old.0);
+        self.held.insert(id, self.at);
+    }
+
+    /// A lookup of an id whose name is known: nothing when the id holds a slot (the name is not copied then).
+    fn touch_seen(&mut self, id: u32) {
+        if !self.held.contains_key(&id)
+            && let Some(name) = self.seen.get(&id).cloned()
+        {
+            self.touch(id, &name);
+        }
+    }
+
+    fn name(&self, id: u32) -> Option<String> {
+        self.held.get(&id).map(|&i| self.slots[i].1.clone())
+    }
 }
 
 impl Items {
@@ -423,7 +478,7 @@ impl Items {
             .map(|r| index.path(r.3[lang as usize]).map(|p| (stride(&p, r.1 - r.0), p)).map(|(n, p)| (p, n)))
             .collect();
         paths.iter().any(|p| p.is_some()).then_some(()).context("no item files")?;
-        Ok(Items { lang, paths, nouns: Default::default() })
+        Ok(Items { lang, paths, nouns: Default::default(), recent: Default::default() })
     }
 
     pub fn lang(&self) -> Lang {
@@ -462,18 +517,81 @@ impl Items {
         Some((RANGES[i].2, r))
     }
 
+    /// FUN_1015d210: the record, which also takes a slot of the record cache.
     pub fn item(&self, id: u32) -> Option<Item> {
+        let it = self.item_raw(id)?;
+        if let Ok(mut r) = self.recent.lock() {
+            r.touch(id, &it.name);
+            r.seen.entry(id).or_insert_with(|| it.name.clone());
+        }
+        Some(it)
+    }
+
+    /// The record for a reader retail has no like of (a mod's lookup: retail's add-ons read their own files and never
+    /// call FUN_1015d210): no slot of the record cache is taken. The name is remembered, so a later `touch` counts.
+    pub fn peek(&self, id: u32) -> Option<Item> {
+        let it = self.item_raw(id)?;
+        if let Ok(mut r) = self.recent.lock() {
+            r.seen.entry(id).or_insert_with(|| it.name.clone());
+        }
+        Some(it)
+    }
+
+    /// The record without the record cache (ours' scans over every id, which retail has no like of).
+    pub fn item_raw(&self, id: u32) -> Option<Item> {
         let (kind, r) = self.record(id)?;
         let it = parse(&r, kind, self.lang, r.len() == 0x1400);
         (it.id == id).then_some(it)
     }
 
+    /// A lookup one of our own caches answered: the record cache takes it as retail's would.
+    pub fn touch(&self, id: u32) {
+        if let Ok(mut r) = self.recent.lock() {
+            r.touch_seen(id);
+        }
+    }
+
+    /// The record cache's name of an item (record +0x1b4: the record's first string, 30 bytes at most), looked up as
+    /// FUN_1015d210 does.
+    pub fn cached_name(&self, id: u32) -> Option<String> {
+        if id == 0 {
+            return None;
+        }
+        {
+            let mut r = self.recent.lock().ok()?;
+            r.touch_seen(id);
+            if let Some(n) = r.name(id) {
+                return Some(n);
+            }
+        }
+        // Not read yet: `item` takes the lock itself.
+        self.item(id)?;
+        self.recent.lock().ok()?.name(id)
+    }
+
+    /// The record cache's filled slots in slot order: (id, name).
+    pub fn recent(&self) -> Vec<(u32, String)> {
+        self.recent.lock().map(|r| r.slots.iter().filter(|s| s.0 != 0).cloned().collect()).unwrap_or_default()
+    }
+
     /// The item's noun for message text (`names::item_noun`; the bare name outside English), read once.
     pub fn noun(&self, id: u32) -> Option<super::names::Noun> {
+        self.noun_as(id, true)
+    }
+
+    /// `noun` for a mod (`peek`): no slot of the record cache is taken.
+    pub fn noun_peek(&self, id: u32) -> Option<super::names::Noun> {
+        self.noun_as(id, false)
+    }
+
+    fn noun_as(&self, id: u32, counts: bool) -> Option<super::names::Noun> {
         if let Some(n) = self.nouns.lock().ok().and_then(|c| c.get(&id).cloned()) {
+            if counts {
+                self.touch(id);
+            }
             return n;
         }
-        let n = self.item(id).map(|it| match self.lang {
+        let n = if counts { self.item(id) } else { self.peek(id) }.map(|it| match self.lang {
             Lang::En => super::names::item_noun(it),
             _ => super::names::plain(it.name),
         });
@@ -491,6 +609,36 @@ impl Items {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FUN_1015b5c0: a new id takes the next slot round robin, from slot 1; a held id takes none; names stop at 30
+    /// bytes.
+    #[test]
+    fn record_cache_ring() {
+        let mut r = Recent::default();
+        r.touch(5, "Five");
+        r.touch(0, "none");
+        r.touch(6, "A name that is longer than thirty bytes");
+        r.touch(5, "Five");
+        assert_eq!(
+            (r.slots[1].clone(), r.slots[2].1.as_str()),
+            ((5, "Five".to_string()), "A name that is longer than thi")
+        );
+        assert_eq!(r.slots[0].0, 0);
+        for id in 100..100 + RECENT as u32 - 2 {
+            r.touch(id, "x");
+        }
+        // 200 ids fill the ring (slot 0 last); the next one takes slot 1 from the oldest.
+        assert_eq!((r.slots[0].0, r.slots[1].0), (297, 5));
+        r.touch(1000, "new");
+        assert_eq!((r.slots[1].0, r.slots.iter().any(|s| s.0 == 5)), (1000, false));
+        // The slot index follows: the id pushed out is not held, so its next lookup takes a slot again.
+        assert_eq!((r.name(5), r.name(1000).as_deref(), r.held.len()), (None, Some("new"), RECENT));
+        r.seen.insert(5, "Five".into());
+        r.touch_seen(1000);
+        assert_eq!(r.slots[2].0, 6);
+        r.touch_seen(5);
+        assert_eq!((r.slots[2].0, r.name(5).as_deref(), r.name(6)), (5, Some("Five"), None));
+    }
 
     /// The Primer: "Basics" (0xf620) lists 56 topics from "Movement" (0xf631: image number 1, three images).
     #[test]

@@ -179,7 +179,16 @@ impl ItemCache {
     }
 
     pub fn item(&self, id: u16) -> Option<Arc<Item>> {
+        if self.cache.borrow().contains_key(&id) {
+            // Our cache answered: retail's record cache (the auto-translate Items group's source) still counts it.
+            self.names.items.touch(id as u32);
+        }
         self.cache.borrow_mut().entry(id).or_insert_with(|| self.names.items.item(id as u32).map(Arc::new)).clone()
+    }
+
+    /// The record for a mod (`Items::peek`): no slot of retail's record cache is taken, whichever cache answers.
+    pub fn peek(&self, id: u16) -> Option<Arc<Item>> {
+        self.cache.borrow_mut().entry(id).or_insert_with(|| self.names.items.peek(id as u32).map(Arc::new)).clone()
     }
 
     /// A Records of Eminence objective record (0xe000 + n).
@@ -2227,6 +2236,33 @@ pub(super) fn persona(w: &World) -> Persona {
 /// The storage view's itemctrl (the quantity) has the keys.
 pub(super) fn qty_open(w: &World) -> bool {
     matches!(&w.win, Some(Win::Items { store: Some(b), .. }) if b.qty.is_some())
+}
+
+#[cfg(test)]
+mod peek_tests {
+    /// A mod's reads (`Items::peek`, `noun_peek`, `ItemCache::peek`) take no slot of the record cache; the game's own
+    /// lookup of the same id afterwards does, whichever of our caches answers it.
+    #[test]
+    fn peeks_take_no_slot() {
+        use crate::dat::items::Lang;
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(names) = crate::dat::names::Names::load(&index, Lang::En) else { return };
+        let names = std::sync::Arc::new(names);
+        let cache = super::ItemCache::new(names.clone());
+        let items = &names.items;
+        let ids = || items.recent().iter().map(|s| s.0).collect::<Vec<_>>();
+        assert!(items.peek(0x1010).is_some() && items.noun_peek(0x1011).is_some() && cache.peek(0x1012).is_some());
+        // Again, now from our caches.
+        assert!(items.noun_peek(0x1011).is_some() && cache.peek(0x1012).is_some());
+        assert_eq!(ids(), Vec::<u32>::new());
+        assert!(items.item(0x1010).is_some() && items.noun(0x1011).is_some() && cache.item(0x1012).is_some());
+        assert_eq!(ids(), vec![0x1010, 0x1011, 0x1012]);
+        // A read first: `noun` and `ItemCache::item` count it once.
+        assert!(items.noun(0x1013).is_some() && cache.item(0x1014).is_some());
+        assert!(items.noun(0x1013).is_some() && cache.item(0x1014).is_some());
+        assert_eq!(ids(), vec![0x1010, 0x1011, 0x1012, 0x1013, 0x1014]);
+    }
 }
 
 #[cfg(test)]
