@@ -376,7 +376,8 @@ local function keep_usable(pieces)
   local worn = core.worn()
   for slot, w in pairs(worn) do
     local rec = pick.item(w.id)
-    if rec and (rec.max_charges or 0) > 0 and not used[w.id] and pieces[slot] and pieces[slot].name ~= rec.name then
+    if rec and (rec.max_charges or 0) > 0 and not used[w.id] and not core.put_by_us(slot, w) and pieces[slot]
+      and pieces[slot].name ~= rec.name then
       pieces[slot] = nil
     end
   end
@@ -471,7 +472,13 @@ end
 function M.action(act)
   if not M.loaded() or act.kind == "item" then return end
   local r = M.route(act)
-  if not r or (not r[1] and not r[2]) then return end
+  if not r or (not r[1] and not r[2]) then
+    if act.category == 7 and M.H.ws_line() then
+      local a = M.H.ability(act.param)
+      chat.add("Gearshift: no set for " .. (a and a.name or ("weapon skill " .. act.param)) .. ".")
+    end
+    return
+  end
   if r[1] then wear(M.pieces(r[1]), "auto") end
   local main
   if r[2] then
@@ -491,9 +498,7 @@ function M.action(act)
     local ws = a and a.name or ("weapon skill " .. act.param)
     local def = r[2] and M.set_def(r[2])
     local set = def and def.label or r[2]
-    if not r[2] then
-      chat.add("Gearshift: no set for " .. ws .. ".")
-    elseif changed == 0 then
+    if changed == 0 then
       chat.add(string.format("Gearshift: %s, the %s set already on.", ws, set))
     else
       chat.add(string.format("Gearshift: %s, the %s set on before it (%d piece%s).", ws, set, changed,
@@ -515,10 +520,16 @@ function M.on_action(a)
   if not p or a.actor ~= p.id then return end
   -- A finish, or an interrupted cast / shot (param 28787).
   if DONE[a.category] or ((a.category == 8 or a.category == 12) and a.param == 28787) then busy_until = 0 end
-  -- An item used (category 5, the item's id): worn usable gear is let go, and the status set comes back.
+  -- A worn charged piece used (category 5, the item's id): it is let go, and the status set comes back (a potion or
+  -- food changes nothing).
   if a.category == 5 and a.param then
-    used[a.param] = true
-    restore = true
+    for slot, w in pairs(core.worn()) do
+      local rec = pick.item(w.id)
+      if w.id == a.param and rec and (rec.max_charges or 0) > 0 and not core.put_by_us(slot, w) then
+        used[a.param] = true
+        restore = true
+      end
+    end
   end
 end
 

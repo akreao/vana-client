@@ -56,6 +56,7 @@ local function on_out(p)
   if p.injected then return end
   local act = core.parse_action(p)
   if not act then return end
+  core.note_action(act)
   if gs.loaded() then return gs.action(act) end
   if lac.loaded() then return lac.action(act) end
   if acxml.loaded() then return acxml.action(act) end
