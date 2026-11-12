@@ -165,7 +165,7 @@ pub struct Creator {
 impl Creator {
     pub fn new(mut backdrop: Backdrop) -> Self {
         Self {
-            effects: backdrop.fx.take().map(|l| super::select::LobbyFx::new(l, MINUTE)),
+            effects: backdrop.fx.take().map(|l| super::select::LobbyFx::new(l, MINUTE, super::select::CREATOR_VOICES)),
             backdrop,
             zone: None,
             renderer: None,
