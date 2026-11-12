@@ -12170,20 +12170,22 @@ impl App {
                 }
                 NetEvent::MapGroup { id, zone, pos } => {
                     world.scan.party_busy = false;
+                    // FUN_100f07b0 -> FUN_101f94d0: our own zone, a listed member after us, on the sub-map the map was
+                    // asked for.
                     let own = world.party.own_flags;
                     let member = world
                         .party
                         .members()
                         .skip(1)
                         .find(|m| m.id == id)
-                        .map(|m| (m.name.clone(), (m.flags ^ own) & 3 != 0));
-                    let p = Vec3::from(pos);
-                    let key = (zone == world.pos_zone).then(|| world.ground.as_ref().map(|g| g.map_key(p))).flatten();
-                    if let (Some((name, alliance)), Some(m)) = (member, world.map.as_mut())
-                        && m.zone() == zone
+                        .map(|m| (m.name.clone(), (m.flags ^ own) & 3 == 0));
+                    let key = world.ground.as_ref().map(|g| g.map_key(Vec3::from(pos)));
+                    let from = map::rest_from(world);
+                    if let (Some((name, party)), Some(m)) = (member, world.map.as_mut())
+                        && zone == world.pos_zone
+                        && key.is_none_or(|k| k == m.asked_key())
                     {
-                        let same = key.is_none_or(|k| k == m.region.key as u8);
-                        m.party_pos(&name, pos[0], pos[2], alliance, same);
+                        m.party_pos(&name, pos[0], pos[2], party, from);
                     }
                 }
                 NetEvent::EventAnswer { id, data } => {
