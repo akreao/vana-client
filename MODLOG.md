@@ -16689,7 +16689,8 @@ From the research notes:
   ~8%, upload_poses); CommandEncoder::finish's validation 15%. wgpu-hal maps every MAP_WRITE buffer to gpu-allocator's
   CpuToGpu, which prefers DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT: VRAM through the BAR, every store across the
   link.
-- vendor/gpu-allocator (0.28.0, [patch.crates-io]) measures it, as bg3le's memsteer does: at device creation CPU writes
+- gpu-allocator 0.28.0 with our patch ([patch.crates-io]; vendor/gpu-allocator until 2026-11-11, now the fork
+  github.com/lenonk/gpu-allocator, branch vana-client, pinned by rev) measures it, as bg3le's memsteer does: at device creation CPU writes
   into the two types the allocator would pick are timed (4 MiB, best of 3 after a warm copy), and CpuToGpu goes to the
   first HOST_VISIBLE | HOST_COHERENT type without DEVICE_LOCAL only when the VRAM type writes under a quarter of host
   speed. Here: host 37-38 GB/s, VRAM 0.25 GB/s, steered; a desktop link stays as it was. FFXI_MEMSTEER=on / off
