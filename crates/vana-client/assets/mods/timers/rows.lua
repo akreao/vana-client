@@ -132,21 +132,51 @@ local function recast_rows(seen)
   return rows
 end
 
+-- Our own effects' gauge lengths: per status, each copy by its end (songs, maneuvers and runes keep several of one
+-- status). A copy whose end moved by more than a second is a new one.
+local copies = {}
+
+local function copy_total(id, left, claimed)
+  local ends = now() + left
+  local list = copies[id] or {}
+  copies[id] = list
+  for _, c in ipairs(list) do
+    if not claimed[c] and math.abs(c.ends - ends) <= 1 then
+      claimed[c] = true
+      c.ends, c.total = ends, math.max(c.total, left)
+      return c.total
+    end
+  end
+  local c = { ends = ends, total = left }
+  list[#list + 1] = c
+  claimed[c] = true
+  return left
+end
+
 -- Our own effects with end times, shortest first, named by what we cast when it was ours.
-local function own_rows(seen)
+local function own_rows()
   local names = {}
   for _, e in ipairs(E.effects_on(game.player().id)) do
     if e.name ~= "" then names[e.status] = e.name end
   end
-  local rows = {}
+  local rows, claimed = {}, {}
   for _, b in ipairs(game.buffs()) do
     local info = b.remaining and res.status_info(b.id)
     if b.remaining and b.remaining > 0 and not (info and info.untimed) then
       rows[#rows + 1] = { icon = { kind = "status", id = b.id }, name = names[b.id] or res.status(b.id) or "",
-        left = b.remaining, total = total("b" .. b.id, b.remaining, seen), fills = false }
+        left = b.remaining, total = copy_total(b.id, b.remaining, claimed), fills = false }
     end
   end
-  table.sort(rows, function(a, b) return a.left < b.left end)
+  for id, list in pairs(copies) do
+    for i = #list, 1, -1 do
+      if not claimed[list[i]] then table.remove(list, i) end
+    end
+    if #list == 0 then copies[id] = nil end
+  end
+  table.sort(rows, function(a, b)
+    if a.left ~= b.left then return a.left < b.left end
+    return a.icon.id < b.icon.id
+  end)
   return rows
 end
 
@@ -156,7 +186,10 @@ local function applied_rows(id)
     rows[#rows + 1] = { icon = { kind = "status", id = e.status }, name = e.name, left = e.left or 0,
       total = e.secs or 0, fills = false }
   end
-  table.sort(rows, function(a, b) return a.left < b.left end)
+  table.sort(rows, function(a, b)
+    if a.left ~= b.left then return a.left < b.left end
+    return a.icon.id < b.icon.id
+  end)
   return rows
 end
 
@@ -183,6 +216,7 @@ function R.add(mod_id, name, seconds, options)
 end
 
 function R.remove(mod_id, name)
+  name = tostring(name)
   for i = #R.mod_timers, 1, -1 do
     local t = R.mod_timers[i]
     if t.mod == mod_id and t.name == name then table.remove(R.mod_timers, i) end
@@ -227,7 +261,7 @@ function R.sections(builtin)
   if builtin then
     local seen = {}
     local recasts = recast_rows(seen)
-    local own = own_rows(seen)
+    local own = own_rows()
     for k in pairs(totals) do
       if not seen[k] then totals[k] = nil end
     end
@@ -261,7 +295,8 @@ function R.sections(builtin)
       if tx ~= ty then return tx end
       local lx, ly = latest(x[2]), latest(y[2])
       if lx ~= ly then return lx > ly end
-      return x[2].name < y[2].name
+      if x[2].name ~= y[2].name then return x[2].name < y[2].name end
+      return x[1] < y[1]
     end)
     for _, x in ipairs(mobs) do
       local rows = applied_rows(x[1])
