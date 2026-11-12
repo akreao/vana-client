@@ -19511,6 +19511,11 @@ fn draw_effects(
     if !r.ready(&gfx.gpu) {
         eg.upload_pending(&gfx.gpu, &mut w.effects);
     }
+    // The faded actors render left out (defer_faded), farthest first: each is composited where it falls among the
+    // effects (retail's one sorted transparent list), so what is behind it shows through and what is in front stays.
+    let faded_all: Vec<&crate::render::ActorGpu> = w.actors.values().filter_map(|a| a.gpu.as_ref()).collect();
+    let pending = r.faded_pending(camera, &faded_all);
+    let mut faded_done = 0;
     if r.ready(&gfx.gpu) {
         let view = camera.view();
         let mut view_rot = view;
@@ -19620,7 +19625,8 @@ fn draw_effects(
         fg.mark("fx update");
         let (fog_color, fog) =
             r.lighting.as_ref().map_or(([0.0; 3], [150.0, 600.0]), |l| (l.fog.to_array(), [l.fog_start, l.fog_end]));
-        eg.draw(
+        let keys: Vec<f32> = pending.iter().map(|p| p.0).collect();
+        faded_done = eg.draw_with_breaks(
             &gfx.gpu,
             &mut fg.encoder,
             (&scene_raw, &scene_depth, bg),
@@ -19630,12 +19636,16 @@ fn draw_effects(
             [crate::render::NEAR, crate::render::FAR],
             fog_color,
             fog,
+            &keys,
+            &mut |enc, i| r.render_faded_one(&gfx.gpu, enc, &scene_raw, &scene_depth, pending[i].1, i),
         );
         fg.mark("fx draw");
     }
-    // The faded actors render left out, over the effects and everything else behind them.
-    let faded: Vec<&crate::render::ActorGpu> = w.actors.values().filter_map(|a| a.gpu.as_ref()).collect();
-    r.render_faded_after(&gfx.gpu, &mut fg.encoder, &scene_raw, &scene_depth, camera, &faded);
+    // Those nearer than every effect (or all of them, with no effects drawn).
+    for (i, (_, a)) in pending.iter().enumerate().skip(faded_done) {
+        r.render_faded_one(&gfx.gpu, &mut fg.encoder, &scene_raw, &scene_depth, a, i);
+    }
+    r.defer_faded = false;
 }
 
 /// Over the finished scene: the mods' shapes and post passes, layout mode's lines, the held zone frame and the

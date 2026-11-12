@@ -4148,24 +4148,34 @@ impl ZoneRenderer {
         self.render_faded(gpu, encoder, color, depth, &list, slot);
     }
 
-    /// The faded actors render left out (`defer_faded`), farthest first, over everything drawn since: what stands
-    /// behind them (effects, refracting actors, ground shadows) shows through, and their depth hides nothing drawn
-    /// before. `actors`: any list holding them; the others are skipped.
-    pub fn render_faded_after(
+    /// The faded actors render left out (`defer_faded`), farthest first, with their sort keys (view depth, as the
+    /// effect elements'): the caller composites each where it falls among the effects (render_faded_one), so what is
+    /// behind it shows through and what is in front stays in front. `actors`: any list holding them.
+    pub fn faded_pending<'a>(&self, camera: &Camera, actors: &[&'a ActorGpu]) -> Vec<(f32, &'a ActorGpu)> {
+        let view = camera.view();
+        let mut list: Vec<(f32, &ActorGpu)> = actors
+            .iter()
+            .copied()
+            .filter(|a| a.faded_pending.replace(false))
+            .map(|a| ((-view.transform_point3(a.origin).z).clamp(0.0, 512.0), a))
+            .collect();
+        list.sort_by(|a, b| b.0.total_cmp(&a.0));
+        list
+    }
+
+    /// One of faded_pending's actors (`k`: its place in that list).
+    pub fn render_faded_one(
         &self,
         gpu: &Gpu,
         encoder: &mut wgpu::CommandEncoder,
         color: &wgpu::TextureView,
         depth: &wgpu::TextureView,
-        camera: &Camera,
-        actors: &[&ActorGpu],
+        a: &ActorGpu,
+        k: usize,
     ) {
-        let mut list: Vec<&ActorGpu> = actors.iter().copied().filter(|a| a.faded_pending.replace(false)).collect();
-        if list.is_empty() {
-            return;
-        }
-        list.sort_by(|a, b| b.origin.distance(camera.eye).total_cmp(&a.origin.distance(camera.eye)));
-        self.render_faded(gpu, encoder, color, depth, &list, self.faded_slot.get());
+        let mut slot = self.faded_slot.get();
+        self.faded_one(gpu, encoder, color, depth, a, k, &mut slot);
+        self.faded_slot.set(slot);
     }
 
     /// One actor posed this frame drawn alone into `color` / `depth` (cleared to `clear`, premultiplied) from `camera`,
@@ -4260,13 +4270,31 @@ impl ZoneRenderer {
         list: &[&ActorGpu],
         mut shine_slot: u64,
     ) {
+        for (k, a) in list.iter().enumerate() {
+            self.faded_one(gpu, encoder, color, depth, a, k, &mut shine_slot);
+        }
+    }
+
+    /// One faded actor: drawn opaque into the helper target inside its rect, then blended over `color` at its alpha.
+    /// `k` picks its uniforms (one per actor a frame).
+    #[allow(clippy::too_many_arguments)]
+    fn faded_one(
+        &self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        color: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
+        a: &ActorGpu,
+        k: usize,
+        shine_slot: &mut u64,
+    ) {
         let (Some((rt_tex, rt, rt_group)), Some((_, group, _))) = (&self.faded_rt, &self.pose_gpu) else { return };
         let size = rt_tex.size();
-        for (k, a) in list.iter().enumerate() {
-            let Some(skin) = a.skin.as_ref() else { continue };
+        {
+            let Some(skin) = a.skin.as_ref() else { return };
             // Ours: both passes only inside the actor's rect; the composite reads nothing outside it, so the target is
             // zeroed there alone (retail clears and blends the whole viewport per actor).
-            let Some([sx, sy, sw, sh]) = faded_rect(a.screen, size.width, size.height) else { continue };
+            let Some([sx, sy, sw, sh]) = faded_rect(a.screen, size.width, size.height) else { return };
             let off = k as u64 * SHINE_STRIDE;
             gpu.queue.put(
                 &self.faded_buf,
@@ -4307,22 +4335,22 @@ impl ZoneRenderer {
                 }
                 if let Some(s) = a.shine
                     && let Some(tex) = self.shine_tex.get(&s.key)
-                    && shine_slot < SHINE_SLOTS as u64
+                    && *shine_slot < SHINE_SLOTS as u64
                 {
                     gpu.queue.put(
                         &self.shine_buf,
-                        shine_slot * SHINE_STRIDE,
+                        *shine_slot * SHINE_STRIDE,
                         bytemuck::cast_slice(&[s.u, s.v, shine_wrap(), 0.0, s.tf[0], s.tf[1], s.tf[2], s.tf[3]]),
                     );
                     pass.set_pipeline(&self.shine_pipeline);
-                    pass.set_bind_group(3, self.shine_group(gpu, skin), &[(shine_slot * SHINE_STRIDE) as u32]);
+                    pass.set_bind_group(3, self.shine_group(gpu, skin), &[(*shine_slot * SHINE_STRIDE) as u32]);
                     pass.set_bind_group(1, tex, &[]);
                     for (_, range, wep) in &a.draws {
                         if shown(*wep) {
                             pass.draw(range.clone(), 0..1);
                         }
                     }
-                    shine_slot += 1;
+                    *shine_slot += 1;
                 }
             }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

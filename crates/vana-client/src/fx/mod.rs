@@ -2816,8 +2816,8 @@ impl Effects {
     }
 
     /// The draw order with the after-images among the elements (`TRAIL_ITEM | slot`), farthest first (ties by
-    /// `insert_order`).
-    pub fn draw_items(&self) -> Vec<u32> {
+    /// `insert_order`), each with its sort key (view depth: larger is farther).
+    pub fn draw_items_keyed(&self) -> Vec<(f32, u32)> {
         let view = self.last_frame.map_or(Mat4::IDENTITY, |f| f.view);
         let mut v: Vec<(f32, (u32, u32), u32)> = self
             .elems
@@ -2833,7 +2833,7 @@ impl Effects {
             }))
             .collect();
         v.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
-        v.into_iter().map(|(_, _, i)| i).collect()
+        v.into_iter().map(|(k, _, i)| (k, i)).collect()
     }
 
     /// Live elements to draw, back to front (the CMoOT walk: larger keys first, insertion order within one).
