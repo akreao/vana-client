@@ -19834,7 +19834,7 @@ impl ApplicationHandler for App {
         }
         surface.configure(&gpu.device, &config);
         let depth = depth_view(&gpu.device, config.width, config.height);
-        let egui_ctx = egui::Context::default();
+        let egui_ctx = app_egui_context();
         // The device's texture limit (egui assumes 2048; the modern atlases are larger).
         let egui_state = egui_winit::State::new(
             egui_ctx.clone(),
@@ -20437,6 +20437,17 @@ pub fn run(cfg: Config, drive: Drive) -> Result<()> {
     Ok(())
 }
 
+/// The window's egui context: no egui keyboard zoom (Ctrl+0 / Ctrl+Plus / Ctrl+Minus are macro keys), and no quit
+/// shortcut (egui consumes Ctrl+Q, and we never act on its close).
+fn app_egui_context() -> egui::Context {
+    let ctx = egui::Context::default();
+    ctx.options_mut(|o| {
+        o.zoom_with_keyboard = false;
+        o.quit_shortcuts.clear();
+    });
+    ctx
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -20599,6 +20610,35 @@ mod tests {
     }
 
     use super::*;
+
+    /// Ctrl+0, Ctrl+Minus, Ctrl+Plus and Ctrl+Equals are macro keys: the app's context leaves the zoom alone (a plain
+    /// egui context would reset or step it).
+    #[test]
+    fn zoom_keys_are_macro_keys() {
+        let ctrl = egui::Modifiers { ctrl: true, command: true, ..Default::default() };
+        // A zoom change takes effect at the next pass's start: an empty pass after each.
+        let idle = |ctx: &egui::Context| {
+            let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        };
+        let press = |ctx: &egui::Context, key| {
+            let event = egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: ctrl };
+            let _ = ctx.run_ui(egui::RawInput { events: vec![event], ..Default::default() }, |_| {});
+            idle(ctx);
+        };
+        let plain = egui::Context::default();
+        plain.set_zoom_factor(1.25);
+        idle(&plain);
+        assert_eq!(plain.zoom_factor(), 1.25);
+        press(&plain, egui::Key::Num0);
+        assert_ne!(plain.zoom_factor(), 1.25, "egui's zoom keys did nothing: the test no longer tests anything");
+        let app = app_egui_context();
+        app.set_zoom_factor(1.25);
+        idle(&app);
+        for key in [egui::Key::Num0, egui::Key::Minus, egui::Key::Plus, egui::Key::Equals] {
+            press(&app, key);
+            assert_eq!(app.zoom_factor(), 1.25, "{key:?} moved the zoom");
+        }
+    }
 
     /// FUN_100381d0 at 2 ticks a frame: the pad's 60 comes while bit 5 of the whole timer is set (118..96, 62..32,
     /// then -2..-32 while the sound is still heard); the task ends once the 120 ticks and the voice are over, or at
