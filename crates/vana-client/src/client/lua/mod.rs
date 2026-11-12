@@ -2408,7 +2408,10 @@ mod tests {
             }
         }
         assert!(failed.is_empty(), "{} of {ran} mod tests failed:\n{}", failed.len(), failed.join("\n\n"));
-        assert!(ran > 0 || only.is_some(), "no mod tests found");
+        match &only {
+            Some(o) => assert!(ran > 0, "VANA_MOD_TEST={o} matches no mod test"),
+            None => assert!(ran > 0, "no mod tests found"),
+        }
     }
     use mlua::{Table, Value};
 

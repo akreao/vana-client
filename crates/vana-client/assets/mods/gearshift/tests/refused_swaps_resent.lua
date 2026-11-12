@@ -1,6 +1,6 @@
 -- Gearshift's core: a refused swap is sent again only around a weapon skill or a shot (LSB's weapons and ammo
 -- lock), at most until the window closes, never once a later wear overtook it or the player changed the slot;
--- and it knows which worn pieces it put on.
+-- and it knows which worn pieces it put on (not one the player took off and put back).
 
 local core = require("src.core")
 local T, EQ, out = 0, {}, {}
@@ -54,6 +54,14 @@ T = 40
 core.note_action({ category = 7 })
 wear("Morion Tathlum")
 EQ[3] = { bag = 0, slot = 3, id = 18166 }
-core.mine[3] = nil
 assert(retry_at(42.5) == 0, "retried over the player's change")
 assert(not core.put_by_us(3, core.worn()[3]), "the player's piece taken as ours")
+-- Ours, taken off by the player and put back by hand: the player's now.
+T = 50
+wear("Tiphia Sting")
+EQ[3] = { bag = 0, slot = 2, id = 18254 }
+assert(core.put_by_us(3, core.worn()[3]), "our own piece not known as ours")
+EQ[3] = nil
+core.worn()
+EQ[3] = { bag = 0, slot = 2, id = 18254 }
+assert(not core.put_by_us(3, core.worn()[3]), "a piece put back by hand taken as ours")

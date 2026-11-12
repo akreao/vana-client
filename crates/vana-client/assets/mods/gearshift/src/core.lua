@@ -137,6 +137,9 @@ function M.worn()
     elseif cur.id then
       out[s] = { bag = cur.bag, index = cur.slot, id = cur.id }
     end
+    -- Our piece seen gone: if it comes back, the player put it on.
+    local m = M.mine[s]
+    if not p and m and not (cur.bag == m.bag and cur.slot == m.index and cur.id == m.id) then M.mine[s] = nil end
   end
   return out
 end
