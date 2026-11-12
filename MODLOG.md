@@ -23762,6 +23762,51 @@ For lenonk/vana-client#172. Addresses are 30261006_0.
   task, the release only once `fsh6` is over) `fh1` would start again. Ours: after a result's put-away, with the status
   still 0x3a..0x3e, the angler keeps the last pose until the status leaves fishing (fishrod::put_away) *(inf)*.
 
+## Gearshift's set builder (2026-11-11)
+
+Issue #230: average players should not need XML or Lua for gear swapping. With no GearSwap, LuAshitacast, Ashitacast or
+Spellcast file for the job, Gearshift builds the job's sets from the gear held and wears them (docs/mods/gearshift.md).
+All of it is the mod's Lua over the general API; the client gained nothing.
+
+- Item stats (src/build/stats.lua): the item's description and augment lines. Each signed number takes the longest
+  known phrase before it (about 300 phrases); a "Word:" prefix starts a context: Pet:, Avatar:, Wyvern:, Automaton:,
+  Luopan: go to that pet ("Pet:" counts for every pet), every other (Set:, Latent effect:, weather, days, Unity
+  Ranking, Vs. X:) is conditional and not scored, as are "<Element> Elemental ..." lines. The element glyphs U+E000..E007
+  (Fire .. Dark) are elemental resistance; an unknown quoted name ("Boost"+5) is that ability's effect (ja:boost).
+  Over every armour and weapon record (18,432 in 30261006_0): 99.3% read with no unknown phrase (a test holds 99%).
+  Descriptions wrap mid-phrase; lines are joined first.
+- Not in the descriptions, so by name: the 75-era elemental staves' affinity (NQ / HQ), obis ("full benefit of the
+  day / weather"), gorgets and belts (latent: weapon skill accuracy and damage when the skillchain property's element
+  matches; Fotia for any). The rules put them on at action time.
+- Sets (src/build/sets.lua): our own weights and caps per set (TP: Triple Attack 10, Double Attack 7, Store TP 5, Haste
+  8 capped at 25; DT floors -50), every job's full list, ability sets from ja: stats. Weapon skills from
+  data/gearshift_ws_gen.py (LandSandBoat data/weapon_skills.yaml and the scripts: kind, wsc modifiers with the Adoulin
+  values, element, jobs, skillchain properties; 206), blue magic kinds from data/gearshift_blu_gen.py (126).
+- Picks (src/build/pick.lua): the reference per slot is the set's best at the cap (curated in bis.lua, else the
+  best-scoring piece in the whole item list the job and race can wear at the cap). bis.lua: 1,496 slots from public
+  guides (the sources above each job: BG-Wiki community and gear-set guides for 99, FFXIclopedia, FFXIAH and
+  horizonffxi.wiki for 75), each name checked against the item list for slot, job and level; unsourced 75-era staples
+  and the 99 "PDT" sets that were engaged sets with DT were left out. A curated name with several items (levels'
+  versions) takes the best one wearable at the cap. "Like the best in slot" is the
+  share of a piece's set value from stats the reference also gives (its kind of stats, not its amount, so a low-level
+  piece can match a level-75 one). The owned pick is the most of those among pieces at least 25% alike, else the
+  set's own best by its weights; "worth getting" is the same rule over every item wearable at the level. Caps hold
+  over the whole set by three greedy passes; a pair of ear / ring slots never takes one piece twice; a sub piece goes
+  with its main (a grip under a two-handed weapon). Pure mages (WHM, BLM, SMN, SCH, GEO) swap weapons outside the
+  melee sets; the others keep them. Left: pieces that take two slots ("Cannot equip ...": suits, cloaks) are left out.
+- The work (src/build/run.lua) runs in one coroutine that yields after 1.5 ms of a frame (mod calls are reported past
+  2 ms and stopped at 100 ms): the item list indexed by slot, the job's candidates at the cap and at the level (once
+  per job or level change), then one set at a time, the one the window shows first. Only hand picks and the toggles
+  are saved (storage.character.builder); every other pick follows the level, so level sync needs no rebuild.
+- After review (#236): sets are worn only with the window's Wear These Sets on (per character, off after an update)
+  and both settings on; the status set goes on when it changes or after an action (a hand change stays); a cast holds
+  its sets for its cast time + 2 s or to its finish / interruption (0x028 category 8 / 12 param 28787); only pure
+  mages swap weapons; ammo stays for a bow / gun / crossbow or thrown ammo; the obi takes the weekday's element by a
+  day table (game.time().weekday is day order: 0 Fire, 1 Earth, 2 Water, 3 Wind, 4 Ice, 5 Lightning, 6 Light, 7
+  Dark), and magical weapon skills pass their element to it.
+- Live (Lnxcsfix, WAR 23, nine pieces given by GM): the window in both UIs, a hand pick kept through a relog, Wear
+  Now and the idle set worn; WAR TP at 99 references Boii +3, Sulevia +2, Pummeler's +4, Telos, Schere, Null.
+
 ## The Windows release built with MSVC on GitHub (2026-11-11)
 
 - Issue #229: Microsoft Defender flagged the 1.0.11 Windows exe as a trojan (2 of 70 engines on VirusTotal); a false
