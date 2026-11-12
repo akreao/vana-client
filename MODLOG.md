@@ -23758,5 +23758,6 @@ For lenonk/vana-client#172. Addresses are 30261006_0.
   imports no vcruntime / msvcp / api-ms-win-crt DLL, runs `--version` and uploads vana-client-windows-x86_64.exe.
   release/fetch-ci-builds.sh downloads it with the others; release/publish.sh still requires it. ci.yml is unchanged:
   its Windows job only lints and tests (its release build was dropped for time and stays dropped).
-- release/build-windows.sh stays for local MinGW test builds.
+- release/build-windows.sh stays for local MinGW test builds, written as vana-client-windows-x86_64-mingw.exe so
+  release/publish.sh never ships one.
 - Left: an Authenticode signature (Azure Trusted Signing or SignPath), the real fix for unsigned-binary detections.

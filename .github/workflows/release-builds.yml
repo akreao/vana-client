@@ -90,7 +90,10 @@ jobs:
         run: |
           exe=target/x86_64-pc-windows-msvc/dist/vana-client.exe
           objdump="$(rustc --print sysroot)/lib/rustlib/x86_64-pc-windows-msvc/bin/llvm-objdump.exe"
-          if "$objdump" -p "$exe" | grep -iE "DLL Name: (vcruntime|msvcp|api-ms-win-crt)"; then
+          test -x "$objdump"
+          imports="$("$objdump" -p "$exe")"
+          echo "$imports" | grep -q "DLL Name:" || { echo "llvm-objdump listed no imports" >&2; exit 1; }
+          if echo "$imports" | grep -iE "DLL Name: (vcruntime|msvcp|api-ms-win-crt)"; then
             echo "the exe needs the VC++ runtime" >&2
             exit 1
           fi
