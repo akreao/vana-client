@@ -71,7 +71,7 @@ detail inside implemented ops.
 | 0x5b / 0x66 finishing in one call when the file is cached (ours take 2 frames) | Built *([batch 8](notes/2026-11-03-modlog-gaps-batch8.md) item 39: FUN_100b5210 requests the file and runs FUN_100d12d0's ready test in the same call, keeping its per-kind requested flag so a waiting op does not re-request)* | L2408 | DLL |
 | Motion-file model kinds | Not built | L2408 | DLL |
 | 0x46 sub 1's HUD window FUN_10217e90 *(inf: hides a HUD window)* *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 5: "menu    buff" hidden until the event ends)* | Built | L2408 | DLL |
-| 0x1f7 (San d'Oria opening) not played live since the VM-speed fix; timing is the headless VM's | Not checked live | L2408 | Live |
+| 0x1f7 (San d'Oria opening) not played live since the VM-speed fix; timing is the headless VM's *([city openings](../modlog/2026-11-12-city-openings.md): played live on the test bed 2026-11-12 with seven of the other eight openings and set against retail footage; cameras, narration and placements match)* | Checked live | L2408 | Live |
 | Op 0x89 (actor +0x840 bit 1 and position held for dur ticks; *inferred: holds the actor in place*); also its head-look suppression *([batch 6](notes/2026-11-03-modlog-gaps-batch6.md) item 13: no hold; head-look off for dur x speed ticks or until a move > 1 in x / z)* | Built | L7951, L4535 | DLL |
 | Event text codes 0x1d (speaker's compass direction), 0x13 *(answered, [batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 1: not Japanese, the raise / tractor offer)* | Built | L15345 | DLL |
 | Grammar 2 / 3 whole-text conversions (key items with their own article) | Not built | L14678 | DLL |
@@ -79,12 +79,16 @@ detail inside implemented ops.
 | Op 0x71 subs 0x50..0x55 (a full-screen picture, zone 291) | Not built | L4983 | DLL |
 | 0x7f0b / 0x7f8b special values (+0x124 bit 25, 475 sites); FUN_100977f0's gate for PCs *(answered, [batch 3](notes/2026-11-03-modlog-gaps-batch3.md) §2: the speaker's / player's gender bit (1 male); ours reads 0 for both, and dialog `7F 90` / `7F 91` use the player's gender; the PC see-through is FUN_100973f0, already built; [batch 4](notes/2026-11-03-modlog-gaps-batch4.md) §2..3: 0x00D / 0x00E mask 4 write it for every actor, default female; `7F 90` / `7F 91` are the message's actor 1 / 2)* | Not built | L4893, L4900 | DLL |
 | Op 0x7e / 0xac subs 5 / 0x55 (FUN_10097a20 spawning the chocobo / mount in an event) | Not built | L5246 | DLL |
-| Event op 0x34 area swaps: retail's file slots (ours restarts the auto schedulers; inferred) | Unknown | L13514 | DLL |
+| Event op 0x34 area swaps: retail's file slots (ours restarts the auto schedulers; inferred). The model drop and reload at the swap is built ([city openings](../modlog/2026-11-12-city-openings.md)) | Unknown | L13514 | DLL |
 | Event sound: Audio::event_volume reaches the mixer, but the live runs had audio off | Not checked live | L1634 | Live |
 | Mhaura ferry: the call that puts the 0x00E pose on an undriven ship is not found *(inf)* | Unknown (behaviour now matches retail) | L20050 | DLL |
 | The message formatter's backward-jump stop: what FUN_10153310 does with such a string *([batch 5](notes/2026-11-03-modlog-gaps-batch5.md) item 3: retail never stops, the client hangs in the loop; ours stopping at a repeated state is deliberate, nothing to build)* | Answered | `2026-11-02-msgfmt-backward-jump.md` | DLL |
 | Event ops 0x83, 0xa8 / 0xb9, 0x50, 0x84 / 0x86 / 0x95 / 0x96 / 0xa4 | Built, not checked live | the fragments `event-game-clock`, `event-marker-clear`, `event-scheduler-stop`, `event-actor-flags` | Live |
-| Login events start on a black screen | Built, not checked live (needs a new character) | `2026-11-02-login-event-black.md` | Live |
+| Login events start on a black screen | Built, checked live 2026-11-12 (the city openings) | `2026-11-02-login-event-black.md` | Live |
+| City openings: our own character hidden by s2c 0x037 Flags0 bit 0 until the script shows it; no c2s 0x015 from the zone-in to the event's end (nor while bound without Mode bit 4, nor under the control lock); event maps show the map without its key item and take the origin's sub-key; ops 0x34 / 0x35 drop and reload every model *([fragment](../modlog/2026-11-12-city-openings.md))* | Built, checked live on Port Windurst and Windurst Waters | `2026-11-12-city-openings.md` | DLL |
+| s2c 0x037 Flags0 bits 1 and 3 on our own actor (+0x120 bits 18 and 22, FUN_1009d0f0); bit 2 (+0x120 bit 20) is read nowhere in ours from this packet | Not built | `2026-11-12-city-openings.md` | DLL |
+| Zone-in events start only after the King NPC wait (DAT_104840f3: the 0x00A's SendCount reached, or 600 ticks; FUN_10096640), ours as soon as the bound actors are there; LSB sends SendCount 1 and no King NPC, so retail's order would hold every zone-in event 10 s on black | Ours, not retail (deliberate against LSB) | `2026-11-12-city-openings.md` | DLL |
+| Bystander NPCs in a zone-in event against LSB: its SendResRdy handler spawns the area's NPCs while the event plays (retail's server sends them by position, and the client sends none until the end) | Server side (akreao/lsb), not a client gap | `2026-11-12-city-openings.md` | LSB |
 
 ## 3. Actors, motions and schedulers
 

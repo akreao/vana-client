@@ -588,8 +588,8 @@ impl MapWin {
         }
     }
 
-    /// An event's map (FUN_100b2570 -> FUN_101f78e0): zone and sub-key (negative: the one under the player when in
-    /// that zone *(inf)*, else 0); the arrow only with the op's flag.
+    /// An event's map (FUN_100b2570 -> FUN_101f8ef0): zone and sub-key (negative: the one under the loaded area's
+    /// origin, 0 with no floor there); the arrow only with the op's flag.
     pub fn open_event(
         w: &World,
         regions: &[Region],
@@ -600,15 +600,14 @@ impl MapWin {
         sh: f32,
     ) -> Option<Self> {
         let mode = Mode::of_event_zone(zone);
-        let key = if key >= 0 {
-            key as u8
-        } else if zone == w.pos_zone as i16 {
-            w.ground.as_ref().map_or(0, |g| g.map_key(w.pos))
-        } else {
-            0
-        };
+        // FUN_101f8ef0: a negative key is the sub-key FUN_101827a0 finds under a point of the loaded area, and that
+        // point is the player's only with the last argument set, which every event op passes as 0: the origin.
+        let key = if key >= 0 { key as u8 } else { w.ground.as_ref().map_or(0, |g| g.map_key(glam::Vec3::ZERO)) };
         let region = Region::find_key(regions, zone as u16, key).or_else(|| Region::find(regions, zone as u16))?;
-        let owned = owned(w, &region);
+        // FUN_101fb060 modes 1..3 call FUN_101f9970 with its "owned" argument 1: an event's map shows the map image
+        // whether or not we hold the area's map (only modes 0 and 5 ask FUN_10097e80 for the key item), so a
+        // newcomer shown another nation's city gets its map, not NO MAP.
+        let owned = true;
         let facing = w.net.me.lock().map_or(0.0, |m| super::event::rad_of(m.dir));
         log::info!("map: event map zone {zone} key {key} mode {mode:?} owned {owned}");
         let mut m = Self::new(
