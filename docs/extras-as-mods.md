@@ -1,7 +1,7 @@
 # Extras as mods (experimental branch `exp/extras-as-mods`)
 
 The plan (user, 2026-11-06; docs/lua-mods.md decision 4): every feature that is or was on Config > Extras becomes a
-bundled Lua mod, so our own features prove the API, as WoW's default UI is built from its add-on API. `/dps` is the
+bundled Lua mod, so our features prove the API, as WoW's default UI is built from its add-on API. `/dps` is the
 first, already done (assets/mods/dps). After this come the Windower and Ashita ports and a mod catalogue (the
 roadmap, below).
 
@@ -274,7 +274,7 @@ Each conversion removes the Rust it replaces, keeps the extra's look in both UIs
   tier, upcasting and stepping down.
 - **Countdowns** (assets/mods/countdowns; stopwatch, Tickle, ctimers, Ticker and kin): `//timer <time> <name>` (90,
   5m, 1h30m, 2:30) counts down as a Timers row and says when it is up; cancel and clear. The resting tick is the
-  client's own (its "Next tick" over the party list). Seen live: a 20 s countdown ending with its line.
+  client's (its "Next tick" over the party list). Seen live: a 20 s countdown ending with its line.
 - **Party Tools** (assets/mods/party-tools; autojoin, autoinvite, invite): invites accepted from the players listed
   (`*` anyone), others optionally declined; a tell holding the Invite Word gets its sender an invite (optionally only
   listed players). Seen live: a bot's invite accepted in Southern San d'Oria; the invite word not tried. Not yet:
@@ -306,7 +306,7 @@ Each conversion removes the Rust it replaces, keeps the extra's look in both UIs
   place and kept per character; `//note <name>` removes it, `//notes` lists them. Seen live: a note added and dragged.
 - **Calculator** (assets/mods/calculator; calculator): `//calc <sum>` prints the answer (+ - * / % ^, brackets, 1.5k,
   2m, commas in the answer); `//calc` alone opens a window that answers as Enter ends the line. Parsed by hand, never
-  run as Lua; a Rust test covers it. Seen live in chat and in the window. (The emote picker add-on is the game's own
+  run as Lua; a Rust test covers it. Seen live in chat and in the window. (The emote picker add-on is the game's
   Emotes list, so it has no port.)
 - **Attendance** (assets/mods/attendance; Att, Attendance, EventTracker): `//attend [note]` writes the party, the
   alliance and players within 50 yalms with the time, zone and note to `attendance/<date>.txt`. Seen live. Not yet:
@@ -322,7 +322,7 @@ Each conversion removes the Rust it replaces, keeps the extra's look in both UIs
 - **Cast Grid** (assets/mods/cast-grid; Nostrum's cure grid, the click-to-cast parts of the party HUDs): over the
   party list (above the chat window's full height in the modern UI), a row per party member with their name and a
   button per chosen spell; a click casts it on them (`<me>` for us), unlearned or recasting spells dimmed. The rest of
-  the party HUD add-ons (HP / MP / TP, buffs) is the client's own party window. Seen live: the grid, a click casting.
+  the party HUD add-ons (HP / MP / TP, buffs) is the client's party window. Seen live: the grid, a click casting.
 - **Target Debuffs** (assets/mods/target-debuffs; Debuffed, debuff-tracker): the effects anyone put on the target as
   status icons over the target window (name and time since it landed in the tip), from the action results that name
   their effect (the messages the Timers read), gone when they wear off, are removed or the target is defeated. A Rust
@@ -382,7 +382,7 @@ Each conversion removes the Rust it replaces, keeps the extra's look in both UIs
 - **Automaton Sets** (assets/mods/automaton-sets; autocontrol, pupatt, pupsets): `//automaton save <name>` keeps the
   head, frame and attachments (game.job_data's `attachment_slots`), `//automaton <name>` changes only the slots that
   differ, one a second (the server takes one setup change a second), then says which the server refused; list and
-  delete. The customization window is the client's own. A Rust test covers the round trip; not seen live (no
+  delete. The customization window is the client's. A Rust test covers the round trip; not seen live (no
   Puppetmaster with attachments). Not yet: the burden tracker.
 - **Blue Magic Sets** (assets/mods/blue-sets; azuresets, BlueMagic sets): `//blu save <name>` keeps the 20 slots
   (game.job_data's `blue_slots`), `//blu <name>` changes only the slots that differ, one a second, and names any spell
@@ -439,11 +439,11 @@ Each conversion removes the Rust it replaces, keeps the extra's look in both UIs
   has no Omen, Delve, Odyssey or Sortie and sends no reive lines, so those are only tested with fed lines. Not done:
   cellhelp's lotting; totals before the first gain line (the currencies are not in the API yet).
 - **Auction Desk** (assets/mods/auction-desk; AuctionHelper, Auctioneer, ahpro): at the auction house, `//ahbuy <item>
-  <price> [stack]` and `//ahsell <item> <price> [stack]` (prices take k and m) start the game's own bid and sale, whose
+  <price> [stack]` and `//ahsell <item> <price> [stack]` (prices take k and m) start the game's bid and sale, whose
   questions the player answers as in the windows; `//ahlist` prints our listings. New `actions.auction_bid`,
   `actions.auction_sell` and `game.auction`. Seen live at Southern San d'Oria's counter: the listings, the bid question
   for a Fire Crystal at 1.5k, the sale's 21 gil fee question for a Wind Crystal (both answered No). ahcolors' row
-  colours are the client's own (the shops' rule: worn, wearable, learned, learnable). Not done: price lookups.
+  colours are the client's (the shops' rule: worn, wearable, learned, learnable). Not done: price lookups.
 - **NPC Errands** (assets/mods/npc-errands; Sparks, UnityNPC, temps, htmb, JobChange and kin): `//npc <name>: <option> >
   <option> > ...` talks to the nearest NPC of that name (running up when it is near) and picks each row by its words,
   passing pages that wait for a key; where a row is missing the menu is left to the player. `//errand save <name>
@@ -460,13 +460,13 @@ Each conversion removes the Rust it replaces, keeps the extra's look in both UIs
 - **Monster Notes** (assets/mods/monster-notes; InfoBar, ibar, mobdb): a bar across the top of the screen (or above
   the log) with the zone, Vana'diel time and day, the weather, and the target: HP, distance, its last /check (level,
   difficulty, defence and evasion, from the check's message) and the note kept on its name (`//mobnote <text>`,
-  `//mobnote clear`). Seen live on a Forest Hare: "Lv 2, too weak, low defence, low evasion" beside the game's own
+  `//mobnote clear`). Seen live on a Forest Hare: "Lv 2, too weak, low defence, low evasion" beside the game's
   lines. Not done: a bundled monster table (this LandSandBoat keeps most monster data in its zone scripts).
   A Rust test now keeps two bundled mods from registering the same `//` command (`//note` was Screen Notes').
 - **Chat Windows** (assets/mods/chat-windows; RuptChat, chatty, xichats, lschat): `//chatwin <tell | party | ls | ls2
   | say | shout | yell | unity>` opens a window with that channel's lines and a line to answer in (a tell answers the
   last one who wrote); `//chatfind <words>` lists this session's log lines with them. The tabs, the full log and a
-  second log window are the client's own. Seen live: the Say window with the bots' lines, an answer sent from it and
+  second log window are the client's. Seen live: the Say window with the bots' lines, an answer sent from it and
   kept in it, a search.
 - **Multibox Control** (assets/mods/multibox; send, SubTarget, switch_focus, stna, chatPorter, MultiSend, Servo and kin):
   across the game windows on this machine, on the player's input: `//send <name | all | others> <command>`,
@@ -503,7 +503,7 @@ Each conversion removes the Rust it replaces, keeps the extra's look in both UIs
   (`mods.provide("view")`); its own look is unchanged. Seen live in Southern San d'Oria: a note at our marker and the
   tracked Rumoie beside it.
 - **Exit Markers** (assets/mods/exit-markers; ZoneLines, off by default): each zone line within range (a setting)
-  outlined on the ground with a post at each corner, in a colour setting. New `game.zone_lines` (the zone's own 'z'
+  outlined on the ground with a post at each corner, in a colour setting. New `game.zone_lines` (the zone's 'z'
   boxes: centre, size, yaw, the floor's corners; dat::zone Region::corners, tested against its containment). The box
   reaches below the street, so the outline is drawn at our feet' height while that is within the box. Seen live at
   Southern San d'Oria's east gate.
@@ -535,7 +535,7 @@ Each conversion removes the Rust it replaces, keeps the extra's look in both UIs
   `focus_target` / `last_target`. `<lt>` / `<ft>` stay the client's. Compared live with master: the same panel.
 - **Pending Actions** (assets/mods/pending-actions, on by default): the modern UI's pending-action chip (PR #74) as a
   mod: asks seen in c2s 0x01A / 0x037, the confirmation in the `action` event, the refusal from our battle message
-  with the game's own line (`res.message`). New: the `chip` element and the `"pending"` stand-in panel. Compared live
+  with the game's line (`res.message`). New: the `chip` element and the `"pending"` stand-in panel. Compared live
   with master: the same chip, place and keep time. On the way: the sandbox's `os.clock` is now wall time (C's clock()
   is CPU time; fourteen bundled mods' countdowns ran at its pace).
 - `/uimodes` lists every loaded mod's windows and HUD groups (the user: all mods' windows there): each a row with
@@ -550,7 +550,7 @@ Each conversion removes the Rust it replaces, keeps the extra's look in both UIs
   the top of the screen with what monsters ready (0x028 category 7) or start casting (8), the move or spell named
   from the first result's value, for 8 seconds each; a call for the Watched Moves; a line and a call when a Watched
   Monster comes within 50 yalms. Seen live: the box on a hare's move and the watched-monster alert; a Rust test covers
-  the lines. It uses the game's own line through `res.message` given an action result's values in the game's order
+  the lines. It uses the game's line through `res.message` given an action result's values in the game's order
   (the action's param, the result's value, ...), now documented; its own text is the fallback.
 - **Gathering Log** (assets/mods/gathering-log; yield, HGather, DigDig and kin): every try at a Harvesting, Logging,
   Mining or Excavation Point (the point's event start, s2c 0x032 / 0x034: LandSandBoat's HELM puts what was found and
@@ -560,7 +560,7 @@ Each conversion removes the Rust it replaces, keeps the extra's look in both UIs
   by the hint lines (LandSandBoat's caskets: greater / less, even / odd digits, one digit is N, a digit is one of
   three) and wrong guesses; after each, how many are left (listed when 12 or fewer) and the middle one to try. A Rust
   test walks a casket to its answer; not seen live (it needs a casket drop).
-- Not ported: Discord Status (it needs a Discord application id: the user's call); Safety Catches' call-for-help block (the game's own /blockhelp does it; the cast hold while moving is
+- Not ported: Discord Status (it needs a Discord application id: the user's call); Safety Catches' call-for-help block (the game's /blockhelp does it; the cast hold while moving is
   not done); GM Helper (gmcommand: LSB takes `!` lines as they are); Mod Profiles (plugin_manager: mod sets per character) waits for a settings API across mods; the emote
   picker is the game's Emotes list.
 

@@ -1,4 +1,4 @@
--- Changes to the modern interface's own panels: the target window a quarter larger, the location panel replaced by
+-- Changes to the modern interface's panels: the target window a quarter larger, the location panel replaced by
 -- one compact line where it stood, your target's HP in large figures on the target window's corner, and warmer
 -- colours.
 -- /tweaks turns it all off and on again; unloading the mod gives everything back too.

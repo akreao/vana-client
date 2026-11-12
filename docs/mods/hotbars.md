@@ -87,4 +87,4 @@ The macros are kept in `mod-data/hotbar/files/macros.json`:
 - `//hb palette` shows or hides the palette.
 - `//hb run <bar> <slot>`: runs a slot (for a key bind).
 - `//hb reload`: reads macros.json again.
-- `//hb wipestock` empties the game's own macro sets after keeping a copy; `//hb restorestock` puts it back.
+- `//hb wipestock` empties the game's macro sets after keeping a copy; `//hb restorestock` puts it back.

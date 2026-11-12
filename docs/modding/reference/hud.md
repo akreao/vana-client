@@ -650,7 +650,7 @@ hud.opacity(window, opacity)
 ```
 
 Sets the opacity of one of your HUD windows: every element whose `window` field names it (`"hud"` for elements that
-name none) draws at it, as the client draws every window, built in or a mod's, at its own opacity. The player's own
+name none) draws at it, as the client draws every window, built in or a mod's, at its own opacity. The player's
 setting for the window, when there is one, wins over yours.
 
 **Parameters**

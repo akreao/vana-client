@@ -200,7 +200,7 @@ pub const FUNCS: &[Func] = &[
     Func {
         ns: "ui",
         name: "prompt",
-        doc: "A modal question in the UI's own look: the text and buttons (default Yes / No); the handler gets the button's 1-based index, or nil when Escape closes it.",
+        doc: "A modal question in the UI's look: the text and buttons (default Yes / No); the handler gets the button's 1-based index, or nil when Escape closes it.",
         params: &[("text", "string", ""), ("buttons?", "string[]", ""), ("handler", "fun(index: integer?)", "")],
         ret: "",
     },
@@ -243,7 +243,7 @@ pub const FUNCS: &[Func] = &[
     Func {
         ns: "ui",
         name: "opacity",
-        doc: "Sets one of the mod's windows' opacity (per-window opacity: its frame and everything in it), 0..1; nil gives it back (opaque). The player's own setting for the window wins.",
+        doc: "Sets one of the mod's windows' opacity (per-window opacity: its frame and everything in it), 0..1; nil gives it back (opaque). The player's setting for the window wins.",
         params: &[("window", "string", "the window's id"), ("opacity", "number?", "")],
         ret: "",
     },
@@ -344,7 +344,7 @@ pub const FUNCS: &[Func] = &[
     Func {
         ns: "hud",
         name: "opacity",
-        doc: "Sets the opacity of one of the mod's HUD windows (the elements whose window field names it; 'hud' by default), over everything they draw, 0..1; nil gives it back (opaque). The player's own setting for the window wins.",
+        doc: "Sets the opacity of one of the mod's HUD windows (the elements whose window field names it; 'hud' by default), over everything they draw, 0..1; nil gives it back (opaque). The player's setting for the window wins.",
         params: &[("window", "string", ""), ("opacity", "number?", "")],
         ret: "",
     },
@@ -497,7 +497,7 @@ pub const FUNCS: &[Func] = &[
     Func {
         ns: "ui.skin",
         name: "sprite",
-        doc: "Replaces one of the modern UI's sprites (gauges, icons, job icons, controls ...; ui.skin.list names them) with a PNG from the mod's folder while the mod is loaded, the newest mod's winning. It keeps the sprite's size and nine-slice insets: draw the PNG at the pack's proportions, any resolution (twice the logical size is the pack's own). false gives it back. Needs ui.native.",
+        doc: "Replaces one of the modern UI's sprites (gauges, icons, job icons, controls ...; ui.skin.list names them) with a PNG from the mod's folder while the mod is loaded, the newest mod's winning. It keeps the sprite's size and nine-slice insets: draw the PNG at the pack's proportions, any resolution (twice the logical size is the pack's). false gives it back. Needs ui.native.",
         params: &[("name", "string", "e.g. 'gauges/hp_full'"), ("path", "string|false", "a PNG in the mod's folder")],
         ret: "",
     },
@@ -1023,7 +1023,7 @@ pub const FUNCS: &[Func] = &[
     Func {
         ns: "game",
         name: "zone_lines",
-        doc: "The zone lines of the zone we are in (its boxes that zone us when touched): name (8 letters: its own tag, then its destination's), centre {x, y, z}, size {x, y, z}, yaw (radians), corners (the four corners of its floor, {x, y, z} each, in order around it). Entity coordinates (y down).",
+        doc: "The zone lines of the zone we are in (its boxes that zone us when touched): name (8 letters: its tag, then its destination's), centre {x, y, z}, size {x, y, z}, yaw (radians), corners (the four corners of its floor, {x, y, z} each, in order around it). Entity coordinates (y down).",
         params: &[],
         ret: "{name: string, centre: table, size: table, yaw: number, corners: table[]}[]",
     },
@@ -2048,7 +2048,7 @@ pub const FUNCS: &[Func] = &[
     Func {
         ns: "client",
         name: "set_option",
-        doc: "Sets a behaviour switch while the mod is loaded (the game's usual behaviour back when it unloads): macro_palette_delay (false: the Ctrl / Alt palette opens at once, not at the next whole second), ah_result_delay (false: a bid's result prints at once), equipset_delay (false: no 0.9 s wait between equip sets), log_slide (false: new log lines show at once), cutscene_speed (1..4: events play that much faster), animation_rate (0.25..4: the actors' animation speed), clear_colour and ambient ({r, g, b} 0..255 in place of the zone's background colour and ambient light; false gives the zone's back), minimap_span (the minimap's zoom, map pixels across, 48..512; kept as the minimap's own wheel keeps it), map_opacity (0..1: the HUD maps' opacity where a mod gives none, and the minimap marker's shade; the Map Overlay mod's Map Overlay Opacity; kept when the mod unloads and remembered across sessions); rules: move_lock (false: our abilities' and the weapon draw's move lock is lifted), all_maps (true: every map without its key item), dead_commands (true: text commands while K.O.), compass_monsters (true: monster dots on the compass for every job), player_collision (false: moving players never hold a step), occlusion (false: characters behind scenery still draw and target), menu_reach (false: the auction house and the nomad moogle menu stay open as we move away); send_interval (ms between the datagrams we send, 50..1000; the game's is 400); wireframe (true: the scenery drawn as lines, where the GPU draws them); ttf_text (true: the game font's text in the UI's TrueType face in the classic UI too: the log, the windows' text; sprite numbers and captions stay as the game draws them); stamp_all_lines (true: the game's chat timestamps on every log line, not only chat; with them off, hours, minutes and seconds); synth_amount (true: after Synthesize the synthesis window asks how many, 1 to the sets held, and gives the count to the mods' synth_amount event). A value of the wrong type is an error.",
+        doc: "Sets a behaviour switch while the mod is loaded (the game's usual behaviour back when it unloads): macro_palette_delay (false: the Ctrl / Alt palette opens at once, not at the next whole second), ah_result_delay (false: a bid's result prints at once), equipset_delay (false: no 0.9 s wait between equip sets), log_slide (false: new log lines show at once), cutscene_speed (1..4: events play that much faster), animation_rate (0.25..4: the actors' animation speed), clear_colour and ambient ({r, g, b} 0..255 in place of the zone's background colour and ambient light; false gives the zone's back), minimap_span (the minimap's zoom, map pixels across, 48..512; kept as the minimap's wheel keeps it), map_opacity (0..1: the HUD maps' opacity where a mod gives none, and the minimap marker's shade; the Map Overlay mod's Map Overlay Opacity; kept when the mod unloads and remembered across sessions); rules: move_lock (false: our abilities' and the weapon draw's move lock is lifted), all_maps (true: every map without its key item), dead_commands (true: text commands while K.O.), compass_monsters (true: monster dots on the compass for every job), player_collision (false: moving players never hold a step), occlusion (false: characters behind scenery still draw and target), menu_reach (false: the auction house and the nomad moogle menu stay open as we move away); send_interval (ms between the datagrams we send, 50..1000; the game's is 400); wireframe (true: the scenery drawn as lines, where the GPU draws them); ttf_text (true: the game font's text in the UI's TrueType face in the classic UI too: the log, the windows' text; sprite numbers and captions stay as the game draws them); stamp_all_lines (true: the game's chat timestamps on every log line, not only chat; with them off, hours, minutes and seconds); synth_amount (true: after Synthesize the synthesis window asks how many, 1 to the sets held, and gives the count to the mods' synth_amount event). A value of the wrong type is an error.",
         params: &[("name", "string", ""), ("value", "boolean|number|table", "")],
         ret: "",
     },
@@ -2377,11 +2377,11 @@ pub const NAMESPACES: &[(&str, &str)] = &[
     ("commands", "The mod's own text commands, and running the game's."),
     ("filters", "Chat lines and typed lines rewritten or dropped before the client takes them."),
     ("timers", "Rows in the client's Timers window."),
-    ("ui", "The mod's windows, in the active UI's own look."),
+    ("ui", "The mod's windows, in the active UI's look."),
     ("hud", "Text, bars, images and maps drawn over the game, under the game's windows."),
     (
         "ui.native",
-        "The game's own windows, panels and HUD pieces: what is open, what is highlighted, hiding, placing and scaling panels, where they are, the config.",
+        "The game's windows, panels and HUD pieces: what is open, what is highlighted, hiding, placing and scaling panels, where they are, the config.",
     ),
     ("ui.skin", "The modern UI's look: its sprites, palette colours and window frames, replaced while the mod runs."),
     ("render", "How entities and the camera draw, and post-process passes."),
@@ -2392,7 +2392,7 @@ pub const NAMESPACES: &[(&str, &str)] = &[
     ("packets", "Hooks on the packets the server and the client send, and injecting them."),
     ("chat", "The chat log and the chat line."),
     ("input", "The keys and the mouse: watching, taking and pressing them."),
-    ("binds", "Key binds that run lines, as the game's own binds do."),
+    ("binds", "Key binds that run lines, as the game's binds do."),
     ("timer", "Calls after a delay or at an interval."),
     ("game", "The game's state: our character, the zone, entities, party, items, jobs and more."),
     (
@@ -2475,7 +2475,7 @@ pub const CLASSES: &[Class] = &[
             ("master", "integer", "the master's index (pets), 0 for none"),
             ("trust", "boolean", "a trust (an alter ego called into the party)"),
             ("radar", "integer?", "the compass radar's colour for it (0xRRGGBB), nil while the radar does not show it"),
-            ("me", "boolean?", "true for our own character"),
+            ("me", "boolean?", "true for our character"),
             ("race", "integer?", ""),
             ("model", "integer", "a monster or NPC model id (0 for a player-style look)"),
             (

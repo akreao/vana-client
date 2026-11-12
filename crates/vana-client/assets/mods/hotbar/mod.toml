@@ -14,7 +14,7 @@ help = "Shows the hotbars in an edge window and binds their keys. //hb opens the
 type = "bool"
 default = true
 label = "Hide Stock Macro Bar"
-help = "Hides the game's own macro palette while the hotbars show. Its Ctrl and Alt keys still run macros unless a bar uses them."
+help = "Hides the game's macro palette while the hotbars show. Its Ctrl and Alt keys still run macros unless a bar uses them."
 
 [settings.visible]
 type = "bool"
@@ -73,6 +73,6 @@ forms = [
   { args = "palette", help = "Opens or closes the macro palette for your job." },
   { args = "run <bar> <slot>", help = "Fires a slot." },
   { args = "reload", help = "Reads macros.json again." },
-  { args = "wipestock", help = "Empties the game's own macro palette (it can be restored)." },
+  { args = "wipestock", help = "Empties the game's macro palette (it can be restored)." },
   { args = "restorestock", help = "Puts the game's macro palette back." },
 ]

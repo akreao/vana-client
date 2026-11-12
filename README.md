@@ -163,7 +163,7 @@ is created on first save, and most options can be changed from the in-game Confi
 
 ### Gamepad
 
-Controllers work through the game's own pad path: the buttons set the pad bits the game's key functions test, and
+Controllers work through the game's pad path: the buttons set the pad bits the game's key functions test, and
 the sticks fill its stick bytes. The button settings are retail's: at start the client reads what the retail Gamepad
 Config tool (FFXiPadConfig.exe, which retail's Config > Gamepad starts) saved, `padsin000`, `padexsin000` and
 `padmode000`, from the registry on Windows or from a Wine prefix's `system.reg` elsewhere (the prefix the game folder is
@@ -189,7 +189,7 @@ XInput layout:
 Typing on the pad: turn on Config > Misc. 4 > Software Keyboard, then RB brings up the game's software keyboard over
 the text field (or opens the chat line with it). The d-pad moves its cursor, A types the key, B is Escape, LB
 Backspace, RB a space, X switches to capitals and symbols, Y is Enter, LT / RT move the caret, Start is Tab and Back
-closes it. Any key on a real keyboard closes it too. The modern UI draws it as one of its own panels.
+closes it. Any key on a real keyboard closes it too. The modern UI draws it as one of its panels.
 
 To change them in game, open Settings > Controller (in the modern interface): the Controller window is the tool's
 XInput page. Pick a function and press the button for it (on a Movement, Camera or Menus direction, push a stick to give
@@ -200,7 +200,7 @@ them again. Force feedback and the device choice (`padguid000`) are not used yet
 
 Many desktops do not count pad input as activity, so while the pad is in use the client keeps the screen awake
 (Linux: the screen saver inhibit, or the desktop portal's; Windows: the display timer; macOS: IOKit power assertions).
-Five minutes after the pad's last input it lets go, and the desktop's own timeout applies again.
+Five minutes after the pad's last input it lets go, and the desktop's timeout applies again.
 
 | Field | Default | Meaning |
 |---|---|---|

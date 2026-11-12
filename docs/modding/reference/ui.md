@@ -769,7 +769,7 @@ ui.opacity(id, opacity)
 ```
 
 Sets the opacity of one of your windows, its frame and everything in it, as the client draws every window: each
-window, built in or a mod's, carries its own opacity. The player's own setting for the window, when there is one,
+window, built in or a mod's, carries its own opacity. The player's setting for the window, when there is one,
 wins over yours.
 
 **Parameters**
