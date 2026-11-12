@@ -4,6 +4,7 @@
 
 use crate::config::Config;
 use gilrs::{Axis, Button, GamepadId, Gilrs};
+use std::time::{Duration, Instant};
 use winit::keyboard::KeyCode;
 
 /// FFXiPadConfig's XInput layout: A confirm, B cancel, X main menu, Y active window, LB autorun, LT / RT macros, L3
@@ -373,10 +374,42 @@ pub struct Ctx {
     pub capture: bool,
 }
 
+/// How often a failed Gilrs::new is tried again (a pad backend that comes up late, e.g. udev in a container).
+const RETRY: Duration = Duration::from_secs(5);
+
+/// One poll of the pad that plays, from gilrs or SDL: the buttons held (VIRTUAL's numbers, sorted) and the sticks and
+/// triggers (lx, ly, rx, ry in -1 ..= 1, up positive; lt, rt in 0 ..= 1).
+pub struct Pad {
+    pub buttons: Vec<u8>,
+    pub axes: [f32; 6],
+}
+
+fn gilrs_pad(pad: &gilrs::Gamepad) -> Pad {
+    let trigger = |b: Button| pad.button_data(b).map_or(0.0, |d| d.value());
+    Pad {
+        buttons: VIRTUAL.iter().filter(|(b, _)| pad.is_pressed(*b)).map(|(_, n)| *n).collect(),
+        axes: [
+            pad.value(Axis::LeftStickX),
+            pad.value(Axis::LeftStickY),
+            pad.value(Axis::RightStickX),
+            pad.value(Axis::RightStickY),
+            trigger(Button::LeftTrigger2),
+            trigger(Button::RightTrigger2),
+        ],
+    }
+}
+
 #[derive(Default)]
 pub struct Gamepad {
     gilrs: Option<Gilrs>,
-    tried: bool,
+    /// When Gilrs::new may be tried (again), and its last error (logged once, not every retry).
+    next_try: Option<Instant>,
+    gilrs_err: Option<String>,
+    /// SDL's pads (Linux): started once when gilrs fails or finds none.
+    #[cfg(target_os = "linux")]
+    sdl: Option<super::gamepad_sdl::Sdl>,
+    #[cfg(target_os = "linux")]
+    sdl_tried: bool,
     active: Option<GamepadId>,
     maps: Option<(String, String, PadMap, PadMap)>,
     /// DAT_10455c3e: the left stick's mode (0 move, 1 d-pad, 2 camera), stepped by slot 31.
@@ -461,60 +494,27 @@ impl Gamepad {
             mods(&[], [0.0; 6], false);
             return self.release_all();
         }
-        if !self.tried {
-            self.tried = true;
-            match Gilrs::new() {
-                Ok(g) => {
-                    for (id, pad) in g.gamepads() {
-                        log::info!("gamepad {id}: {}", pad.name());
-                        self.active.get_or_insert(id);
-                    }
-                    self.gilrs = Some(g);
-                }
-                Err(e) => log::warn!("gamepad: {e}"),
-            }
-        }
+        self.connect();
         let (padsin, padexsin) = (set.padsin.as_str(), set.padexsin.as_str());
         if self.maps.as_ref().is_none_or(|m| m.0 != padsin || m.1 != padexsin) {
             self.maps =
                 Some((padsin.to_string(), padexsin.to_string(), PadMap::parse(padsin), PadMap::parse(padexsin)));
         }
-        let Some(g) = &mut self.gilrs else {
-            mods(&[], [0.0; 6], false);
-            return Frame::default();
-        };
-        // The pad last touched is the one that plays.
-        while let Some(ev) = g.next_event() {
-            match ev.event {
-                gilrs::EventType::Connected => {
-                    log::info!("gamepad {} connected: {}", ev.id, g.gamepad(ev.id).name());
-                    self.active.get_or_insert(ev.id);
-                }
-                gilrs::EventType::Disconnected => {
-                    if self.active == Some(ev.id) {
-                        self.active = g.gamepads().map(|(id, _)| id).find(|&id| id != ev.id);
-                    }
-                }
-                gilrs::EventType::ButtonPressed(..) => self.active = Some(ev.id),
-                _ => {}
-            }
-        }
-        let pad = match self.active.and_then(|id| g.connected_gamepad(id)) {
+        let pad = match self.read_pad() {
             Some(p) if focused || set.background => p,
             _ => {
                 mods(&[], [0.0; 6], false);
                 return self.release_all();
             }
         };
-        let mut buttons: Vec<u8> = VIRTUAL.iter().filter(|(b, _)| pad.is_pressed(*b)).map(|(_, n)| *n).collect();
+        let Pad { mut buttons, axes } = pad;
         if capture {
             // Buttons already down when it starts (the A that asked) are not presses.
             if !self.capturing {
                 (self.capturing, self.cap_prev) = (true, buttons.clone());
             }
             let pressed = buttons.iter().copied().filter(|b| !self.cap_prev.contains(b)).collect();
-            let a = |x: Axis| pad.value(x) * 127.0;
-            let axes = [a(Axis::LeftStickX), a(Axis::LeftStickY), a(Axis::RightStickX), a(Axis::RightStickY)];
+            let axes = [axes[0] * 127.0, axes[1] * 127.0, axes[2] * 127.0, axes[3] * 127.0];
             self.cap_prev = buttons;
             mods(&[], [0.0; 6], false);
             let mut f = self.release_all();
@@ -527,26 +527,14 @@ impl Gamepad {
         }
         self.mute.retain(|b| buttons.contains(b));
         buttons.retain(|b| !self.mute.contains(b));
-        let trigger = |b: Button| pad.button_data(b).map_or(0.0, |d| d.value());
-        let axes = [
-            pad.value(Axis::LeftStickX),
-            pad.value(Axis::LeftStickY),
-            pad.value(Axis::RightStickX),
-            pad.value(Axis::RightStickY),
-            trigger(Button::LeftTrigger2),
-            trigger(Button::RightTrigger2),
-        ];
         let taken = mods(&buttons, axes, true);
         buttons.retain(|b| !taken.contains(b));
-        let axis = |code: u8| {
-            let a = match code {
-                1 => Axis::LeftStickX,
-                2 => Axis::LeftStickY,
-                4 => Axis::RightStickX,
-                5 => Axis::RightStickY,
-                _ => return 0.0,
-            };
-            pad.value(a) * 127.0
+        let axis = |code: u8| match code {
+            1 => axes[0] * 127.0,
+            2 => axes[1] * 127.0,
+            4 => axes[2] * 127.0,
+            5 => axes[3] * 127.0,
+            _ => 0.0,
         };
         let (_, _, map, alt) = self.maps.as_ref().unwrap();
         // FUN_10005320 adds the alternate map's mode flags to padsin's.
@@ -625,6 +613,75 @@ impl Gamepad {
         self.ff_level = level;
     }
 
+    /// Starts gilrs, again every RETRY while it fails, and on Linux SDL once when gilrs failed or found no pad.
+    fn connect(&mut self) {
+        let now = Instant::now();
+        if self.gilrs.is_none() && self.next_try.is_none_or(|t| now >= t) {
+            self.next_try = Some(now + RETRY);
+            match Gilrs::new() {
+                Ok(g) => {
+                    for (id, pad) in g.gamepads() {
+                        log::info!("gamepad {id}: {}", pad.name());
+                        self.active.get_or_insert(id);
+                    }
+                    self.gilrs = Some(g);
+                    self.gilrs_err = None;
+                }
+                Err(e) => {
+                    let e = e.to_string();
+                    if self.gilrs_err.as_ref() != Some(&e) {
+                        log::warn!("gamepad: {e} (trying again every {}s)", RETRY.as_secs());
+                        self.gilrs_err = Some(e);
+                    }
+                }
+            }
+        }
+        #[cfg(target_os = "linux")]
+        if !self.sdl_tried && self.gilrs.as_ref().is_none_or(|g| g.gamepads().next().is_none()) {
+            self.sdl_tried = true;
+            match super::gamepad_sdl::Sdl::new() {
+                Ok(s) => {
+                    log::info!("gamepad: SDL {} as the fallback", sdl2::version::version());
+                    self.sdl = Some(s);
+                }
+                Err(e) => log::warn!("gamepad: SDL: {e}"),
+            }
+        }
+    }
+
+    /// The pad that plays (the last one touched): gilrs's, else SDL's.
+    fn read_pad(&mut self) -> Option<Pad> {
+        #[cfg(target_os = "linux")]
+        if let Some(s) = &mut self.sdl {
+            s.update();
+        }
+        if let Some(g) = &mut self.gilrs {
+            while let Some(ev) = g.next_event() {
+                match ev.event {
+                    gilrs::EventType::Connected => {
+                        log::info!("gamepad {} connected: {}", ev.id, g.gamepad(ev.id).name());
+                        self.active.get_or_insert(ev.id);
+                    }
+                    gilrs::EventType::Disconnected => {
+                        if self.active == Some(ev.id) {
+                            self.active = g.gamepads().map(|(id, _)| id).find(|&id| id != ev.id);
+                        }
+                    }
+                    gilrs::EventType::ButtonPressed(..) => self.active = Some(ev.id),
+                    _ => {}
+                }
+            }
+            if let Some(p) = self.active.and_then(|id| g.connected_gamepad(id)) {
+                return Some(gilrs_pad(&p));
+            }
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(p) = self.sdl.as_ref().and_then(|s| s.state()) {
+            return Some(p);
+        }
+        None
+    }
+
     /// Reads retail's registry values again, on a thread (at start, and when the Controller window asks).
     pub fn reload_retail(&mut self, game_dir: std::path::PathBuf) {
         let (tx, rx) = std::sync::mpsc::channel();
@@ -639,13 +696,22 @@ impl Gamepad {
         self.retail.as_ref()
     }
 
-    /// The connected pads' names, the one that plays first.
+    /// The connected pads' names (gilrs's, else SDL's), the one that plays first.
     pub fn pads(&self) -> Vec<String> {
-        let Some(g) = &self.gilrs else { return Vec::new() };
-        let mut v: Vec<(bool, String)> =
-            g.gamepads().map(|(id, p)| (Some(id) != self.active, p.name().to_string())).collect();
+        let mut v: Vec<(bool, String)> = self
+            .gilrs
+            .iter()
+            .flat_map(|g| g.gamepads())
+            .map(|(id, p)| (Some(id) != self.active, p.name().to_string()))
+            .collect();
         v.sort();
-        v.into_iter().map(|p| p.1).collect()
+        let mut v: Vec<String> = v.into_iter().map(|p| p.1).collect();
+        // SDL sees gilrs's pads too: its list only when gilrs has none.
+        #[cfg(target_os = "linux")]
+        if let (true, Some(s)) = (v.is_empty(), &self.sdl) {
+            v = s.names();
+        }
+        v
     }
 
     fn release_all(&mut self) -> Frame {
