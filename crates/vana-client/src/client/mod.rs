@@ -204,6 +204,10 @@ impl Task {
             Task::AccountCreated(_) => "account",
             Task::Lobby(_) => "lobby",
             Task::Selected(_) => "selected",
+            Task::SelectFailed(..) => "select failed",
+            Task::Renamed(_) => "renamed",
+            Task::Deleted(_) => "deleted",
+            Task::LobbyBack(_) => "lobby back",
             Task::ZoneLoaded(..) => "zone loaded",
             Task::ZonePreloaded(..) => "zone preloaded",
             Task::AreaLoaded(..) => "area loaded",
@@ -241,6 +245,15 @@ enum Task {
     AccountCreated(Result<()>),
     Lobby(Result<(Lobby, Vec<Character>)>),
     Selected(Result<MapLogin>),
+    /// The log-in failed with the view link still up (a refusal, the 0x68): the link back, and the failure.
+    SelectFailed(Box<Lobby>, anyhow::Error),
+    /// A rename (view 0x28, op 5): the lobby back, the refusal code, the new list, the character under its new name.
+    Renamed(Result<(Lobby, Option<u16>, Vec<Character>, Character)>),
+    /// A delete (view 0x14, op 2): the lobby back, the refusal code, the new list.
+    Deleted(Result<(Lobby, Option<u16>, Vec<Character>)>),
+    /// A run timed out (FFXI-3113) and its worker stopped waiting: the lobby link back, its request still open. None
+    /// when there is no link to hand back (the connect).
+    LobbyBack(Option<Box<Lobby>>),
     /// The creator's name check (view 0x22): the lobby back and the refusal code, if any.
     NameChecked(Result<(Lobby, Option<u16>)>),
     /// The creator's create (view 0x21): the lobby back, the refusal code, the new list.
@@ -703,6 +716,9 @@ enum LobbyScreen {
     Select,
     Create,
     Delete,
+    /// The log-in's run (FUN_10241200): no screen of its own, hnbackwi over the title's scene, which FUN_10246c80
+    /// loads again before it (FUN_10247130(0xc, 0x1e)).
+    Run,
 }
 
 /// Lobby screen changes (FUN_10233d50 / FUN_10233cf0, schedulers of file 33193): 'sfot' + 'ffot' take the 2D layer
@@ -5778,9 +5794,44 @@ fn task_failed(t: &Task) -> bool {
         Task::LoggedIn(Err(_), _)
             | Task::Lobby(Err(_))
             | Task::Selected(Err(_))
+            | Task::SelectFailed(..)
+            | Task::Renamed(Err(_))
+            | Task::Deleted(Err(_))
             | Task::NameChecked(Err(_))
             | Task::Created(Err(_))
     )
+}
+
+/// The backdrop windows behind a lobby run, both lobbywin 85 scaled over the screen (registry flags 0x11002f: no
+/// frame, no open animation, scaled by W / 640 and H / 480).
+#[derive(Clone, Copy, PartialEq)]
+enum Backdrop {
+    /// "menu    ptcbgwin": the lobby entry (FUN_1023fc20), op 0.
+    Entry,
+    /// "menu    hnbackwi": the log-in (FUN_10241200), op 1.
+    Login,
+}
+
+/// The log-in's worker result (op 1): a failure that leaves the view link up hands the link back with it.
+fn select_done(l: Lobby, r: Result<MapLogin>) -> Task {
+    match r {
+        Err(e) if crate::net::lobby::link_kept(&e) => Task::SelectFailed(Box::new(l), e),
+        r => Task::Selected(r),
+    }
+}
+
+/// A lobby worker's job. When its run timed out meanwhile (netwait's FFXI-3113) the link comes back instead of the
+/// result, its request still open.
+fn lobby_job<T>(
+    mut l: Lobby,
+    job: impl FnOnce(&mut Lobby) -> Result<T>,
+    done: impl FnOnce(Lobby, Result<T>) -> Task,
+) -> Task {
+    let r = job(&mut l);
+    if l.replies.abandon.load(std::sync::atomic::Ordering::Relaxed) {
+        return Task::LobbyBack(Some(Box::new(l)));
+    }
+    done(l, r)
 }
 
 /// Where the creator's popup goes on OK (FUN_10239720).
@@ -5792,6 +5843,8 @@ enum CreatorNext {
     Then(String, Box<CreatorNext>),
     /// Leave the creator.
     Leave,
+    /// Leave the lobby (FUN_10239720's -2: FFXI-3115 or FFXI-3331).
+    LeaveLobby,
     /// The world step again, in a new order (FUN_1023d6c0 mode 0).
     World,
 }
@@ -8537,6 +8590,15 @@ pub struct App {
     mouse: mousecur::MouseCursor,
     /// A lobby or login error (or the new account's notice) waiting in the OK window on the login screen.
     login_error: Option<String>,
+    /// The backdrop behind a lobby run (lobbywin 85): ptcbgwin at the lobby entry, hnbackwi at the log-in.
+    backdrop: Option<Backdrop>,
+    /// A failed log-in run's popup over its backdrop; OK goes back to the title menu (FUN_10241200's -1).
+    lobby_popup: Option<String>,
+    /// The lobby is left once the popups are answered: a run's -2 (FFXI-3115 after a failed refresh) or FFXI-3331.
+    leave_lobby: bool,
+    /// A rename the lobby refused with 0x139 / 0x142: the name and the code, shown again without asking
+    /// (FUN_10244c00's local_100 / local_228).
+    rename_refused: Option<(String, u16)>,
     /// The server and account the login form's Trust this computer and token are for (sync_trust).
     trust_for: (String, String),
     /// The two-factor window over the login form.
@@ -8799,6 +8861,10 @@ impl App {
             scene_scale: None,
             cursor_in: false,
             login_error: None,
+            backdrop: None,
+            lobby_popup: None,
+            leave_lobby: false,
+            rename_refused: None,
             trust_for: Default::default(),
             twofa: None,
             lobby_cfg: None,
@@ -9019,6 +9085,7 @@ impl App {
                     (true, LobbyScreen::Select) => "select",
                     (true, LobbyScreen::Create) => "create",
                     (true, LobbyScreen::Delete) => "delete",
+                    (true, LobbyScreen::Run) => "connecting",
                 };
                 view.selected = *selected;
                 view.characters = chars
@@ -9085,8 +9152,13 @@ impl App {
                 *selected = Some(k);
                 let replies = l.replies.clone();
                 self.lobby_fade.out(Box::new(move |app: &mut App| {
-                    app.netwait = Some(netwait::NetWait::new(netwait::Op::Login, replies));
-                    app.spawn(move || Task::Selected(l.select(&c)));
+                    // FUN_10241200: hnbackwi opens behind the run, which starts after FUN_1023fb20's 8 frames.
+                    app.backdrop = Some(Backdrop::Login);
+                    if let Phase::Characters { screen, .. } = &mut app.phase {
+                        *screen = LobbyScreen::Run;
+                    }
+                    app.netwait = Some(netwait::NetWait::new(netwait::Op::Login, replies).after(8));
+                    app.spawn(move || lobby_job(l, move |l| l.select(&c), select_done));
                     app.lobby_fade.enter(true);
                 }));
             }
@@ -9118,6 +9190,7 @@ impl App {
         }
         self.phase = Phase::login(&self.cfg);
         self.lobby_fade = LobbyFade::default();
+        (self.backdrop, self.lobby_popup, self.leave_lobby, self.rename_refused) = (None, None, false, None);
         self.close_asked = false;
         // The character's window style (config 0x12) replaced lobby images (the select screen drew gray); a mod's
         // TrueType text ends with the world.
@@ -9252,7 +9325,9 @@ impl App {
                 MusicScene::Creator
             }
             Phase::Characters { screen: LobbyScreen::Create, .. } => MusicScene::Created,
-            Phase::Characters { screen: LobbyScreen::Select, .. } if self.music_created => MusicScene::Created,
+            Phase::Characters { screen: LobbyScreen::Select | LobbyScreen::Run, .. } if self.music_created => {
+                MusicScene::Created
+            }
             Phase::Characters { .. } => MusicScene::Title,
             Phase::World(_) => MusicScene::World,
         };
@@ -9417,8 +9492,14 @@ impl App {
         if self.drive.login.is_none() {
             let _ = self.cfg.save();
         }
-        let replies: Arc<std::sync::atomic::AtomicU32> = Default::default();
-        self.netwait = Some(netwait::NetWait::new(netwait::Op::Connect, replies.clone()));
+        let replies: Arc<crate::net::lobby::Watch> = Default::default();
+        // FUN_1023fc20: ptcbgwin and the empty help line fade in ('sfin', 8 + 8 + 8 frames), then the run.
+        self.backdrop = Some(Backdrop::Entry);
+        if !self.cfg.modern_ui {
+            (self.lobby_fade.ui, self.lobby_fade.ui_to) = (0.0, 1.0);
+        }
+        self.netwait = Some(netwait::NetWait::new(netwait::Op::Connect, replies.clone()).after(24));
+        let watch = replies.clone();
         self.spawn(move || {
             let result = (|| {
                 let creds = crate::net::pol::Credentials {
@@ -9446,6 +9527,9 @@ impl App {
                 lobby.worlds()?;
                 Ok((lobby, chars))
             })();
+            if watch.abandon.load(std::sync::atomic::Ordering::Relaxed) {
+                return Task::LobbyBack(None);
+            }
             Task::LoggedIn(result, None)
         });
     }
@@ -9480,8 +9564,14 @@ impl App {
             });
             return;
         }
-        let replies: Arc<std::sync::atomic::AtomicU32> = Default::default();
-        self.netwait = Some(netwait::NetWait::new(netwait::Op::Connect, replies.clone()));
+        let replies: Arc<crate::net::lobby::Watch> = Default::default();
+        // FUN_1023fc20: ptcbgwin and the empty help line fade in ('sfin', 8 + 8 + 8 frames), then the run.
+        self.backdrop = Some(Backdrop::Entry);
+        if !self.cfg.modern_ui {
+            (self.lobby_fade.ui, self.lobby_fade.ui_to) = (0.0, 1.0);
+        }
+        self.netwait = Some(netwait::NetWait::new(netwait::Op::Connect, replies.clone()).after(24));
+        let watch = replies.clone();
         // Trust this computer: the kept token stands in for the code; a code typed asks for a (new) token.
         let token = cfg
             .trust_computer
@@ -9525,6 +9615,9 @@ impl App {
                 lobby.worlds()?;
                 Ok((lobby, chars))
             })();
+            if watch.abandon.load(std::sync::atomic::Ordering::Relaxed) {
+                return Task::LobbyBack(None);
+            }
             Task::LoggedIn(result, Some(trust))
         });
     }
@@ -9579,12 +9672,39 @@ impl App {
         if let Some(nw) = self.netwait.as_mut()
             && matches!(
                 task,
-                Task::LoggedIn(..) | Task::Lobby(_) | Task::Selected(_) | Task::NameChecked(_) | Task::Created(_)
+                Task::LoggedIn(..)
+                    | Task::Lobby(_)
+                    | Task::Selected(_)
+                    | Task::SelectFailed(..)
+                    | Task::Renamed(_)
+                    | Task::Deleted(_)
+                    | Task::NameChecked(_)
+                    | Task::Created(_)
             )
         {
-            let refused = matches!(&task, Task::NameChecked(Ok((_, Some(_)))) | Task::Created(Ok((_, Some(_), _))));
+            let refused = matches!(
+                &task,
+                Task::NameChecked(Ok((_, Some(_))))
+                    | Task::Created(Ok((_, Some(_), _)))
+                    | Task::Renamed(Ok((_, Some(_), ..)))
+                    | Task::Deleted(Ok((_, Some(_), _)))
+            );
             nw.park(task, refused);
             return;
+        }
+        // FUN_1023fc20's end: the entry backdrop fades out ('sfot', FUN_1023fc00) before the title menu comes up.
+        if self.backdrop == Some(Backdrop::Entry) {
+            if matches!(task, Task::LoggedIn(Ok(_), _)) && !self.cfg.modern_ui {
+                self.lobby_fade.out(Box::new(move |app: &mut App| {
+                    app.backdrop = None;
+                    app.handle_task(task);
+                    app.lobby_fade.enter(true);
+                }));
+                return;
+            }
+            if matches!(task, Task::LoggedIn(..)) {
+                self.backdrop = None;
+            }
         }
         // The lobby art loads in the background; nobody is waiting on it.
         if !matches!(
@@ -9799,6 +9919,7 @@ impl App {
                 }
             }
             Task::Selected(Ok(login)) => {
+                self.backdrop = None;
                 match crate::net::map::compress::Codec::from_ffximain(
                     &std::fs::read(crate::dat::ffximain(&self.cfg.ffxi_dir())).unwrap_or_default(),
                 ) {
@@ -10579,15 +10700,121 @@ impl App {
             }
             Task::ZoneLoaded(zone_id, map_no, result) => self.zone_loaded(zone_id, map_no, result.map(|d| *d), None),
             Task::ZonePreloaded(zone_id, map_no, result) => self.preloaded(zone_id, map_no, result.map(|d| *d)),
-            Task::LoggedIn(Err(e), _) | Task::AccountCreated(Err(e)) | Task::Selected(Err(e)) => {
+            // Op 1 failed (FUN_1023cb60 LAB_1023d116, then FUN_10241200's -1): the popup of the step's code
+            // (FUN_1023d440), then the title menu; FFXI-3331 leaves the lobby. The view link is still up after a
+            // refusal or the 0x68, and the next run goes on with it.
+            Task::SelectFailed(l, e)
+                if self.game_ui.is_some()
+                    && matches!(self.phase, Phase::Characters { screen: LobbyScreen::Run, .. }) =>
+            {
+                log::warn!("lobby: the log-in failed: {e:#}");
+                if let Phase::Characters { lobby, .. } = &mut self.phase {
+                    *lobby = Some(*l);
+                }
+                let code = crate::net::lobby::failure_code(&e);
+                self.lobby_run_failed(netwait::Op::Login, code, false);
+                self.leave_lobby = code == 0x14b;
+            }
+            // The same with the link gone (a broken reply, or PlayOnline's part of step 3, which runs after the lobby
+            // closed it). Retail goes back to the title menu and connects again in the next run's step 1; ours has no
+            // such connect yet, so the lobby is left once the popup is answered.
+            Task::Selected(Err(e))
+                if self.game_ui.is_some()
+                    && matches!(self.phase, Phase::Characters { screen: LobbyScreen::Run, .. }) =>
+            {
+                log::warn!("lobby: the log-in failed: {e:#}");
+                self.lobby_run_failed(netwait::Op::Login, crate::net::lobby::failure_code(&e), false);
+                self.leave_lobby = true;
+            }
+            Task::LoggedIn(Err(e), _)
+            | Task::AccountCreated(Err(e))
+            | Task::Selected(Err(e))
+            | Task::SelectFailed(_, e) => {
                 self.status = format!("{e:#}");
                 self.back_to_login(true);
             }
-            Task::Lobby(Err(e)) | Task::NameChecked(Err(e)) | Task::Created(Err(e)) => {
+            // The list refresh after a change failed (steps 0x13 / 2, LAB_1023d0a6): the error, then FFXI-3115, and the
+            // lobby is left.
+            Task::Deleted(Err(e)) | Task::Renamed(Err(e)) | Task::Created(Err(e))
+                if e.downcast_ref::<crate::net::lobby::InRefresh>().is_some() && self.game_ui.is_some() =>
+            {
+                log::warn!("lobby: {e:#}");
+                let op = match &self.phase {
+                    Phase::Characters { screen: LobbyScreen::Create, .. } => netwait::Op::Create,
+                    _ if self.deleting => netwait::Op::Delete,
+                    _ => netwait::Op::Rename,
+                };
+                self.lobby_run_failed(op, crate::net::lobby::failure_code(&e), true);
+            }
+            Task::Lobby(Err(e))
+            | Task::NameChecked(Err(e))
+            | Task::Created(Err(e))
+            | Task::Deleted(Err(e))
+            | Task::Renamed(Err(e)) => {
                 self.deleting = false;
                 self.status = format!("{e:#}");
                 self.back_to_login(true);
             }
+            // A run that timed out: its link is back, the request still open (retail's link stays up after FFXI-3113).
+            Task::LobbyBack(l) => {
+                if let (Some(l), Phase::Characters { lobby, .. }) = (l, &mut self.phase)
+                    && lobby.is_none()
+                {
+                    l.replies.abandon.store(false, std::sync::atomic::Ordering::Relaxed);
+                    *lobby = Some(*l);
+                }
+            }
+            // Op 2 (FUN_1023c840): refused, the error and the delete screen again (FFXI-3331 leaves the lobby); done,
+            // the new list and 8 0x83.
+            Task::Deleted(Ok((l, refused, list))) => match refused {
+                None => self.handle_task(Task::Lobby(Ok((l, list)))),
+                Some(code) => {
+                    self.deleting = false;
+                    if let Phase::Characters { lobby, .. } = &mut self.phase {
+                        *lobby = Some(l);
+                    }
+                    if let Some(gu) = self.game_ui.as_ref() {
+                        self.select_ui.focus =
+                            select::Focus::Ok(gu.error_text(3000 + code as u32), Box::new(select::Focus::List));
+                    }
+                    self.leave_lobby = code == 0x14b;
+                }
+            },
+            // Op 5 (FUN_10244c00): refused, the error over the select screen, the name remembered for 0x139 / 0x142
+            // (FFXI-3331 leaves the lobby); done, the select screen fades out and the log-in is its own run (op 1,
+            // FUN_10241200).
+            Task::Renamed(Ok((l, refused, list, c))) => match refused {
+                None => {
+                    if let Phase::Characters { chars, selected, .. } = &mut self.phase {
+                        *selected = list.iter().position(|x| x.content_id == c.content_id).or(*selected);
+                        *chars = list;
+                    }
+                    let replies = l.replies.clone();
+                    self.busy = true;
+                    self.lobby_fade.out(Box::new(move |app: &mut App| {
+                        app.backdrop = Some(Backdrop::Login);
+                        if let Phase::Characters { screen, .. } = &mut app.phase {
+                            *screen = LobbyScreen::Run;
+                        }
+                        app.netwait = Some(netwait::NetWait::new(netwait::Op::Login, replies).after(8));
+                        app.spawn(move || lobby_job(l, move |l| l.select(&c), select_done));
+                        app.lobby_fade.enter(true);
+                    }));
+                }
+                Some(code) => {
+                    if let Phase::Characters { lobby, .. } = &mut self.phase {
+                        *lobby = Some(l);
+                    }
+                    if matches!(code, 0x139 | 0x142) {
+                        self.rename_refused = Some((c.name.clone(), code));
+                    }
+                    if let Some(gu) = self.game_ui.as_ref() {
+                        self.select_ui.focus =
+                            select::Focus::Ok(gu.error_text(3000 + code as u32), Box::new(select::Focus::List));
+                    }
+                    self.leave_lobby = code == 0x14b;
+                }
+            },
             // Op 4 after the world step (FUN_10239720): passed, the nation step; refused, the error popup, then the name
             // step for 313 / 322 (remembered with the world), out for 331, else the world step again.
             Task::NameChecked(Ok((l, refused))) => {
@@ -10608,7 +10835,7 @@ impl App {
                                     self.creator_refused = checked.map(|(n, w, _)| (n, w, code));
                                     CreatorNext::Step(5)
                                 }
-                                0x14b => CreatorNext::Leave,
+                                0x14b => CreatorNext::LeaveLobby,
                                 _ => CreatorNext::World,
                             };
                             self.creator_ok = self.game_ui.as_ref().map(|g| (g.error_text(3000 + code as u32), next));
@@ -10640,7 +10867,7 @@ impl App {
                             new_name.clear();
                             (
                                 gu.error_text(3000 + code as u32),
-                                if code == 0x14b { CreatorNext::Leave } else { CreatorNext::Step(0) },
+                                if code == 0x14b { CreatorNext::LeaveLobby } else { CreatorNext::Step(0) },
                             )
                         }
                     });
@@ -10770,11 +10997,77 @@ impl App {
         }
     }
 
+    /// A run that failed with `code` (0x71 the time-out, FFXI-3113), as FUN_1023cb60 ends it: the windows close and
+    /// the error shows (LAB_1023d116), in the list refresh followed by FFXI-3115 (LAB_1023d0a6, the callers' -2: the
+    /// lobby is left). Then the caller's part: the entry leaves (FUN_1023fc20), the log-in goes back to the title menu
+    /// (FUN_10241200 / FUN_10246c80), the delete and the rename stay on their screen (FUN_1023c840 / FUN_10244c00), the
+    /// name check goes back to the world step and the create to the race step (FUN_1023ad30).
+    fn lobby_run_failed(&mut self, op: netwait::Op, code: i32, refresh: bool) {
+        use netwait::Op;
+        let Some(gu) = self.game_ui.as_ref() else {
+            self.status = format!("Lobby error. (FFXI-{})", 3000 + code);
+            return self.back_to_login(true);
+        };
+        let (text, lost) = (gu.lobby_error_text(code), gu.error_text(3115));
+        self.deleting = false;
+        match op {
+            Op::Connect => {
+                self.status = format!("The lobby did not answer. (FFXI-{})", 3000 + code);
+                self.back_to_login(true);
+            }
+            Op::Login => {
+                // A scripted run does not pick its character again.
+                self.drive.character = None;
+                self.lobby_popup = Some(text);
+            }
+            Op::Delete | Op::Rename => {
+                let next = Box::new(select::Focus::List);
+                self.select_ui.focus = match refresh {
+                    true => select::Focus::Ok(text, Box::new(select::Focus::Ok(lost, next))),
+                    false => select::Focus::Ok(text, next),
+                };
+                self.leave_lobby = refresh;
+            }
+            Op::NameCheck => {
+                self.creator_checking = None;
+                self.creator_ok = Some((text, CreatorNext::World));
+            }
+            Op::Create if refresh => {
+                self.creator_ok = Some((text, CreatorNext::Then(lost, Box::new(CreatorNext::LeaveLobby))));
+            }
+            Op::Create => {
+                self.creator_passed = None;
+                if let Phase::Characters { new_name, .. } = &mut self.phase {
+                    new_name.clear();
+                }
+                self.creator_ok = Some((text, CreatorNext::Step(0)));
+            }
+        }
+    }
+
     /// The netwait run's next frames; the parked Task goes on as the windows close.
     fn update_netwait(&mut self, dt: f32) {
-        if let Some(t) = self.netwait.as_mut().and_then(|nw| nw.update(dt)) {
-            self.netwait = None;
-            self.handle_task(t);
+        // A run's -2 (or FFXI-3331): the lobby is left once its popups are answered.
+        if self.leave_lobby
+            && self.netwait.is_none()
+            && self.lobby_popup.is_none()
+            && self.creator_ok.is_none()
+            && !matches!(self.select_ui.focus, select::Focus::Ok(..))
+        {
+            self.status.clear();
+            self.back_to_login(false);
+        }
+        match self.netwait.as_mut().and_then(|nw| nw.update(dt)) {
+            Some(netwait::End::Task(t)) => {
+                self.netwait = None;
+                self.handle_task(*t);
+            }
+            Some(netwait::End::TimedOut { op, refresh }) => {
+                self.netwait = None;
+                log::warn!("lobby: {op:?} timed out{}", if refresh { " in the list refresh" } else { "" });
+                self.lobby_run_failed(op, netwait::TIMEOUT_CODE as i32, refresh);
+            }
+            None => {}
         }
     }
 
@@ -14479,7 +14772,7 @@ impl App {
         {
             gu.hover.set(false);
         }
-        let busy = self.busy;
+        let busy = self.busy || self.lobby_popup.is_some();
         let status = self.status.clone();
         let (mut apply, mut save) = (false, false);
         let mut settings_new = false;
@@ -14716,7 +15009,13 @@ impl App {
                             );
                         }
                     }
-                    if let Some(nw) = self.netwait.as_ref() {
+                    // FUN_1023fc20: ptcbgwin behind the lobby entry's run (the modern layer keeps its form).
+                    if self.backdrop == Some(Backdrop::Entry) && !modern_ui {
+                        // Retail has nothing behind it yet (the title's scene loads after the entry): ours covers the
+                        // login form and the title.
+                        lu.backdrop_window("menu    ptcbgwin", size[0] as f32, size[1] as f32, true);
+                    }
+                    if let Some(nw) = self.netwait.as_ref().filter(|nw| nw.shown()) {
                         if modern_ui {
                             let (text, p) = netwait::view(lu, nw);
                             let frame = lu
@@ -15015,7 +15314,11 @@ impl App {
                 // Only the title's buttons and the select screen are the modern layer's: elsewhere egui keeps its zoom.
                 if !matches!(
                     screen,
-                    LobbyScreen::Main | LobbyScreen::Select | LobbyScreen::Delete | LobbyScreen::Create
+                    LobbyScreen::Main
+                        | LobbyScreen::Select
+                        | LobbyScreen::Delete
+                        | LobbyScreen::Create
+                        | LobbyScreen::Run
                 ) && self.netwait.is_none()
                     || !self.cfg.modern_ui
                 {
@@ -15495,42 +15798,74 @@ impl App {
                                 if let (Some(l), Some(c)) = (lobby.take(), chars.get(i).cloned()) {
                                     let replies = l.replies.clone();
                                     action = Some(Box::new(move |app: &mut App| {
-                                        app.netwait = Some(netwait::NetWait::new(netwait::Op::Login, replies));
-                                        app.spawn(move || Task::Selected(l.select(&c)))
+                                        // FUN_10241200: hnbackwi opens behind the run, which starts after FUN_1023fb20's 8 frames.
+                                        app.backdrop = Some(Backdrop::Login);
+                                        if let Phase::Characters { screen, .. } = &mut app.phase {
+                                            *screen = LobbyScreen::Run;
+                                        }
+                                        app.netwait = Some(netwait::NetWait::new(netwait::Op::Login, replies).after(8));
+                                        app.spawn(move || lobby_job(l, move |l| l.select(&c), select_done))
                                     }));
                                     fade_action = true;
                                 }
                             }
                             Some(select::Action::Rename(i, name)) => {
-                                // LSB view 0x28, then the login with the new name (LAB_102395b5).
-                                if let (Some(mut l), Some(mut c)) = (lobby.take(), chars.get(i).cloned()) {
+                                // FUN_10244c00: a name the lobby refused with 0x139 / 0x142 shows its error again
+                                // without a request (local_100 / local_228).
+                                if let Some((_, code)) = self.rename_refused.as_ref().filter(|r| r.0 == name) {
+                                    self.select_ui.focus = select::Focus::Ok(
+                                        gu.error_text(3000 + *code as u32),
+                                        Box::new(select::Focus::List),
+                                    );
+                                } else if let (Some(l), Some(mut c)) = (lobby.take(), chars.get(i).cloned()) {
+                                    // Op 5 over the select screen (view 0x28, then the list again); the log-in is
+                                    // its own run after it (op 1, Task::Renamed).
                                     let replies = l.replies.clone();
                                     action = Some(Box::new(move |app: &mut App| {
-                                        // Retail runs op 5 (rename) and then op 1 (log in); ours both in one Task.
                                         app.netwait = Some(netwait::NetWait::new(netwait::Op::Rename, replies));
                                         app.spawn(move || {
-                                            Task::Selected((|| {
-                                                l.rename(&c, &name)?;
-                                                c.name = name;
-                                                l.select(&c)
-                                            })())
+                                            lobby_job(
+                                                l,
+                                                move |l| {
+                                                    let refused =
+                                                        crate::net::lobby::refusal(l.rename(&c, &name))?.err();
+                                                    let list = match refused {
+                                                        None => l
+                                                            .characters()
+                                                            .map_err(|e| e.context(crate::net::lobby::InRefresh))?,
+                                                        Some(_) => Vec::new(),
+                                                    };
+                                                    c.name = name;
+                                                    Ok((refused, list, c))
+                                                },
+                                                |l, r| Task::Renamed(r.map(|(refused, list, c)| (l, refused, list, c))),
+                                            )
                                         })
                                     }));
-                                    fade_action = true;
                                 }
                             }
                             Some(select::Action::Delete(i)) => {
-                                if let (Some(mut l), Some(c)) = (lobby.take(), chars.get(i).cloned()) {
+                                if let (Some(l), Some(c)) = (lobby.take(), chars.get(i).cloned()) {
                                     let replies = l.replies.clone();
                                     action = Some(Box::new(move |app: &mut App| {
                                         app.netwait = Some(netwait::NetWait::new(netwait::Op::Delete, replies));
                                         app.deleting = true;
                                         app.spawn(move || {
-                                            Task::Lobby((|| {
-                                                l.delete_character(&c)?;
-                                                let chars = l.characters()?;
-                                                Ok((l, chars))
-                                            })())
+                                            lobby_job(
+                                                l,
+                                                move |l| {
+                                                    let refused =
+                                                        crate::net::lobby::refusal(l.delete_character(&c))?.err();
+                                                    let list = match refused {
+                                                        None => l
+                                                            .characters()
+                                                            .map_err(|e| e.context(crate::net::lobby::InRefresh))?,
+                                                        Some(_) => Vec::new(),
+                                                    };
+                                                    Ok((refused, list))
+                                                },
+                                                |l, r| Task::Deleted(r.map(|(refused, list)| (l, refused, list))),
+                                            )
                                         })
                                     }));
                                 }
@@ -15824,16 +16159,21 @@ impl App {
                                 match popup {
                                     Some((code, then)) => self.creator_ok = Some((gu.error_text(code), then)),
                                     None => {
-                                        if let Some(mut l) = lobby.take() {
+                                        if let Some(l) = lobby.take() {
                                             self.creator_checking = Some(triple);
                                             let replies = l.replies.clone();
                                             action = Some(Box::new(move |app: &mut App| {
                                                 app.netwait =
                                                     Some(netwait::NetWait::new(netwait::Op::NameCheck, replies));
                                                 app.spawn(move || {
-                                                    Task::NameChecked(
-                                                        crate::net::lobby::refusal(l.check_name(&name, &world, &pass))
-                                                            .map(|r| (l, r.err())),
+                                                    lobby_job(
+                                                        l,
+                                                        move |l| {
+                                                            crate::net::lobby::refusal(
+                                                                l.check_name(&name, &world, &pass),
+                                                            )
+                                                        },
+                                                        |l, r| Task::NameChecked(r.map(|r| (l, r.err()))),
                                                     )
                                                 })
                                             }));
@@ -15893,14 +16233,21 @@ impl App {
                                 }
                                 CreatorNext::Then(text, then) => self.creator_ok = Some((text, *then)),
                                 CreatorNext::Leave => *screen = LobbyScreen::Main,
+                                CreatorNext::LeaveLobby => self.leave_lobby = true,
                                 CreatorNext::Login(c) => {
                                     if let Some(l) = lobby.take() {
                                         *selected = chars.iter().position(|x| x.content_id == c.content_id);
                                         fade_action = true;
                                         let replies = l.replies.clone();
                                         action = Some(Box::new(move |app: &mut App| {
-                                            app.netwait = Some(netwait::NetWait::new(netwait::Op::Login, replies));
-                                            app.spawn(move || Task::Selected(l.select(&c)))
+                                            // FUN_10241200: hnbackwi opens behind the run, which starts after FUN_1023fb20's 8 frames.
+                                            app.backdrop = Some(Backdrop::Login);
+                                            if let Phase::Characters { screen, .. } = &mut app.phase {
+                                                *screen = LobbyScreen::Run;
+                                            }
+                                            app.netwait =
+                                                Some(netwait::NetWait::new(netwait::Op::Login, replies).after(8));
+                                            app.spawn(move || lobby_job(l, move |l| l.select(&c), select_done))
                                         }));
                                     }
                                 }
@@ -15910,7 +16257,7 @@ impl App {
                         // ids). No: chmktown again on the chosen nation.
                         match answer {
                             Some(true) => {
-                                if let Some(mut l) = lobby.take() {
+                                if let Some(l) = lobby.take() {
                                     self.creator_step = 8;
                                     self.music_created = true;
                                     // LSB face byte = face * 2 + hair.
@@ -15920,18 +16267,28 @@ impl App {
                                     action = Some(Box::new(move |app: &mut App| {
                                         app.netwait = Some(netwait::NetWait::new(netwait::Op::Create, replies));
                                         app.spawn(move || {
-                                            Task::Created((|| {
-                                                let made =
-                                                    crate::net::lobby::refusal(l.create_character(&NewCharacter {
-                                                        race: r,
-                                                        face: f,
-                                                        size: sz,
-                                                        job: j,
-                                                        nation: na,
-                                                    }))?;
-                                                let chars = if made.is_ok() { l.characters()? } else { Vec::new() };
-                                                Ok((l, made.err(), chars))
-                                            })())
+                                            lobby_job(
+                                                l,
+                                                move |l| {
+                                                    let made = crate::net::lobby::refusal(l.create_character(
+                                                        &NewCharacter {
+                                                            race: r,
+                                                            face: f,
+                                                            size: sz,
+                                                            job: j,
+                                                            nation: na,
+                                                        },
+                                                    ))?;
+                                                    let chars = match made {
+                                                        Ok(()) => l
+                                                            .characters()
+                                                            .map_err(|e| e.context(crate::net::lobby::InRefresh))?,
+                                                        Err(_) => Vec::new(),
+                                                    };
+                                                    Ok((made.err(), chars))
+                                                },
+                                                |l, r| Task::Created(r.map(|(refused, chars)| (l, refused, chars))),
+                                            )
                                         })
                                     }));
                                 }
@@ -15944,7 +16301,60 @@ impl App {
                     // the dancer shows); Config has no game screen yet.
                     _ => {}
                 }
-                if let (Some(nw), Some(gu)) = (self.netwait.as_ref(), self.game_ui.as_mut()) {
+                // FUN_10241200: hnbackwi behind the log-in's run and its error, over the title's scene.
+                if self.backdrop == Some(Backdrop::Login)
+                    && let Some(gu) = self.game_ui.as_mut()
+                {
+                    self.ui_drawn = true;
+                    // The run has no screen of its own to start the 2D frame.
+                    if *screen == LobbyScreen::Run {
+                        gu.clear();
+                    }
+                    gu.backdrop_window("menu    hnbackwi", screen_size[0] as f32, screen_size[1] as f32, false);
+                }
+                // A failed log-in's error over the backdrop (FUN_1023fab0 in FUN_1023cb60); OK goes back to the title
+                // menu (FUN_10241200's -1 in FUN_10246c80), from the creator with the title music again.
+                if let (Some(text), Some(gu)) = (self.lobby_popup.clone(), self.game_ui.as_mut()) {
+                    let (sw, sh) = (screen_size[0] as f32, screen_size[1] as f32);
+                    let key = input.events.iter().any(|ev| {
+                        matches!(ev, egui::Event::Key { key: egui::Key::Enter | egui::Key::Escape, pressed: true, .. })
+                    });
+                    let click = if self.cfg.modern_ui {
+                        let r = gu.popup_rects("menu    ok", sw, sh);
+                        let frame = r.as_ref().map_or([0.0; 4], |r| r.frame);
+                        let ok = r.as_ref().and_then(|r| r.children.first().map(|c| c.1)).unwrap_or(frame);
+                        self.modern.get_or_insert_with(|| modern::Modern::new(ctx)).ok_popup(
+                            ctx,
+                            [screen_size[0], screen_size[1]],
+                            self.cfg.modern_scale,
+                            self.ui_k,
+                            frame,
+                            ok,
+                            &text,
+                        )
+                    } else {
+                        let ok = gu.ok_window(&text, sw, sh);
+                        input.clicked && ok.is_some_and(|r| input.pointer.is_some_and(|p| inside(&r, p)))
+                    };
+                    if (key || click) && !fading && !self.busy {
+                        self.lobby_popup = None;
+                        if let Some(a) = self.audio.as_mut() {
+                            a.ui(crate::audio::Ui::Select);
+                        }
+                        let created = *screen == LobbyScreen::Create;
+                        fade_action = true;
+                        action = Some(Box::new(move |app: &mut App| {
+                            app.backdrop = None;
+                            if let Phase::Characters { screen, .. } = &mut app.phase {
+                                *screen = LobbyScreen::Main;
+                            }
+                            if created && let Some(a) = app.audio.as_mut() {
+                                a.title_music(app.lobby_values.get(0xaf), app.installed);
+                            }
+                        }));
+                    }
+                }
+                if let (Some(nw), Some(gu)) = (self.netwait.as_ref().filter(|nw| nw.shown()), self.game_ui.as_mut()) {
                     if self.cfg.modern_ui {
                         let (text, p) = netwait::view(gu, nw);
                         let frame = gu
@@ -16323,6 +16733,7 @@ impl App {
                     // FUN_10238580 rebuilds the scene and FUN_102371c0 starts the cursor at 0 on every opening.
                     if matches!(new, LobbyScreen::Select | LobbyScreen::Delete) {
                         app.select_ui = select::SelectUi::default();
+                        app.rename_refused = None;
                         if let Some(s) = app.select.as_mut() {
                             s.reset();
                         }
@@ -16399,8 +16810,10 @@ impl App {
                 {
                     self.drive.relogin = false;
                     let l = lobby.take().unwrap();
+                    self.backdrop = Some(Backdrop::Login);
+                    *screen = LobbyScreen::Run;
                     self.netwait = Some(netwait::NetWait::new(netwait::Op::Login, l.replies.clone()));
-                    self.spawn(move || Task::Selected(l.select(&c)));
+                    self.spawn(move || lobby_job(l, move |l| l.select(&c), select_done));
                 }
             }
             Phase::World(world) if world.renderer.is_some() && world.zone_uploading.is_none() => {
@@ -16759,7 +17172,10 @@ impl App {
 
     /// The login screen and title menu play the flyover behind the lobby art.
     fn title_backdrop(&self) -> bool {
-        matches!(self.phase, Phase::Login { .. } | Phase::Characters { screen: LobbyScreen::Main, .. })
+        matches!(
+            self.phase,
+            Phase::Login { .. } | Phase::Characters { screen: LobbyScreen::Main | LobbyScreen::Run, .. }
+        )
     }
 
     /// The scenes behind the lobby and the game UI load as they are wanted: the title flyover, the select ring, the
