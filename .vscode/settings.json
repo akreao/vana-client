@@ -5,7 +5,6 @@
     "**/target/**": true
   },
   "search.exclude": {
-    "**/target": true,
-    "vendor/**": true
+    "**/target": true
   }
 }

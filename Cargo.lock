@@ -1719,6 +1719,7 @@ dependencies = [
 [[package]]
 name = "gpu-allocator"
 version = "0.28.0"
+source = "git+https://github.com/lenonk/gpu-allocator?rev=eb8f2afb10c87953852422626c68049aa6d2b1ad#eb8f2afb10c87953852422626c68049aa6d2b1ad"
 dependencies = [
  "ash",
  "hashbrown 0.16.1",
