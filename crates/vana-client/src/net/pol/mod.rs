@@ -6,7 +6,7 @@ pub mod chat;
 pub mod cipher;
 pub mod polpro;
 
-use super::lobby::Session;
+use super::lobby::{Failed, Session};
 use anyhow::{Context, Result, bail};
 use polpro::{ReplyBody, Status};
 use std::net::{Shutdown, SocketAddr, TcpStream};
@@ -104,7 +104,8 @@ impl Profile {
                 && u32_at(c, 0x10) == content_id
                 && u32_at(c, 0x14) == 0
         }) else {
-            bail!("PlayOnline has no entry for this character.");
+            // FUN_100eff30: no entry, the state's +0x136ac = -1.
+            return Err(anyhow::Error::from(Failed(-1)).context("PlayOnline has no entry for this character."));
         };
         if c[4] & 1 == 0 {
             // FFXiMain would attach it to a free handle slot and store the list (1/10); not done here.
@@ -113,7 +114,11 @@ impl Profile {
             );
         }
         let (content, index) = ((c[5] & 0x3f) as i32, c[0] as i32);
-        self.change_status([content, index, 0, -2, -1, 1])?;
+        // Subs 0xe / 0xf: a refused or failed ChangeMyStatus leaves polcore's code in +0x136ac.
+        self.change_status([content, index, 0, -2, -1, 1]).map_err(|e| match polpro::local_code(&e) {
+            Some(c) => e.context(Failed(c)),
+            None => e,
+        })?;
         Ok(())
     }
 }

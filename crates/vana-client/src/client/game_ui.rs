@@ -1357,6 +1357,18 @@ impl GameUi {
         }
     }
 
+    /// The lobby's error popup (FUN_1023d440): a code of the lobby's shows as FFXI-3000 + code; 0x6c and PlayOnline's
+    /// negative codes go to the PlayOnline path (FUN_10018310; the -POLCON start switch, state +0xa4, is off):
+    /// 0x6c as the FFXI code it is, a negative one as group 7 id 0 with its magnitude. Retail adds polerr.bin's
+    /// message for the code on a second line (the job table 0x103632c8); ours has no polerr.bin.
+    pub fn lobby_error_text(&self, code: i32) -> String {
+        match code {
+            0x6c => self.error_text(0x6c),
+            c if c >= 0 => self.error_text(3000 + c as u32),
+            c => super::select::printf(&self.lobby_msg(7, 0, ""), &[&c.unsigned_abs().to_string()]),
+        }
+    }
+
     /// The info panel's area: group 4's short name (FUN_102333b0, "unknown" when the entry is missing, as retail).
     /// FUN_101cbc10(zone, 0): the group 4 short name, none when the table has no entry.
     pub fn short_area(&self, zone: u16) -> Option<String> {

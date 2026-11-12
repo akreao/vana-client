@@ -208,6 +208,7 @@ impl Task {
             Task::AccountCreated(_) => "account",
             Task::Lobby(_) => "lobby",
             Task::Selected(_) => "selected",
+            Task::SelectFailed(..) => "select failed",
             Task::Renamed(_) => "renamed",
             Task::Deleted(_) => "deleted",
             Task::LobbyBack(_) => "lobby back",
@@ -249,6 +250,8 @@ enum Task {
     AccountCreated(Result<()>),
     Lobby(Result<(Lobby, Vec<Character>)>),
     Selected(Result<MapLogin>),
+    /// The log-in failed with the view link still up (a refusal, the 0x68): the link back, and the failure.
+    SelectFailed(Box<Lobby>, anyhow::Error),
     /// A rename (view 0x28, op 5): the lobby back, the refusal code, the new list, the character under its new name.
     Renamed(Result<(Lobby, Option<u16>, Vec<Character>, Character)>),
     /// A delete (view 0x14, op 2): the lobby back, the refusal code, the new list.
@@ -5836,6 +5839,7 @@ fn task_failed(t: &Task) -> bool {
         Task::LoggedIn(Err(_), _)
             | Task::Lobby(Err(_))
             | Task::Selected(Err(_))
+            | Task::SelectFailed(..)
             | Task::Renamed(Err(_))
             | Task::Deleted(Err(_))
             | Task::NameChecked(Err(_))
@@ -5851,6 +5855,14 @@ enum Backdrop {
     Entry,
     /// "menu    hnbackwi": the log-in (FUN_10241200), op 1.
     Login,
+}
+
+/// The log-in's worker result (op 1): a failure that leaves the view link up hands the link back with it.
+fn select_done(l: Lobby, r: Result<MapLogin>) -> Task {
+    match r {
+        Err(e) if crate::net::lobby::link_kept(&e) => Task::SelectFailed(Box::new(l), e),
+        r => Task::Selected(r),
+    }
 }
 
 /// A lobby worker's job. When its run timed out meanwhile (netwait's FFXI-3113) the link comes back instead of the
@@ -9263,7 +9275,7 @@ impl App {
                         *screen = LobbyScreen::Run;
                     }
                     app.netwait = Some(netwait::NetWait::new(netwait::Op::Login, replies).after(8));
-                    app.spawn(move || lobby_job(l, move |l| l.select(&c), |_, r| Task::Selected(r)));
+                    app.spawn(move || lobby_job(l, move |l| l.select(&c), select_done));
                     app.lobby_fade.enter(true);
                 }));
             }
@@ -9774,6 +9786,7 @@ impl App {
                 Task::LoggedIn(..)
                     | Task::Lobby(_)
                     | Task::Selected(_)
+                    | Task::SelectFailed(..)
                     | Task::Renamed(_)
                     | Task::Deleted(_)
                     | Task::NameChecked(_)
@@ -10829,7 +10842,36 @@ impl App {
             }
             Task::ZoneLoaded(zone_id, map_no, result) => self.zone_loaded(zone_id, map_no, result.map(|d| *d), None),
             Task::ZonePreloaded(zone_id, map_no, result) => self.preloaded(zone_id, map_no, result.map(|d| *d)),
-            Task::LoggedIn(Err(e), _) | Task::AccountCreated(Err(e)) | Task::Selected(Err(e)) => {
+            // Op 1 failed (FUN_1023cb60 LAB_1023d116, then FUN_10241200's -1): the popup of the step's code
+            // (FUN_1023d440), then the title menu; FFXI-3331 leaves the lobby. The view link is still up after a
+            // refusal or the 0x68, and the next run goes on with it.
+            Task::SelectFailed(l, e)
+                if self.game_ui.is_some()
+                    && matches!(self.phase, Phase::Characters { screen: LobbyScreen::Run, .. }) =>
+            {
+                log::warn!("lobby: the log-in failed: {e:#}");
+                if let Phase::Characters { lobby, .. } = &mut self.phase {
+                    *lobby = Some(*l);
+                }
+                let code = crate::net::lobby::failure_code(&e);
+                self.lobby_run_failed(netwait::Op::Login, code, false);
+                self.leave_lobby = code == 0x14b;
+            }
+            // The same with the link gone (a broken reply, or PlayOnline's part of step 3, which runs after the lobby
+            // closed it). Retail goes back to the title menu and connects again in the next run's step 1; ours has no
+            // such connect yet, so the lobby is left once the popup is answered.
+            Task::Selected(Err(e))
+                if self.game_ui.is_some()
+                    && matches!(self.phase, Phase::Characters { screen: LobbyScreen::Run, .. }) =>
+            {
+                log::warn!("lobby: the log-in failed: {e:#}");
+                self.lobby_run_failed(netwait::Op::Login, crate::net::lobby::failure_code(&e), false);
+                self.leave_lobby = true;
+            }
+            Task::LoggedIn(Err(e), _)
+            | Task::AccountCreated(Err(e))
+            | Task::Selected(Err(e))
+            | Task::SelectFailed(_, e) => {
                 self.status = format!("{e:#}");
                 self.back_to_login(true);
             }
@@ -10897,7 +10939,7 @@ impl App {
                             *screen = LobbyScreen::Run;
                         }
                         app.netwait = Some(netwait::NetWait::new(netwait::Op::Login, replies).after(8));
-                        app.spawn(move || lobby_job(l, move |l| l.select(&c), |_, r| Task::Selected(r)));
+                        app.spawn(move || lobby_job(l, move |l| l.select(&c), select_done));
                         app.lobby_fade.enter(true);
                     }));
                 }
@@ -11102,17 +11144,17 @@ impl App {
     /// lobby is left). Then the caller's part: the entry leaves (FUN_1023fc20), the log-in goes back to the title menu
     /// (FUN_10241200 / FUN_10246c80), the delete and the rename stay on their screen (FUN_1023c840 / FUN_10244c00), the
     /// name check goes back to the world step and the create to the race step (FUN_1023ad30).
-    fn lobby_run_failed(&mut self, op: netwait::Op, code: u16, refresh: bool) {
+    fn lobby_run_failed(&mut self, op: netwait::Op, code: i32, refresh: bool) {
         use netwait::Op;
         let Some(gu) = self.game_ui.as_ref() else {
-            self.status = format!("Lobby error. (FFXI-{})", 3000 + code as u32);
+            self.status = format!("Lobby error. (FFXI-{})", 3000 + code);
             return self.back_to_login(true);
         };
-        let (text, lost) = (gu.error_text(3000 + code as u32), gu.error_text(3115));
+        let (text, lost) = (gu.lobby_error_text(code), gu.error_text(3115));
         self.deleting = false;
         match op {
             Op::Connect => {
-                self.status = format!("The lobby did not answer. (FFXI-{})", 3000 + code as u32);
+                self.status = format!("The lobby did not answer. (FFXI-{})", 3000 + code);
                 self.back_to_login(true);
             }
             Op::Login => {
@@ -11165,7 +11207,7 @@ impl App {
             Some(netwait::End::TimedOut { op, refresh }) => {
                 self.netwait = None;
                 log::warn!("lobby: {op:?} timed out{}", if refresh { " in the list refresh" } else { "" });
-                self.lobby_run_failed(op, netwait::TIMEOUT_CODE, refresh);
+                self.lobby_run_failed(op, netwait::TIMEOUT_CODE as i32, refresh);
             }
             None => {}
         }
@@ -16093,7 +16135,7 @@ impl App {
                                             *screen = LobbyScreen::Run;
                                         }
                                         app.netwait = Some(netwait::NetWait::new(netwait::Op::Login, replies).after(8));
-                                        app.spawn(move || lobby_job(l, move |l| l.select(&c), |_, r| Task::Selected(r)))
+                                        app.spawn(move || lobby_job(l, move |l| l.select(&c), select_done))
                                     }));
                                     fade_action = true;
                                 }
@@ -16559,9 +16601,7 @@ impl App {
                                             }
                                             app.netwait =
                                                 Some(netwait::NetWait::new(netwait::Op::Login, replies).after(8));
-                                            app.spawn(move || {
-                                                lobby_job(l, move |l| l.select(&c), |_, r| Task::Selected(r))
-                                            })
+                                            app.spawn(move || lobby_job(l, move |l| l.select(&c), select_done))
                                         }));
                                     }
                                 }
@@ -17135,7 +17175,7 @@ impl App {
                     self.backdrop = Some(Backdrop::Login);
                     *screen = LobbyScreen::Run;
                     self.netwait = Some(netwait::NetWait::new(netwait::Op::Login, l.replies.clone()));
-                    self.spawn(move || lobby_job(l, move |l| l.select(&c), |_, r| Task::Selected(r)));
+                    self.spawn(move || lobby_job(l, move |l| l.select(&c), select_done));
                 }
             }
             Phase::World(world) if world.renderer.is_some() && world.zone_uploading.is_none() => {

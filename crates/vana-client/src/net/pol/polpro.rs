@@ -190,6 +190,25 @@ impl std::fmt::Display for Refused {
 
 impl std::error::Error for Refused {}
 
+/// A failure polcore codes itself: -0x140f, a reply that fails its checksum.
+#[derive(Debug)]
+pub struct Local(pub i32);
+
+impl std::fmt::Display for Local {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "a PlayOnline reply failed its checksum (POL-{})", -self.0)
+    }
+}
+
+impl std::error::Error for Local {}
+
+/// polcore's code for a failed transaction, when the failure has one: a refusal's (`error_code`) or its own.
+pub fn local_code(e: &anyhow::Error) -> Option<i32> {
+    e.chain().find_map(|c| {
+        c.downcast_ref::<Refused>().map(|r| error_code(r.0)).or_else(|| c.downcast_ref::<Local>().map(|l| l.0))
+    })
+}
+
 /// The member as the profile service knows it, from the chat leg.
 pub struct Member {
     pub pol_id: String,
@@ -296,7 +315,7 @@ pub fn transact<S: Stream>(
             data.len(),
             hex::encode(&more[..n])
         );
-        bail!("a PlayOnline reply failed its checksum (POL-{})", 0x140f);
+        bail!(Local(-0x140f));
     }
     Ok(payload.to_vec())
 }
@@ -475,6 +494,15 @@ mod tests {
 
     /// polcore's bodies for FFXiMain's (-2,-1,0,-2,-1,1), then app.dll's (3,-2,1,2,0,-2), after a LoadMyStatus of
     /// content 3, service 5, presence 2, p5 1, activity 0x123 (profile run1815e.txt).
+    /// polcore's code for a failed transaction (FUN_10017cb0's mapping for a refusal; its own for a bad checksum).
+    #[test]
+    fn local_codes() {
+        assert_eq!(local_code(&anyhow::Error::from(Refused(0xb4)).context("ChangeMyStatus")), Some(-0x104));
+        assert_eq!(local_code(&anyhow::Error::from(Refused(0x7b))), Some(-0x14cb));
+        assert_eq!(local_code(&anyhow::Error::from(Local(-0x140f))), Some(-0x140f));
+        assert_eq!(local_code(&anyhow::anyhow!("connection reset")), None);
+    }
+
     #[test]
     fn change_my_status_bodies() {
         let cur = Status { content: 3, service: 5, flag: 1, presence: 2, p5: 1, activity: 0x123, changed: false };

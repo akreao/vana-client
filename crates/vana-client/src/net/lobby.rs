@@ -181,10 +181,50 @@ impl std::fmt::Display for InRefresh {
     }
 }
 
-/// The code retail's popup shows for a failed lobby step (thunk_FUN_100efa60): the lobby's refusal, else 0x65
-/// (FFXI-3101, a broken or unexpected reply).
-pub fn failure_code(e: &anyhow::Error) -> u16 {
-    e.chain().find_map(|c| c.downcast_ref::<Refused>()).map_or(0x65, |r| r.0)
+/// A step that failed with a code of its own (thunk_FUN_100efa60): the link's 0x68 (FFXI-3104, the 0x0B came with
+/// no character list held, FUN_10115ea0 case 5), or a negative one from PlayOnline (the state's +0x136ac: -1 when
+/// polcore's list has no entry for the character, FUN_100eff30, else polcore's own code, FUN_100ee2a0 subs 0xe / 0xf).
+#[derive(Debug)]
+pub struct Failed(pub i32);
+
+impl std::fmt::Display for Failed {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self.0 {
+            c if c < 0 => write!(f, "PlayOnline failed the log-in (POL-{:04})", -(c as i64)),
+            c => write!(f, "the lobby step failed (FFXI-{})", 3000 + c),
+        }
+    }
+}
+
+impl std::error::Error for Failed {}
+
+/// The lobby's 0x0B with an empty character list held.
+pub const NO_LIST_CODE: i32 = 0x68;
+
+/// The code retail's popup shows for a failed lobby step (thunk_FUN_100efa60): the lobby's refusal, a step's own
+/// code (`Failed`), else 0x65 (FFXI-3101, a broken or unexpected reply).
+pub fn failure_code(e: &anyhow::Error) -> i32 {
+    e.chain()
+        .find_map(|c| {
+            c.downcast_ref::<Refused>().map(|r| r.0 as i32).or_else(|| c.downcast_ref::<Failed>().map(|f| f.0))
+        })
+        .unwrap_or(0x65)
+}
+
+/// Whether the view link outlives the failure: a refusal (0x04) and the 0x68 only zero the link's wait state
+/// (FUN_10115ea0 LAB_101163f3), so the next run's step 1 finds it alive (FUN_101164f0).
+pub fn link_kept(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| {
+        c.downcast_ref::<Refused>().is_some() || matches!(c.downcast_ref::<Failed>(), Some(Failed(NO_LIST_CODE)))
+    })
+}
+
+/// polcore's character list as xiloader fills it from LSB's data message 0x03 (count @1, 16-byte entries from
+/// 0x10: the content id, then the world key): (content id, key). xiloader marks every entry linked to handle 0
+/// (+0x10 = its index, +0x11 = 0x80), so FFXiMain's step 3 takes the short path, sub 0xe -> 0xf -> 0x16.
+fn pol_entries(msg: &[u8]) -> Vec<(u32, u32)> {
+    let count = (msg[1] as usize).min((msg.len() - 8) / 16);
+    (1..=count).filter_map(|x| Some((rd_u32(msg, x * 16), rd_u32(msg.get(..x * 16 + 8)?, x * 16 + 4)))).collect()
 }
 
 /// How long a read waits before it looks at `Watch::abandon` again.
@@ -326,6 +366,8 @@ pub struct Lobby {
     pub worlds: Vec<(u32, String)>,
     /// The last 0x20's records, as sent: requests take their ids from them.
     records: Vec<[u8; CHAR_INFO_LEN]>,
+    /// LSB: polcore's character list as xiloader would hold it (`pol_entries`).
+    pol_list: Vec<(u32, u32)>,
     /// PlayOnline: the signed-in member (net/pol).
     pub pol: Option<super::pol::Pol>,
 }
@@ -389,6 +431,7 @@ impl Lobby {
             mute_seen: 0,
             worlds: Vec::new(),
             records: Vec::new(),
+            pol_list: Vec::new(),
             pol: None,
         };
 
@@ -562,6 +605,7 @@ impl Lobby {
             if list[0] != 0x03 {
                 bail!("expected the character list, got 0x{:02X}", list[0]);
             }
+            self.pol_list = pol_entries(&list);
         }
         let pkt = self.read_view(0x20, 32)?;
         let count = (rd_u32(&pkt, 28) as usize).min(16);
@@ -623,7 +667,14 @@ impl Lobby {
 
     /// Picks a character; the lobby answers with where its zone runs.
     pub fn select(&mut self, ch: &Character) -> Result<MapLogin> {
-        let rec = *self.record(ch.content_id).context("that character is not in the lobby's list")?;
+        // With no list held (the 0x20's count 0, data +0x144) retail still asks, from an empty slot, and fails once
+        // the 0x0B is in.
+        let listed = !self.records.is_empty();
+        let rec = match self.record(ch.content_id) {
+            Some(r) => *r,
+            None if !listed => [0; CHAR_INFO_LEN],
+            None => bail!("that character is not in the lobby's list"),
+        };
         let mut p = packet(0x58);
         put(&mut p, 0x1C, &ch.content_id.to_le_bytes());
         put(&mut p, 0x20, &(rd_u16(&rec, 4) as u32).to_le_bytes());
@@ -667,6 +718,11 @@ impl Lobby {
 
         let pkt = self.read_view(0x0B, 0x48)?;
         let ip = |o| Ipv4Addr::from(rd_u32(&pkt, o).to_le_bytes());
+        // FUN_10115ea0 case 5: the 0x0B is taken, then data +0x144 == 0 fails the wait with the link's code 0x68.
+        if !listed {
+            return Err(Failed(NO_LIST_CODE).into());
+        }
+        let world_key = rd_u16(&rec, 4) as u32 | (rd_u16(&rec, 6) as u32) << 16 | (rec[0xB] as u32) << 24;
         // The lobby closes the link after 0x0B and the game waits for it (FUN_100ee160 sub 2), then makes the character
         // PlayOnline's active one (subs 0xE..0x15); a failure there ends the login.
         if self.playonline() {
@@ -674,10 +730,14 @@ impl Lobby {
             let mut rest = Vec::new();
             // Bounded: anything after 0x0B is ignored, and a lobby that keeps sending can't grow it without limit.
             let _ = (&mut self.view).take(MAX_REPLY as u64).read_to_end(&mut rest);
-            let world_key = rd_u16(&rec, 4) as u32 | (rd_u16(&rec, 6) as u32) << 16 | (rec[0xB] as u32) << 24;
             if let Some(p) = self.pol.as_mut() {
                 p.profile.select(ch.content_id, world_key)?;
             }
+        } else if !self.pol_list.contains(&(ch.content_id, world_key)) {
+            // Sub 0xe under xiloader (FUN_100efee0 -> FUN_100eff30): polcore's list is the data link's 0x03, and a
+            // character it does not hold under the same content id and key fails the step with -1. A listed one is
+            // linked there, and its ChangeMyStatus (subs 0xe / 0xf) is answered by the loader, so the step ends.
+            return Err(Failed(-1).into());
         }
         // World entry hashes the counter after two more steps (step 6: FUN_101158e0 twice); 0x0B made one.
         let mut key20 = [0u8; 20];
@@ -935,6 +995,56 @@ mod create_tests {
     /// counter LSB's older login keyed the map with, so `old_key` is the loader's zero value and that counter.
     #[test]
     fn old_key_matches_the_older_lsb_login() {
+        let hash = [0x33u8; 16];
+        let m = lsb_select(hash, 1).unwrap();
+        let old = m.old_key.unwrap();
+        assert_eq!(
+            (old[..16].to_vec(), u32::from_le_bytes(old[16..].try_into().unwrap())),
+            (vec![0u8; 16], 0xAD5DE058)
+        );
+        assert_eq!((m.key[..16].to_vec(), m.key[16..].to_vec()), (Md5::digest(hash).to_vec(), old[16..].to_vec()));
+    }
+
+    /// Step 3 sub 0xe under xiloader (FUN_100efee0 -> FUN_100eff30): the character has to be in polcore's list, which
+    /// the loader fills from the data link's 0x03, under the same content id and key; else the step fails with -1
+    /// (the popup's "Error code: POL-0001"), after the lobby has answered and closed, so the link is not kept.
+    #[test]
+    fn a_character_the_loader_list_lacks_fails_the_log_in() {
+        let e = lsb_select([0; 16], 0).unwrap_err();
+        assert_eq!(failure_code(&e), -1);
+        assert!(!link_kept(&e));
+    }
+
+    /// The codes of a failed step: the lobby's refusal, a step's own, else 0x65; a refusal and the 0x68 leave the
+    /// link up.
+    #[test]
+    fn failure_codes() {
+        let refused = anyhow::Error::from(Refused(201));
+        assert_eq!((failure_code(&refused), link_kept(&refused)), (201, true));
+        let empty = anyhow::Error::from(Failed(NO_LIST_CODE)).context("select");
+        assert_eq!((failure_code(&empty), link_kept(&empty)), (0x68, true));
+        let pol = anyhow::Error::from(Failed(-0x104));
+        assert_eq!((failure_code(&pol), link_kept(&pol)), (-0x104, false));
+        let broken = anyhow::anyhow!("closed");
+        assert_eq!((failure_code(&broken), link_kept(&broken)), (0x65, false));
+    }
+
+    /// The loader's list from the data message 0x03, as xiloader's applyList reads it.
+    #[test]
+    fn loader_list_entries() {
+        let mut msg = vec![0u8; 0x148];
+        (msg[0], msg[1]) = (3, 2);
+        msg[16..24].copy_from_slice(&[7, 0, 0, 0, 0x34, 0x12, 9, 1]);
+        msg[32..40].copy_from_slice(&[8, 0, 0, 0, 0, 0, 0, 0]);
+        msg[48..52].copy_from_slice(&[9, 0, 0, 0]);
+        assert_eq!(pol_entries(&msg), vec![(7, 0x0109_1234), (8, 0)]);
+        // A count past the message's room stops at its end.
+        msg[1] = 0xff;
+        assert_eq!(pol_entries(&msg).len(), 20);
+    }
+
+    /// An LSB log-in against a spec server whose data list holds `listed` characters (the one picked is the first).
+    fn lsb_select(hash: [u8; 16], listed: u8) -> Result<MapLogin> {
         use std::net::TcpListener;
         let (view, data) = (TcpListener::bind("127.0.0.1:0").unwrap(), TcpListener::bind("127.0.0.1:0").unwrap());
         let (vp, dp) = (view.local_addr().unwrap().port(), data.local_addr().unwrap().port());
@@ -952,7 +1062,8 @@ mod create_tests {
             let mut ident = [0u8; 28];
             d.read_exact(&mut ident).unwrap();
             let mut list = vec![0u8; 0x148];
-            list[0] = 3;
+            (list[0], list[1]) = (3, listed);
+            list[16..20].copy_from_slice(&7u32.to_le_bytes());
             d.write_all(&list).unwrap();
             let mut chars = vec![0u8; 4 + CHAR_INFO_LEN];
             chars[0] = 1;
@@ -967,7 +1078,6 @@ mod create_tests {
             d.read_exact(&mut key).unwrap();
             reply(&mut v, 0x0B, &[0u8; 0x48 - 28]);
         });
-        let hash = [0x33u8; 16];
         let mut l = Lobby::connect(
             "127.0.0.1",
             vp,
@@ -982,14 +1092,9 @@ mod create_tests {
         .unwrap();
         let chars = l.characters().unwrap();
         l.worlds().unwrap();
-        let m = l.select(&chars[0]).unwrap();
+        let m = l.select(&chars[0]);
         server.join().unwrap();
-        let old = m.old_key.unwrap();
-        assert_eq!(
-            (old[..16].to_vec(), u32::from_le_bytes(old[16..].try_into().unwrap())),
-            (vec![0u8; 16], 0xAD5DE058)
-        );
-        assert_eq!((m.key[..16].to_vec(), m.key[16..].to_vec()), (Md5::digest(hash).to_vec(), old[16..].to_vec()));
+        m
     }
 
     /// LSB since xiloader 3.0: data and view are TLS with the login server's key. The lobby talks over both as before;
@@ -1182,10 +1287,18 @@ mod create_tests {
         list[0] = 1;
         list[4..8].copy_from_slice(&7u32.to_le_bytes());
         list[4 + 12..4 + 16].copy_from_slice(b"Nine");
-        let (l, s) = lobby(vec![ok05, (0x20, list), (0x0B, vec![0; 0x40 - 28])]);
+        let (l, s) = lobby(vec![ok05.clone(), (0x20, list), (0x0B, vec![0; 0x40 - 28])]);
         let mut l = l.unwrap();
         let chars = l.characters().unwrap();
         assert!(l.select(&chars[0]).is_err());
+        s.join().unwrap();
+        // A 0x0B with no character list held (the 0x20's count 0): the request still goes, the answer is taken, and
+        // the wait fails with the link's code 0x68 (FUN_10115ea0 case 5), the link kept.
+        let (l, s) = lobby(vec![ok05, (0x20, vec![0; 4]), (0x0B, vec![0; 0x48 - 28])]);
+        let mut l = l.unwrap();
+        assert!(l.characters().unwrap().is_empty());
+        let e = l.select(&parse_char(&[0; CHAR_INFO_LEN])).unwrap_err();
+        assert_eq!((failure_code(&e), link_kept(&e)), (NO_LIST_CODE, true));
         s.join().unwrap();
     }
 

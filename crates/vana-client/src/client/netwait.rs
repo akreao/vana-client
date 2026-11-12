@@ -70,7 +70,10 @@ const fn c(text: Option<u16>, sub: u32, reply: bool) -> Call {
 
 /// FUN_100dbac0: a step's sub-step count, and its calls (FUN_100ed7e0, FUN_100edfb0, FUN_100ee160, FUN_100ee690 /
 /// FUN_100ee900 / FUN_100eeb70, FUN_100ef020, FUN_100ee0a0). Step 1 on a live link jumps from sub 5 to 21; step 3 takes
-/// the PlayOnline short path (14 -> 15 -> 22) *(inf: no POL under xiloader)*.
+/// the PlayOnline short path (14 -> 15 -> 22): polcore's entry for the character is linked to a handle (+0x10 bit
+/// 0x8000), as every entry xiloader writes is, so sub 14 asks ChangeMyStatus and sub 15 polls it. An entry not
+/// linked yet would go 14 -> 16..21 (the link is made and stored) -> 20 -> 21 -> 22; ours refuses that log-in.
+/// docs/modlog/2026-11-12-lobby-playonline-returns-145.md.
 fn step(id: u8, fresh: bool) -> (u32, Vec<Call>) {
     match id {
         1 if fresh => {
