@@ -318,6 +318,8 @@ pub struct Host {
     print_seq: u64,
     /// Window events for the mods' handlers: (mod, window, event).
     ui_events: Vec<(String, String, window::Event)>,
+    /// Events for one mod (its settings changed), delivered in the mod phase: (mod, name, arguments).
+    mod_events: Vec<(String, &'static str, Vec<serde_json::Value>)>,
     /// Where the mods' canvases were last drawn (the modern UI), for a HUD drag let go over one.
     canvases: Vec<CanvasAt>,
     /// The canvas a HUD drag is over now: (mod, window, canvas, the dragged element).
@@ -1312,6 +1314,14 @@ fn save(vm: &Vm, w: Option<&World>) {
 }
 
 /// The mod phase (docs/lua-mods.md 3.2): once a frame in the world.
+/// The events queued for one mod (Host.mod_events: settings_changed), run in the mod phase.
+fn emit_mod_events(vm: &Vm, events: &[(String, &'static str, Vec<serde_json::Value>)]) {
+    for (_, name, args) in events.iter().filter(|e| e.0 == vm.manifest.id) {
+        let vals: Vec<mlua::Value> = args.iter().map(|a| api::to_lua(&vm.lua, a).unwrap_or(mlua::Value::Nil)).collect();
+        vm.emit(name, mlua::MultiValue::from_iter(vals));
+    }
+}
+
 pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
     if !w.lua.opt_owners.is_empty() {
         release_options(w);
@@ -1412,6 +1422,7 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
             }
         }
         let events = std::mem::take(&mut host.events);
+        let mod_events = std::mem::take(&mut host.mod_events);
         let ui_events = std::mem::take(&mut host.ui_events);
         let pasted = host.pasted.take();
         // The bus to the other clients, and what they sent (to the same mod, when it holds multibox).
@@ -1472,6 +1483,7 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
                         args.iter().map(|a| api::to_lua(&vm.lua, a).unwrap_or(mlua::Value::Nil)).collect();
                     vm.emit(name, mlua::MultiValue::from_iter(vals));
                 }
+                emit_mod_events(vm, &mod_events);
                 let mine: Vec<(String, window::Event)> =
                     ui_events.iter().filter(|e| e.0 == vm.manifest.id).map(|e| (e.1.clone(), e.2.clone())).collect();
                 for (win, ev) in mine {
@@ -2513,6 +2525,33 @@ mod tests {
         assert_eq!(tail_of(&vm), Some((Some(hud::Tail { at: [100.0, 300.0], w: 30.0, len: 22.0 }), 300.0)));
         vm.lua.load(r#"hud.set("b", {tail = false})"#).exec().unwrap();
         assert_eq!(tail_of(&vm), Some((None, 300.0)));
+    }
+
+    /// A setting changed (the Mods window, outside the mod phase) is queued for the mod phase, for that mod only; its
+    /// handler does not run at once.
+    #[test]
+    fn settings_changed_waits_for_the_mod_phase() {
+        let mut host = Host::default();
+        let vm = Vm::new(
+            manifest::Manifest { id: "t".into(), ..Default::default() },
+            PathBuf::from("."),
+            vm::Source::Dir(PathBuf::from(".")),
+        )
+        .unwrap();
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        vm.lua
+            .load(r#"RAN = nil; events.on("settings_changed", function(key, value) RAN = key .. "=" .. value end)"#)
+            .exec()
+            .unwrap();
+        host.vms.push(vm);
+        host.settings_changed("t", "opacity", serde_json::json!(0.55));
+        host.settings_changed("other", "size", serde_json::json!(3));
+        assert!(host.vms[0].lua.globals().get::<Option<String>>("RAN").unwrap().is_none());
+        assert_eq!(host.mod_events[0], ("t".to_string(), "settings_changed", vec!["opacity".into(), 0.55.into()]));
+        // The frame's delivery: only this mod's event reaches it.
+        let events = std::mem::take(&mut host.mod_events);
+        emit_mod_events(&host.vms[0], &events);
+        assert_eq!(host.vms[0].lua.globals().get::<String>("RAN").unwrap(), "opacity=0.55");
     }
 
     /// hud.portrait: its actor is wanted once however many show it, a later entity moves it, none is an error.
@@ -6506,10 +6545,13 @@ impl Host {
         if let Err(e) = std::fs::write(&file, serde_json::to_vec_pretty(&v).unwrap_or_default()) {
             log::warn!("lua mod {id}: saving {}: {e}", file.display());
         }
-        lend(vm, w, |vm| {
-            let v = api::to_lua(&vm.lua, &value).unwrap_or(mlua::Value::Nil);
-            vm.emit("settings_changed", (key.to_string(), v));
-        });
+        self.settings_changed(id, key, value);
+    }
+
+    /// A mod's setting changed: told to it in the mod phase, where its handler can read all the game state (the Mods
+    /// window changes settings outside it).
+    fn settings_changed(&mut self, id: &str, key: &str, value: serde_json::Value) {
+        self.mod_events.push((id.to_string(), "settings_changed", vec![key.into(), value]));
     }
 }
 
