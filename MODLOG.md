@@ -24022,9 +24022,12 @@ All of it is the mod's Lua over the general API; the client gained nothing.
 - FUN_100b5800 (op 0x6c) acts only on an actor with +0x120 bit 9; without it the op advances and the fade is lost.
   FUN_100b26f0 (scheduler starts) needs bit 9 on both actors too. So in retail the alpha-0 fades right after an area
   switch do nothing and the actors come back opaque.
-- Ours: op 0x34 / 0x35 make every actor opaque and the host reports no actor ready (Host::ready, bit 9) until two VM
-  ticks after the area wait ends (State::models_off / models_back); op 0x6c skips an actor that is not ready (test
-  fade_needs_model). Live (Lnxcsfix, the full event 1 from the Tales' Beginning params): the Throne Room scene has
+- Bit 9 is read by ops 0x6c, 0x99, 0x76 and the scheduler starts and waits only; messages (0x2b / 0x49 / 0xb0), face,
+  0x44 and 0x70 need the actor to resolve (FUN_100afb00) and nothing more.
+- Ours: Host::ready (resolves) and Host::modelled (bit 9, the ops above). Op 0x34 / 0x35 make every actor opaque
+  (remade) and no actor modelled; the VM runs no ticks while the area loads in the background (retail loads it inside
+  the op's last frame), and the tick that ends the wait and the next are modelless (ModelGate; tests fade_needs_model,
+  area_switch_models). Live (Lnxcsfix, the full event 1 from the Tales' Beginning params): the Throne Room scene has
   Zeid, Raogrimm, Eald'narche, Kam'lanaut and the Knights. Other per-model state a free loses (motions, attached
   effects) is kept *(ours: only the colour is reset)*.
 - Op 0x62 with tag 0xfefefe00 (25 sites in this scene) finds no scheduler (FUN_10071310 compares the name exactly) and
