@@ -794,25 +794,25 @@
           "help": "Your party's damage since the first hit after a reset."
         }
       },
-      "description": "/dps: the damage your party dealt since the first hit after a reset; /dps reset starts again.",
+      "description": "/dps: the damage your party dealt since the first hit after a reset; /dps reset starts again. Members who left keep counting in the total.",
       "files": [
         {
           "path": "init.lua",
-          "sha256": "443354a26dac25125a0a6ca221a52207146c8ceac1094f1a3549b3d516a8a6b1",
-          "size": 3403,
+          "sha256": "b3f17e5389fcac684eb7644242fa9607671224a4c0a2ce81971750525e1dfb1a",
+          "size": 3452,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/dps/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "79eea134095fb765b6c129e70a3d9f29b30ecd4aff8f4634194c7ec95adce211",
-          "size": 570,
+          "sha256": "eaf0b83ed2aa18fbc6ce50ffaa8883763ed831eb7f6cf4d812c53b8dc4361b4a",
+          "size": 615,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/dps/mod.toml"
         }
       ],
       "id": "dps",
       "kind": "lua",
       "name": "DPS",
-      "version": "1.0.2"
+      "version": "1.0.4"
     },
     {
       "authors": [],
