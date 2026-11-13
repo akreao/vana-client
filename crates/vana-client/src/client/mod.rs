@@ -20515,6 +20515,12 @@ fn app_egui_context() -> egui::Context {
     ctx
 }
 
+/// A test's egui pass, its texture deltas cleared (epaint debug-asserts on a dropped unapplied one).
+#[cfg(test)]
+pub(crate) fn egui_pass(ctx: &egui::Context, raw: egui::RawInput, ui: impl FnMut(&mut egui::Ui)) {
+    ctx.run_ui(raw, ui).textures_delta.clear();
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -20684,15 +20690,10 @@ mod tests {
     fn zoom_keys_are_macro_keys() {
         let ctrl = egui::Modifiers { ctrl: true, command: true, ..Default::default() };
         // A zoom change takes effect at the next pass's start: an empty pass after each.
-        // The pass's output goes through `run`: egui panics on a dropped `TexturesDelta` (the first pass uploads the font atlas).
-        let run = |ctx: &egui::Context, input: egui::RawInput| {
-            let mut out = ctx.run_ui(input, |_| {});
-            out.textures_delta.clear();
-        };
-        let idle = |ctx: &egui::Context| run(ctx, egui::RawInput::default());
+        let idle = |ctx: &egui::Context| egui_pass(ctx, egui::RawInput::default(), |_| {});
         let press = |ctx: &egui::Context, key| {
             let event = egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: ctrl };
-            run(ctx, egui::RawInput { events: vec![event], ..Default::default() });
+            egui_pass(ctx, egui::RawInput { events: vec![event], ..Default::default() }, |_| {});
             idle(ctx);
         };
         let plain = egui::Context::default();
