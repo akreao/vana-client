@@ -5914,39 +5914,26 @@ struct Actor {
     gpu: Option<crate::render::ActorGpu>,
     /// A changed look's model while its GPU copy goes up: the old one stays drawn (and targetable) until then.
     next: Option<Arc<Model>>,
-    /// Motion playing, and ticks (1/60 s, scaled by its rate) since it started.
+    /// The motion queued last (the status motion, a one-shot or a scheduler's), for the motion log.
     motion: String,
-    ticks: f32,
-    /// The motion being blended out, its ticks and whether it played once, and blend progress in ticks (16 = done).
-    prev: Option<(String, f32, bool)>,
-    /// Regions 0..2 the current motion has no chunk for: the motion still playing there, its ticks, played once
-    /// (FUN_100cb500 leaves those region queues alone).
-    keep: [Option<(String, f32, bool)>; 3],
-    /// The motion regions in the last pose (a bit each; logged at debug when it changes).
-    regions: u8,
+    /// The model's motion queues (crate::motionq; FUN_1001a420's seven regions): what is posed.
+    q: actmotion::Queues,
+    /// Model +0x7d8 / +0x7dc: the status motion FUN_100c83c0 queued last, and its rate.
+    q_status: String,
+    q_rate: f32,
+    /// The status motion is queued again next frame: below 0 through FUN_100c83c0 (+0x7d8 blanked), else scheduler
+    /// op 0x28 with that blend-in and no phase carry.
+    status_force: Option<f32>,
+    /// The layers of the last skinned pose (kept through the frames Misc. 2's animation frame rate skips).
+    q_layers: Vec<crate::motionq::Layer<actmotion::Chunk>>,
+    /// Reactions, guards and parries waiting for the pose block to queue them.
+    overlays: Vec<actmotion::Overlay>,
     /// Event op 0xae 5 (model +0x798): the leader whose motion frame this one's never runs ahead of (FUN_100cb400).
     motion_link: Option<u32>,
-    /// The current motion plays once (a one-shot or a single-count scheduler motion): it holds its last frame,
-    /// also as the pose a switch blends from (FUN_1001a8e0: regions < 3 hold the last frame when the count ends).
-    once: bool,
-    blend: f32,
     /// Height of the posed model's top above its feet (world units, y down so negative).
     top: f32,
     /// An attack, damage or death motion played once over the status motion.
     oneshot: Option<combat::OneShot>,
-    /// A hit reaction / guard over the motion (regions 5 / 6).
-    overlay: Option<actmotion::Overlay>,
-    /// The status motion's clock, kept under a one-shot or scheduler motion (its regions stay below). It is the
-    /// motion's clock while that plays alone, so the regions below a one-shot go on in step (FUN_100cb500 leaves them).
-    base_ticks: f32,
-    /// The status motion picked last frame (FUN_100c83c0's +0x1f6): kept while +0x80 holds the pick.
-    base_name: String,
-    /// Last frame's status motion under a one-shot or scheduler motion, and its ticks.
-    under: Option<(String, f32)>,
-    /// What a switch blends from in the regions the old motion has no chunk for: the status motion that played there
-    /// under it (`under` at the switch); and the regions that do not blend at all, the new motion being that one.
-    prev_under: Option<(String, f32)>,
-    under_skip: u8,
     /// Event op 0xb6 0xf / 0x17: a scale set by a script (+0x204), over the model's.
     event_scale: Option<f32>,
     /// A per-axis scale (facing, height, side) over `scale` (a chair, client/chair.rs).
@@ -5982,18 +5969,11 @@ struct Actor {
     /// ride's end).
     rebase: bool,
     fresh: bool,
-    /// The motion's and the status motion's rates last frame (kept while +0x80 holds the pick).
-    rate_now: f32,
-    base_rate_now: f32,
-    /// +0x7d8 was cleared: the status motion starts again from frame 0 even when its name is the same.
-    restart: bool,
     /// A scheduler's motions (event motions, weapon draw / sheathe), and one waiting for its files.
     play: Option<actmotion::Play>,
     pending: Option<actmotion::Pending>,
     /// Battle files on the list (FUN_100cf650 while engaged) and the engaged state they follow.
     battle: actmotion::Battle,
-    /// Blend length of the current switch in ticks (scheduler op 0x05 u16 @0x18, else 16).
-    blend_len: f32,
     /// Alpha 0..0x80 (model colour high byte) and a fade toward a target (op 0x6c, "kesu").
     alpha: f32,
     /// The model colour's RGB bytes (0x80 = 1.0), faded by scheduler op 0x29.
@@ -6024,9 +6004,8 @@ struct Actor {
     failed: bool,
     /// Mouth motion of a spoken line, the head look, and the emote scheduler playing (actor +0x1b8).
     mouth: Option<actmotion::Mouth>,
-    /// FUN_100cdf90: ticks to the next blink (actor +0x8b8), and ticks into the playing `eye3`.
+    /// FUN_100cdf90: ticks to the next blink (actor +0x8b8).
     blink_wait: f32,
-    blink: Option<f32>,
     /// Model +0x8b4 clear (event op 0x81): no new blink.
     blink_off: bool,
     look: actmotion::Look,
@@ -6063,13 +6042,10 @@ struct Actor {
     cloth: Option<(usize, cloth::Track)>,
 }
 
-/// The pose an actor was last skinned with: its motion frames (with their animations' addresses to notice a change),
-/// the reaction overlay's frame and weight, and the head look.
+/// The pose an actor was last skinned with, beside its layers (Actor::q_layers): the overlay regions' weights and
+/// the head look.
 struct AnimHeld {
-    to: Vec<(usize, f32)>,
-    from: Vec<(usize, f32)>,
-    t: f32,
-    overlay: Option<(usize, f32, f32)>,
+    over: [f32; 2],
     look: Option<crate::render::anim::HeadLook>,
 }
 
@@ -6105,10 +6081,41 @@ impl Actor {
         if seed {
             wepfx::seed(self, m);
         }
+        // The queues go on over a look change on the same skeleton whose model chunks share their tracks (the looks of
+        // one race); another model's start empty.
+        let old = self.character.as_ref();
+        let skeleton = old.is_some_and(|c| c.files.first() == m.files.first());
+        let same = |i: usize| match (old.and_then(|c| c.animations.get(i)), m.animations.get(i)) {
+            (Some(a), Some(b)) => Arc::ptr_eq(&a.tracks, &b.tracks),
+            _ => false,
+        };
+        if !skeleton
+            || !self.q.regions.iter().flatten().all(|e| match &e.anim {
+                actmotion::Chunk::Model(i) => same(*i),
+                actmotion::Chunk::File(..) => true,
+            })
+        {
+            self.q = Default::default();
+            self.q_status.clear();
+            self.q_layers.clear();
+        }
         self.character = Some(m.clone());
         (self.motion_names, self.rebase, self.fresh) = (None, true, true);
         (self.rest, self.bones, self.motion_link) = (crate::dat::character::pose(&m.skeleton, &[]), Vec::new(), None);
         (self.anchors, self.anchor_at) = (ANCHORS, [None; 2]);
+    }
+
+    /// FUN_10087e40 (event op 0x7c off, unbind) and op 0x23's close: the spoken line's mouth stops; FUN_100ce160
+    /// lets every motion in the mouth region (4) run 8 more ticks, then they go.
+    fn mouth_off(&mut self) {
+        self.mouth = None;
+        self.q.fade_region(crate::motionq::MOUTH, 8.0);
+    }
+
+    /// Model +0x7d8 = "    ": FUN_100c83c0 queues the status motion again.
+    fn status_blank(&mut self) {
+        self.status_motion.clear();
+        self.status_force.get_or_insert(-1.0);
     }
 
     fn new() -> Self {
@@ -6119,20 +6126,14 @@ impl Actor {
             gpu: None,
             next: None,
             motion: String::new(),
-            ticks: 0.0,
-            prev: None,
-            keep: Default::default(),
-            regions: 0,
-            once: false,
-            blend: 0.0,
+            q: Default::default(),
+            q_status: String::new(),
+            q_rate: 1.0,
+            status_force: None,
+            q_layers: Vec::new(),
+            overlays: Vec::new(),
             top: -2.0,
             oneshot: None,
-            overlay: None,
-            base_ticks: 0.0,
-            base_name: String::new(),
-            under: None,
-            prev_under: None,
-            under_skip: 0,
             event_scale: None,
             turn_pct: 0,
             look_pct: 0,
@@ -6149,13 +6150,9 @@ impl Actor {
             status_motion: String::new(),
             rebase: false,
             fresh: false,
-            rate_now: 1.0,
-            base_rate_now: 1.0,
-            restart: false,
             play: None,
             pending: None,
             battle: Default::default(),
-            blend_len: crate::motion::BLEND_TICKS,
             alpha: actmotion::OPAQUE,
             rgb: [actmotion::OPAQUE; 3],
             flash: Default::default(),
@@ -6187,7 +6184,6 @@ impl Actor {
             death_pick: 0,
             mouth: None,
             blink_wait: (actmotion::crand() % 480) as f32,
-            blink: None,
             blink_off: false,
             look: Default::default(),
             emote: None,
@@ -13067,8 +13063,7 @@ impl App {
                 if let Some(p) = a.play.as_mut() {
                     p.cut();
                 }
-                a.restart = true;
-                a.status_motion.clear();
+                a.status_blank();
             }
         }
         for r in std::mem::take(&mut world.effects.reacts) {
@@ -18463,7 +18458,7 @@ struct WorldFrame {
     visible: HashSet<u32>,
     shines: HashMap<u32, crate::render::Shine>,
     refracts: HashMap<u32, f32>,
-    leads: HashMap<u32, f32>,
+    leads: HashMap<u32, [f32; crate::motionq::REGIONS]>,
     sdep_ids: HashSet<u32>,
     event_ids: HashSet<u32>,
     // pose_actors' for the shadows and the scene.
@@ -18907,10 +18902,13 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
     // Ops 0x48 / 0x49: the refraction level per actor.
     refracts.extend(w.effects.refractions());
     let hold_now = Instant::now();
-    // FUN_100cb400: each linked follower's leader frame (last frame's: one frame behind at most).
-    let frame_of =
-        |a: &Actor| Some(a.ticks * actmotion::find(&a.extra, a.character.as_ref()?, &a.motion).first()?.speed * 0.5);
-    leads.extend(w.actors.iter().filter_map(|(id, a)| Some((*id, frame_of(w.actors.get(&a.motion_link?)?)?))));
+    // FUN_100cb400: each linked follower's leader frames, per region the leader's newest entry (its region 0 one
+    // where it has none; last frame's: one frame behind at most).
+    let frames_of = |a: &Actor| -> [f32; crate::motionq::REGIONS] {
+        let r0 = a.q.regions[0].last().map(|e| e.frame);
+        std::array::from_fn(|r| a.q.regions[r].last().map(|e| e.frame).or(r0).unwrap_or(-1.0))
+    };
+    leads.extend(w.actors.iter().filter_map(|(id, a)| Some((*id, frames_of(w.actors.get(&a.motion_link?)?)))));
     let me = w.my_id;
     let my_strafe = w.my_strafe;
     // `sdep` entities (trusts, death-flagged): no corpse pose in status 2 / 3 (actmotion::sdep_stand).
@@ -18955,89 +18953,18 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
             a.gpu = Some(g);
             a.top_key.clear();
         }
-        // A one-off combat motion wins; it ends after its length and blends back.
+        // A one-off combat motion: queued on its first frame; its bookkeeping ends after its length (the motion
+        // itself ends in the queue).
+        let shot = a.oneshot.clone().filter(|o| o.ticks == 0.0);
         if a.oneshot.as_ref().is_some_and(|o| o.ticks >= o.len) {
             a.oneshot = None;
         }
         let extra = a.extra.clone();
         let cache = std::cell::RefCell::new(std::mem::take(&mut a.find_cache));
         let has = |n: &str| !actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, n).is_empty();
-        // Motion and rate as FFXiMain picks them (FUN_100c6b70); frame += ticks * speed * 0.5.
-        // Then a scheduler's motion (event / weapon draw) over the status motion.
-        // +0x80 up (ops 0x07 / 0x08 / 0x59, w.noreact): FUN_100c83c0 returns at once, no status motion re-pick.
-        let held = w.noreact.get(id).is_some_and(|t| *t > hold_now)
-            || w.effects.held.get(id).is_some_and(|k| k & crate::fx::HOLD_REACT != 0)
-            || fishrod::is_rod(*id)
-            || put_away.contains(id);
-        let (name, rate, once, blend) = match (&a.oneshot, a.play.as_ref().and_then(|p| p.current())) {
-            (Some(o), _) => (o.name.clone(), o.speed, true, crate::motion::BLEND_TICKS),
-            (None, Some(m)) => {
-                let rate = actmotion::op_rate(
-                    actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, &m.name).first().copied(),
-                    m.ticks as f32,
-                );
-                (m.name.clone(), rate, m.count == 1, m.blend.max(1) as f32)
-            }
-            // The motion stays, a counted one on its last frame.
-            (None, None) if held && !a.motion.is_empty() => {
-                (a.motion.clone(), a.rate_now, a.once, crate::motion::BLEND_TICKS)
-            }
-            // Op 0x5e / 0x6b: the event's idle motion while the actor stands.
-            (None, None) if ratio < 1e-3 && idles.get(id).is_some_and(|n| has(n)) => {
-                (idles[id].clone(), 1.0, false, crate::motion::BLEND_TICKS)
-            }
-            // FUN_100c8930 (LAB_100c8dde): while the jump timer runs, "jmp" at rate 1 ("jmp*" engaged, "jmp "
-            // otherwise; ours takes the prefix).
-            (None, None) if a.jump >= 0.0 && matches!(status, 0 | 1) => {
-                ("jmp".to_string(), 1.0, false, crate::motion::BLEND_TICKS)
-            }
-            (None, None) => {
-                // FUN_100c8bb0: our strafe / backpedal motions over the walk / run, at its rate.
-                let (n, r) = crate::motion::choose_strafed(
-                    &a.motion_names.unwrap_or(ch.motions),
-                    pick_status,
-                    pick_ratio,
-                    if *id == me { my_strafe } else { 0 },
-                    fixed_model(a),
-                );
-                // FUN_100c6380: a status motion the model lacks is not queued (FUN_100cb8e0 fails, +0x1f6
-                // stays), so what plays goes on: the walk of an NPC without a run.
-                if !has(n) && !a.motion.is_empty() && has(&a.motion) {
-                    (a.motion.clone(), a.rate_now, a.once, crate::motion::BLEND_TICKS)
-                } else {
-                    (n.to_string(), r * a.rate_scale, false, crate::motion::BLEND_TICKS)
-                }
-            }
-        };
-        a.rate_now = rate;
-        // Fall back to idle when a model lacks a motion; chocobos idle with chi.
-        let frames_of = |motion: &str, ticks: f32, once: bool| -> Vec<_> {
-            [motion, ch.motions.idle, "idl", "chi"]
-                .iter()
-                .map(|n| actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, n))
-                .find(|a| !a.is_empty())
-                .unwrap_or_default()
-                .into_iter()
-                .map(|x| {
-                    let f = ticks * x.speed * 0.5;
-                    (x, if once { f.min(x.frames as f32) } else { crate::motion::loop_frame(f, x.frames) })
-                })
-                .collect()
-        };
-        let mask = |v: &[(&crate::dat::character::Animation, f32)]| {
-            v.iter().fold(0u8, |m, (x, _)| m | 1u8.checked_shl(actmotion::region(x) as u32).unwrap_or(0))
-        };
-        if name != a.motion
-            || std::mem::take(&mut a.restart)
-            || (once && a.oneshot.as_ref().is_some_and(|o| o.ticks == 0.0))
-        {
-            let line = format!(
-                "actor {id:#x}: {} -> {name} at {:.1} (oneshot {}, play {}, status {status}, ratio {ratio:.2})",
-                a.motion,
-                a.ticks,
-                a.oneshot.is_some(),
-                a.play.is_some()
-            );
+        let chunks = |n: &str| actmotion::chunks(&mut cache.borrow_mut(), &extra, &ch, n);
+        let ticks = dt * 60.0;
+        let note = |line: String| {
             // Our actor's at info (the user's runs log it), the others' at debug.
             if *id == me {
                 log::info!(target: "motion_me", "{line}");
@@ -19046,292 +18973,233 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
             } else {
                 log::debug!(target: "motion", "{line}");
             }
-            // FUN_100cb500: a new motion takes only the regions it has chunks for; the others go on with what
-            // they play, but a finished counted one goes once region 0 is taken (FUN_100cb8e0's tail).
-            // A play start (actmotion::start / play_op) has moved the old motion to `prev` already.
-            let new = mask(&frames_of(&name, 0.0, false));
-            let was = if a.motion.is_empty() { a.prev.clone() } else { Some((a.motion.clone(), a.ticks, a.once)) };
-            let old = was.as_ref().filter(|w| !w.0.is_empty()).map_or(0, |w| mask(&frames_of(&w.0, 0.0, false)));
-            let old_mask = old;
-            for r in 0..3u8 {
-                let cur = if old >> r & 1 != 0 { was.clone() } else { a.keep[r as usize].take() };
-                let done = |(n, t, o): &(String, f32, bool)| {
-                    *o && frames_of(n, *t, true).iter().any(|(x, f)| actmotion::region(x) == r && *f >= x.frames as f32)
-                };
-                a.keep[r as usize] =
-                    if new >> r & 1 != 0 || (new & 1 != 0 && cur.as_ref().is_some_and(done)) { None } else { cur };
+        };
+        // Queues a motion's chunks into their regions (FUN_100cd920); true when any went in.
+        let queue = |a: &mut Actor, name: &str, region: u8, e: &crate::motionq::Enq, why: &str| -> bool {
+            let mask = a.q.enqueue_motion(chunks(name), region, e, |_| e.rate);
+            if mask == 0 {
+                return false;
             }
-            if a.keep.iter().any(|k| k.is_some()) {
-                let keeps: Vec<_> = a.keep.iter().map(|k| k.as_ref().map(|k| k.0.as_str())).collect();
-                if *id == me {
-                    log::info!(target: "motion_me", "actor {id:#x}: {name} keeps {keeps:?}");
-                } else {
-                    log::debug!(target: "motion", "actor {id:#x}: {name} keeps {keeps:?}");
-                }
+            note(format!(
+                "actor {id:#x}: {} -> {name} ({why}; regions {mask:#09b}, rate {:.2}, count {}, in {} out {}, carry {}, status {status}, ratio {ratio:.2})",
+                a.motion, e.rate, e.count, e.blend, e.out_len, e.carry
+            ));
+            if mask & 0x1f != 0 {
+                a.motion = name.to_string();
             }
-            if !a.motion.is_empty() {
-                a.prev = Some((std::mem::take(&mut a.motion), a.ticks, a.once));
-                a.blend = 0.0;
+            true
+        };
+        // +0x80 up (ops 0x07 / 0x08 / 0x59, w.noreact): FUN_100c83c0 returns at once, no status motion re-pick. The
+        // swing's op 0x59 holds it from its start to about 30 ticks past the hit, so the status motion under a
+        // one-shot stays what it was, at its rate, whatever the move does meanwhile.
+        let held = w.noreact.get(id).is_some_and(|t| *t > hold_now)
+            || w.effects.held.get(id).is_some_and(|k| k & crate::fx::HOLD_REACT != 0)
+            || fishrod::is_rod(*id)
+            || put_away.contains(id);
+        // Scheduler op 0x28 of a planned play: the status motion comes back there.
+        if let Some(p) = a.play.as_mut() {
+            if !p.stanced && p.stance_at.is_some_and(|s| s <= p.ticks) {
+                p.stanced = true;
+                a.status_force = Some(p.stance_blend);
             }
-            a.blend_len = blend;
-            // FUN_1001ad00 (batch 5 item 9): a new motion in a region that already held one starts at the
-            // same fraction of its cycle as the old entry had reached, pushed on by half the blend at the
-            // new rate, so the feet stay in step through a walk / run change. Retail's lengths and
-            // positions are in frames / speed; our tick is twice that unit.
-            let span = |m: &str| {
-                frames_of(m, 0.0, false)
-                    .first()
-                    .map(|(x, _)| (x.frames as f32, x.speed))
-                    .filter(|(f, sp)| *f > 0.0 && *sp > 0.0)
-            };
-            let old =
-                a.prev.as_ref().filter(|p| !p.0.is_empty()).and_then(|p| span(&p.0).map(|(f, sp)| (p.1 * 0.5, f / sp)));
-            // Back from a one-shot or scheduler motion to the status motion that went on under it: the
-            // regions it kept were never queued again (FUN_100c83c0 queues only a changed +0x1f6), so they
-            // go on in step and do not blend; the old motion's regions blend back to it.
-            // A new one-shot over the same status motion (the next swing) leaves the regions neither keys
-            // to it, too.
-            let under = a.under.take();
-            a.under_skip = match &under {
-                Some(u) if u.0 == name => !old_mask & 7,
-                Some(_) => !old_mask & !new & 7,
-                None => 0,
-            };
-            a.ticks = match (old, span(&name)) {
-                _ if !once && under.as_ref().is_some_and(|u| u.0 == name) => under.as_ref().map_or(0.0, |u| u.1),
-                (Some((at, old_len)), Some((frames, speed))) if !once && old_len > 0.001 => {
-                    crate::motion::cycle_sync(at, old_len, frames, speed, rate, blend)
-                }
-                _ => 0.0,
-            };
-            a.prev_under = under.filter(|u| u.0 != name);
-            a.motion = name.clone();
+            if std::mem::take(&mut p.force) {
+                a.status_force.get_or_insert(-1.0);
+            }
         }
-        a.once = once;
-        a.ticks += dt * 60.0 * rate;
-        // A leader frame in (0, ours] becomes ours.
-        // The leader first: the chunk search runs only for actors that follow one.
-        if let Some(&lf) = leads.get(id)
-            && let Some(speed) =
-                actmotion::find(&extra, &ch, &a.motion).first().map(|x| x.speed * 0.5).filter(|s| *s > 0.0)
-            && lf > 0.0
-            && lf <= a.ticks * speed
-        {
-            a.ticks = lf / speed;
-        }
-        if a.jump >= 0.0 {
-            a.jump -= dt * 60.0;
-        }
-        // One-shots end by real ticks: their motion runs at the op's stretch rate.
-        if let Some(o) = &mut a.oneshot {
-            o.ticks += dt * 60.0;
-        }
-        // The kept regions run on at the status rate (FUN_100c83c0 sets a new rate on every region's newest
-        // entry *(inf: every frame)*).
-        for k in a.keep.iter_mut().flatten() {
-            k.1 += dt * 60.0 * rate;
-        }
-        // FUN_1001ad00's queue replaces only the regions a new motion keys: under a one-shot or scheduler motion
-        // the status motion goes on (an Elvaan's moving swing amf1 keys the upper body over the run), so it
-        // goes first and the motion's tracks win where it has them.
-        // +0x80 up (the swing's op 0x59 holds it from its start to about 30 ticks past the hit):
-        // FUN_100c83c0 returns before the pick, so the status motion under a one-shot stays what it was,
-        // at its rate, whatever the move does meanwhile.
-        let (base, base_rate) = match a.play.as_ref().filter(|_| held) {
-            Some(p) => (p.base.clone(), a.base_rate_now),
-            None if held && a.under.is_some() && !a.base_name.is_empty() => (a.base_name.clone(), a.base_rate_now),
-            None => {
-                let (b, r) = crate::motion::choose_strafed(
+        // FUN_100c83c0: re-queued on a name change, a counted end or a blanked +0x7d8; a rate change alone goes on the
+        // newest entries. Op 0x28 (0x1005b12e) queues it past the +0x80 hold. *(ours: so does an empty queue, not a rod.)*
+        let stance = a.status_force.is_some_and(|b| b >= 0.0);
+        if stance || !held || (!fishrod::is_rod(*id) && a.q.regions[..5].iter().all(|l| l.is_empty())) {
+            // Motion and rate as FFXiMain picks them (FUN_100c6b70 / FUN_100c8930 / FUN_100c8bb0).
+            let (s, r): (String, f32) = if ratio < 1e-3 && idles.get(id).is_some_and(|n| has(n)) {
+                // Op 0x5e / 0x6b: the event's idle motion while the actor stands.
+                (idles[id].clone(), 1.0)
+            } else if a.jump >= 0.0 && matches!(status, 0 | 1) {
+                // FUN_100c8930 (LAB_100c8dde): while the jump timer runs, "jmp" at rate 1 ("jmp*" engaged, "jmp "
+                // otherwise; ours takes the prefix).
+                ("jmp".to_string(), 1.0)
+            } else {
+                // FUN_100c8bb0: our strafe / backpedal motions over the walk / run, at its rate.
+                let (n, r) = crate::motion::choose_strafed(
                     &a.motion_names.unwrap_or(ch.motions),
                     pick_status,
                     pick_ratio,
                     if *id == me { my_strafe } else { 0 },
                     fixed_model(a),
                 );
-                (b.to_string(), r)
-            }
-        };
-        // A changed status motion under a one-shot is queued as any (FUN_1001ad00): it starts at the old
-        // one's fraction of its cycle. *(inf: its 16-tick blend in those regions is not modelled.)*
-        if base != a.base_name
-            && a.under.is_some()
-            && let (Some((of, osp)), Some((nf, nsp))) = (
-                frames_of(&a.base_name, 0.0, false).first().map(|(x, _)| (x.frames as f32, x.speed)),
-                frames_of(&base, 0.0, false).first().map(|(x, _)| (x.frames as f32, x.speed)),
-            )
-            && of > 0.0
-            && osp > 0.0
-            && nf > 0.0
-            && nsp > 0.0
-        {
-            a.base_ticks = crate::motion::cycle_sync(
-                a.base_ticks * 0.5,
-                of / osp,
-                nf,
-                nsp,
-                base_rate * a.rate_scale,
-                crate::motion::BLEND_TICKS,
-            );
-        }
-        a.base_rate_now = base_rate;
-        a.base_ticks += dt * 60.0 * base_rate * a.rate_scale;
-        // After a one-shot's end its motion may stay while +0x80 holds (no pick): still over the status
-        // motion.
-        let under = name != base && (a.oneshot.is_some() || a.play.is_some() || (held && a.under.is_some()));
-        if under {
-            a.under = Some((base.clone(), a.base_ticks));
-        } else {
-            a.under = None;
-            // The status motion playing alone: its clock is the one a one-shot's regions go on with.
-            if name == base {
-                a.base_ticks = a.ticks;
-            }
-        }
-        a.base_name = base.clone();
-        // The kept regions' chunks (the status motion under a one-shot covers them).
-        let kept: Vec<_> = if under {
-            Vec::new()
-        } else {
-            (0..3u8)
-                .filter_map(|r| a.keep[r as usize].as_ref().map(|k| (r, k)))
-                .flat_map(|(r, (n, t, o))| {
-                    frames_of(n, *t, *o).into_iter().filter(move |(x, _)| actmotion::region(x) == r)
-                })
-                .collect()
-        };
-        let mut anims = kept.clone();
-        if under {
-            anims.extend(frames_of(&base, a.base_ticks, false));
-        }
-        anims.extend(frames_of(&name, a.ticks, once));
-        // FUN_1001a420 poses regions 4 down to 0 and the first to write a bone keeps it: higher regions win, so
-        // they go last here (the last track wins); within a region the newer motion stays last.
-        anims.sort_by_key(|(x, _)| actmotion::region(x));
-        // The mouth motion of a spoken line goes over the body motion (its face tracks win).
-        if let Some(m) = &mut a.mouth
-            && let Some(mt) = m.ticks
-        {
-            // FUN_100ce0e0: the entity's face motion, else 'mou6'.
-            let mouth: Vec<_> = [a.mouth_name, "mou6"]
-                .iter()
-                .map(|n| actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, n))
-                .find(|v| !v.is_empty())
-                .unwrap_or_default();
-            let mut playing = false;
-            for x in mouth {
-                let f = mt * x.speed * 0.5;
-                if f < x.frames as f32 {
-                    anims.push((x, f));
-                    playing = true;
+                (n.to_string(), r * a.rate_scale)
+            };
+            // FUN_100c8bb0 picks a blank for the dead statuses until the death's counted motion has ended (vtable
+            // +0x200), so the corpse motion does not cut the fall short. *(ours: only while a death or other motion
+            // of ours is still running; one who arrives dead lies down at once.)*
+            let falling = matches!(pick_status, 2 | 3) && !a.q.done && (a.oneshot.is_some() || a.play.is_some());
+            let force = a.status_force;
+            if falling {
+            } else if a.q.done || force.is_some() || s != a.q_status {
+                let (blend, carry, why) = match force {
+                    Some(b) if b >= 0.0 => (b, false, "stance op"),
+                    // After a counted motion: in over its out length, from the start.
+                    _ if a.q.done => (a.q.back_blend(), false, "counted motion ended"),
+                    _ => (crate::motion::BLEND_TICKS, !s.starts_with("jmp"), "status"),
+                };
+                let e = crate::motionq::Enq::status(r, blend, carry);
+                // FUN_100c83c0's fallbacks; a motion the model lacks is not queued, so what plays goes on.
+                // *(ours: with nothing playing at all, an idle stands in.)*
+                let alt = actmotion::STATUS_FALLBACKS.iter().find(|(n, _)| *n == s).map(|(_, f)| *f);
+                let bare = a.q.regions[..5].iter().all(|l| l.is_empty());
+                let pick = std::iter::once(s.as_str())
+                    .chain(alt)
+                    .chain(std::iter::once(ch.motions.idle).chain(actmotion::IDLE_STAND_INS).filter(|_| bare))
+                    .find(|n| queue(a, n, 0, &e, why));
+                if pick.is_some() {
+                    (a.q_status, a.q_rate, a.status_force) = (s, r, None);
                 }
-            }
-            if !playing {
-                m.ticks = None;
+            } else if r != a.q_rate {
+                a.q.set_rate(r);
+                a.q_rate = r;
             }
         }
-        // FUN_100cdf90: every rand() % 480 ticks the eyes blink (eye3, region 3) unless op 0xb5 holds them.
-        a.blink_wait -= dt * 60.0;
+        // Scheduler op 0x05 motions (0x1005cd69): a swing's or a death's one-shot, and the play's whose tick has come.
+        // Each is queued once, from its start (no phase carry), stretched over its op's length.
+        let mut starts: Vec<crate::dat::sched::Motion> = Vec::new();
+        let mut rates: Vec<Option<f32>> = Vec::new();
+        if let Some(o) = shot {
+            rates.push(Some(o.speed));
+            starts.push(crate::dat::sched::Motion {
+                name: o.name,
+                at: 0,
+                speed: 1.0,
+                ticks: 0,
+                count: o.count,
+                blend: o.blend as u16,
+                out: o.out as u16,
+                half: o.half,
+            });
+        }
+        if let Some(p) = a.play.as_mut() {
+            let v = p.take_starts();
+            rates.extend(v.iter().map(|_| None));
+            starts.extend(v);
+        }
+        for (m, rate) in starts.iter().zip(rates) {
+            let first = actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, &m.name).first().copied();
+            let rate = rate.unwrap_or_else(|| actmotion::op_rate(first, m.ticks as f32));
+            let (start, end) = crate::dat::sched::Motion::span(m.half, first.map_or(0.0, |x| x.frames as f32));
+            let e = crate::motionq::Enq {
+                share: m.speed,
+                rate,
+                count: m.count,
+                blend: m.blend as f32,
+                out_len: m.out as f32,
+                start,
+                end,
+                carry: false,
+            };
+            queue(a, &m.name, 0, &e, "scheduler motion");
+        }
+        // Reactions, guards and parries (FUN_100cdd60 / FUN_100cde70 / FUN_100cdf00).
+        for o in std::mem::take(&mut a.overlays) {
+            let e = crate::motionq::Enq {
+                share: o.weight,
+                // *(ours: a rate of 0 would hold the first frame for ever.)*
+                rate: if o.rate > 0.0 { o.rate } else { 1.0 },
+                count: o.count,
+                blend: o.blend_in,
+                out_len: o.fade,
+                start: 0.0,
+                end: 0.0,
+                carry: false,
+            };
+            queue(a, &o.name, o.region, &e, "reaction");
+        }
+        // One chunk by its whole name into a given region (FUN_100cd4e0: in over `blend`, once, out over `out`).
+        let single = |a: &mut Actor, name: &str, region: usize, blend: f32, out: f32| -> bool {
+            let digit = name.as_bytes().get(3).map_or(0, |c| c.wrapping_sub(b'0'));
+            let Some((_, c, frames, speed)) = chunks(name).into_iter().find(|c| c.0 == digit) else { return false };
+            let e = crate::motionq::Enq {
+                share: 1.0,
+                rate: 1.0,
+                count: 1,
+                blend,
+                out_len: out,
+                start: 0.0,
+                end: 0.0,
+                carry: false,
+            };
+            a.q.enqueue(region, c, frames, speed, &e);
+            true
+        };
+        // FUN_100ce0e0: a spoken line's mouth: the entity's face motion in region 4 (in over 8 ticks), else 'mou6' as
+        // an overlay in region 6 (in over 16, out over 8).
+        if a.mouth.as_mut().is_some_and(|m| std::mem::take(&mut m.start)) {
+            let name = a.mouth_name;
+            let _ = single(a, name, crate::motionq::MOUTH, 8.0, 1.0)
+                || single(a, actmotion::TALK, crate::motionq::OVERLAY_TALK, 16.0, 8.0);
+        }
+        // FUN_100cdf90: every rand() % 480 ticks the eyes blink (eye3 into region 3) unless op 0xb5 holds them.
+        a.blink_wait -= ticks;
         if a.blink_wait < 0.0 {
             a.blink_wait = (actmotion::crand() % 480) as f32;
             if !w.effects.no_blink.contains(id) && !a.blink_off {
-                a.blink = Some(0.0);
+                single(a, actmotion::BLINK, crate::motionq::EYES, 1.0, 1.0);
             }
         }
-        if let Some(bt) = a.blink.as_mut() {
-            *bt += dt * 60.0;
-            let eyes = actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, "eye3");
-            let mut playing = false;
-            for x in eyes {
-                let f = *bt * x.speed * 0.5;
-                if f < x.frames as f32 {
-                    anims.push((x, f));
-                    playing = true;
+        // FUN_1001a3e0: the queues' fades and frames.
+        a.q.tick(ticks);
+        // FUN_100cb400: per region, a leader frame in (0, ours] becomes ours.
+        if let Some(lf) = leads.get(id) {
+            for (l, &f) in a.q.regions.iter_mut().zip(lf) {
+                if let Some(e) = l.last_mut()
+                    && f > 0.0
+                    && f <= e.frame
+                {
+                    e.frame = f;
                 }
             }
-            if !playing {
-                a.blink = None;
-            }
         }
-        let regions = mask(&anims) & 7;
-        if regions != a.regions {
-            log::debug!(target: "motion", "actor {id:#x}: regions {:#05b} -> {regions:#05b} ({name}, base {base}, keep {:?})", a.regions, a.keep.iter().map(|k| k.as_ref().map(|k| k.0.as_str())).collect::<Vec<_>>());
-            a.regions = regions;
+        if a.jump >= 0.0 {
+            a.jump -= ticks;
         }
-        a.blend += dt * 60.0;
-        if a.blend >= a.blend_len {
-            a.prev = None;
-            (a.prev_under, a.under_skip) = (None, 0);
-        }
-        // Motions are evaluated and skinned on the GPU (render/anim.rs, vs_skinned).
-        // The old pose: its regions, the kept ones live (a kept region does not blend).
-        let kept_mask = mask(&kept);
-        let mut from = a
-            .prev
-            .as_ref()
-            .map(|(old, old_ticks, old_once)| {
-                let mut v: Vec<_> = frames_of(old, *old_ticks, *old_once)
-                    .into_iter()
-                    .filter(|(x, _)| kept_mask >> actmotion::region(x).min(7) & 1 == 0)
-                    .collect();
-                v.extend(kept.iter().copied());
-                // The regions the old motion had no chunk for showed the status motion under it.
-                let has_mask = mask(&v);
-                let free = |x: &crate::dat::character::Animation| {
-                    let r = actmotion::region(x);
-                    r < 3 && has_mask >> r & 1 == 0
-                };
-                if let Some((b, bt)) = &a.prev_under {
-                    v.extend(frames_of(b, *bt, false).into_iter().filter(|(x, _)| free(x)));
-                }
-                let skip = a.under_skip;
-                v.extend(anims.iter().copied().filter(|(x, _)| free(x) && skip >> actmotion::region(x) & 1 != 0));
-                v.sort_by_key(|(x, _)| actmotion::region(x));
-                v
-            })
-            .unwrap_or_default();
-        // The reaction overlay, its first animation found; dropped once faded out.
-        let mut overlay = a.overlay.as_mut().and_then(|o| {
-            o.ticks += dt * 60.0;
-            let x = actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, &o.name).into_iter().next()?;
-            o.sample(x.frames as u32, x.speed).map(|(f, wt)| (x, f, wt))
-        });
-        if overlay.is_none() {
-            a.overlay = None;
+        // One-shots end by real ticks: their motion runs at the op's stretch rate.
+        if let Some(o) = &mut a.oneshot {
+            o.ticks += ticks;
         }
         a.find_cache = cache.take();
-        let mut t = a.blend / a.blend_len;
+        // Motions are evaluated and skinned on the GPU (render/anim.rs, vs_skinned) from the queues' layers.
         // Misc. 2's animation frame rate: other actors (not one on a mount, status 0x55: FUN_100956a0) keep
-        // last frame's whole pose (motion frames, reaction overlay, head look) when FUN_100cbde0 would not
-        // skin them; the head look is held further down, once worked out.
-        let addr = |v: &[(&crate::dat::character::Animation, f32)]| {
-            v.iter().map(|(x, f)| (*x as *const _ as usize, *f)).collect::<Vec<_>>()
-        };
-        let same = |held: &[(usize, f32)], now: &[(&crate::dat::character::Animation, f32)]| {
-            held.len() == now.len() && held.iter().zip(now).all(|(h, (x, _))| h.0 == *x as *const _ as usize)
-        };
-        let ov_addr = overlay.map(|(x, f, wt)| (x as *const _ as usize, f, wt));
+        // last frame's whole pose (motion frames and weights, head look) when FUN_100cbde0 would not skin them;
+        // the head look is held further down, once worked out.
+        let mut layers = std::mem::take(&mut a.q_layers);
+        let mut fresh = Vec::new();
+        let mut over = a.q.layers(&mut fresh);
+        let same = layers.len() == fresh.len()
+            && layers.iter().zip(&fresh).all(|(x, y)| x.anim == y.anim && (x.start, x.over) == (y.start, y.over));
         let mut skipped = false;
         if *id != me
             && status != 0x55
             && anim_skip(anim_cfg, anim_frame, a)
-            && let Some(h) = a.anim_held.as_ref().filter(|h| {
-                same(&h.to, &anims) && same(&h.from, &from) && h.overlay.map(|o| o.0) == ov_addr.map(|o| o.0)
-            })
+            && same
+            && let Some(h) = a.anim_held.as_ref()
         {
-            for (x, h) in anims.iter_mut().zip(&h.to) {
-                x.1 = h.1;
-            }
-            for (x, h) in from.iter_mut().zip(&h.from) {
-                x.1 = h.1;
-            }
-            if let (Some(o), Some(ho)) = (overlay.as_mut(), h.overlay) {
-                (o.1, o.2) = (ho.1, ho.2);
-            }
-            t = h.t;
+            over = h.over;
             skipped = true;
         } else {
-            a.anim_held = Some(AnimHeld { to: addr(&anims), from: addr(&from), t, overlay: ov_addr, look: None });
+            layers = fresh;
+            a.anim_held = Some(AnimHeld { over, look: None });
         }
+        let job: Vec<crate::render::anim::JobLayer> = layers
+            .iter()
+            .map(|l| crate::render::anim::JobLayer {
+                src: match &l.anim {
+                    actmotion::Chunk::Model(i) => crate::render::anim::AnimSrc::Model(*i),
+                    actmotion::Chunk::File(f, i) => crate::render::anim::AnimSrc::File(f, *i),
+                },
+                frame: l.frame,
+                weight: l.weight,
+                start: l.start,
+                over: l.over,
+            })
+            .collect();
         a.scale = a.event_scale.unwrap_or_else(|| ch.scale(size)) * w.lua.look_scale(*id);
         // The rest pose's mesh top, once (stub models, plates without attach points).
         if a.top_key.is_empty() {
@@ -19353,11 +19221,23 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
         let held: Vec<(u16, u16)> =
             if a.drawn { ch.grips.iter().flatten().copied().filter(|&(c, _)| riding(c)).collect() } else { Vec::new() };
         let pose_now = || {
-            if from.is_empty() {
-                crate::dat::character::pose_held(&ch.skeleton, &anims, &held)
-            } else {
-                crate::render::character::pose_blend(&ch, &from, &anims, t, &held)
-            }
+            // A chunk that is gone hands its region's opening on to the next one of the region.
+            let mut open = false;
+            let pl: Vec<crate::dat::character::PoseLayer> = layers
+                .iter()
+                .filter_map(|l| {
+                    open |= l.start;
+                    let anim = l.anim.anim(&ch)?;
+                    Some(crate::dat::character::PoseLayer {
+                        anim,
+                        frame: l.frame,
+                        weight: l.weight,
+                        start: std::mem::take(&mut open),
+                        over: l.over,
+                    })
+                })
+                .collect();
+            crate::dat::character::pose_layers(&ch.skeleton, &pl, over, &held)
         };
         let posed_anchor = a.anchors[..2].iter().any(|&k| k != 2);
         if (w.locked && (*id == w.my_id || w.target == Some(*id)))
@@ -19609,19 +19489,7 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
             cloth_tick = Some((tick, at - c.at, at));
         }
         if drawn {
-            let files: Vec<_> = extra.iter().map(|(_, f)| f.clone()).collect();
-            r.pose_actor_gpu(
-                g,
-                &ch,
-                &files,
-                &anims,
-                if a.prev.is_some() { &from } else { &[] },
-                t,
-                model,
-                look,
-                overlay,
-                &held,
-            );
+            r.pose_actor_gpu(g, &ch, &job, over, model, look, &held);
             fg.counts.posed += 1;
             // FUN_100c9330: a mounted rider's point 0x6b and the mount's saddle point, for the offset.
             if let Some((key, k)) = ride::query(&w.rides, *id)
@@ -19670,6 +19538,7 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
         {
             (c.tick, c.at) = (wind.0, at);
         }
+        a.q_layers = layers;
     }
     // Test 6: the occlusion results, a frame or two late, drop actors hidden behind scenery.
     r.occl.results.retain(|id, _| visible.contains(id));
