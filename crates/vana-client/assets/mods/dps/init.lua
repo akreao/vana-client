@@ -1,47 +1,43 @@
 -- /dps prints the damage our party dealt since the first hit after a reset: each member's total, share and damage a
 -- second over the fight's span; the Damage Meter setting shows the same live in an edge window. /dps reset starts again. Every damage number counts (main and proc records), by its
--- actor: us, the party (trusts included) and their pets.
+-- actor: us, the party (trusts included) and their pets, while they are still with us.
 
 -- The colour of chat mode 0x8b, as the lines always had.
 local COLOUR = {colour = 0x8b}
 
 local by, first, last = {}, nil, nil
 
--- Us, a member of our party, or the pet of either (its master's index).
-local function ours(actor)
+-- The name of us, a member of our party, or the pet of either (its master's index); nil for anyone else, and once
+-- an actor has left (a dismissed trust, a despawned pet, a member gone from the party).
+local function current(actor)
   local me = game.player()
   if actor == me.id then
-    return true
+    return me.name
   end
   local members = game.party()
   for _, m in ipairs(members) do
     if m.party == 0 and m.id == actor then
-      return true
+      return m.name
     end
   end
   local e = game.entity(actor)
   if not e or e.master == 0 then
-    return false
+    return nil
   end
   if e.master == me.index then
-    return true
+    return e.name
   end
   for _, m in ipairs(members) do
     local pe = m.party == 0 and game.entity(m.id)
     if pe and pe.index == e.master then
-      return true
+      return e.name
     end
   end
-  return false
-end
-
-local function name(id)
-  local e = game.entity(id)
-  return e and e.name or ("0x%x"):format(id)
+  return nil
 end
 
 events.on("damage", function(actor, _, value)
-  if value <= 0 or not ours(actor) then
+  if value <= 0 or not current(actor) then
     return
   end
   local now = clock()
@@ -58,22 +54,36 @@ local function commas(n)
   return (out:gsub("^,", ""))
 end
 
+-- The current members' rows, most damage first, and their total; actors who have left are dropped.
+local function rows()
+  local total, out = 0, {}
+  for id, v in pairs(by) do
+    local n = current(id)
+    if n then
+      total = total + v.dmg
+      out[#out + 1] = { name = n, dmg = v.dmg, hits = v.hits }
+    else
+      by[id] = nil
+    end
+  end
+  if not next(by) then
+    first, last = nil, nil
+  end
+  table.sort(out, function(a, b) return a.dmg > b.dmg end)
+  return out, total
+end
+
 -- The meter window: a row per member, its bar its share.
 local function meter()
+  local list, total = rows()
   if not settings.get("window") or not first then
     ui.close("meter")
     return
   end
   local secs = math.max(math.floor(last - first), 1)
-  local total, rows = 0, {}
-  for id, v in pairs(by) do
-    total = total + v.dmg
-    rows[#rows + 1] = { id = id, dmg = v.dmg }
-  end
-  table.sort(rows, function(a, b) return a.dmg > b.dmg end)
   local els = {}
-  for _, r in ipairs(rows) do
-    els[#els + 1] = { type = "gauge", style = "row", label = ("%s  %.1f/s"):format(name(r.id), r.dmg / secs),
+  for _, r in ipairs(list) do
+    els[#els + 1] = { type = "gauge", style = "row", label = ("%s  %.1f/s"):format(r.name, r.dmg / secs),
       text = ("%s  %d%%"):format(commas(r.dmg), math.floor(r.dmg * 100 / math.max(total, 1) + 0.5)),
       value = r.dmg / math.max(total, 1) }
   end
@@ -92,19 +102,14 @@ commands.register("dps", function(arg)
     meter()
     return
   end
+  local list, total = rows()
   if not first then
     chat.add("DPS: no damage yet.", COLOUR)
     return
   end
   local secs = math.max(math.floor(last - first), 1)
-  local total, rows = 0, {}
-  for id, v in pairs(by) do
-    total = total + v.dmg
-    rows[#rows + 1] = {id = id, dmg = v.dmg, hits = v.hits}
-  end
-  table.sort(rows, function(a, b) return a.dmg > b.dmg end)
   chat.add(("DPS over %d:%02d: %d damage"):format(secs // 60, secs % 60, total), COLOUR)
-  for _, r in ipairs(rows) do
-    chat.add(("  %s: %d (%.0f%%), %.1f/s, %d hits"):format(name(r.id), r.dmg, r.dmg * 100 / math.max(total, 1), r.dmg / secs, r.hits), COLOUR)
+  for _, r in ipairs(list) do
+    chat.add(("  %s: %d (%.0f%%), %.1f/s, %d hits"):format(r.name, r.dmg, r.dmg * 100 / math.max(total, 1), r.dmg / secs, r.hits), COLOUR)
   end
 end)

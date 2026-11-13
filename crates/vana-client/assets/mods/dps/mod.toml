@@ -1,5 +1,5 @@
 name = "DPS"
-version = "1.0.2"
+version = "1.0.3"
 authors = ["vana-client"]
 description = "/dps: the damage your party dealt since the first hit after a reset; /dps reset starts again."
 

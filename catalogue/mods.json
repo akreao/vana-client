@@ -798,13 +798,13 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "443354a26dac25125a0a6ca221a52207146c8ceac1094f1a3549b3d516a8a6b1",
-          "size": 3403,
+          "sha256": "69d86d7fb87964432db1acc90da411c4707f5a72ee2e3256088b50d7c0132ea3",
+          "size": 3610,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/dps/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "79eea134095fb765b6c129e70a3d9f29b30ecd4aff8f4634194c7ec95adce211",
+          "sha256": "69d394bf686df211c0a6b8fd8cf134048d044b3a5e06fa09bee77e474f056eea",
           "size": 570,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/dps/mod.toml"
         }
@@ -812,7 +812,7 @@
       "id": "dps",
       "kind": "lua",
       "name": "DPS",
-      "version": "1.0.2"
+      "version": "1.0.3"
     },
     {
       "authors": [],
