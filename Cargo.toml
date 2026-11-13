@@ -14,6 +14,14 @@ incremental = false
 lto = "fat"
 codegen-units = 1
 
+# CI's tests (`cargo test --profile ci-test`, out in target/ci-test): release with epaint's debug asserts, which catch
+# a dropped unapplied TexturesDelta. egui's stay off.
+[profile.ci-test]
+inherits = "release"
+
+[profile.ci-test.package.epaint]
+debug-assertions = true
+
 # Debug builds (cargo build): dependencies optimized and ours lightly, so a debug run is playable; debug assertions
 # and overflow checks stay on.
 [profile.dev]
