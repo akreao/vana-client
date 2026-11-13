@@ -24008,3 +24008,29 @@ All of it is the mod's Lua over the general API; the client gained nothing.
   read moved to dat::weather::forecast_day so `event-run` reads the real forecast too (it gave weather 0 before).
   Headless, Port Jeuno 246 #10022 at Earth second 784700135: Valkurm Dunes "sunny with a chance of clouds", Qufim
   Island "snow with occasional clouds ... slight chance of blizzards".
+
+## Event op 0x34 / 0x35: every model freed, fades on modelless actors lost (2026-11-13)
+
+- User report: Rise of the Zilart's opening (Norg event 1) showed the Throne Room part with nobody in it: Zeid,
+  Raogrimm, Eald'narche and Kam'lanaut spoke over empty rooms.
+- The scene starts with `zone_env #165` (op 0x34), then thread entry 2 on npc04a..04d: `22 0` (shown), `2f 0`,
+  `6c self #0 #1` (alpha 0). No later event fade brings 04c / 04d back; they walk and talk long before file 5066's
+  'main' (scheduler op 0x2a to 0x80808080) runs on them.
+- FUN_100b3df0 (op 0x34; 0x35 FUN_100b3ed0 the same): its first frame calls FUN_10091150 on every entity, freeing the
+  model and clearing +0x120 bit 9; each of its three frames sets DAT_10476ef1, which makes FUN_10094ea0's entity loop
+  return before FUN_10094150 (the model pass), so the frame ends with no models. The op's last frame loads the area
+  (FUN_10184380) and the threads it starts run the next frame, still modelless; FUN_10094150 makes the models again at
+  that frame's end (FUN_1008f740: colour 0x80808080).
+- FUN_100b5800 (op 0x6c) acts only on an actor with +0x120 bit 9; without it the op advances and the fade is lost.
+  FUN_100b26f0 (scheduler starts) needs bit 9 on both actors too. So in retail the alpha-0 fades right after an area
+  switch do nothing and the actors come back opaque.
+- Bit 9 is read by ops 0x6c, 0x99, 0x76 and the scheduler starts and waits only; messages (0x2b / 0x49 / 0xb0), face,
+  0x44 and 0x70 need the actor to resolve (FUN_100afb00) and nothing more.
+- Ours: Host::ready (resolves) and Host::modelled (bit 9, the ops above). Op 0x34 / 0x35 make every actor opaque
+  (remade) and no actor modelled; the VM runs no ticks while the area loads in the background (retail loads it inside
+  the op's last frame), and the tick that ends the wait and the next are modelless (ModelGate; tests fade_needs_model,
+  area_switch_models). Live (Lnxcsfix, the full event 1 from the Tales' Beginning params): the Throne Room scene has
+  Zeid, Raogrimm, Eald'narche, Kam'lanaut and the Knights. Other per-model state a free loses (motions, attached
+  effects) is kept *(ours: only the colour is reset)*.
+- Op 0x62 with tag 0xfefefe00 (25 sites in this scene) finds no scheduler (FUN_10071310 compares the name exactly) and
+  only loads and pins the file (FUN_10072200, +0x1a |= 0x10); ours logs "no scheduler" for them.

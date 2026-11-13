@@ -211,9 +211,13 @@ pub trait Host {
     fn busy(&mut self, _b: &Busy) -> bool {
         false
     }
-    /// Actor loaded (FUN_10089c70) and with a model (+0x120 bit 9).
+    /// Actor resolves (FUN_100afb00, loaded by FUN_10089c70).
     fn ready(&self, _actor: u32) -> bool {
         true
+    }
+    /// Actor resolves and has a model (+0x120 bit 9): ops 0x6c, 0x99, 0x76 and the scheduler starts and waits.
+    fn modelled(&self, actor: u32) -> bool {
+        self.ready(actor)
     }
     fn name(&self, actor: u32) -> String {
         if actor == PLAYER { "Player".into() } else { format!("npc{:03x}", actor & 0xfff) }
@@ -1694,8 +1698,8 @@ impl Runtime {
             }
             0x45 | 0x62 | 0x9f | 0xbb | 0xc5 | 0xcd | 0xd0 | 0xd5 => {
                 if let Some((file, tag, a, t)) = self.sched(v, sched_base(opc))
-                    && host.ready(a)
-                    && host.ready(t)
+                    && host.modelled(a)
+                    && host.modelled(t)
                 {
                     let param = self.val(v, 0xf);
                     host.effect(Effect::Scheduler { file, tag, actor: a, target: t, param });
@@ -1710,7 +1714,9 @@ impl Runtime {
             }
             0x55 | 0xa0 | 0xa2 | 0xbc | 0xc6 | 0xce | 0xd1 | 0xd6 => {
                 let busy = self.sched(v, sched_base(opc)).is_some_and(|(file, tag, a, t)| {
-                    host.ready(a) && host.ready(t) && host.busy(&Busy::Scheduler { file, tag, actor: a, target: t })
+                    host.modelled(a)
+                        && host.modelled(t)
+                        && host.busy(&Busy::Scheduler { file, tag, actor: a, target: t })
                 });
                 if busy { self.yield_(v) } else { self.adv(v, 15) }
             }
@@ -1841,11 +1847,13 @@ impl Runtime {
             }
             0x6c => {
                 let a = self.actor_at(v, 1);
-                if self.thread(v).state == 0 {
+                // FUN_100b5800: an actor without a model (+0x120 bit 9) is passed over, its fade lost.
+                let ready = host.modelled(a);
+                if ready && self.thread(v).state == 0 {
                     host.effect(Effect::ActorFade { actor: a, alpha: self.val(v, 5), frames: self.val(v, 7) });
                     self.thread(v).state = 1;
                 }
-                if host.busy(&Busy::Op { op: opc, sub, actor: a }) {
+                if ready && host.busy(&Busy::Op { op: opc, sub, actor: a }) {
                     self.yield_(v);
                 } else {
                     self.thread(v).state = 0;
@@ -1886,7 +1894,7 @@ impl Runtime {
             }
             0x99 => {
                 let a = self.actor_at(v, 1);
-                if host.ready(a) && host.busy(&Busy::Op { op: 0x99, sub: None, actor: a }) {
+                if host.modelled(a) && host.busy(&Busy::Op { op: 0x99, sub: None, actor: a }) {
                     self.yield_(v);
                 } else {
                     self.adv(v, 5);
@@ -1894,7 +1902,8 @@ impl Runtime {
             }
             0x70 | 0x76 => {
                 let a = if opc == 0x70 { actor } else { self.actor_at(v, 1) };
-                if host.ready(a) && host.busy(&Busy::Turning { actor: a }) {
+                let ok = if opc == 0x76 { host.modelled(a) } else { host.ready(a) };
+                if ok && host.busy(&Busy::Turning { actor: a }) {
                     self.yield_(v);
                 } else {
                     self.adv(v, len);
@@ -3619,6 +3628,43 @@ mod tests {
             rt.tick(&mut host, 1.0);
         }
         assert_eq!((rt.mem.m[1], rt.mem.m[2]), (0b100, 0x300));
+    }
+
+    /// Op 0x6c on an actor without a model (FUN_100b5800, +0x120 bit 9 clear) passes over it: no fade.
+    #[test]
+    fn fade_needs_model() {
+        struct Modelless(Scripted);
+        impl Host for Modelless {
+            fn effect(&mut self, e: Effect) {
+                self.0.effect(e)
+            }
+            fn modelled(&self, _actor: u32) -> bool {
+                false
+            }
+        }
+        // actor_fade self, #0, #1; event_end.
+        let code = vec![0x6c, 0xf8, 0xff, 0xff, 0x7f, 0x00, 0x80, 0x01, 0x80, 0x21, 0x00];
+        let actor = 0x010e_601b;
+        let fades = |modelled: bool| {
+            let blocks = vec![event::Block { actor, events: vec![(1, 0)], consts: vec![0, 1], code: code.clone() }];
+            let start = Start { zone: 230, event: 1, target: actor, ..Default::default() };
+            let mut host = Modelless(Scripted::new(&[]));
+            let log = if modelled {
+                let mut rt = Runtime::start(blocks, None, start, Memory::default(), &mut host.0);
+                run_scripted(&mut rt, &mut host.0, 60).expect("finished");
+                host.0.log
+            } else {
+                let mut rt = Runtime::start(blocks, None, start, Memory::default(), &mut host);
+                for _ in 0..60 {
+                    rt.tick(&mut host, 1.0);
+                }
+                assert!(rt.done(), "the op advanced");
+                host.0.log
+            };
+            log.iter().filter(|e| matches!(e, Effect::ActorFade { .. })).count()
+        };
+        let (with, without) = (fades(true), fades(false));
+        assert!(with > 0 && without == 0, "{with} {without}");
     }
 
     /// Op 0x5f subs 0 / 1 (FUN_100b72c0): two bytes, to the host with the thread's actor (its +0x124 bit 29).
