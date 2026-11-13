@@ -814,8 +814,10 @@ pub fn topbar_shot(
             true,
         );
         m.wait_image(&mut gu);
-        if f.get(5) == Some(&"markers") {
-            m.shot_markers();
+        match f.get(5) {
+            Some(&"markers") => m.shot_markers(),
+            Some(&"marker-menu") => m.shot_marker_menu(),
+            _ => {}
         }
         m.draw(&mut gu, sw, sh, false);
         let [help, title] = gu.focus_text("menu    map0", m.cursor);
