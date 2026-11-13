@@ -1352,6 +1352,17 @@ impl GameUi {
         }
     }
 
+    /// The lobby's error popup (FUN_1023d440): FFXI-3000 + code; 0x6c as FFXI-0108 and a negative code as "POL-%04d"
+    /// (group 7 id 0), the PlayOnline path (FUN_10018310), without polerr.bin's second line.
+    pub fn lobby_error_text(&self, code: i32) -> String {
+        use crate::net::lobby::POL_PATH_CODE;
+        match code {
+            POL_PATH_CODE => self.error_text(POL_PATH_CODE as u32),
+            c if c >= 0 => self.error_text(3000 + c as u32),
+            c => super::select::printf(&self.lobby_msg(7, 0, ""), &[&c.unsigned_abs().to_string()]),
+        }
+    }
+
     /// The info panel's area: group 4's short name (FUN_102333b0, "unknown" when the entry is missing, as retail).
     /// FUN_101cbc10(zone, 0): the group 4 short name, none when the table has no entry.
     pub fn short_area(&self, zone: u16) -> Option<String> {
@@ -2732,6 +2743,22 @@ impl GameUi {
             self.batch.push_sprite(&self.data.lobby, lib, r.index as usize, x, y, 1.0, 1.0, 0x8080_8080, 0);
         }
         Some((x, y))
+    }
+
+    /// "menu    ptcbgwin" / "menu    hnbackwi", the backdrop behind a lobby run: sprite lobbywin 85, every cell, scaled
+    /// by (w / 640, h / 480) (registry flags 0x11002f). `black`: over black (ours, for the entry: no scene behind yet).
+    pub fn backdrop_window(&mut self, name: &str, w: f32, h: f32, black: bool) {
+        let (fx, fy) = (w / 640.0, h / 480.0);
+        if black {
+            self.batch.push_corners([[0.0, 0.0], [w, 0.0], [0.0, h], [w, h]], [[0.0, 0.0, 0.0, 1.0]; 4]);
+        }
+        let Some(m) = self.data.lobby.menu(name) else { return };
+        let (x, y) = screens::window_pos(m, w, h, fx, fy);
+        if let Some(r) = m.elements[0].refs.iter().find(|r| r.kind == 0)
+            && let Some(lib) = self.data.lobby.lib(&r.lib)
+        {
+            self.batch.push_sprite(&self.data.lobby, lib, r.index as usize, x, y, fx, fy, 0x8080_8080, 0);
+        }
     }
 
     /// menu netwait (FUN_102408a0), centred as the prompts: the status text in the frame rect, 28 px off the bottom.
