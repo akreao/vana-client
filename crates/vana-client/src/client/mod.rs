@@ -24,6 +24,7 @@ pub mod opening;
 mod petrow;
 mod polmail;
 mod racing;
+mod randname;
 mod record;
 mod regime;
 mod rest;
@@ -8524,6 +8525,12 @@ pub struct App {
     creator_passed: Option<(String, String, String)>,
     creator_refused: Option<(String, String, u16)>,
     creator_checking: Option<(String, String, String)>,
+    /// The name filter (FFXiMain DAT_10662db8) while the creator is open, and its load in flight.
+    name_filter: Option<crate::poldic::NameFilter>,
+    name_filter_load: Option<std::thread::JoinHandle<crate::poldic::NameFilter>>,
+    /// The random names' tables out of the install's FFXiMain.dll, read the first time the creator opens.
+    name_tables: Option<randname::Tables>,
+    name_tables_load: Option<std::thread::JoinHandle<Option<randname::Tables>>>,
     /// The lobby's netwait / netbar while an operation runs (client/netwait.rs); a delete's notice after it (8 0x83).
     netwait: Option<netwait::NetWait>,
     deleting: bool,
@@ -8794,6 +8801,10 @@ impl App {
             creator_passed: None,
             creator_refused: None,
             creator_checking: None,
+            name_filter: None,
+            name_filter_load: None,
+            name_tables: None,
+            name_tables_load: None,
             netwait: None,
             deleting: false,
             exit_requested: false,
@@ -15419,6 +15430,16 @@ impl App {
                                 self.creator_step = 0;
                                 (self.creator_simple, self.portrait) = (self.cfg.tool("0023") != 0, Default::default());
                                 (self.creator_world, self.creator_passed, self.creator_refused) = (None, None, None);
+                                // FUN_102435f0 → FUN_101ba220 loads the name filter as the creator opens.
+                                let game_dir = self.cfg.game_dir.clone();
+                                self.name_filter = None;
+                                self.name_filter_load =
+                                    Some(std::thread::spawn(move || crate::poldic::NameFilter::load(&game_dir)));
+                                if self.name_tables.is_none() && self.name_tables_load.is_none() {
+                                    let ffxi_dir = self.cfg.ffxi_dir();
+                                    self.name_tables_load =
+                                        Some(std::thread::spawn(move || randname::Tables::load(&ffxi_dir)));
+                                }
                             }
                             Some(2) => *screen = LobbyScreen::Delete,
                             // FUN_10235fa0 index 4: lobycwin over the title (FUN_10195e80 reads the values first).
@@ -15548,10 +15569,17 @@ impl App {
                         // Steps and their menus (0x30 layouts); help lines from groups 8 / 0x1b (creator::draw_ui).
                         // Step 7 is the type-5 confirm, 8 the create under way; menu ok popups over any step.
                         use creator::STEPS;
+                        let step = self.creator_step.min(8);
+                        // The name data loads off the UI thread; from the name step on it is waited for.
+                        if let Some(h) = self.name_filter_load.take_if(|h| step >= 5 || h.is_finished()) {
+                            self.name_filter = Some(h.join().unwrap_or(crate::poldic::NameFilter::Damaged));
+                        }
+                        if let Some(h) = self.name_tables_load.take_if(|h| step >= 5 || h.is_finished()) {
+                            self.name_tables = h.join().ok().flatten();
+                        }
                         let gu = self.game_ui.as_mut().unwrap();
                         self.ui_drawn = true;
                         let (sw, sh) = (screen_size[0] as f32, screen_size[1] as f32);
-                        let step = self.creator_step.min(8);
                         let popup = self.creator_ok.is_some();
                         let keys = !busy && !popup;
                         let n = STEPS.get(step).map_or(0, |s| s.1);
@@ -15569,12 +15597,19 @@ impl App {
                         let (mut next, back, mut answer, mut ok) =
                             (false, escape && keys && step < 7 && !world_open, None, false);
                         let (mut world_se, mut world_check) = (Vec::new(), None);
-                        // FUN_102384d0: Num+ (DIK 0x4e) on the name step asks for a random name.
+                        let name_filter = self.name_filter.as_ref();
+                        let name_refused = |name: &[u8]| creator::name_refused(name_filter, name);
+                        let random_name = |race: usize, face: u8| {
+                            let (index, tables) = (self.index.as_deref(), self.name_tables.as_ref());
+                            creator::random_name(index, tables, name_filter, race, face)
+                        };
+                        // Num+ (DIK 0x4e) on the name step (FUN_10239ae0 / FUN_10239b10 message 0xc); a refused
+                        // name is dropped and the next Num+ rolls again.
                         if step == 5
                             && keys
                             && !world_open
                             && self.input.pressed(0x4e)
-                            && let Some(n) = self.index.as_ref().and_then(|i| creator::roll_name(i))
+                            && let Some(n) = random_name(*race, *face)
                         {
                             *new_name = n;
                         }
@@ -15721,7 +15756,7 @@ impl App {
                                 }
                                 next |= ptr.row.1.is_some() || ptr.enter;
                                 if ptr.random
-                                    && let Some(n) = self.index.as_ref().and_then(|i| creator::roll_name(i))
+                                    && let Some(n) = random_name(*race, *face)
                                 {
                                     *new_name = n;
                                 }
@@ -15800,7 +15835,8 @@ impl App {
                             world_check = self.creator_world.take();
                         }
                         // Enter on the pass: the checks in retail's order (FUN_10239720 448223..); the world is always
-                        // a table row here, so 3118 / 3119 cannot come up, and the local filter (3322) is not traced.
+                        // a table row here, so 3118 / 3119 cannot come up. The name filter (0x1023a2f5: FFXI-3322 and
+                        // the name step) comes after the length and before the comparisons with earlier checks.
                         if let Some(ws) = world_check {
                             let world = ws.world().to_string();
                             let pass = ws.pass.map(|p| p.0).unwrap_or_default();
@@ -15821,6 +15857,8 @@ impl App {
                                     Some((3111, CreatorNext::World))
                                 } else if name.len() < 3 {
                                     Some((3110, CreatorNext::Step(5)))
+                                } else if name_refused(name.as_bytes()) {
+                                    Some((3322, CreatorNext::Step(5)))
                                 } else {
                                     refused.map(|code| (code, CreatorNext::Step(5)))
                                 };
@@ -16830,6 +16868,10 @@ impl App {
             self.select_key.clear();
         }
         let in_create = matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Create, .. });
+        // Retail unloads the name filter on every way out of the creator.
+        if !in_create {
+            (self.name_filter, self.name_filter_load) = (None, None);
+        }
         if in_create && !self.creator_simple {
             if self.creator.is_none()
                 && self.creator_state == LoadState::Idle
