@@ -18614,8 +18614,9 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
         // The status motion (FUN_100c83c0, every frame): queued when its name changes, when a counted motion has
         // ended (vtable +0x200) or when +0x7d8 was blanked; a changed rate alone goes on the newest entry of every
         // region.
-        // *(ours: a held actor with nothing queued yet, a model that just came in, still takes its status motion.)*
-        if !held || a.q.regions[..5].iter().all(|l| l.is_empty()) {
+        // *(ours: a held actor with nothing queued yet, a model that just came in, still takes its status motion; not
+        // the rod, which never picks one, FUN_100c63d0.)*
+        if !held || (!fishrod::is_rod(*id) && a.q.regions[..5].iter().all(|l| l.is_empty())) {
             // Motion and rate as FFXiMain picks them (FUN_100c6b70 / FUN_100c8930 / FUN_100c8bb0).
             let (s, r): (String, f32) = if ratio < 1e-3 && idles.get(id).is_some_and(|n| has(n)) {
                 // Op 0x5e / 0x6b: the event's idle motion while the actor stands.
