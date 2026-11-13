@@ -101,20 +101,13 @@ pub enum Place {
     End,
 }
 
-/// One word engine (FUN_10049100), its section unpacked with key (1, 0). Offsets into `data`:
-/// +0x00 the mask mode and +0x04 the mask characters (retail overwrites these 8 bytes for the name dictionary; only
-/// the mask modes read them); +0x10 / +0x30 the bit sets of skipped characters (single or first byte / second byte);
-/// +0x50 / +0x150 the first / second byte classes of two-byte characters (0: not one); +0x250 the two-byte fold table
-/// (u16 by first class + second class × 0x30); +0x4930 the single-byte fold table; +0x4a30 / +0x4a34 the offsets of
-/// the word tree and of the tree of allowed words.
+/// One word engine (FUN_10049100), its section unpacked with key (1, 0); layout in MODLOG "Character creator: the
+/// name filter".
 pub struct Engine {
     data: Vec<u8>,
 }
 
-/// A tree of an engine: +0x00..0x10 four offsets (from the tree + 0x48f4) to the child table (u16), the keys (u16,
-/// negated), the strings (bytes, negated) and the nodes (8 bytes: kind, key count, child base u16, key / string
-/// offset u32); +0x10 two-byte characters are folded; +0x14 the first node by two-byte character (first class +
-/// second class × 0x30); +0x46f4 the first node by folded single byte.
+/// A tree of an engine (word or allowed), its table offsets resolved; layout in the same MODLOG entry.
 #[derive(Clone, Copy)]
 struct Tree {
     at: usize,
@@ -177,7 +170,8 @@ impl Engine {
         }
     }
 
-    /// FUN_10049910: the key's place among a node's `count` sorted keys.
+    /// FUN_10049910: the key's place among a node's `count` sorted keys. With no keys polcore still compares key 0
+    /// (its caller passes count − 1 as the signed upper bound).
     fn key_index(&self, key: u16, keys: usize, count: usize) -> Option<usize> {
         let k = |i: usize| u16_at(&self.data, keys + i * 2).wrapping_neg();
         let (mut lo, mut hi) = (0usize, count.saturating_sub(1));
@@ -191,8 +185,9 @@ impl Engine {
     /// FUN_100495f0: the tree walked from `node` over the text at `p` (`len` bytes left). Some(bytes used) when a
     /// word ends, skipped characters inside it included.
     fn walk(&self, tree: Tree, t: &[u8], mut p: usize, mut len: isize, mut node: usize) -> Option<usize> {
-        let mut used = 0usize;
-        // Every step uses at least one byte, so a walk ends within the text (a damaged tree could loop otherwise).
+        let (mut used, mut idle) = (0usize, 0usize);
+        // An empty run uses no byte: more of them in a row than the section can hold nodes is a cycle, on which
+        // retail recurses without end.
         while p <= t.len() {
             let kind = self.b(node);
             let child_base = u16_at(&self.data, node + 2) as usize;
@@ -259,6 +254,10 @@ impl Engine {
                     node = tree.nodes + child * 8;
                 }
                 _ => return None,
+            }
+            idle = if k == 0 { idle + 1 } else { 0 };
+            if idle > self.data.len() / 8 {
+                return None;
             }
             p += k;
             len -= k as isize;
@@ -596,6 +595,11 @@ mod tests {
     /// An engine's packed section: space and '-' skipped, A..Z folded to a..z, one two-byte character, the words
     /// and the allowed words.
     fn engine(words: &[&[u8]], allowed: &[&[u8]]) -> Vec<u8> {
+        pack([1, 0], &engine_data(tree(words), tree(allowed)))
+    }
+
+    /// An engine's unpacked bytes around two trees.
+    fn engine_data(words: Vec<u8>, allowed: Vec<u8>) -> Vec<u8> {
         let mut d = vec![0u8; 0x4a38];
         for c in *b" -" {
             d[0x10 + (c >> 3) as usize] |= 1 << (c & 7);
@@ -605,12 +609,12 @@ mod tests {
         for c in 0..=255u8 {
             d[0x4930 + c as usize] = c.to_ascii_lowercase();
         }
-        for (slot, list) in [(0x4a30, words), (0x4a34, allowed)] {
+        for (slot, t) in [(0x4a30, words), (0x4a34, allowed)] {
             let at = d.len() as u32;
             put32(&mut d, slot, at);
-            d.extend(tree(list));
+            d.extend(t);
         }
-        pack([1, 0], &d)
+        d
     }
 
     /// A name dictionary file from exact names and the three engines' sections.
@@ -686,6 +690,33 @@ mod tests {
         assert!(!e.matches(b"badly", Place::End));
         // Like retail, both answer at the first word found: a later one in the right place does not count.
         assert!(!e.matches(b"xbog bad", Place::End) && e.matches(b"bog-xbad", Place::Start));
+    }
+
+    /// A damaged tree whose empty run leads back to itself: the walk gives up instead of looping.
+    #[test]
+    fn empty_run_cycle_ends() {
+        let mut t = vec![0u8; 0x48f4];
+        // 'a' starts at node 1, a run of no characters whose child is node 1 again.
+        put16(&mut t, 0x46f4 + b'a' as usize * 2, 1);
+        let children: Vec<u8> = [0u16, 1].iter().flat_map(|v| v.to_le_bytes()).collect();
+        let nodes = [[0u8; 8], [2, 0, 1, 0, 0, 0, 0, 0]].concat();
+        for (slot, table) in [children, Vec::new(), vec![0], nodes].iter().enumerate() {
+            let at = (t.len() - 0x48f4) as u32;
+            put32(&mut t, slot * 4, at);
+            t.extend(table);
+        }
+        let e = Engine { data: engine_data(t, tree(&[])) };
+        assert!(!e.matches(b"abc", Place::Anywhere));
+    }
+
+    /// A branch with no keys still compares key 0, as polcore does.
+    #[test]
+    fn branch_without_keys() {
+        let mut data = vec![0u8; 0x4a38];
+        put16(&mut data, 0x100, (b'x' as u16).wrapping_neg());
+        let e = Engine { data };
+        assert_eq!(e.key_index(b'x' as u16, 0x100, 0), Some(0));
+        assert_eq!(e.key_index(b'y' as u16, 0x100, 0), None);
     }
 
     #[test]
