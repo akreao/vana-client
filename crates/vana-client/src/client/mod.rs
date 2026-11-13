@@ -7604,6 +7604,8 @@ struct World {
     furniture: furniture::State,
     /// The main menu's pupequip (client/equipwin.rs).
     pupequip: Option<equipwin::PupMenu>,
+    /// The map region table (GameUi's copy), for `<pos>`.
+    map_regions: Arc<[map::Region]>,
     merit_tables: Option<Arc<crate::dat::merits::MeritTables>>,
     merit_list: std::collections::BTreeMap<u16, (u8, u8)>,
     merit_stamp: u32,
@@ -10054,6 +10056,7 @@ impl App {
                             blklist: None,
                             furniture: Default::default(),
                             pupequip: None,
+                            map_regions: self.game_ui.as_ref().map(|g| g.map_regions().into()).unwrap_or_default(),
                             merit_tables: None,
                             merit_list: Default::default(),
                             merit_stamp: 0,

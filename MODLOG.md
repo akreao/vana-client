@@ -4620,6 +4620,8 @@ From the grid spec (scratchpad gridpos/SPEC.md; current [2019] addresses there).
 - Ours: Ground::map_key, map::Region::find_key / here, map::grid_text, hudtop's cached suffix. The map window and
   overlay now open the record under the player (else key 0), so the 40 zones without a key-0 record open a map and
   multi-floor zones show the floor you are on.
+- `<pos>` (FUN_10076ff0 type 0xe) calls FUN_101f7600(1) at expansion time, not the compass's cached suffix. Ours
+  read hudtop's cache, empty with the compass closed or in the modern UI, so the tag stayed literal (fixed 2026-11-12).
 
 ## Window open / close animation (2026-10-23)
 
