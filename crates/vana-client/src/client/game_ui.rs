@@ -1352,13 +1352,12 @@ impl GameUi {
         }
     }
 
-    /// The lobby's error popup (FUN_1023d440): a code of the lobby's shows as FFXI-3000 + code; 0x6c and PlayOnline's
-    /// negative codes go to the PlayOnline path (FUN_10018310; the -POLCON start switch, state +0xa4, is off):
-    /// 0x6c as the FFXI code it is, a negative one as group 7 id 0 with its magnitude. Retail adds polerr.bin's
-    /// message for the code on a second line (the job table 0x103632c8); ours has no polerr.bin.
+    /// The lobby's error popup (FUN_1023d440): FFXI-3000 + code; 0x6c as FFXI-0108 and a negative code as "POL-%04d"
+    /// (group 7 id 0), the PlayOnline path (FUN_10018310), without polerr.bin's second line.
     pub fn lobby_error_text(&self, code: i32) -> String {
+        use crate::net::lobby::POL_PATH_CODE;
         match code {
-            0x6c => self.error_text(0x6c),
+            POL_PATH_CODE => self.error_text(POL_PATH_CODE as u32),
             c if c >= 0 => self.error_text(3000 + c as u32),
             c => super::select::printf(&self.lobby_msg(7, 0, ""), &[&c.unsigned_abs().to_string()]),
         }
@@ -2746,10 +2745,8 @@ impl GameUi {
         Some((x, y))
     }
 
-    /// "menu    ptcbgwin" / "menu    hnbackwi", the backdrop behind a lobby run (registry flags 0x11002f: no frame, no
-    /// open animation, 0x100000 scaled): the window's sprite (lobbywin 85: two dark 640 x 240 halves and the small
-    /// logo), every cell, at the file place and size scaled by (w / 640, h / 480).
-    /// `black`: nothing shows through it (ours, for the entry: retail has no scene behind it yet).
+    /// "menu    ptcbgwin" / "menu    hnbackwi", the backdrop behind a lobby run: sprite lobbywin 85, every cell, scaled
+    /// by (w / 640, h / 480) (registry flags 0x11002f). `black`: over black (ours, for the entry: no scene behind yet).
     pub fn backdrop_window(&mut self, name: &str, w: f32, h: f32, black: bool) {
         let (fx, fy) = (w / 640.0, h / 480.0);
         if black {
