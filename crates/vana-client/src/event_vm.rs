@@ -211,9 +211,13 @@ pub trait Host {
     fn busy(&mut self, _b: &Busy) -> bool {
         false
     }
-    /// Actor loaded (FUN_10089c70) and with a model (+0x120 bit 9).
+    /// Actor resolves (FUN_100afb00, loaded by FUN_10089c70).
     fn ready(&self, _actor: u32) -> bool {
         true
+    }
+    /// Actor resolves and has a model (+0x120 bit 9): ops 0x6c, 0x99, 0x76 and the scheduler starts and waits.
+    fn modelled(&self, actor: u32) -> bool {
+        self.ready(actor)
     }
     fn name(&self, actor: u32) -> String {
         if actor == PLAYER { "Player".into() } else { format!("npc{:03x}", actor & 0xfff) }
@@ -1689,8 +1693,8 @@ impl Runtime {
             }
             0x45 | 0x62 | 0x9f | 0xbb | 0xc5 | 0xcd | 0xd0 | 0xd5 => {
                 if let Some((file, tag, a, t)) = self.sched(v, sched_base(opc))
-                    && host.ready(a)
-                    && host.ready(t)
+                    && host.modelled(a)
+                    && host.modelled(t)
                 {
                     let param = self.val(v, 0xf);
                     host.effect(Effect::Scheduler { file, tag, actor: a, target: t, param });
@@ -1705,7 +1709,9 @@ impl Runtime {
             }
             0x55 | 0xa0 | 0xa2 | 0xbc | 0xc6 | 0xce | 0xd1 | 0xd6 => {
                 let busy = self.sched(v, sched_base(opc)).is_some_and(|(file, tag, a, t)| {
-                    host.ready(a) && host.ready(t) && host.busy(&Busy::Scheduler { file, tag, actor: a, target: t })
+                    host.modelled(a)
+                        && host.modelled(t)
+                        && host.busy(&Busy::Scheduler { file, tag, actor: a, target: t })
                 });
                 if busy { self.yield_(v) } else { self.adv(v, 15) }
             }
@@ -1837,7 +1843,7 @@ impl Runtime {
             0x6c => {
                 let a = self.actor_at(v, 1);
                 // FUN_100b5800: an actor without a model (+0x120 bit 9) is passed over, its fade lost.
-                let ready = host.ready(a);
+                let ready = host.modelled(a);
                 if ready && self.thread(v).state == 0 {
                     host.effect(Effect::ActorFade { actor: a, alpha: self.val(v, 5), frames: self.val(v, 7) });
                     self.thread(v).state = 1;
@@ -1883,7 +1889,7 @@ impl Runtime {
             }
             0x99 => {
                 let a = self.actor_at(v, 1);
-                if host.ready(a) && host.busy(&Busy::Op { op: 0x99, sub: None, actor: a }) {
+                if host.modelled(a) && host.busy(&Busy::Op { op: 0x99, sub: None, actor: a }) {
                     self.yield_(v);
                 } else {
                     self.adv(v, 5);
@@ -1891,7 +1897,8 @@ impl Runtime {
             }
             0x70 | 0x76 => {
                 let a = if opc == 0x70 { actor } else { self.actor_at(v, 1) };
-                if host.ready(a) && host.busy(&Busy::Turning { actor: a }) {
+                let ok = if opc == 0x76 { host.modelled(a) } else { host.ready(a) };
+                if ok && host.busy(&Busy::Turning { actor: a }) {
                     self.yield_(v);
                 } else {
                     self.adv(v, len);
@@ -3618,7 +3625,7 @@ mod tests {
             fn effect(&mut self, e: Effect) {
                 self.0.effect(e)
             }
-            fn ready(&self, _actor: u32) -> bool {
+            fn modelled(&self, _actor: u32) -> bool {
                 false
             }
         }

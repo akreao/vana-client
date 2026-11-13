@@ -579,10 +579,8 @@ pub struct State {
     pub hidden: HashSet<u32>,
     /// Actors the script faded (op 0x6c); made opaque again when the event ends (inferred).
     faded: HashSet<u32>,
-    /// Op 0x34 / 0x35 freed every model (FUN_100b3df0 -> FUN_10091150): no actor is ready until they are made again.
-    models_off: bool,
-    /// VM ticks until the models are back once the area has loaded (FUN_10094150 at the next frame's end).
-    models_back: Option<u8>,
+    /// Op 0x34 / 0x35 freed every model: actors are not modelled until they are made again.
+    models: ModelGate,
     pub idle: HashMap<u32, String>,
     /// The scheduler a motion op (0x5b / 0x66, 0x5f 3..6; FUN_100b5210) last started on an actor, and its second
     /// actor (+0x1ec / +0x1f4): ops 0x5e / 0x6b stop it before they set the idle motion (FUN_10087d40).
@@ -680,8 +678,7 @@ impl State {
             map_preview: false,
             hidden: HashSet::new(),
             faded: HashSet::new(),
-            models_off: false,
-            models_back: None,
+            models: ModelGate::default(),
             idle: HashMap::new(),
             event_sched: HashMap::new(),
             bound: HashSet::new(),
@@ -1689,12 +1686,8 @@ impl Host for LiveHost<'_> {
             Effect::Op { op: 0xd9, args, .. } => self.w.event_voices = Self::arg_int(&args, 0) == Some(0),
             // FUN_10184380 with the area: the App loads it (or brings the zone's scene back) and ends the wait.
             Effect::Op { op: 0x34 | 0x35, args, .. } => {
-                // FUN_100b3df0's first frame frees every actor's model; FUN_1008f740 makes each again at 0x80808080.
-                self.st.models_off = true;
-                self.st.models_back = None;
-                for a in self.w.actors.values_mut() {
-                    (a.alpha, a.rgb, a.fade) = (super::actmotion::OPAQUE, [super::actmotion::OPAQUE; 3], None);
-                }
+                self.st.models.free();
+                remade(&mut self.w.actors);
                 match args.first() {
                     Some(Arg::Int(v)) if (0..0x10000).contains(v) => self.w.area.want = Some(*v as u16),
                     _ => self.w.area.done = true,
@@ -2028,9 +2021,8 @@ impl Host for LiveHost<'_> {
             // Asked before the op's effect runs, so the first frame waits too (retail spends three frames on it).
             Busy::Op { op: 0x34 | 0x35, .. } => {
                 let busy = !std::mem::take(&mut self.w.area.done);
-                // Retail's frame returns as the op ends, so the threads it starts run the next frame, still modelless.
-                if !busy && self.st.models_off {
-                    self.st.models_back = Some(2);
+                if !busy {
+                    self.st.models.area_done();
                 }
                 busy
             }
@@ -2092,7 +2084,11 @@ impl Host for LiveHost<'_> {
     /// FUN_10089c70 and +0x120 bit 9: the actor exists (all bound ones do once the event starts).
     fn ready(&self, actor: u32) -> bool {
         let id = self.wid(actor);
-        !self.st.models_off && (id == self.w.my_id || self.w.entities.contains_key(&id))
+        id == self.w.my_id || self.w.entities.contains_key(&id)
+    }
+
+    fn modelled(&self, actor: u32) -> bool {
+        self.st.models.on() && self.ready(actor)
     }
 
     fn name(&self, actor: u32) -> String {
@@ -2259,6 +2255,52 @@ impl LiveHost<'_> {
                 self.st.hidden.remove(&id);
             }
         }
+    }
+}
+
+/// Op 0x34 / 0x35's models (FUN_100b3df0): every one freed on the op's first frame (FUN_10091150, +0x120 bit 9 clear),
+/// made again by FUN_10094150 at the end of the frame after the area loads; the threads the op starts run modelless.
+#[derive(Default)]
+struct ModelGate {
+    off: bool,
+    /// VM ticks left without models once the area wait has ended.
+    back: Option<u8>,
+}
+
+impl ModelGate {
+    fn free(&mut self) {
+        (self.off, self.back) = (true, None);
+    }
+
+    /// The op's wait ended: its tick and the next run without models.
+    fn area_done(&mut self) {
+        if self.off {
+            self.back = Some(2);
+        }
+    }
+
+    /// After each VM tick.
+    fn ticked(&mut self) {
+        if let Some(n) = self.back {
+            self.back = n.checked_sub(1).filter(|n| *n > 0);
+            self.off = self.back.is_some();
+        }
+    }
+
+    fn on(&self) -> bool {
+        !self.off
+    }
+
+    /// Freed and the area still loading: the VM waits, as retail's synchronous load does.
+    fn loading(&self, area_done: bool) -> bool {
+        self.off && self.back.is_none() && !area_done
+    }
+}
+
+/// FUN_1008f740 makes a model at colour 0x80808080: whatever fade an actor had is gone.
+fn remade(actors: &mut HashMap<u32, super::Actor>) {
+    for a in actors.values_mut() {
+        (a.alpha, a.rgb, a.fade) = (super::actmotion::OPAQUE, [super::actmotion::OPAQUE; 3], None);
     }
 }
 
@@ -2527,15 +2569,13 @@ pub fn update(w: &mut World, dt: f32) {
     // a faster frame limit does not speed the script up; a slow frame runs up to 4 ticks.
     live.st.vm_ticks = (live.st.vm_ticks + ticks).min(4.0);
     let mut ran = 0;
-    while live.st.vm_ticks >= 1.0 && !live.rt.done() {
+    // Retail loads op 0x34's area inside the op's last frame: no thread runs while ours loads in the background.
+    while live.st.vm_ticks >= 1.0 && !live.rt.done() && !live.st.models.loading(w.area.done) {
         live.st.vm_ticks -= 1.0;
         ran += 1;
         let mut host = LiveHost { w: &mut *w, st: &mut live.st, index: &index };
         live.rt.tick(&mut host, 1.0);
-        if let Some(n) = live.st.models_back {
-            live.st.models_back = n.checked_sub(1).filter(|n| *n > 0);
-            live.st.models_off = live.st.models_back.is_some();
-        }
+        live.st.models.ticked();
     }
     // The bodies only move when the VM ticks: their motion ratios count VM ticks, not frames (at 300 fps a
     // frame-based ratio flipped between 0 and a capped run, and the legs blurred).
@@ -4057,6 +4097,40 @@ mod tests {
         }
         assert!(!st.cancellable);
         assert!(st.flags_df04 & 0x2000 != 0, "op 0x38 keeps 0x052 mode 0 from enabling cancel");
+    }
+
+    /// Op 0x34: no thread runs while the area loads; once its wait ends, that tick and the next are modelless; then
+    /// the models are back. A remade model is opaque, its fade gone.
+    #[test]
+    fn area_switch_models() {
+        let mut g = ModelGate::default();
+        assert!(g.on() && !g.loading(false));
+        g.free();
+        assert!(!g.on());
+        assert!(g.loading(false), "the VM waits while the area loads");
+        assert!(!g.loading(true));
+        // The tick that takes the finished wait, and the one after.
+        g.area_done();
+        assert!(!g.loading(false));
+        for tick in 0..2 {
+            assert!(!g.on(), "tick {tick} after the wait is modelless");
+            g.ticked();
+        }
+        assert!(g.on());
+        g.ticked();
+        assert!(g.on());
+        // Ticks while the area loads count nothing.
+        g.free();
+        g.ticked();
+        assert!(!g.on() && g.loading(false));
+
+        let mut actors = HashMap::from([(1u32, super::super::Actor::new())]);
+        let a = actors.get_mut(&1).unwrap();
+        a.alpha = 0.0;
+        a.fade = Some(super::super::actmotion::Fade::to(0.0, 0x80, 10));
+        remade(&mut actors);
+        let a = &actors[&1];
+        assert!(a.alpha == super::super::actmotion::OPAQUE && a.fade.is_none());
     }
 
     #[test]
