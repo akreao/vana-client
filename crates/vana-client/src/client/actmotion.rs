@@ -347,11 +347,20 @@ impl std::fmt::Debug for Chunk {
     }
 }
 
+/// FUN_100c83c0's fallbacks for a status motion the model lacks: 'id1 ' -> 'idl ', 'df1 ' -> 'dft0'.
+pub const STATUS_FALLBACKS: [(&str, &str); 2] = [("id1", "idl"), ("df1", "dft")];
+/// Ours: the idles that stand in when nothing plays at all (a chocobo's is "chi").
+pub const IDLE_STAND_INS: [&str; 2] = ["idl", "chi"];
+/// FUN_100cdf90's blink and FUN_100ce0e0's talk overlay (a line without the entity's face motion).
+pub const BLINK: &str = "eye3";
+pub const TALK: &str = "mou6";
+
 /// The model's motion queues (FUN_1001a420's seven regions).
 pub type Queues = crate::motionq::Queues<Chunk>;
 
 /// A motion's chunks as FUN_100cd540 queues them: (region, chunk, frames, speed), the first one per region in search
 /// order. A PC look whose body has no skirt set (+0x881 == 0, model kinds 0 / 1 / 6) queues no region 2 chunk.
+/// *(Not modelled: FUN_100cd540's `jmp*` pass, region 1 from `run1` at a scaled rate; ours queues `jmp`'s.)*
 pub fn chunks(cache: &mut FindCache, extra: &Extra, ch: &Character, name: &str) -> Vec<(u8, Chunk, f32, f32)> {
     if find_cached(cache, extra, ch, name).is_empty() {
         return Vec::new();
@@ -417,7 +426,7 @@ impl Default for Play {
             base: String::new(),
             cut: -1.0,
             stance_at: None,
-            stance_blend: 10.0,
+            stance_blend: 0.0,
             stanced: false,
             queued: 0,
             force: false,
@@ -437,6 +446,9 @@ impl Play {
             ..Default::default()
         };
         play.stance_at = p.stance_at.map(|t| t as f32);
+        if let Some(b) = p.stance_blend {
+            play.stance_blend = b.max(0.0);
+        }
         play
     }
 
@@ -1069,5 +1081,94 @@ mod tests {
             assert!(!fd.tick(1.0));
         }
         assert!(fd.tick(2.0) && fd.alpha == 0.0);
+    }
+
+    /// Op 0x05 starts as the queue takes them: each once, in order, those before a cut or op 0x28 passed over.
+    #[test]
+    fn take_starts_once_past_the_cut() {
+        let m = |name: &str, at: u32| sched::Motion {
+            name: name.into(),
+            at,
+            speed: 1.0,
+            ticks: 10,
+            count: 1,
+            blend: 0,
+            out: 0,
+            half: 0,
+        };
+        let mut p = Play { motions: vec![m("a", 0), m("b", 20), m("c", 40)], length: 60.0, ..Default::default() };
+        p.ticks = 10.0;
+        assert_eq!(p.take_starts().iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["a"]);
+        p.ticks = 25.0;
+        p.cut();
+        p.ticks = 50.0;
+        assert_eq!(p.take_starts().iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["c"]);
+        assert!(p.take_starts().is_empty(), "each motion is handed out once");
+        // Op 0x28 at tick 20 passes over the motion that starts on it.
+        let mut p = Play {
+            motions: vec![m("a", 0), m("b", 20), m("c", 40)],
+            length: 60.0,
+            stance_at: Some(20.0),
+            ..Default::default()
+        };
+        p.ticks = 50.0;
+        assert_eq!(p.take_starts().iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["c"]);
+    }
+
+    /// Op 0x05's half (top nibble of byte @0x1f): 1 the first half of the frames, 2 from the second half.
+    #[test]
+    fn motion_span_halves() {
+        assert_eq!(sched::Motion::span(0, 9.0), (0.0, 0.0));
+        assert_eq!(sched::Motion::span(1, 9.0), (0.0, 4.0));
+        assert_eq!(sched::Motion::span(2, 9.0), (5.0, 0.0));
+    }
+
+    /// FUN_100cd540: a PC look with no skirt set queues no region 2 chunk; one with a skirt set, or an NPC, does.
+    #[test]
+    fn chunks_skip_the_skirt_without_one() {
+        let anim = |name: &str| Animation {
+            name: name.into(),
+            frames: 10,
+            speed: 1.0,
+            tracks: Arc::from(Vec::new()),
+            unkeyed: Arc::from(Vec::new()),
+        };
+        let mut ch = Character {
+            skeleton: crate::dat::character::Skeleton {
+                name: String::new(),
+                bones: Vec::new(),
+                points: Vec::new(),
+                point_rots: Vec::new(),
+                look_limits: [[0.0; 3]; 2],
+                boxes: Vec::new(),
+                spheres: Vec::new(),
+            },
+            parts: Vec::new(),
+            textures: Vec::new(),
+            animations: vec![anim("idl0"), anim("idl1"), anim("idl2")],
+            size_info: [0xFF; 4],
+            motions: Default::default(),
+            schedulers: Vec::new(),
+            files: Vec::new(),
+            part_files: Vec::new(),
+            cib: [-1; 3],
+            ranged: -1,
+            pc: None,
+            mount: None,
+            init_hidden: Default::default(),
+            grips: [None; 2],
+            log: Vec::new(),
+            packed: None,
+            skin: None,
+        };
+        let regions = |ch: &Character| {
+            chunks(&mut FindCache::default(), &Vec::new(), ch, "idl").iter().map(|c| c.0).collect::<Vec<_>>()
+        };
+        assert_eq!(regions(&ch), [0, 1, 2]);
+        let pc = crate::dat::motionfile::PcMotion { race: 1, weapon: -1, draw: 0, skirt: 0, dual: None, sub_draw: 0 };
+        ch.pc = Some(pc);
+        assert_eq!(regions(&ch), [0, 1]);
+        ch.pc = Some(crate::dat::motionfile::PcMotion { skirt: 1, ..pc });
+        assert_eq!(regions(&ch), [0, 1, 2]);
     }
 }

@@ -1097,15 +1097,12 @@ impl Host for LiveHost<'_> {
                 let (id, target) = (self.wid(*a1), self.wid(*a2));
                 self.stop_scheduler(id, target, name);
             }
-            // FUN_100b7140: on a skeleton actor with a model (+0x120 bit 9), FUN_100ce070 gives every entry of two
-            // motion regions (+0x674 -> +0x44, queues +0x60 / +0x9c = regions 3 and 6: the eyes, and the overlay a
-            // `mou6` talk plays in) FUN_1001b520(8.0): each plays on for 8 ticks, then goes. The body's motions are
-            // not touched.
+            // FUN_100b7140 -> FUN_100ce070: the eyes' and the talk overlay's motions play on for 8 ticks, then go.
             Effect::Op { op: 0xd3, sub: Some(0), args, .. } => {
                 let Some(id) = self.arg_actor(&args, 0) else { return };
                 if let Some(a) = self.w.actors.get_mut(&id).filter(|a| a.character.is_some()) {
-                    a.q.fade_region(3, 8.0);
-                    a.q.fade_region(6, 8.0);
+                    a.q.fade_region(crate::motionq::EYES, 8.0);
+                    a.q.fade_region(crate::motionq::OVERLAY_TALK, 8.0);
                 }
             }
             // FUN_100b72c0 subs 0 / 1: the thread's actor (+0x124 bit 29 = sub).

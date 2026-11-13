@@ -5838,11 +5838,8 @@ struct Actor {
     gpu: Option<crate::render::ActorGpu>,
     /// A changed look's model while its GPU copy goes up: the old one stays drawn (and targetable) until then.
     next: Option<Arc<Model>>,
-    /// The motion queued last (the status motion, a one-shot or a scheduler's), and its place in ticks (1/60 s at
-    /// rate 1: frame / (speed x 0.5)) in the lowest region it took (`q_main`).
+    /// The motion queued last (the status motion, a one-shot or a scheduler's), for the motion log.
     motion: String,
-    ticks: f32,
-    q_main: u8,
     /// The model's motion queues (crate::motionq; FUN_1001a420's seven regions): what is posed.
     q: actmotion::Queues,
     /// Model +0x7d8 / +0x7dc: the status motion FUN_100c83c0 queued last, and its rate.
@@ -5857,9 +5854,6 @@ struct Actor {
     overlays: Vec<actmotion::Overlay>,
     /// Event op 0xae 5 (model +0x798): the leader whose motion frame this one's never runs ahead of (FUN_100cb400).
     motion_link: Option<u32>,
-    /// The motion queued last is counted (a one-shot or a counted scheduler motion): it holds its last frame
-    /// (FUN_1001a8e0: regions < 3 hold the last frame when the count ends).
-    once: bool,
     /// Height of the posed model's top above its feet (world units, y down so negative).
     top: f32,
     /// An attack, damage or death motion played once over the status motion.
@@ -6011,16 +6005,20 @@ impl Actor {
         if seed {
             wepfx::seed(self, m);
         }
-        // The queues go on over a look change while the new model carries the same motions at the same places (the
-        // looks of one race); another model's start empty.
-        let same = |i: usize| {
-            self.character.as_ref().and_then(|c| c.animations.get(i)).map(|a| &a.name)
-                == m.animations.get(i).map(|a| &a.name)
+        // The queues go on over a look change on the same skeleton whose model chunks share their tracks (the looks of
+        // one race); another model's start empty.
+        let old = self.character.as_ref();
+        let skeleton = old.is_some_and(|c| c.files.first() == m.files.first());
+        let same = |i: usize| match (old.and_then(|c| c.animations.get(i)), m.animations.get(i)) {
+            (Some(a), Some(b)) => Arc::ptr_eq(&a.tracks, &b.tracks),
+            _ => false,
         };
-        if !self.q.regions.iter().flatten().all(|e| match &e.anim {
-            actmotion::Chunk::Model(i) => same(*i),
-            actmotion::Chunk::File(..) => true,
-        }) {
+        if !skeleton
+            || !self.q.regions.iter().flatten().all(|e| match &e.anim {
+                actmotion::Chunk::Model(i) => same(*i),
+                actmotion::Chunk::File(..) => true,
+            })
+        {
             self.q = Default::default();
             self.q_status.clear();
             self.q_layers.clear();
@@ -6035,7 +6033,7 @@ impl Actor {
     /// lets every motion in the mouth region (4) run 8 more ticks, then they go.
     fn mouth_off(&mut self) {
         self.mouth = None;
-        self.q.fade_region(4, 8.0);
+        self.q.fade_region(crate::motionq::MOUTH, 8.0);
     }
 
     /// Model +0x7d8 = "    ": FUN_100c83c0 queues the status motion again.
@@ -6052,15 +6050,12 @@ impl Actor {
             gpu: None,
             next: None,
             motion: String::new(),
-            ticks: 0.0,
-            q_main: 0,
             q: Default::default(),
             q_status: String::new(),
             q_rate: 1.0,
             status_force: None,
             q_layers: Vec::new(),
             overlays: Vec::new(),
-            once: false,
             top: -2.0,
             oneshot: None,
             event_scale: None,
@@ -18589,8 +18584,6 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
             ));
             if mask & 0x1f != 0 {
                 a.motion = name.to_string();
-                a.once = e.count != 0;
-                a.q_main = mask.trailing_zeros() as u8;
             }
             true
         };
@@ -18611,12 +18604,10 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
                 a.status_force.get_or_insert(-1.0);
             }
         }
-        // The status motion (FUN_100c83c0, every frame): queued when its name changes, when a counted motion has
-        // ended (vtable +0x200) or when +0x7d8 was blanked; a changed rate alone goes on the newest entry of every
-        // region.
-        // *(ours: a held actor with nothing queued yet, a model that just came in, still takes its status motion; not
-        // the rod, which never picks one, FUN_100c63d0.)*
-        if !held || (!fishrod::is_rod(*id) && a.q.regions[..5].iter().all(|l| l.is_empty())) {
+        // FUN_100c83c0: re-queued on a name change, a counted end or a blanked +0x7d8; a rate change alone goes on the
+        // newest entries. Op 0x28 (0x1005b12e) queues it past the +0x80 hold. *(ours: so does an empty queue, not a rod.)*
+        let stance = a.status_force.is_some_and(|b| b >= 0.0);
+        if stance || !held || (!fishrod::is_rod(*id) && a.q.regions[..5].iter().all(|l| l.is_empty())) {
             // Motion and rate as FFXiMain picks them (FUN_100c6b70 / FUN_100c8930 / FUN_100c8bb0).
             let (s, r): (String, f32) = if ratio < 1e-3 && idles.get(id).is_some_and(|n| has(n)) {
                 // Op 0x5e / 0x6b: the event's idle motion while the actor stands.
@@ -18650,18 +18641,13 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
                     _ => (crate::motion::BLEND_TICKS, !s.starts_with("jmp"), "status"),
                 };
                 let e = crate::motionq::Enq::status(r, blend, carry);
-                // FUN_100c83c0's fallbacks: 'id1 ' -> 'idl ', 'df1 ' -> 'dft0'. A status motion the model lacks
-                // is not queued (FUN_100cd920 fails, +0x7d8 stays), so what plays goes on: the walk of an NPC without
-                // a run. *(ours: with nothing playing at all, the model's idle, "idl" or a chocobo's "chi".)*
-                let alt = match s.as_str() {
-                    "id1" => Some("idl"),
-                    "df1" => Some("dft"),
-                    _ => None,
-                };
+                // FUN_100c83c0's fallbacks; a motion the model lacks is not queued, so what plays goes on.
+                // *(ours: with nothing playing at all, an idle stands in.)*
+                let alt = actmotion::STATUS_FALLBACKS.iter().find(|(n, _)| *n == s).map(|(_, f)| *f);
                 let bare = a.q.regions[..5].iter().all(|l| l.is_empty());
                 let pick = std::iter::once(s.as_str())
                     .chain(alt)
-                    .chain([ch.motions.idle, "idl", "chi"].into_iter().filter(|_| bare))
+                    .chain(std::iter::once(ch.motions.idle).chain(actmotion::IDLE_STAND_INS).filter(|_| bare))
                     .find(|n| queue(a, n, 0, &e, why));
                 if pick.is_some() {
                     (a.q_status, a.q_rate, a.status_force) = (s, r, None);
@@ -18745,14 +18731,15 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
         // an overlay in region 6 (in over 16, out over 8).
         if a.mouth.as_mut().is_some_and(|m| std::mem::take(&mut m.start)) {
             let name = a.mouth_name;
-            let _ = single(a, name, 4, 8.0, 1.0) || single(a, "mou6", 6, 16.0, 8.0);
+            let _ = single(a, name, crate::motionq::MOUTH, 8.0, 1.0)
+                || single(a, actmotion::TALK, crate::motionq::OVERLAY_TALK, 16.0, 8.0);
         }
         // FUN_100cdf90: every rand() % 480 ticks the eyes blink (eye3 into region 3) unless op 0xb5 holds them.
         a.blink_wait -= ticks;
         if a.blink_wait < 0.0 {
             a.blink_wait = (actmotion::crand() % 480) as f32;
             if !w.effects.no_blink.contains(id) && !a.blink_off {
-                single(a, "eye3", 3, 1.0, 1.0);
+                single(a, actmotion::BLINK, crate::motionq::EYES, 1.0, 1.0);
             }
         }
         // FUN_1001a3e0: the queues' fades and frames.
@@ -18767,9 +18754,6 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
                     e.frame = f;
                 }
             }
-        }
-        if let Some(e) = a.q.regions[a.q_main as usize].last() {
-            a.ticks = e.frame / (e.speed * 0.5).max(1e-6);
         }
         if a.jump >= 0.0 {
             a.jump -= ticks;

@@ -1518,7 +1518,7 @@ pub(super) fn react_op(w: &mut World, r: &crate::fx::React) {
         fade: r.fade,
         rate: r.rate,
         blend_in: r.blend_in,
-        region: 5,
+        region: crate::motionq::OVERLAY as u8,
     });
 }
 
@@ -1756,8 +1756,7 @@ pub(super) fn guard_op(w: &mut World, g: &crate::fx::Guard) {
         return;
     }
     log::debug!(target: "motion", "actor {:#x}: {name} count {} fade {}", g.reactor, g.count, g.fade);
-    // Standing (`gdi?` / `pyi?`) the region argument is 0: the chunks go to their regions as a counted motion;
-    // moving, to the overlay region 5.
+    // Standing (`gdi?` / `pyi?`) a counted motion in its chunks' regions; moving, in the overlay region.
     a.overlays.push(actmotion::Overlay {
         name: name.to_string(),
         weight: 1.0,
@@ -1765,7 +1764,7 @@ pub(super) fn guard_op(w: &mut World, g: &crate::fx::Guard) {
         fade: g.fade,
         rate: g.rate,
         blend_in: g.blend_in,
-        region: if name.ends_with('m') { 5 } else { 0 },
+        region: if name.ends_with('m') { crate::motionq::OVERLAY as u8 } else { 0 },
     });
 }
 

@@ -2,8 +2,9 @@
 
 <!-- dll-build: 30261102_0 -->
 
-Queue rows 4 and 9 of the modlog-gaps queue (the mouth's 8-tick fade; the phase carry per region). Not checked in
-game yet.
+Queue rows 4 and 9 of the modlog-gaps queue (the mouth's 8-tick fade; the phase carry per region). Checked in game
+on an LSB server: run start / stop, swings and hit reactions, strafing while engaged, emotes, death and raise,
+engage / disengage. Not yet checked: an NPC's line closing (row 4), guard / parry, blend smoothness.
 
 - Retail keeps seven queues per model, one per body region, each a list of weighted entries (FUN_1001ad00 queues,
   FUN_1001a3e0 ticks, FUN_1001a420 poses). Ours had one status-motion clock, a whole-pose cross-fade (`prev`, `keep`,
@@ -23,7 +24,8 @@ game yet.
 - What changed with it, each as the binary has it:
   - Scheduler op 0x05 motions (swings, deaths, event and emote motions) start at their op's start frame, not at
     a carried phase; the op's out length (u16 @0x1c) and half (top nibble of byte @0x1f: first or second half of
-    the frames) are read. Op 0x28 queues the status motion with its blend-in (f32 @8).
+    the frames) are read. Op 0x28 queues the status motion with its blend-in (f32 @8), a planned play's too, and
+    past the +0x80 hold (its handler calls FUN_100cd920 directly, 0x1005b0c8..0x1005b12e).
   - A counted motion's end raises the model's flag (+0x79c) from the queue itself; FUN_100c83c0 then queues the
     status motion again in all its regions, from frame 0, blended in over the counted motion's out length. So
     after a moving swing (which keys the upper body only) the leg cycle starts over through that blend; before,
@@ -33,14 +35,19 @@ game yet.
     a counted motion in its chunks' regions. Several can overlap (the queue holds them).
   - A spoken line's mouth is the entity's face motion (one chunk by its whole name) in region 4, in over 8 ticks;
     without it `mou6` plays as an overlay in region 6, in over 16 and out over 8. A blink is `eye3` in region 3.
-  - Event op 0xd3 fades regions 3 and 6 only (FUN_100ce070); ours ended the actor's scheduler motions.
+  - Event op 0xd3 fades regions 3 and 6 only (FUN_100ce070: queues +0x60 / +0x9c of the queues at model +0x24,
+    0x14 a region); ours ended the actor's scheduler motions. This supersedes "Event op 0xd3: end the actor's
+    motions" (2026-11-02) in MODLOG.md, which read +0x60 / +0x9c as both motion lists.
   - A PC look whose body has no skirt set (info[9] == 0) queues no region 2 chunk (FUN_100cd540).
   - A bone a region 1..4 chunk names without keying (rot index bit 31) goes back toward the rest pose by the
     entry's weight over an older entry of that region that keyed it (FUN_10019ee0).
+  - A blend of 0 counts as 1 tick (0x1001ad77) in the new entry, the phase carry and the old entry's fade.
   - The motion link (event op 0xae 5, FUN_100cb400) holds each region's newest entry to the leader's.
 - Ours, marked in the code: a dead actor's corpse motion waits for the death motion's end only while a motion of
-  ours is running; a held actor with nothing queued still takes its status motion; with nothing playing at all
-  the model's idle stands in for a status motion it lacks.
+  ours is running; a held actor with nothing queued still takes its status motion (not the fishing rod); with
+  nothing playing at all the model's idle stands in for a status motion it lacks. The queues go on over a look
+  change only on the same skeleton with shared model tracks. FUN_100cd540's `jmp*` pass (region 1 from `run1`)
+  is not modelled.
 - Performance: one pose per actor on the GPU instead of two during a cross-fade (scratch halved); animations are
   found by index instead of a pointer search per layer per frame.
 - Tests: motionq (queue rows, fades, counted ends, overlay weights), render::anim (GPU against the CPU poser with
