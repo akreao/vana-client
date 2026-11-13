@@ -1836,11 +1836,13 @@ impl Runtime {
             }
             0x6c => {
                 let a = self.actor_at(v, 1);
-                if self.thread(v).state == 0 {
+                // FUN_100b5800: an actor without a model (+0x120 bit 9) is passed over, its fade lost.
+                let ready = host.ready(a);
+                if ready && self.thread(v).state == 0 {
                     host.effect(Effect::ActorFade { actor: a, alpha: self.val(v, 5), frames: self.val(v, 7) });
                     self.thread(v).state = 1;
                 }
-                if host.busy(&Busy::Op { op: opc, sub, actor: a }) {
+                if ready && host.busy(&Busy::Op { op: opc, sub, actor: a }) {
                     self.yield_(v);
                 } else {
                     self.thread(v).state = 0;
@@ -3606,6 +3608,43 @@ mod tests {
             rt.tick(&mut host, 1.0);
         }
         assert_eq!((rt.mem.m[1], rt.mem.m[2]), (0b100, 0x300));
+    }
+
+    /// Op 0x6c on an actor without a model (FUN_100b5800, +0x120 bit 9 clear) passes over it: no fade.
+    #[test]
+    fn fade_needs_model() {
+        struct Modelless(Scripted);
+        impl Host for Modelless {
+            fn effect(&mut self, e: Effect) {
+                self.0.effect(e)
+            }
+            fn ready(&self, _actor: u32) -> bool {
+                false
+            }
+        }
+        // actor_fade self, #0, #1; event_end.
+        let code = vec![0x6c, 0xf8, 0xff, 0xff, 0x7f, 0x00, 0x80, 0x01, 0x80, 0x21, 0x00];
+        let actor = 0x010e_601b;
+        let fades = |modelled: bool| {
+            let blocks = vec![event::Block { actor, events: vec![(1, 0)], consts: vec![0, 1], code: code.clone() }];
+            let start = Start { zone: 230, event: 1, target: actor, ..Default::default() };
+            let mut host = Modelless(Scripted::new(&[]));
+            let log = if modelled {
+                let mut rt = Runtime::start(blocks, None, start, Memory::default(), &mut host.0);
+                run_scripted(&mut rt, &mut host.0, 60).expect("finished");
+                host.0.log
+            } else {
+                let mut rt = Runtime::start(blocks, None, start, Memory::default(), &mut host);
+                for _ in 0..60 {
+                    rt.tick(&mut host, 1.0);
+                }
+                assert!(rt.done(), "the op advanced");
+                host.0.log
+            };
+            log.iter().filter(|e| matches!(e, Effect::ActorFade { .. })).count()
+        };
+        let (with, without) = (fades(true), fades(false));
+        assert!(with > 0 && without == 0, "{with} {without}");
     }
 
     /// Op 0x5f subs 0 / 1 (FUN_100b72c0): two bytes, to the host with the thread's actor (its +0x124 bit 29).

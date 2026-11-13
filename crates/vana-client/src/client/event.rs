@@ -579,6 +579,10 @@ pub struct State {
     pub hidden: HashSet<u32>,
     /// Actors the script faded (op 0x6c); made opaque again when the event ends (inferred).
     faded: HashSet<u32>,
+    /// Op 0x34 / 0x35 freed every model (FUN_100b3df0 -> FUN_10091150): no actor is ready until they are made again.
+    models_off: bool,
+    /// VM ticks until the models are back once the area has loaded (FUN_10094150 at the next frame's end).
+    models_back: Option<u8>,
     pub idle: HashMap<u32, String>,
     /// The scheduler a motion op (0x5b / 0x66, 0x5f 3..6; FUN_100b5210) last started on an actor, and its second
     /// actor (+0x1ec / +0x1f4): ops 0x5e / 0x6b stop it before they set the idle motion (FUN_10087d40).
@@ -676,6 +680,8 @@ impl State {
             map_preview: false,
             hidden: HashSet::new(),
             faded: HashSet::new(),
+            models_off: false,
+            models_back: None,
             idle: HashMap::new(),
             event_sched: HashMap::new(),
             bound: HashSet::new(),
@@ -1682,10 +1688,18 @@ impl Host for LiveHost<'_> {
             }
             Effect::Op { op: 0xd9, args, .. } => self.w.event_voices = Self::arg_int(&args, 0) == Some(0),
             // FUN_10184380 with the area: the App loads it (or brings the zone's scene back) and ends the wait.
-            Effect::Op { op: 0x34 | 0x35, args, .. } => match args.first() {
-                Some(Arg::Int(v)) if (0..0x10000).contains(v) => self.w.area.want = Some(*v as u16),
-                _ => self.w.area.done = true,
-            },
+            Effect::Op { op: 0x34 | 0x35, args, .. } => {
+                // FUN_100b3df0's first frame frees every actor's model; FUN_1008f740 makes each again at 0x80808080.
+                self.st.models_off = true;
+                self.st.models_back = None;
+                for a in self.w.actors.values_mut() {
+                    (a.alpha, a.rgb, a.fade) = (super::actmotion::OPAQUE, [super::actmotion::OPAQUE; 3], None);
+                }
+                match args.first() {
+                    Some(Arg::Int(v)) if (0..0x10000).contains(v) => self.w.area.want = Some(*v as u16),
+                    _ => self.w.area.done = true,
+                }
+            }
             Effect::Op { op: op @ (0x2e | 0x42 | 0x38), args, .. } => self.st.cancel_op(op, &args),
             // FUN_100b5b90 / FUN_100b5bf0: FUN_10132030(1, x, y) / (0, 0, 0) on both event message windows.
             Effect::Op { op: 0x67, args, .. } => {
@@ -2012,7 +2026,14 @@ impl Host for LiveHost<'_> {
                     || a.oneshot.as_ref().is_some_and(|o| o.name.starts_with(n) && o.ticks < o.len)
             }
             // Asked before the op's effect runs, so the first frame waits too (retail spends three frames on it).
-            Busy::Op { op: 0x34 | 0x35, .. } => !std::mem::take(&mut self.w.area.done),
+            Busy::Op { op: 0x34 | 0x35, .. } => {
+                let busy = !std::mem::take(&mut self.w.area.done);
+                // Retail's frame returns as the op ends, so the threads it starts run the next frame, still modelless.
+                if !busy && self.st.models_off {
+                    self.st.models_back = Some(2);
+                }
+                busy
+            }
             Busy::Op { op: 0x6c, actor, .. } => {
                 let id = self.wid(*actor);
                 self.w.actors.get(&id).is_some_and(|a| a.fade.is_some())
@@ -2071,7 +2092,7 @@ impl Host for LiveHost<'_> {
     /// FUN_10089c70 and +0x120 bit 9: the actor exists (all bound ones do once the event starts).
     fn ready(&self, actor: u32) -> bool {
         let id = self.wid(actor);
-        id == self.w.my_id || self.w.entities.contains_key(&id)
+        !self.st.models_off && (id == self.w.my_id || self.w.entities.contains_key(&id))
     }
 
     fn name(&self, actor: u32) -> String {
@@ -2511,6 +2532,10 @@ pub fn update(w: &mut World, dt: f32) {
         ran += 1;
         let mut host = LiveHost { w: &mut *w, st: &mut live.st, index: &index };
         live.rt.tick(&mut host, 1.0);
+        if let Some(n) = live.st.models_back {
+            live.st.models_back = n.checked_sub(1).filter(|n| *n > 0);
+            live.st.models_off = live.st.models_back.is_some();
+        }
     }
     // The bodies only move when the VM ticks: their motion ratios count VM ticks, not frames (at 300 fps a
     // frame-based ratio flipped between 0 and a capped run, and the legs blurred).
