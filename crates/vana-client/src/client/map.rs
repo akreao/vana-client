@@ -3105,7 +3105,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod marker_tests {
     use super::*;
