@@ -1445,13 +1445,13 @@ function res.augments(item, extdata) end
 ---@return {text: string, mode: integer?}?
 function res.message(id, options) end
 
---- The auto-translate dictionary: the entries whose completion key starts with `word` (no word: the group titles; a word that matches nothing: an empty list), or a group's entries: {text, group, id, phrase (the in-line string: put it in a chat line)}; nil before the dictionary loads.
+--- The auto-translate dictionary: the entries whose completion key starts with `word` (no word: the group titles; a word that matches nothing: an empty list), or a group's entries (`group`: an entry's `group`, or "item" / "key_item"): {text, kind, group, id, phrase (the in-line string: put it in a chat line)}. kind "phrase": group and id are the phrase's (id 0 a group's title). kind "item" / "key_item": a word of the Items / Key Items groups the game builds when its category list opens (the items it looked up lately, the key items held); id is the item or key item id (0 the group's title) and there is no group: pass `e.group or e.kind` on. nil before the dictionary loads.
 ---@param word? string 
----@param group? integer 
+---@param group? integer|string 
 ---@return table[]?
 function res.autotranslate(word, group) end
 
---- The auto-translate groups: {group, title, count}.
+--- The auto-translate groups: {kind, group, title, count}; the Items and Key Items groups the game builds (kind "item" / "key_item", no group) follow the file's (kind "phrase") once its category list has opened.
 ---@return table[]?
 function res.autotranslate_groups() end
 
@@ -1606,8 +1606,8 @@ function text.from_shift_jis(bytes) end
 ---@return string
 function text.to_shift_jis(text) end
 
---- An auto-translate phrase as a line holds it (group, id from res.autotranslate); put it in chat text.
----@param group integer 
+--- An auto-translate phrase as a line holds it (`e.group or e.kind`, `e.id` of a res.autotranslate entry: a group number and phrase id, or "item" / "key_item" and the item or key item id); put it in chat text.
+---@param group integer|string 
 ---@param id integer 
 ---@return string
 function text.phrase(group, id) end

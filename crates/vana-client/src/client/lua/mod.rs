@@ -2368,7 +2368,7 @@ mod tests {
                 };
                 let out = lua.create_table()?;
                 for id in 0x2800u32..0x7000 {
-                    let Some(it) = items.item(id).filter(|it| it.slots != 0 && !it.name.is_empty()) else { continue };
+                    let Some(it) = items.peek(id).filter(|it| it.slots != 0 && !it.name.is_empty()) else { continue };
                     let rec = lua.create_table()?;
                     rec.set("id", id)?;
                     rec.set("name", it.name.as_str())?;

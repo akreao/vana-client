@@ -2731,7 +2731,7 @@ pub(super) fn system_line(w: &mut World, id: u16) {
         return;
     }
     let Some(bt) = w.battle.clone() else { return };
-    let ctx = crate::dat::battle::Ctx { me: w.name.clone(), ..Default::default() };
+    let ctx = crate::dat::battle::Ctx { me: w.name.clone(), names: super::combat::tables(w), ..Default::default() };
     if let Some(line) = bt.system(id, &ctx) {
         let colour = bt.colour_in(line.mode.unwrap_or(0x79), &w.game);
         for l in line.lines.into_iter().filter(|l| !l.is_empty()) {

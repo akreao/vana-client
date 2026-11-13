@@ -392,9 +392,9 @@ pub(super) struct Pending {
     messages: Vec<Msg>,
 }
 
-/// The name tables for a message's key items.
-fn keys(w: &World) -> Option<crate::dat::battle::Keys> {
-    w.names.clone().map(crate::dat::battle::Keys)
+/// The name tables for a message line.
+pub(super) fn tables(w: &World) -> Option<crate::dat::battle::Tables> {
+    w.names.clone().map(crate::dat::battle::Tables)
 }
 
 pub(super) fn who(w: &World, id: u32) -> Option<Who> {
@@ -457,7 +457,7 @@ pub(super) fn on_emote(w: &mut World, caster: u32, target: u32, emote: u16, para
         target: (target != 0).then(|| who(w, target)).flatten(),
         me: w.name.clone(),
         work: [0; 5],
-        keys: keys(w),
+        names: tables(w),
         ..Default::default()
     };
     let entry = emote as u32 * 2 + (target == 0) as u32;
@@ -813,7 +813,7 @@ fn print(w: &mut World, m: Msg) {
         target: who(w, m.target),
         me: w.name.clone(),
         work: m.work,
-        keys: keys(w),
+        names: tables(w),
         ..Default::default()
     };
     let rel = relation(w, m.actor, m.target);
@@ -939,7 +939,7 @@ pub(super) fn on_system_message(w: &mut World, id: u16, work: [i32; 2]) {
         target: who(w, me),
         me: w.name.clone(),
         work: [work[0], work[1], 0, 0, 0],
-        keys: keys(w),
+        names: tables(w),
         ..Default::default()
     };
     match bt.system(id, &ctx) {
@@ -975,7 +975,7 @@ pub(super) fn on_message_std(w: &mut World, id: u16, cas: u32, para: [i32; 4], s
         me: w.name.clone(),
         work: [para[0], para[1], para[2], para[3], 0],
         strings,
-        keys: keys(w),
+        names: tables(w),
     };
     match bt.system(id, &ctx) {
         Some(line) => {
