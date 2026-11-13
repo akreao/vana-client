@@ -20684,12 +20684,15 @@ mod tests {
     fn zoom_keys_are_macro_keys() {
         let ctrl = egui::Modifiers { ctrl: true, command: true, ..Default::default() };
         // A zoom change takes effect at the next pass's start: an empty pass after each.
-        let idle = |ctx: &egui::Context| {
-            let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        // The pass's output goes through `run`: egui panics on a dropped `TexturesDelta` (the first pass uploads the font atlas).
+        let run = |ctx: &egui::Context, input: egui::RawInput| {
+            let mut out = ctx.run_ui(input, |_| {});
+            out.textures_delta.clear();
         };
+        let idle = |ctx: &egui::Context| run(ctx, egui::RawInput::default());
         let press = |ctx: &egui::Context, key| {
             let event = egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: ctrl };
-            let _ = ctx.run_ui(egui::RawInput { events: vec![event], ..Default::default() }, |_| {});
+            run(ctx, egui::RawInput { events: vec![event], ..Default::default() });
             idle(ctx);
         };
         let plain = egui::Context::default();
