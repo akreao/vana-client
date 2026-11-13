@@ -1186,6 +1186,8 @@ pub struct NetStats {
     pub send_ms: std::sync::atomic::AtomicU32,
     /// Settings' Send Rate in ms, used on a private server when no mod sets one (0 before the first frame sets it).
     pub rate_ms: std::sync::atomic::AtomicU32,
+    /// Send queue slots taken (sent and unacknowledged, queued, the position's), for `call_gate`'s room test.
+    pub waiting: std::sync::atomic::AtomicU32,
     /// Config `gm_window`: the zone-in asks a private server for the GM list (c2s 0x1F0).
     pub gm_window: std::sync::atomic::AtomicBool,
     /// The last sub-packet of each id each way (packets.last), kept while HOOK_LAST is set.
@@ -1194,6 +1196,27 @@ pub struct NetStats {
     /// The ids the mods hook each way (in, out; a bit an id), published each frame: only a batch holding one goes
     /// through the main thread, the rest decode or go out at once.
     pub hooked: [[AtomicU64; 8]; 2],
+}
+
+/// Retail's PacketCnt from the config (+0xd0): the datagram interval in ms until s2c 0x005 sets another.
+const RETAIL_INTERVAL: u32 = 400;
+/// s2c 0x005: the server's PacketCnt.
+const S2C_PACKET_CONTROL: u16 = 0x005;
+/// c2s 0x00D: the answer to a zone change or logout (s2c 0x00B), the session's last datagram.
+const C2S_NETEND: u16 = 0x00D;
+
+/// The datagram interval in force, one rule: a mod's interval, then a Send Rate faster than retail's on a private
+/// server (LSB answers every datagram), then the server's s2c 0x005, then retail's 400.
+fn wanted_interval(stats: &NetStats, private: bool, server: Option<u32>) -> u32 {
+    let retail = server.unwrap_or(RETAIL_INTERVAL);
+    match stats.send_ms.load(Relaxed) {
+        0 if private => match stats.rate_ms.load(Relaxed) {
+            n @ 1..RETAIL_INTERVAL => n.max(50),
+            _ => retail,
+        },
+        0 => retail,
+        n => n,
+    }
 }
 
 /// A sub-packet's id (its first 9 bits).
@@ -1280,74 +1303,137 @@ fn packet_id(p: &[u8]) -> u16 {
     u16::from_le_bytes([p[0], p[1]]) & 0x1ff
 }
 
-/// FUN_100fc3c0 for a caller that acts on the answer (chat and tells refuse before their echo): the id was last
-/// admitted 1000 ms ago or more; admitting stores the time.
-pub fn call_gate(last: &mut std::collections::HashMap<u16, Instant>, id: u16, now: Instant) -> bool {
-    let open = last.get(&id).is_none_or(|t| now.duration_since(*t) >= Duration::from_millis(1000));
-    if open {
+/// FUN_100fc510's test (0x100fc56a): refused while now <= last + 1000 on the ms clock, so the gate opens at 1001 ms.
+fn gate_open(last: Instant, now: Instant) -> bool {
+    now.duration_since(last).as_millis() > 1000
+}
+
+/// FUN_100dda60's room test (the send queue: 30 slots of 0x110 bytes, 10 kept back): a slot is given while at least
+/// 10 are free, so with 21 or more waiting (queued, or sent and not acknowledged) a send is refused; c2s 0x00C and
+/// 0x0F2 (the ids FUN_100fa000 registers, FUN_100dddc0) may take the kept ones, up to 29 waiting.
+fn queue_room(id: u16, waiting: usize) -> bool {
+    waiting < if matches!(id, 0x00C | 0x0F2) { QUEUE_SLOTS - 1 } else { QUEUE_SLOTS - QUEUE_KEPT + 1 }
+}
+
+const QUEUE_SLOTS: usize = 30;
+const QUEUE_KEPT: usize = 10;
+
+/// FUN_100fa000: the interval at the connect is 5 x the base, from the config's 400 in retail (2000 ms). Ours caps it
+/// there, so a slower mod interval does not slow the login and the first sends after the zone-in.
+fn connect_interval(base: u32) -> u32 {
+    base.saturating_mul(5).min(5 * RETAIL_INTERVAL)
+}
+
+/// FUN_100fab40's interval step (0x100fab53), run before each datagram once zoned in: when the datagram about to go
+/// and the server's last acknowledgement are more than one apart (`lag`, MapSession::lag) the interval grows 50 ms,
+/// up to the base + 3000; otherwise an interval above the base drops by the base, not below it.
+fn step_interval(interval: u32, base: u32, lag: i32) -> u32 {
+    if !(-1..=1).contains(&lag) {
+        interval.wrapping_add(50).min(base.wrapping_add(3000))
+    } else if interval > base {
+        (interval - base).max(base)
+    } else {
+        interval
+    }
+}
+
+/// FUN_100fc3c0's answer to one send.
+#[derive(Debug, PartialEq)]
+enum Ask {
+    Given,
+    /// A gated id within its second.
+    Shut,
+    /// No queue slot (FUN_100dda60).
+    Full,
+}
+
+/// FUN_100fc3c0 for one packet with `waiting` slots taken: a gated id's time is stored before the queue is asked
+/// for a slot (0x100fc5d9), so a full queue still uses the second.
+fn ask(last: &mut std::collections::HashMap<u16, Instant>, id: u16, gated: bool, waiting: usize, now: Instant) -> Ask {
+    if gated {
+        if last.get(&id).is_some_and(|t| !gate_open(*t, now)) {
+            return Ask::Shut;
+        }
         last.insert(id, now);
     }
-    open
+    if queue_room(id, waiting) { Ask::Given } else { Ask::Full }
+}
+
+/// c2s chat, tells and fishing: their callers act on a refusal, so they ask the gate where they are made. The GM
+/// prompt's answer tells skip it (retail retries them each frame; ours sends each once, client/gmtell.rs).
+pub const C2S_CHAT: u16 = 0x0B5;
+pub const C2S_TELL: u16 = 0x0B6;
+pub const C2S_FISHING: u16 = 0x110;
+const CALLER_GATED: &[u16] = &[C2S_CHAT, C2S_TELL, C2S_FISHING];
+
+/// FUN_100fc3c0 for a caller that acts on the answer (chat and tells refuse before their echo): the gate's second
+/// and the queue's room, from the slots the net thread last published (NetStats::waiting).
+pub fn call_gate(last: &mut std::collections::HashMap<u16, Instant>, id: u16, stats: &NetStats, now: Instant) -> bool {
+    ask(last, id, true, stats.waiting.load(Relaxed) as usize, now) == Ask::Given
 }
 
 impl SendGate {
-    fn open(&self, id: u16, now: Instant) -> bool {
-        self.last.get(&id).is_none_or(|t| now.duration_since(*t) >= Duration::from_millis(1000))
+    /// FUN_100fc3c0 for a packet of ours; one behind a held packet of its id is shut until that one goes.
+    fn ask(&mut self, id: u16, waiting: usize, now: Instant) -> Ask {
+        let gated = GATED.binary_search(&id).is_ok();
+        if gated && self.held.iter().any(|h| packet_id(h) == id) {
+            return Ask::Shut;
+        }
+        ask(&mut self.last, id, gated, waiting, now)
     }
 
-    /// Gates the packets a command queued from `from` on.
-    fn admit(&mut self, queue: &mut Vec<Vec<u8>>, from: usize, now: Instant) {
+    /// Gates the packets a command queued from `from` on. `sent` is the count already sent and not acknowledged,
+    /// which with the queue and the position's slot is what holds retail's queue slots.
+    fn admit(&mut self, queue: &mut Vec<Vec<u8>>, from: usize, sent: usize, now: Instant) {
         let mut k = from;
         while k < queue.len() {
             let id = packet_id(&queue[k]);
-            if GATED.binary_search(&id).is_err() {
+            let answer = if CALLER_GATED.contains(&id) { Ask::Given } else { self.ask(id, sent + 1 + k, now) };
+            if answer == Ask::Given {
                 k += 1;
                 continue;
             }
-            // Behind a held one of its id, or within its second: refused.
-            if self.held.iter().any(|h| packet_id(h) == id) || !self.open(id, now) {
-                let p = queue.remove(k);
-                if RETRIED.contains(&id) {
-                    log::info!("c2s {id:#05x} held: the 1000 ms gate (FUN_100fc3c0); sent when it opens");
-                    self.held.push_back(p);
-                } else {
-                    log::warn!("c2s {id:#05x} refused: sent again within 1000 ms (FUN_100fc3c0's gate)");
-                }
-                continue;
+            let p = queue.remove(k);
+            if RETRIED.contains(&id) {
+                log::info!("c2s {id:#05x} held: FUN_100fc3c0 refused it ({answer:?})");
+                self.held.push_back(p);
+            } else if answer == Ask::Full {
+                log::warn!("c2s {id:#05x} refused: the send queue is full ({} waiting for the server)", sent + 1 + k);
+            } else {
+                log::warn!("c2s {id:#05x} refused: sent again within 1000 ms (FUN_100fc3c0's gate)");
             }
-            self.last.insert(id, now);
-            k += 1;
         }
     }
 
-    /// A packet to hold rather than drop: queued now if its id's gate is open and none of its id is held (admit then
-    /// stamps it), else held for release. A sort (0x03A) of a container already waiting is not held twice.
-    fn hold(&mut self, queue: &mut Vec<Vec<u8>>, p: Vec<u8>, now: Instant) {
+    /// A packet to hold rather than drop: queued if FUN_100fc3c0 gives it a slot, else held for release. A sort
+    /// (0x03A) of a container already waiting is not held twice.
+    fn hold(&mut self, queue: &mut Vec<Vec<u8>>, p: Vec<u8>, sent: usize, now: Instant) {
         let id = packet_id(&p);
         if id == 0x03A && self.held.iter().any(|h| packet_id(h) == id && h.get(4..) == p.get(4..)) {
             return;
         }
-        if GATED.binary_search(&id).is_ok() && (self.held.iter().any(|h| packet_id(h) == id) || !self.open(id, now)) {
-            log::info!("c2s {id:#05x} held: the 1000 ms gate (FUN_100fc3c0); sent when it opens");
-            self.held.push_back(p);
-        } else {
-            queue.push(p);
+        match self.ask(id, sent + 1 + queue.len(), now) {
+            Ask::Given => queue.push(p),
+            answer => {
+                log::info!("c2s {id:#05x} held: FUN_100fc3c0 refused it ({answer:?})");
+                self.held.push_back(p);
+            }
         }
     }
 
-    /// The retried sends: each held packet goes once its id's gate is open (the first of its id first).
-    fn release(&mut self, queue: &mut Vec<Vec<u8>>, now: Instant) {
+    /// The retried sends: the first held packet of each id asks again, as the retail callers retry.
+    fn release(&mut self, queue: &mut Vec<Vec<u8>>, sent: usize, now: Instant) {
         let mut seen = Vec::new();
         let mut k = 0;
         while k < self.held.len() {
             let id = packet_id(&self.held[k]);
-            if !seen.contains(&id) && self.open(id, now) {
-                self.last.insert(id, now);
-                seen.push(id);
+            let first = !seen.contains(&id);
+            seen.push(id);
+            let gated = GATED.binary_search(&id).is_ok();
+            if first && ask(&mut self.last, id, gated, sent + 1 + queue.len(), now) == Ask::Given {
                 queue.extend(self.held.remove(k));
                 continue;
             }
-            seen.push(id);
             k += 1;
         }
     }
@@ -1423,7 +1509,7 @@ fn tell_packet(name: &str, text: &str) -> Vec<u8> {
     let n = name.len().min(15);
     body[2..2 + n].copy_from_slice(&name.as_bytes()[..n]);
     body.extend_from_slice(&chat_bytes(text));
-    build(0x0B6, &body)
+    build(C2S_TELL, &body)
 }
 
 /// The Kinds whose line never carries the sender's name (client/mod.rs chat_line): the system announcements 6 / 7 and
@@ -1697,15 +1783,26 @@ struct Session<'a> {
     /// The session's bytes each way already counted into the stats.
     rx_seen: u64,
     tx_seen: u64,
-    /// FFXiMain sends the plain login every 400 ms until the zone-in (s2c 0x00A) is handled, not just any datagram.
+    /// FFXiMain sends the plain login again on the send timer until the zone-in (s2c 0x00A) is handled, not just any
+    /// datagram.
     tries: u32,
     answered: bool,
     zoned: bool,
     queue: Vec<Vec<u8>>,
     /// FUN_100fc3c0's per-id send times (char data +0x41b4), for the gated ids.
     gate: SendGate,
+    /// Timer 0 (FUN_100dbfe0(0, +0x417c)): the login datagrams and the game's share it.
     last_send: Instant,
-    last_login: Instant,
+    /// Retail's PacketCnt (DAT_104e0f44 +0x44c5c, 400 from the config; s2c 0x005 sets it): the interval the send
+    /// timer settles on. Ours also follows Settings' Send Rate and a mod's send_interval (`wanted`).
+    base: u32,
+    /// The send timer's interval now (+0x417c): 5 x the base at the connect (FUN_100fa000), stepped by
+    /// `step_interval` before each datagram once zoned in.
+    interval: u32,
+    /// `wanted_interval` as last seen: a change becomes the base at once.
+    wanted: u32,
+    /// The server's s2c 0x005 PacketCnt this session, if sent.
+    server_base: Option<u32>,
     my_index: u16,
     npc_logged: u32,
     /// Packets back from the mods' hooks (or injected), decoded before the next receive.
@@ -1731,6 +1828,7 @@ fn session(
     let mut map = MapSession::connect(addr, &login.key, codec.clone())?.or_key(login.old_key);
     map.send_login(login.char_id, &login.name, account, 0)?;
     let now = Instant::now();
+    let wanted = wanted_interval(stats, login.lsb.is_some(), None);
     let mut s = Session {
         addr,
         login,
@@ -1750,7 +1848,10 @@ fn session(
         queue: Vec::new(),
         gate: SendGate::default(),
         last_send: now,
-        last_login: now,
+        base: wanted,
+        interval: connect_interval(wanted),
+        wanted,
+        server_base: None,
         my_index: 0,
         npc_logged: 0,
         hooked_in: Vec::new(),
@@ -1814,6 +1915,17 @@ impl Session<'_> {
         match p.id {
             // A zone-in once in the session is ignored (FUN_100fa5c0: error 0x10 outside state 2).
             0x00A if self.zoned => log::info!("map: a repeated zone-in ignored"),
+            // s2c 0x005 (FUN_100fadf0): PacketCnt u32 @4 becomes the base and the interval at once, unless a mod or
+            // Send Rate overrides it (`wanted_interval`).
+            S2C_PACKET_CONTROL if p.data.len() >= 8 => {
+                let cnt = p.u32(4);
+                self.server_base = Some(cnt);
+                let wanted = wanted_interval(self.stats, self.login.lsb.is_some(), self.server_base);
+                if wanted == cnt {
+                    (self.wanted, self.base, self.interval) = (cnt, cnt, cnt);
+                }
+                log::info!("map: s2c 0x005 asks for a send interval of {cnt} ms; in force {wanted} ms");
+            }
             0x00A => {
                 self.map.zoned_in(&p);
                 let pos = [p.f32(12), p.f32(16), p.f32(20)];
@@ -1872,7 +1984,7 @@ impl Session<'_> {
             0x00B if p.u8(4) == 4 => log::info!("map: logout cancelled"),
             0x00B => {
                 let state = p.u8(4);
-                self.map.send(&[build(0x00D, &[0u8; 4])])?;
+                self.map.send_last(&[build(C2S_NETEND, &[0u8; 4])])?;
                 if matches!(state, 2 | 3) {
                     let ip = match p.u32(8) {
                         0 => self.addr.ip(),
@@ -2520,11 +2632,13 @@ impl Session<'_> {
         Ok(None)
     }
 
-    /// The plain login again every 400 ms until the zone-in.
+    /// The plain login again each time the send timer runs out until the zone-in: every 2000 ms with retail's base
+    /// (the interval is 5 x the base until the game's sends step it down). Retail has no limit; ours gives up after
+    /// a minute.
     fn retry_login(&mut self) -> Result<()> {
-        if !self.zoned && self.last_login.elapsed() >= Duration::from_millis(400) {
+        if !self.zoned && self.last_send.elapsed() >= Duration::from_millis(self.interval as u64) {
             self.tries += 1;
-            if self.tries > 150 {
+            if self.tries as u64 * self.interval.max(1) as u64 > 60_000 {
                 anyhow::bail!("the zone server did not answer the login");
             }
             self.map.send_login(
@@ -2533,14 +2647,14 @@ impl Session<'_> {
                 self.account,
                 if self.answered { 3 } else { 2 },
             )?;
-            self.last_login = Instant::now();
+            self.last_send = Instant::now();
         }
         Ok(())
     }
 
     /// The main thread's commands into the send queue, through the send gate.
     fn commands(&mut self) -> Result<()> {
-        self.gate.release(&mut self.queue, Instant::now());
+        self.gate.release(&mut self.queue, self.map.pending(), Instant::now());
         while let Ok(cmd) = self.rx.try_recv() {
             let before = self.queue.len();
             match cmd {
@@ -2568,7 +2682,7 @@ impl Session<'_> {
                     let mut body = vec![kind, 0];
                     body.extend_from_slice(&chat_bytes(&text));
                     body.push(0);
-                    self.queue.push(build(0x0B5, &body));
+                    self.queue.push(build(C2S_CHAT, &body));
                 }
                 NetCommand::Tell { name, text } => self.queue.push(tell_packet(&name, &text)),
                 NetCommand::Heal(mode) => self.queue.push(build(0x0E8, &mode.to_le_bytes())),
@@ -2590,7 +2704,9 @@ impl Session<'_> {
                 }
                 NetCommand::Packet { id, body } => self.queue.push(build(id, &body)),
                 NetCommand::PacketHeld { id, body } => {
-                    self.gate.hold(&mut self.queue, build(id, &body), Instant::now())
+                    // hold asks the gate itself: not again in admit.
+                    self.gate.hold(&mut self.queue, build(id, &body), self.map.pending(), Instant::now());
+                    continue;
                 }
                 NetCommand::GroupListReq => self.queue.push(build(0x076, &[0u8; 4])),
                 NetCommand::CancelStatus(id) => self.queue.push(build(0x0F1, &[id as u8, (id >> 8) as u8, 0, 0])),
@@ -2644,24 +2760,37 @@ impl Session<'_> {
                     self.queue.push(build(0x0F2, &b));
                 }
             }
-            self.gate.admit(&mut self.queue, before, Instant::now());
+            self.gate.admit(&mut self.queue, before, self.map.pending(), Instant::now());
         }
+        self.publish_waiting();
         Ok(())
+    }
+
+    /// The slots taken for the main thread's `call_gate`: sent and unacknowledged, queued, and the position's.
+    fn publish_waiting(&self) {
+        self.stats.waiting.store((self.map.pending() + self.queue.len() + 1) as u32, Relaxed);
     }
 
     /// The queued packets out once a send interval has passed, with a fresh position (c2s 0x015).
     fn send_due(&mut self) -> Result<()> {
-        // Retail sends one datagram every 400 ms (config +0xd0 = 400, net+0x417c), each with a fresh 0x015. On a private
-        // server Settings' Send Rate may be faster (LSB answers every datagram); a mod's interval wins over both.
-        let every = match self.stats.send_ms.load(Relaxed) {
-            0 if self.login.lsb.is_some() => match self.stats.rate_ms.load(Relaxed) {
-                0 => 400,
-                n => n.clamp(50, 400) as u64,
-            },
-            0 => 400,
-            n => n as u64,
-        };
-        if self.zoned && self.last_send.elapsed() >= Duration::from_millis(every) {
+        // Retail sends one datagram each time timer 0 passes the interval (+0x417c), each with a fresh 0x015. The
+        // interval settles on the base (config +0xd0 = 400); a changed setting becomes the base and the interval at
+        // once, as s2c 0x005 does.
+        let wanted = wanted_interval(self.stats, self.login.lsb.is_some(), self.server_base);
+        if wanted != self.wanted {
+            (self.wanted, self.base, self.interval) = (wanted, wanted, wanted);
+        }
+        if self.zoned && self.last_send.elapsed() >= Duration::from_millis(self.interval as u64) {
+            let stepped = step_interval(self.interval, self.base, self.map.lag());
+            if stepped != self.interval {
+                log::debug!(
+                    "map: send interval {} -> {stepped} ms (lag {}, base {})",
+                    self.interval,
+                    self.map.lag(),
+                    self.base
+                );
+                self.interval = stepped;
+            }
             let s = *self.me.lock().unwrap();
             let mut body = [0u8; 28];
             for (i, v) in s.pos.iter().enumerate() {
@@ -2690,6 +2819,7 @@ impl Session<'_> {
             }
             self.queue.clear();
             self.last_send = Instant::now();
+            self.publish_waiting();
         }
         Ok(())
     }
@@ -2770,24 +2900,24 @@ mod tests {
             build(0x05B, &[1; 4]),
             build(0x05B, &[2; 4]),
         ];
-        g.admit(&mut q, 0, t0);
+        g.admit(&mut q, 0, 0, t0);
         assert_eq!(ids(&q), [0x0DD, 0x015, 0x05B]);
-        g.release(&mut q, ms(999));
+        g.release(&mut q, 0, ms(1000));
         assert_eq!(ids(&q), [0x0DD, 0x015, 0x05B]);
         q.clear();
         q.push(build(0x0DD, &[0; 12]));
-        g.admit(&mut q, 0, ms(999));
+        g.admit(&mut q, 0, 0, ms(1000));
         assert!(q.is_empty());
-        // At 1 s the held 0x05B goes (the second one, body 2), and a new /check is let through.
-        g.release(&mut q, ms(1000));
+        // Past 1 s the held 0x05B goes (the second one, body 2), and a new /check is let through.
+        g.release(&mut q, 0, ms(1001));
         assert_eq!((ids(&q), q[0][4]), (vec![0x05B], 2));
         q.push(build(0x0DD, &[0; 12]));
-        g.admit(&mut q, 1, ms(1000));
+        g.admit(&mut q, 1, 0, ms(1001));
         assert_eq!(ids(&q), [0x05B, 0x0DD]);
         assert!(g.held.is_empty());
         // Chat and tells are gated where they are typed, not here.
         let mut q = vec![build(0x0B5, &[0; 4]), build(0x0B5, &[0; 4]), build(0x0B6, &[0; 20]), build(0x0B6, &[0; 20])];
-        g.admit(&mut q, 0, ms(1000));
+        g.admit(&mut q, 0, 0, ms(1001));
         assert_eq!(q.len(), 4);
     }
 
@@ -2799,51 +2929,145 @@ mod tests {
         let ms = |n| t0 + Duration::from_millis(n);
         let mut g = SendGate::default();
         let mut q = Vec::new();
-        g.hold(&mut q, build(0x029, &[1; 8]), t0);
-        g.admit(&mut q, 0, t0);
+        g.hold(&mut q, build(0x029, &[1; 8]), 0, t0);
         assert_eq!(q.len(), 1);
         q.clear();
-        g.hold(&mut q, build(0x029, &[2; 8]), ms(10));
-        g.hold(&mut q, build(0x029, &[3; 8]), ms(20));
+        g.hold(&mut q, build(0x029, &[2; 8]), 0, ms(10));
+        g.hold(&mut q, build(0x029, &[3; 8]), 0, ms(20));
         q.push(build(0x029, &[4; 8]));
-        g.admit(&mut q, 0, ms(20));
+        g.admit(&mut q, 0, 0, ms(20));
         assert!(q.is_empty());
         assert_eq!(g.held.len(), 2);
-        g.release(&mut q, ms(999));
+        g.release(&mut q, 0, ms(1000));
         assert!(q.is_empty());
-        g.release(&mut q, ms(1000));
+        g.release(&mut q, 0, ms(1001));
         assert_eq!(q.iter().map(|p| p[4]).collect::<Vec<_>>(), [2]);
-        g.release(&mut q, ms(1999));
+        g.release(&mut q, 0, ms(2001));
         assert_eq!(q.len(), 1);
-        g.release(&mut q, ms(2000));
+        g.release(&mut q, 0, ms(2002));
         assert_eq!(q.iter().map(|p| p[4]).collect::<Vec<_>>(), [2, 3]);
         assert!(g.held.is_empty());
         // A sort of a container already waiting is not held again; another container's is.
-        g.hold(&mut q, build(0x03A, &[1, 0, 0, 0]), ms(2000));
-        g.admit(&mut q, 0, ms(2000));
+        g.hold(&mut q, build(0x03A, &[1, 0, 0, 0]), 0, ms(2002));
         q.clear();
         for c in [8u8, 8, 10] {
-            g.hold(&mut q, build(0x03A, &[c, 0, 0, 0]), ms(2100));
+            g.hold(&mut q, build(0x03A, &[c, 0, 0, 0]), 0, ms(2102));
         }
         assert!(q.is_empty());
         assert_eq!(g.held.iter().map(|p| p[4]).collect::<Vec<_>>(), [8, 10]);
         g.held.clear();
         // An id outside the gate is never held.
         let mut q = Vec::new();
-        g.hold(&mut q, build(0x015, &[0; 28]), ms(2000));
-        g.hold(&mut q, build(0x015, &[0; 28]), ms(2000));
+        g.hold(&mut q, build(0x015, &[0; 28]), 0, ms(2002));
+        g.hold(&mut q, build(0x015, &[0; 28]), 0, ms(2002));
         assert_eq!(q.len(), 2);
+        // Held for a full queue, the id has used its second as in admit: not released before it passes.
+        let mut g = SendGate::default();
+        let mut q = Vec::new();
+        g.hold(&mut q, build(0x05B, &[0; 4]), 21, t0);
+        assert!(q.is_empty() && g.last.contains_key(&0x05B));
+        g.release(&mut q, 0, ms(500));
+        assert!(q.is_empty());
+        g.release(&mut q, 0, ms(1001));
+        assert_eq!(q.len(), 1);
     }
 
-    /// FUN_100fc3c0 at the call site: once a second per id, each id separately.
+    /// FUN_100fc3c0 at the call site: once a second per id, each id separately, and only with a queue slot free; a
+    /// full queue still uses the second.
     #[test]
     fn call_gate_once_a_second() {
         let t0 = Instant::now();
+        let s = NetStats::default();
         let mut m = std::collections::HashMap::new();
-        assert!(call_gate(&mut m, 0x0B5, t0));
-        assert!(!call_gate(&mut m, 0x0B5, t0 + Duration::from_millis(999)));
-        assert!(call_gate(&mut m, 0x0B6, t0 + Duration::from_millis(999)));
-        assert!(call_gate(&mut m, 0x0B5, t0 + Duration::from_millis(1000)));
+        assert!(call_gate(&mut m, C2S_CHAT, &s, t0));
+        assert!(!call_gate(&mut m, C2S_CHAT, &s, t0 + Duration::from_millis(1000)));
+        assert!(call_gate(&mut m, C2S_TELL, &s, t0 + Duration::from_millis(1000)));
+        assert!(call_gate(&mut m, C2S_CHAT, &s, t0 + Duration::from_millis(1001)));
+        s.waiting.store(21, Relaxed);
+        assert!(!call_gate(&mut m, C2S_FISHING, &s, t0));
+        s.waiting.store(3, Relaxed);
+        assert!(!call_gate(&mut m, C2S_FISHING, &s, t0 + Duration::from_millis(500)));
+        assert!(call_gate(&mut m, C2S_FISHING, &s, t0 + Duration::from_millis(1001)));
+    }
+
+    /// One rule for the interval: a mod's, then a Send Rate faster than retail's (private servers only), then the
+    /// server's s2c 0x005, then 400. The connect's 5 x stops at retail's 2000.
+    #[test]
+    fn interval_precedence() {
+        let s = NetStats::default();
+        assert_eq!(wanted_interval(&s, true, None), 400);
+        assert_eq!(wanted_interval(&s, true, Some(800)), 800);
+        s.rate_ms.store(400, Relaxed);
+        assert_eq!(wanted_interval(&s, true, Some(800)), 800);
+        s.rate_ms.store(100, Relaxed);
+        assert_eq!(wanted_interval(&s, true, Some(800)), 100);
+        assert_eq!(wanted_interval(&s, false, Some(800)), 800);
+        assert_eq!(wanted_interval(&s, false, None), 400);
+        s.send_ms.store(1000, Relaxed);
+        assert_eq!(wanted_interval(&s, true, Some(800)), 1000);
+        assert_eq!((connect_interval(400), connect_interval(100), connect_interval(1000)), (2000, 500, 2000));
+    }
+
+    /// FUN_100fab40's step: 50 ms slower per send while the server's ack trails, capped at the base + 3000; in step
+    /// again it comes down by the base per send, and so does the connect's 5 x base.
+    #[test]
+    fn interval_steps() {
+        // The connect's 2000 ms comes down over the first sends after the zone-in.
+        let mut v = 2000;
+        let mut seen = Vec::new();
+        for _ in 0..6 {
+            v = step_interval(v, 400, 1);
+            seen.push(v);
+        }
+        assert_eq!(seen, [1600, 1200, 800, 400, 400, 400]);
+        // In step is a difference of -1..=1 between the next sequence and the ack.
+        for lag in [-1, 0, 1] {
+            assert_eq!(step_interval(400, 400, lag), 400);
+        }
+        for lag in [-2, 2, 40, 65534] {
+            assert_eq!(step_interval(400, 400, lag), 450);
+        }
+        assert_eq!(step_interval(3350, 400, 2), 3400);
+        assert_eq!(step_interval(3400, 400, 2), 3400);
+        // Down by the base, not below it: 450 goes straight back, 3400 takes eight sends.
+        assert_eq!(step_interval(450, 400, 1), 400);
+        assert_eq!(step_interval(900, 400, 1), 500);
+        assert_eq!(step_interval(500, 400, 1), 400);
+        let mut v = 3400;
+        let mut n = 0;
+        while v > 400 {
+            v = step_interval(v, 400, 1);
+            n += 1;
+        }
+        assert_eq!(n, 8);
+        // An interval under the base (s2c 0x005 raised the base) is left alone until the server lags.
+        assert_eq!(step_interval(400, 1000, 0), 400);
+    }
+
+    /// FUN_100dda60's room: the 21st packet waiting still gets a slot, the 22nd does not; 0x00C and 0x0F2 go on to
+    /// 29. A refused gated id has used its second all the same, and a retried one is held.
+    #[test]
+    fn send_queue_room() {
+        assert!(queue_room(0x0DD, 20));
+        assert!(!queue_room(0x0DD, 21));
+        assert!(queue_room(0x00C, 28) && queue_room(0x0F2, 28));
+        assert!(!queue_room(0x00C, 29));
+        let t0 = Instant::now();
+        let mut g = SendGate::default();
+        // 19 sent and unacknowledged and the position's slot: one more goes, the next two do not.
+        let mut q = vec![build(0x0DD, &[0; 12]), build(0x01A, &[0; 12]), build(0x05B, &[0; 4]), build(0x0F2, &[0; 4])];
+        g.admit(&mut q, 0, 19, t0);
+        assert_eq!(q.iter().map(|p| packet_id(p)).collect::<Vec<_>>(), [0x0DD, 0x0F2]);
+        assert_eq!(g.held.len(), 1);
+        assert!(!gate_open(g.last[&0x05B], t0 + Duration::from_millis(500)));
+        // Held until the queue has room again; each retry the gate lets through uses the second, as retail's.
+        let mut q = Vec::new();
+        g.release(&mut q, 21, t0 + Duration::from_millis(1001));
+        assert!(q.is_empty());
+        g.release(&mut q, 3, t0 + Duration::from_millis(1001));
+        assert!(q.is_empty());
+        g.release(&mut q, 3, t0 + Duration::from_millis(2002));
+        assert_eq!(q.len(), 1);
     }
 
     /// Standing still, a cast or a ranged attack goes after the position, sent twice; moving, or with only other
