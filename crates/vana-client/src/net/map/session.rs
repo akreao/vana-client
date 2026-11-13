@@ -128,6 +128,8 @@ fn bind_socket() -> Result<UdpSocket> {
 const MAX_PAYLOAD: usize = 3999 - HEADER;
 /// FUN_100fab40 hands FUN_100dd590 a 0x550-byte buffer: a datagram that would be larger is not sent.
 const MAX_DATAGRAM: usize = 0x550;
+/// The compressed size field (payload bits + 8) that still fits MAX_DATAGRAM with the header, the field and the MD5.
+const MAX_BITS: u32 = ((MAX_DATAGRAM - HEADER - 4 - 16) * 8) as u32;
 
 /// FUN_100fab40 (0x100fad1c): the sequence after `seq`; it steps over 0, which marks a sub-packet not sent yet.
 fn seq_after(seq: u16) -> u16 {
@@ -262,6 +264,16 @@ impl MapSession {
     /// One datagram: the new sub-packets plus every earlier one the server has not acked; a new 0x015 replaces
     /// a queued one (retail rewrites its single 0x015 slot).
     pub fn send(&mut self, packets: &[Vec<u8>]) -> Result<()> {
+        self.send_slots(packets, false)
+    }
+
+    /// The session's last datagram (0x00D before a zone change or logout): no later one carries what waits, so
+    /// `packets` always go and older slots are left out when the datagram would be too large.
+    pub fn send_last(&mut self, packets: &[Vec<u8>]) -> Result<()> {
+        self.send_slots(packets, true)
+    }
+
+    fn send_slots(&mut self, packets: &[Vec<u8>], last: bool) -> Result<()> {
         let mut dgram = self.header();
         let (seq, ack) = (self.seq, self.server_ack);
         // FUN_100fdd40: a slot goes while its sync is 0 (not sent yet) or the server's ack has not reached it.
@@ -270,48 +282,49 @@ impl MapSession {
         if packets.iter().any(|p| id(p) == 0x015) {
             self.unacked.retain(|(_, p)| id(p) != 0x015);
         }
+        let mut older = self.unacked.len();
         self.unacked.extend(packets.iter().map(|p| (0, p.clone())));
+        // A sub-packet takes the sequence of the first datagram that carries it; one left out is stamped again.
+        for (sync, p) in &mut self.unacked {
+            if *sync == 0 {
+                p[2..4].copy_from_slice(&seq.to_le_bytes());
+            }
+        }
+        // Retail never sends a slot too large for any datagram (FUN_100dd590 returns -1 each time); ours drops it.
+        let (codec, n) = (&self.codec, older);
+        let mut at = 0;
+        self.unacked.retain(|(s, p)| {
+            let keep = *s != 0 || codec.bits(p) + 8 <= MAX_BITS;
+            if !keep {
+                log::warn!("map out: c2s {:#05x} dropped: it alone compresses past {MAX_DATAGRAM:#x} bytes", id(p));
+                older -= (at < n) as usize;
+            }
+            at += 1;
+            keep
+        });
         if let Some([a, b]) = self.cert {
             dgram[0x0C] = 1;
             dgram[0x10..0x14].copy_from_slice(&a.to_le_bytes());
             dgram[0x14..0x18].copy_from_slice(&b.to_le_bytes());
         }
-        // Retail drops a datagram over 0x550 bytes whole (FUN_100dd590 returns -1) and builds the same one again at
-        // the next send. Ours: the newest sub-packets wait for the next datagram instead, so the oldest still go.
-        let mut count = 0;
-        let mut size = 0;
-        for (_, p) in &self.unacked {
-            if size + p.len() > MAX_PAYLOAD {
-                break;
-            }
-            size += p.len();
-            count += 1;
+        let picked = self.pick(if last { older } else { self.unacked.len() });
+        let mut raw = Vec::new();
+        for &i in &picked {
+            raw.extend_from_slice(&self.unacked[i].1);
         }
-        let (raw, mut body) = loop {
-            let mut raw = Vec::with_capacity(size);
-            for (sync, p) in &self.unacked[..count] {
-                raw.extend_from_slice(p);
-                // A sub-packet takes the sequence of the first datagram that carries it.
-                if *sync == 0 {
-                    let at = raw.len() - p.len() + 2;
-                    raw[at..at + 2].copy_from_slice(&seq.to_le_bytes());
-                }
-            }
-            let (mut body, bits) = self.codec.compress(&raw);
-            body.extend_from_slice(&bits.to_le_bytes());
-            if HEADER + body.len() + 16 <= MAX_DATAGRAM || count <= 1 {
-                break (raw, body);
-            }
-            count -= 1;
-        };
-        for (sync, p) in &mut self.unacked[..count] {
-            if *sync == 0 {
-                *sync = seq;
-                p[2..4].copy_from_slice(&seq.to_le_bytes());
+        let (mut body, bits) = self.codec.compress(&raw);
+        body.extend_from_slice(&bits.to_le_bytes());
+        debug_assert!(HEADER + body.len() + 16 <= MAX_DATAGRAM);
+        for &i in &picked {
+            if self.unacked[i].0 == 0 {
+                self.unacked[i].0 = seq;
             }
         }
-        if count < self.unacked.len() {
-            log::warn!("map out: {} sub-packets wait for the next datagram (size limit)", self.unacked.len() - count);
+        let left = self.unacked.len() - picked.len();
+        if left > 0 && last {
+            log::warn!("map out: {left} sub-packets left out of the session's last datagram (size limit)");
+        } else if left > 0 {
+            log::warn!("map out: {left} sub-packets wait for the next datagram (size limit)");
         }
         if self.logged.1 < LOG_DATAGRAMS {
             self.logged.1 += 1;
@@ -324,6 +337,31 @@ impl MapSession {
         self.sock.send(&dgram)?;
         self.bytes_out += dgram.len() as u64;
         Ok(())
+    }
+
+    /// The slots a datagram carries, in order: the oldest while the raw and the compressed size fit, after room for
+    /// every slot from `kept` on (when those fit together). Retail drops an oversized datagram whole and builds the
+    /// same one again; ours leaves the newest out for the next one, so the oldest still go.
+    fn pick(&self, kept: usize) -> Vec<usize> {
+        let cost = |i: usize| (self.unacked[i].1.len(), self.codec.bits(&self.unacked[i].1));
+        let fit = |(size, bits): (usize, u32), (s, b): (usize, u32)| {
+            (size + s <= MAX_PAYLOAD && bits + b <= MAX_BITS).then_some((size + s, bits + b))
+        };
+        let tail = (kept..self.unacked.len()).try_fold((0, 8), |at, i| fit(at, cost(i)));
+        let (kept, mut at) = match tail {
+            Some(at) => (kept, at),
+            None => (self.unacked.len(), (0, 8)),
+        };
+        let mut out = Vec::new();
+        for i in 0..kept {
+            match fit(at, cost(i)) {
+                Some(next) => at = next,
+                None => break,
+            }
+            out.push(i);
+        }
+        out.extend(kept..self.unacked.len());
+        out
     }
 
     /// Drops a datagram that can't be read: counted, logged (the first few), and an error only after BAD_RUN_LIMIT in a
@@ -457,6 +495,31 @@ mod tests {
         assert_eq!((s.seq, s.pending(), s.unacked.len()), (2, 0, 1));
     }
 
+    /// No datagram passes 0x550 bytes: the newest slots wait unsent, the last datagram keeps the packets given over
+    /// older ones, and a slot no datagram can hold is dropped.
+    #[test]
+    fn datagram_size_limit() {
+        let server = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let mut s = MapSession::connect(server.local_addr().unwrap(), &[7; 20], plain_codec()).unwrap();
+        // Plain codes: six 200-byte slots fit (8 + 6 x 1600 bits), the seventh does not.
+        let slots: Vec<_> = (0..10u8).map(|k| build(0x0DD, &[k; 196])).collect();
+        s.send(&slots).unwrap();
+        assert!(s.bytes_out as usize <= MAX_DATAGRAM);
+        assert_eq!(s.unacked.iter().map(|(sync, _)| *sync).collect::<Vec<_>>(), [1, 1, 1, 1, 1, 1, 0, 0, 0, 0]);
+        let mut buf = [0u8; 4096];
+        assert_eq!(server.recv(&mut buf).unwrap(), s.bytes_out as usize);
+        s.send_last(&[build(0x00D, &[0; 4])]).unwrap();
+        let (sync, p) = s.unacked.last().unwrap();
+        assert_eq!((*sync, p[0]), (2, 0x0D));
+        assert_eq!(s.unacked[6].0, 0);
+        assert!(server.recv(&mut buf).unwrap() <= MAX_DATAGRAM);
+        // 504 bytes of 32-bit codes: no datagram holds it.
+        let mut s = MapSession::connect(server.local_addr().unwrap(), &[7; 20], long_codec()).unwrap();
+        s.send(&[build(0x0DD, &[0xFF; 504]), build(0x0DD, &[0; 12])]).unwrap();
+        assert_eq!(s.unacked.iter().map(|(sync, p)| (*sync, p.len())).collect::<Vec<_>>(), [(1, 16)]);
+        assert!(server.recv(&mut buf).unwrap() <= MAX_DATAGRAM);
+    }
+
     /// Set FFXI_MAIN_DLL to run: a resent datagram (same header sequence) and an older one carry nothing.
     #[test]
     fn resent_datagram_dropped() {
@@ -495,6 +558,18 @@ mod tests {
             let i = (b as i8 as i32 + 0x80) as usize;
             table[i * 4..i * 4 + 4].copy_from_slice(&(b as u32).to_le_bytes());
             table[(i + 0x100) * 4..(i + 0x100) * 4 + 4].copy_from_slice(&8u32.to_le_bytes());
+        }
+        Codec::from_table(&table).unwrap()
+    }
+
+    /// Plain codes but 0xFE and 0xFF, which take 32 bits (their byte, then 24 zero bits).
+    fn long_codec() -> Codec {
+        let mut table = vec![0u8; 2048];
+        for b in 0..=255u8 {
+            let i = (b as i8 as i32 + 0x80) as usize;
+            table[i * 4..i * 4 + 4].copy_from_slice(&(b as u32).to_le_bytes());
+            let len = if b >= 0xFE { 32u32 } else { 8 };
+            table[(i + 0x100) * 4..(i + 0x100) * 4 + 4].copy_from_slice(&len.to_le_bytes());
         }
         Codec::from_table(&table).unwrap()
     }

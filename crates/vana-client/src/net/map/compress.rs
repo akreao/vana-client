@@ -87,6 +87,11 @@ impl Codec {
         Ok(codec)
     }
 
+    /// The payload bits `input` compresses to (`compress`'s size field less 8), without compressing it.
+    pub fn bits(&self, input: &[u8]) -> u32 {
+        input.iter().map(|&b| self.lens[b as usize] as u32).sum()
+    }
+
     /// Returns the compressed bytes and the size field the protocol carries (payload bits + 8).
     pub fn compress(&self, input: &[u8]) -> (Vec<u8>, u32) {
         let mut out = vec![1u8];
@@ -158,6 +163,7 @@ mod tests {
         let input: Vec<u8> = (0..4000u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
         let (packed, size) = c.compress(&input);
         assert_eq!(c.decompress(&packed, size).unwrap(), input);
+        assert_eq!(size, c.bits(&input) + 8);
     }
 
     /// Our trie must decode every code exactly as the decompress.dat tree used by LSB does.
