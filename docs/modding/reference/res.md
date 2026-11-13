@@ -528,7 +528,7 @@ empty list.
 | `id` | `integer` | A phrase's id within its group, or the item or key item id; `0` for a group's title. |
 | `phrase` | `string` | The entry as a chat line holds it: put it in chat text (for example with `chat.add`). |
 
-The Items and Key Items groups are not in the dictionary file: the game builds them each time its own category list
+The Items and Key Items groups are not in the dictionary file: the game builds them each time the category list
 opens (Tab on an empty chat line), from the items it looked up lately and the key items you hold. Until then, and
 while they would be empty, they are not there. Their entries have no `group`: pass `e.group or e.kind` to list an
 entry's group or to [`text.phrase`](text.md#textphrase).

@@ -298,6 +298,39 @@ pub fn item_noun(it: super::items::Item) -> Noun {
     }
 }
 
+/// The names for a mod: its item lookups take no slot of the record cache.
+pub struct Peek<'a>(pub &'a Names);
+
+impl NameSource for Peek<'_> {
+    fn item(&self, id: u32) -> Option<Noun> {
+        self.0.items.noun(id)
+    }
+    fn item_name(&self, id: u32) -> Option<String> {
+        self.0.items.peek_name(id)
+    }
+    fn key_item(&self, id: u32) -> Option<Noun> {
+        NameSource::key_item(self.0, id)
+    }
+    fn spell(&self, id: u32) -> Option<String> {
+        NameSource::spell(self.0, id)
+    }
+    fn ability(&self, id: u32) -> Option<String> {
+        NameSource::ability(self.0, id)
+    }
+    fn place(&self, id: u32) -> Option<String> {
+        NameSource::place(self.0, id)
+    }
+    fn title(&self, id: u32) -> Option<String> {
+        NameSource::title(self.0, id)
+    }
+    fn weather(&self, id: u32, adjective: bool) -> Option<String> {
+        NameSource::weather(self.0, id, adjective)
+    }
+    fn key_item_definite(&self, id: u32) -> bool {
+        NameSource::key_item_definite(self.0, id)
+    }
+}
+
 impl NameSource for Names {
     fn item(&self, id: u32) -> Option<Noun> {
         self.items.noun(id)

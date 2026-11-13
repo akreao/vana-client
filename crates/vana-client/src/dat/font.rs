@@ -540,6 +540,15 @@ pub fn strip_codes(s: &str) -> String {
 /// An auto-translate phrase (`FD kind lang hi lo FD`) kept in a String: its four inner bytes as U+100000 + 0x100 x
 /// position + byte, so encode_sjis gives the block back.
 pub const PHRASE_BASE: u32 = 0x10_0000;
+/// The byte that opens (and closes) an auto-translate block.
+pub const PHRASE_MARK: u8 = 0xFD;
+/// The kind byte of a variable auto-translate block (`FD 06 ..`).
+pub const KIND_VARIABLE: u8 = 6;
+
+/// One of a phrase's four chars (`PHRASE_BASE`).
+pub fn is_phrase(c: char) -> bool {
+    (PHRASE_BASE..PHRASE_BASE + 0x400).contains(&(c as u32))
+}
 
 /// The byte a char keeps for a byte Shift-JIS has no character for, or of a variable auto-translate block.
 pub fn raw_byte(c: char) -> Option<u8> {
@@ -553,8 +562,8 @@ pub fn decode_sjis(sjis: &[u8]) -> String {
         let b = sjis[i];
         // A variable auto-translate block, FD 06 x x x nn <nn bytes> x (FUN_101adbb0: nn + 7 bytes, nn a signed
         // byte): every byte is kept as it is for autotrans::Dictionary::expand, and encode_sjis gives them back.
-        if b == 0xFD
-            && sjis.get(i + 1) == Some(&6)
+        if b == PHRASE_MARK
+            && sjis.get(i + 1) == Some(&KIND_VARIABLE)
             && let Some(&nn) = sjis.get(i + 5).filter(|&&n| n < 0x80)
             && let Some(block) = sjis.get(i..i + nn as usize + 7)
         {
@@ -562,7 +571,7 @@ pub fn decode_sjis(sjis: &[u8]) -> String {
             i += block.len();
             continue;
         }
-        if b == 0xFD && sjis.get(i + 5) == Some(&0xFD) {
+        if b == PHRASE_MARK && sjis.get(i + 5) == Some(&PHRASE_MARK) {
             for (k, &x) in sjis[i + 1..i + 5].iter().enumerate() {
                 out.push(char::from_u32(PHRASE_BASE + 0x100 * k as u32 + x as u32).unwrap());
             }

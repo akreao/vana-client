@@ -1615,7 +1615,8 @@ pub(super) fn install(
                     }
                 }
             }
-            let ctx = crate::dat::battle::Ctx { actor, target, me: w.name.clone(), work, ..Default::default() };
+            let names = w.names.clone().map(crate::dat::battle::Tables);
+            let ctx = crate::dat::battle::Ctx { actor, target, me: w.name.clone(), work, names, ..Default::default() };
             let Some(line) = bt.expand(id, &ctx) else { return Ok(None) };
             let t = lua.create_table()?;
             t.set("text", line.lines.join("\n"))?;
@@ -1680,7 +1681,7 @@ pub(super) fn install(
                 t.set("count", g.phrases.len())?;
                 out.push(t)?;
             }
-            for g in d.built() {
+            for g in d.built().iter() {
                 let t = lua.create_table()?;
                 t.set("kind", if g.kind == crate::dat::autotrans::KIND_KEY_ITEMS { "key_item" } else { "item" })?;
                 t.set("title", g.title.as_str())?;
@@ -1702,7 +1703,7 @@ pub(super) fn install(
                 .ok_or_else(|| mlua::Error::runtime("lang: ja, en, de or fr"))?;
             let Some(n) = names_in(w, lang) else { return Ok(None) };
             Ok(match kind.as_str() {
-                "item" => n.items.noun_peek(id).map(|x| x.bare),
+                "item" => n.items.noun(id).map(|x| x.bare),
                 "key_item" => n.key_item(id).map(|x| x.bare),
                 "spell" => n.spell(id),
                 "ability" => n.ability(id),

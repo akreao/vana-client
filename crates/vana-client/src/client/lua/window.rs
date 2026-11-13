@@ -2079,7 +2079,7 @@ pub(super) fn icon(gu: &mut GameUi, w: Option<&super::World>, i: Icon, x: f32, y
     match i {
         Icon::Item(id) => {
             if let Some(cache) = w.and_then(|w| w.item_info.as_deref()) {
-                super::super::items::upload_icons(gu, cache, std::iter::once(id));
+                super::super::items::upload_icons_peek(gu, cache, std::iter::once(id));
                 let name = crate::render::invwin::icon_texture(id);
                 if gu.has_image(&name) {
                     gu.image_rect(&name, x, y, s, s, mul);

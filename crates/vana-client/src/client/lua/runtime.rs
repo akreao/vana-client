@@ -338,7 +338,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
         "to_shift_jis",
         lua.create_function(|lua, s: String| lua.create_string(crate::dat::font::encode_sjis(&s)))?,
     )?;
-    text.set("plain", lua.create_function(|lua, s: String| Ok(super::super::fep::plain(world(lua)?, &s)))?)?;
+    text.set("plain", lua.create_function(|lua, s: String| Ok(super::super::fep::plain_peek(world(lua)?, &s)))?)?;
     text.set("strip", lua.create_function(|_, s: String| Ok(crate::dat::font::strip_codes(&s)))?)?;
     // `s` in the log's in-line colour code `code` (as the game colours names and items), then back to the line's.
     text.set(
@@ -661,7 +661,7 @@ mod tests {
         assert_eq!(b(s("item"), 0x1010), Some([7, 2, 0x10, 0x10]));
         assert_eq!(b(s("item"), 0x50), Some([9, 2, 0xff, 0x50]));
         assert_eq!(b(s("key_item"), 0x200), Some([0x16, 2, 2, 0xff]));
-        // A built group's title in a line is id 0 written by the game's own encoder: no 00 byte (it would cut the
+        // A built group's title in a line is id 0 written by the game encoder: no 00 byte (it would cut the
         // line); the category block is the query's alone.
         assert_eq!((b(s("item"), 0), b(s("key_item"), 0)), (Some([8, 2, 0xff, 0xff]), Some([0x14, 2, 0xff, 0xff])));
         let c = |g: Value| super::phrase_category(&g).ok();

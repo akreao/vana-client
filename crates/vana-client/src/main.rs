@@ -3680,6 +3680,7 @@ fn battle_dump(ids: &[u32]) -> Result<()> {
         target: who("Wild Rabbit", false),
         me: "Actor".into(),
         work: [11, 12, 13, 14, 15],
+        names: dat::names::Names::load(&index, dat::items::Lang::En).ok().map(|n| dat::battle::Tables(n.into())),
         ..Default::default()
     };
     let all: Vec<u32> = if ids.is_empty() { (0..2000).collect() } else { ids.to_vec() };
