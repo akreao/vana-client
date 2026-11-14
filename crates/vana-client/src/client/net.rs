@@ -29,6 +29,9 @@ pub struct EntityUpdate {
     /// HP bit 0x04 also carries the status byte @0x1F; speed @0x1C comes with the position bit.
     pub hpp: Option<u8>,
     pub name: Option<String>,
+    /// 0x00E without a name of its own, index below 0x700 (asm 0x1009b78f): the zone list's name for the id, else
+    /// "NPC", written on every update.
+    pub listed: bool,
     pub despawn: bool,
     /// Model ids (GrapIDTbl) when the update carries them.
     pub look: Option<[u16; 9]>,
@@ -1604,9 +1607,46 @@ fn look_at(p: &SubPacket, at: usize) -> [u16; 9] {
     std::array::from_fn(|i| p.u16(at + i * 2))
 }
 
+/// FUN_100dde40(dst, 0x10, src, lim, size): how many characters of a name a 0x00D / 0x00E gives: the sub-packet's
+/// size less `lim` (0x00E: 4 past the name's start, 0x00D: 2 past it), 15 at most. The compare is unsigned, so a
+/// packet shorter than `lim` gives 15 too.
+fn name_len(size: usize, lim: usize) -> usize {
+    let n = (size as u32).wrapping_sub(lim as u32);
+    if n >= 0x10 { 15 } else { n as usize }
+}
+
+/// 0x00E's name (FUN_1009b550, asm 0x1009b666..0x1009b7b5), read before the despawn and first-update tests:
+/// 1. SubKind 0 / 1 / 5 / 6 / 7 with 0x08 at an index from 0x700: @0x34 (doors, lifts and ships keep their id words
+///    there, and never name themselves);
+/// 2. SubKind 1 with 0x40: @0x44 at an index from 0x700, and below 0x400 when its first byte is above a space;
+/// 3. below 0x400 with 0x08 (not a SubKind 1 with 0x40 named by rule 2), a byte 1 @0x34 and a byte above a space
+///    @0x35: the text from @0x35, which FUN_10093430 copies itself (24 bytes, no size test);
+/// 4. else below 0x700 the zone's list or "NPC" (`Some(None)`), and from 0x700 no change (`None`).
+fn npc_name(p: &SubPacket) -> Option<Option<String>> {
+    let (index, mask, sub) = (p.u16(8), p.u8(10), p.u8(0x30) & 7);
+    let size = (p.u16(0) >> 9) as usize * 4;
+    let sized = |at: usize| Some(Some(text(p, at, name_len(size, at + 4))));
+    if matches!(sub, 0 | 1 | 5 | 6 | 7) && mask & 0x08 != 0 && index >= 0x700 {
+        return sized(0x34);
+    }
+    let long = sub == 1 && mask & 0x40 != 0;
+    if long && index >= 0x700 {
+        return sized(0x44);
+    }
+    if long && index < 0x400 && p.u8(0x44) > 0x20 {
+        return sized(0x44);
+    }
+    if index < 0x400 && mask & 0x08 != 0 && p.u8(0x34) == 1 && p.u8(0x35) > 0x20 {
+        return Some(Some(text(p, 0x35, 24)));
+    }
+    (index < 0x700).then_some(None)
+}
+
 fn entity(p: &SubPacket, kind: EntityKind) -> EntityUpdate {
     let flags = p.u8(10);
     let name_at = if kind == EntityKind::Npc { 0x34 } else { 0x5A };
+    let size = (p.u16(0) >> 9) as usize * 4;
+    let npc_name = (kind == EntityKind::Npc).then(|| npc_name(p)).flatten();
     // 0x00E mask 0x04: u32 @0x28 bit 26, the server's sub-animation flag (entity +0x130 bit 2, asm 0x1009c5a2).
     let sub_flag =
         (kind == EntityKind::Npc && flags & 0x04 != 0 && p.data.len() >= 0x2C).then(|| p.u32(0x28) & (1 << 26) != 0);
@@ -1617,19 +1657,14 @@ fn entity(p: &SubPacket, kind: EntityKind) -> EntityUpdate {
         pos: (flags & 1 != 0).then(|| [p.f32(12), p.f32(16), p.f32(20)]),
         dir: p.u8(11),
         hpp: (flags & 0x04 != 0).then(|| p.u8(0x1E)),
-        // 0x00E (asm 0x1009b666..): index >= 0x700 takes @0x34; below 0x400 only text marked 0x01 at @0x34 (from @0x35);
-        // other NPCs are named from the zone list (the client side). Doors carry their door id there: not a name.
-        name: (flags & 0x08 != 0 && p.data.len() > name_at)
-            .then(|| match kind {
-                EntityKind::Npc if p.u16(8) >= 0x700 => Some(text(p, name_at, 16)),
-                EntityKind::Npc if p.u16(8) < 0x400 && p.u8(name_at) == 0x01 && p.u8(name_at + 1) > 0x20 => {
-                    Some(text(p, name_at + 1, 15))
-                }
-                EntityKind::Npc => None,
-                _ => Some(text(p, name_at, 16)),
-            })
-            .flatten()
-            .filter(|n| !n.is_empty() && n.chars().all(|c| !c.is_control() && c != '\u{fffd}')),
+        name: match kind {
+            EntityKind::Npc => npc_name.clone().flatten(),
+            // 0x00D (0x10099e36): the name @0x5A with 0x08, never on a despawn.
+            _ => (flags & 0x28 == 0x08 && p.data.len() > name_at)
+                .then(|| text(p, name_at, name_len(size, 0x5c)))
+                .filter(|n| !n.is_empty() && n.chars().all(|c| !c.is_control() && c != '\u{fffd}')),
+        },
+        listed: npc_name == Some(None),
         despawn: flags & 0x20 != 0,
         look: (kind == EntityKind::Player && flags & 0x10 != 0 && p.data.len() >= 0x48 + 18).then(|| look_at(p, 0x48)),
         motion: motion_state(p),
@@ -1757,6 +1792,71 @@ fn entity(p: &SubPacket, kind: EntityKind) -> EntityUpdate {
 }
 
 impl EntityUpdate {
+    /// What FUN_1009b550 still takes for a reserved actor (entity +0x138 bit 31, event op 0xac sub 2): the name, and
+    /// with 0x01 the position, heading, speeds and counter, unless +0x13c bit 0 holds the position too (`hold`, op
+    /// 0xac sub 4). No despawn (0x1009b7f0), face target or @0x20 status bits (0x1009bc29), claim (0x1009bcf3),
+    /// general fields or look (0x1009bda9, and 0x1009c8f5's test without 0x04).
+    pub fn reserved(self, hold: bool) -> Self {
+        Self {
+            pos: self.pos.filter(|_| !hold),
+            despawn: false,
+            mask: 0,
+            king: false,
+            costume: None,
+            hpp: None,
+            look: None,
+            npc: None,
+            claim: None,
+            mob: None,
+            marks: None,
+            plate: None,
+            male: None,
+            name_flags: None,
+            no_snap: None,
+            door: None,
+            lift: None,
+            ship: None,
+            hp_bits: None,
+            untargetable: None,
+            target_off: None,
+            listed_only: None,
+            radar: None,
+            mon_prefix: None,
+            mon_form: None,
+            sub_anim: None,
+            sub_flag: None,
+            mon_stat: None,
+            half_fade: None,
+            face: None,
+            spawn_fx: None,
+            shadowless: None,
+            ride: None,
+            hitbox: None,
+            indi: None,
+            gate: None,
+            ..self
+        }
+    }
+
+    /// The name this update gives (FUN_10093430's argument): its own, or for a `listed` one the zone list's by
+    /// UniqueNo (FUN_1008a930), else "NPC" (0x1035cb44); None leaves the name.
+    pub fn name_for<'a>(&'a self, list: &'a std::collections::HashMap<u32, String>) -> Option<&'a str> {
+        match &self.name {
+            Some(n) => Some(n.as_str()),
+            None if self.listed => Some(list.get(&self.id).map_or("NPC", |n| n.as_str())),
+            None => None,
+        }
+    }
+
+    /// FUN_1009ceb0 (0x00E: below 0x400, or 0x700..0x8ff) / FUN_1009aad0 (0x00D: 0x400..0x6ff): the handler drops an
+    /// update for any other index.
+    pub fn in_range(&self) -> bool {
+        match self.kind {
+            EntityKind::Player => (0x400..0x700).contains(&self.index),
+            _ => self.index < 0x400 || (0x700..0x900).contains(&self.index),
+        }
+    }
+
     /// A full update (actor +0x141): 0x00E needs mask 0x07, 0x17 for kinds 1 / 7 (0x1009a097); 0x00D 0x1f
     /// (0x100982f6).
     pub fn complete(&self) -> bool {
@@ -3202,6 +3302,93 @@ mod tests {
         // LSB's 0x00A (size and gender in Flags1 bits 8..15, 0x100 in Flags3) sets none of them.
         let lsb = sub(0x00A, 0x104, &[(0x20, &0x8100u32.to_le_bytes()), (0x28, &0x100u32.to_le_bytes())]);
         assert_eq!(zone_in_plate(&lsb), SelfPlate::default());
+    }
+
+    /// 0x00E's name rules (asm 0x1009b666..0x1009b7b5) and FUN_100dde40's length.
+    #[test]
+    fn npc_name_rules() {
+        let up = |index: u16, mask: u8, sub_kind: u8, len: usize, fill: &[(usize, &[u8])]| {
+            let mut f = vec![(8, index.to_le_bytes().to_vec()), (10, vec![mask]), (0x30, vec![sub_kind])];
+            f.extend(fill.iter().map(|(at, b)| (*at, b.to_vec())));
+            let f: Vec<(usize, &[u8])> = f.iter().map(|(at, b)| (*at, b.as_slice())).collect();
+            let e = entity(&sub(0x00E, len, &f), EntityKind::Npc);
+            (e.name, e.listed)
+        };
+        let long: &[(usize, &[u8])] = &[(0x34, b"Abcdefghijklmnopqrst")];
+        // Rule 1: 0x08 at a dynamic index, 15 characters, fewer in a short packet (size - 0x38).
+        assert_eq!(up(0x700, 0x0f, 0, 0x48, long), (Some("Abcdefghijklmno".into()), false));
+        assert_eq!(up(0x700, 0x0f, 5, 0x40, &[(0x34, b"Abcdefghijkl")]), (Some("Abcdefgh".into()), false));
+        assert_eq!(up(0x700, 0x08, 6, 0x48, &[]), (Some(String::new()), false));
+        // Doors, lifts and ships there keep their name; without 0x08 nothing changes either.
+        assert_eq!(up(0x700, 0x0f, 2, 0x48, long), (None, false));
+        assert_eq!(up(0x8ff, 0x07, 0, 0x48, long), (None, false));
+        // Below 0x700 the same bytes are not a name: the zone list or "NPC".
+        assert_eq!(up(0x3ff, 0x0f, 0, 0x48, long), (None, true));
+        assert_eq!(up(0x80, 0x0f, 2, 0x48, long), (None, true));
+        // Rule 2: SubKind 1 with 0x40 reads @0x44; a static index only with a first byte above a space.
+        let far: &[(usize, &[u8])] = &[(0x34, b"Near"), (0x44, b"Farther away name")];
+        assert_eq!(up(0x700, 0x57, 1, 0x58, far), (Some("Farther away na".into()), false));
+        assert_eq!(up(0x700, 0x4f, 1, 0x58, far), (Some("Near".into()), false));
+        assert_eq!(up(0x10, 0x57, 1, 0x58, far), (Some("Farther away na".into()), false));
+        assert_eq!(up(0x10, 0x57, 1, 0x58, &[(0x44, b" x")]), (None, true));
+        assert_eq!(up(0x10, 0x57, 0, 0x58, far), (None, true));
+        // Rule 3: a static index's own name, marked 1 @0x34, read from @0x35 with no size test (24 bytes).
+        let own: &[(usize, &[u8])] = &[(0x34, b"\x01A name of twenty-four chars!")];
+        assert_eq!(up(0x10, 0x0f, 0, 0x54, own), (Some("A name of twenty-four ch".into()), false));
+        assert_eq!(up(0x10, 0x07, 0, 0x54, own), (None, true));
+        assert_eq!(up(0x10, 0x0f, 0, 0x54, &[(0x34, b"\x01 x")]), (None, true));
+        assert_eq!(up(0x700, 0x0f, 2, 0x54, own), (None, false));
+        // The length: unsigned, so a packet that ends before the limit still asks for 15.
+        let lens = [0x48, 0x3c, 0x38, 0x34].map(|size| name_len(size, 0x38));
+        assert_eq!(lens, [15, 4, 0, 15]);
+        // 0x00D: @0x5A, size - 0x5c, and never on a despawn.
+        let pc = |mask: u8, len: usize, name: &[u8]| {
+            let p = sub(0x00D, len, &[(8, &0x400u16.to_le_bytes()), (10, &[mask]), (0x5a, name)]);
+            entity(&p, EntityKind::Player).name
+        };
+        assert_eq!(pc(0x1f, 0x6c, b"Abcdefghijklmnop"), Some("Abcdefghijklmno".into()));
+        assert_eq!(pc(0x1f, 0x60, b"Abcdef"), Some("Abcd".into()));
+        assert_eq!(pc(0x28, 0x6c, b"Abcdef"), None);
+        // The list's name by id, "NPC" without one.
+        let list = std::collections::HashMap::from([(0x0100_1001u32, "Listed".to_string())]);
+        let mut e = entity(&sub(0x00E, 0x48, &[(8, &0x10u16.to_le_bytes()), (10, &[0x07])]), EntityKind::Npc);
+        assert_eq!(e.name_for(&list), Some("NPC"));
+        e.id = 0x0100_1001;
+        assert_eq!(e.name_for(&list), Some("Listed"));
+        e.name = Some("Own".into());
+        assert_eq!(e.name_for(&list), Some("Own"));
+        (e.name, e.listed) = (None, false);
+        assert_eq!(e.name_for(&list), None);
+    }
+
+    /// The handlers' index ranges (FUN_1009ceb0 / FUN_1009aad0), and what a reserved actor's 0x00E keeps.
+    #[test]
+    fn index_ranges_and_reserved_view() {
+        let at = |id: u16, index: u16, kind| entity(&sub(id, 0x48, &[(8, &index.to_le_bytes())]), kind).in_range();
+        let npc = |i| at(0x00E, i, EntityKind::Npc);
+        let pc = |i| at(0x00D, i, EntityKind::Player);
+        assert!(npc(0) && npc(0x3ff) && !npc(0x400) && !npc(0x6ff) && npc(0x700) && npc(0x8ff) && !npc(0x900));
+        assert!(!pc(0x3ff) && pc(0x400) && pc(0x6ff) && !pc(0x700));
+        let p = sub(
+            0x00E,
+            0x48,
+            &[
+                (8, &0x10u16.to_le_bytes()),
+                (10, &[0x2f]),
+                (12, &1.5f32.to_le_bytes()),
+                (0x18, &(0x1234u32 | 0x20 << 17 | 1 << 16).to_le_bytes()),
+                (0x1e, &[50]),
+                (0x2c, &7u32.to_le_bytes()),
+                (0x32, &0x52u16.to_le_bytes()),
+            ],
+        );
+        let full = entity(&p, EntityKind::Npc);
+        assert!(full.despawn && full.king && full.claim == Some(7) && full.hpp == Some(50) && full.face == Some(0x20));
+        let r = full.clone().reserved(false);
+        assert_eq!((r.pos, r.counter, r.listed), (Some([1.5, 0.0, 0.0]), 0x1234, true));
+        assert!(!r.despawn && !r.king && r.mask == 0);
+        assert!(r.claim.is_none() && r.hpp.is_none() && r.face.is_none() && r.npc.is_none() && r.mob.is_none());
+        assert!(full.reserved(true).pos.is_none());
     }
 
     /// A 0x00E trimmed after its name (0x3c bytes) still gives its model; a trimmed lift (kind 3) its lift data.

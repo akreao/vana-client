@@ -634,6 +634,8 @@ pub struct State {
     snap: HashSet<u32>,
     /// Despawned while bound (0x1009a04d keeps an event participant); removed at the end.
     despawned: HashSet<u32>,
+    /// Actors a slot reset took out of the event: no pose of the VM body is drawn for them any more.
+    detached: HashSet<u32>,
     /// 0x46: true = normal camera (FUN_10082b20).
     camera_flag: bool,
     /// s2c 0x052 mode 0 arrived.
@@ -725,6 +727,7 @@ impl State {
             status_lock: HashSet::new(),
             snap: HashSet::new(),
             despawned: HashSet::new(),
+            detached: HashSet::new(),
             camera_flag: false,
             released: false,
             cb0: true,
@@ -1340,13 +1343,29 @@ impl Host for LiveHost<'_> {
             }
             // FUN_100bb180 subs 2 / 3: the event actor's entity +0x138 bit 31 (its schedulers mute while its model is
             // hidden); sub 3 clears it and asks for the entity again (c2s 0x016, FUN_100aec70).
-            Effect::Op { op: 0xac, sub: Some(s @ (2 | 3)), actor, .. } => {
-                let id = self.wid(actor);
-                if let Some(e) = self.w.entities.get_mut(&id) {
+            // The actor is actor@2 (FUN_100afac0(2)), in the scripts another one than the running actor nearly every
+            // time (census: 1,400 of 1,430, all in zone 280).
+            Effect::Op { op: 0xac, sub: Some(s @ (2 | 3)), args, .. } => {
+                if let Some(e) = self.arg_actor(&args, 0).and_then(|id| self.w.entities.get_mut(&id)) {
+                    log::debug!(
+                        "event: {} (index {:#x}) {}",
+                        e.name,
+                        e.index,
+                        if s == 2 { "reserved" } else { "released" }
+                    );
                     e.ev_reserved = s == 2;
                     if s == 3 {
                         let _ = self.w.net.commands.send(NetCommand::CharReq(e.index));
                     }
+                }
+            }
+            // FUN_100bb180 sub 4: actor@2's entity +0x13c |= val@6 & 3. Bit 0 keeps a reserved actor where it is
+            // against 0x00E positions (0x1009b9f3); the slot's reset clears both. Retail's scripts only pass 0.
+            Effect::Op { op: 0xac, sub: Some(4), args, .. } => {
+                if let (Some(v), Some(e)) =
+                    (Self::arg_int(&args, 1), self.arg_actor(&args, 0).and_then(|id| self.w.entities.get_mut(&id)))
+                {
+                    e.pos_hold |= v as u8 & 3;
                 }
             }
             // FUN_100bac90 sub 3 locks the event actor's event status; sub 4 (after its wait) unlocks it.
@@ -2791,6 +2810,9 @@ fn sync(live: &mut Live, w: &mut World, ticks: f32, dt: f32) {
     let mut steps = Vec::new();
     for (a, b) in live.rt.actors() {
         let id = if a == PLAYER { me } else { a };
+        if live.st.detached.contains(&id) {
+            continue;
+        }
         let p = Vec3::from(b.pos);
         let snap = live.st.snap.remove(&id);
         let pose = live.st.poses.entry(id).or_insert(Pose::new(p, b.dir, b.tilt));
@@ -3176,6 +3198,23 @@ fn drops_action_in(flags: u32, bound: bool, own: bool, category: u8) -> bool {
         || (own && flags & mode::ALLOW_OWN_ACTION == 0 && crate::net::action::category::by_file(category))
 }
 
+/// An update came for `id`: the despawn mark (entity +0x124 bit 12) is off, so the event's end leaves the actor.
+pub fn respawned(w: &mut World, id: u32) {
+    if let Some(l) = &mut w.event {
+        l.st.despawned.remove(&id);
+    }
+}
+
+/// FUN_1008ee30 from a slot reset: the actor leaves the event (+0x120 bits 7 / 8 off).
+pub fn unbind(w: &mut World, id: u32) {
+    if let Some(l) = &mut w.event {
+        l.st.bound.remove(&id);
+        l.st.despawned.remove(&id);
+        l.st.poses.remove(&id);
+        l.st.detached.insert(id);
+    }
+}
+
 /// An event holds this actor (bound, or taking part while it waits): a despawn waits for the end.
 pub fn holds(w: &mut World, id: u32) -> bool {
     if let Some(l) = &mut w.event
@@ -3271,7 +3310,11 @@ pub fn bound_set(w: &World) -> HashSet<u32> {
 
 /// A bound actor's drawn transform while the event runs: on its way to its last VM step, over the tick after it.
 pub fn pose(w: &World, id: u32) -> Option<Pose> {
-    w.event.as_ref()?.st.poses.get(&id).map(|p| p.drawn(p.since))
+    let l = w.event.as_ref()?;
+    if l.st.detached.contains(&id) {
+        return None;
+    }
+    l.st.poses.get(&id).map(|p| p.drawn(p.since))
 }
 
 /// A bound actor's event status (+0x174, op 0xac sub 1); 0 when none was set.
