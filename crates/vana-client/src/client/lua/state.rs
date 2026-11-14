@@ -32,7 +32,7 @@ pub(super) struct FrameInfo {
     pub modern_ppp: Option<f32>,
     /// What mods put in the built-in panels' slots (ui.native.slot): slot -> (mod, value).
     pub slots: std::collections::BTreeMap<String, (String, serde_json::Value)>,
-    /// Mods' opacity for their own windows ("mod:<mod>:<window>", "hud:<mod>:<window>"): window -> (mod, opacity).
+    /// Mods' opacity for their windows ("mod:<mod>:<window>", "hud:<mod>:<window>"): window -> (mod, opacity).
     pub opacity: std::collections::BTreeMap<String, (String, f32)>,
     /// This frame's view-projection, for draw.to_screen.
     pub view_proj: glam::Mat4,
@@ -56,7 +56,7 @@ pub(super) struct FrameInfo {
 }
 
 /// A modern panel's place from a mod: its top left in window pixels (negative from the right or bottom edge; none
-/// keeps the panel's own), its scale, the point it scales about (a share of its width and height), its opacity.
+/// keeps the panel's), its scale, the point it scales about (a share of its width and height), its opacity.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
     pub x: Option<f32>,
@@ -219,6 +219,12 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
                     j.set("capacity", capacity)?;
                     j.set("points", current)?;
                     j.set("spent", spent)?;
+                    // Each upgrade's level by its id (the job in the id's upper bits: id >> 5).
+                    let up = lua.create_table()?;
+                    for (&id, &(level, _)) in w.jp_list.iter().filter(|(id, _)| (**id >> 5) as usize == job) {
+                        up.set(id, level)?;
+                    }
+                    j.set("upgrades", up)?;
                     out.set(job, j)?;
                 }
             }

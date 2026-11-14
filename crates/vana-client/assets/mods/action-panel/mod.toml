@@ -1,5 +1,5 @@
 name = "Action Panel"
-version = "1.0.5"
+version = "1.0.6"
 description = "A window of everything your jobs can use now: magic by school, job abilities, weapon skills and pet commands, with costs and recasts; a click uses one; //actions opens it (the action menu add-ons)."
 permissions = ["actions"]
 

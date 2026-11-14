@@ -1,8 +1,9 @@
 //! Settings' DATs and Mods pages (not retail; the mod manager, XIPivot's job built in). DATs: the installed game-file
 //! packs in priority order, each ON / OFF and movable (Move, then Up / Down, Enter to place, Escape to put it back, as
 //! the item list's Manual sort), and what is available: the archives found and the catalogue's packs, with Install (or
-//! Update). Mods: the installed Lua mods, each ON / OFF, the Lua mod archives found, and the standard mods from GitHub
-//! (client/catalogue.rs) each with Install, Update or Installed. Archives and the catalogue are read, downloaded and
+//! Update). Mods: the installed Lua mods, each ON / OFF (and Update when the catalogue has a newer one; Update All
+//! queues them all), the Lua mod archives found, and the standard mods from GitHub (client/catalogue.rs) each with
+//! Install, Update or Installed. Archives and the catalogue are read, downloaded and
 //! unpacked off the UI thread (crate::modpack). The modern pages also install an archive or a Lua mod's folder picked
 //! by hand (`Browse`) and remove a folder.
 
@@ -27,6 +28,10 @@ pub struct Mods {
     pub dat_error: Option<String>,
     /// What is being installed, its progress (per mille) and the result (the folder's name).
     installing: Option<(String, Arc<AtomicU32>, Receiver<anyhow::Result<String>>)>,
+    /// Catalogue updates waiting for the one installing (Update All), by id.
+    queue: Vec<String>,
+    /// Mods updated from the catalogue since the caller last took them (a running Lua mod restarts on its new files).
+    pub updated: Vec<String>,
     /// A mod being moved: its order before the move.
     pub held: Option<Vec<ModRef>>,
     /// The last install's failure, for the help bar.
@@ -48,9 +53,14 @@ pub struct Offer {
     pub button: &'static str,
     pub help: String,
     pub catalogue: bool,
+    /// Update All: every update of the page's kind (the last row).
+    pub all: bool,
     /// Its place among the archives, then the catalogue's entries.
     at: usize,
 }
+
+/// Offer.at of the Update All row.
+const ALL: usize = usize::MAX;
 
 /// The catalogue's entries, each with what it is here: to install, to update or installed.
 fn statuses(list: Vec<Entry>) -> Vec<(Entry, Option<bool>)> {
@@ -97,6 +107,8 @@ impl Mods {
             list_error: None,
             dat_error: None,
             installing: None,
+            queue: Vec::new(),
+            updated: Vec::new(),
             held: None,
             error: None,
             top: 0,
@@ -115,6 +127,8 @@ impl Mods {
             list_error: None,
             dat_error: None,
             installing: None,
+            queue: Vec::new(),
+            updated: Vec::new(),
             held: None,
             error: None,
             top: 0,
@@ -165,7 +179,7 @@ impl Mods {
                     if p.files == 1 { "" } else { "s" }
                 ),
             };
-            Offer { label: pct(&p.slug, name), button: "Install", help, catalogue: false, at }
+            Offer { label: pct(&p.slug, name), button: "Install", help, catalogue: false, all: false, at }
         });
         let n = self.packs.len();
         let listed = self
@@ -189,10 +203,27 @@ impl Mods {
                     button: verb,
                     help: help.trim().to_string(),
                     catalogue: true,
+                    all: false,
                     at: n + k,
                 }
             });
-        archives.chain(listed).collect()
+        // Update All: on the Lua page (its updates are on the installed rows), and with two or more DAT packs.
+        let ups = self.updates(lua);
+        let all = (ups > usize::from(!lua)).then(|| {
+            let what = if lua { "Lua mod" } else { "DAT pack" };
+            Offer {
+                label: format!("Update all ({ups})"),
+                button: "Update All",
+                help: format!(
+                    "Downloads the newer version of every {what} with one, one after another. {}",
+                    if lua { "A mod that is on restarts on it." } else { "Takes effect on restart." }
+                ),
+                catalogue: true,
+                all: true,
+                at: ALL,
+            }
+        });
+        archives.chain(listed).chain(all).collect()
     }
 
     /// The standard Lua mods by name: each entry's place in `entries`.
@@ -220,10 +251,61 @@ impl Mods {
     /// runs.
     pub fn install_offer(&mut self, k: usize, lua: bool) -> bool {
         let Some(at) = self.offers(lua).get(k).map(|o| o.at) else { return false };
+        if at == ALL {
+            return self.update_all(lua) > 0;
+        }
         if at < self.packs.len() {
             return self.install(at);
         }
         self.install_entry(at - self.packs.len())
+    }
+
+    /// The newer version the catalogue has of installed mod or pack `id`.
+    pub fn update_for(&self, id: &str) -> Option<&str> {
+        self.entries.iter().find(|e| e.1 == Some(true) && e.0.id.eq_ignore_ascii_case(id)).map(|e| e.0.version.as_str())
+    }
+
+    /// The installed Lua mods (`lua`) or DAT packs with a newer version in the catalogue.
+    pub fn updates(&self, lua: bool) -> usize {
+        self.entries.iter().filter(|e| e.1 == Some(true) && (e.0.kind == "lua") == lua).count()
+    }
+
+    /// Updates of the kind neither installing nor queued: what Update All would start.
+    pub fn waiting(&self, lua: bool) -> usize {
+        let busy = |id: &str| self.progress(id).is_some() || self.queued(id);
+        self.entries.iter().filter(|e| e.1 == Some(true) && (e.0.kind == "lua") == lua && !busy(&e.0.id)).count()
+    }
+
+    /// Waiting for another update to finish.
+    pub fn queued(&self, id: &str) -> bool {
+        self.queue.iter().any(|q| q.eq_ignore_ascii_case(id))
+    }
+
+    /// Installed mod or pack `id` updated from the catalogue, now or after the install running; false when it has no
+    /// update.
+    pub fn update(&mut self, id: &str) -> bool {
+        let Some(at) = self.entries.iter().position(|e| e.1 == Some(true) && e.0.id.eq_ignore_ascii_case(id)) else {
+            return false;
+        };
+        if self.installing.as_ref().is_some_and(|i| i.0.eq_ignore_ascii_case(id)) || self.queued(id) {
+            return true;
+        }
+        if self.installing.is_some() {
+            self.queue.push(self.entries[at].0.id.clone());
+            return true;
+        }
+        self.install_entry(at)
+    }
+
+    /// Every Lua mod (`lua`) or DAT pack with an update, one after another; how many.
+    pub fn update_all(&mut self, lua: bool) -> usize {
+        let ids: Vec<String> = self
+            .entries
+            .iter()
+            .filter(|e| e.1 == Some(true) && (e.0.kind == "lua") == lua)
+            .map(|e| e.0.id.clone())
+            .collect();
+        ids.iter().filter(|id| self.update(id)).count()
     }
 
     /// Catalogue entry `at` installed off the UI thread; false while another install runs.
@@ -261,10 +343,22 @@ impl Mods {
         let Some((_, _, rx)) = &self.installing else { return false };
         let Ok(res) = rx.try_recv() else { return false };
         self.installing = None;
+        // The next queued update starts (an error ends none of them).
+        while !self.queue.is_empty() {
+            let id = self.queue.remove(0);
+            if let Some(at) = self.entries.iter().position(|e| e.1 == Some(true) && e.0.id == id)
+                && self.install_entry(at)
+            {
+                break;
+            }
+        }
         match res {
             Ok(slug) => {
                 self.packs.retain(|p| p.slug != slug);
                 for e in self.entries.iter_mut().filter(|e| e.0.id == slug) {
+                    if e.1 == Some(true) {
+                        self.updated.push(slug.clone());
+                    }
                     e.1 = None;
                 }
                 if !mods.iter().any(|m| m.name == slug) {
@@ -437,5 +531,41 @@ impl Browse {
             self.cursor = self.entries.iter().position(|e| e.0 == f).unwrap_or(0);
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(id: &str, kind: &str) -> Entry {
+        serde_json::from_value(serde_json::json!({"id": id, "name": id, "kind": kind, "version": "2.0.0", "files": []}))
+            .unwrap()
+    }
+
+    /// The updates by kind, the newer version of one, and the Update All row (Lua: one is enough; DATs: two).
+    #[test]
+    fn updates_and_update_all_row() {
+        let mut m = Mods::empty();
+        m.entries = vec![
+            (entry("a", "lua"), Some(true)),
+            (entry("b", "lua"), None),
+            (entry("c", "lua"), Some(false)),
+            (entry("p", "pack"), Some(true)),
+        ];
+        assert_eq!((m.updates(true), m.updates(false), m.waiting(true)), (1, 1, 1));
+        assert_eq!((m.update_for("A"), m.update_for("b"), m.update_for("c")), (Some("2.0.0"), None, None));
+        let all =
+            |m: &Mods, lua: bool| m.offers(lua).iter().filter(|o| o.all).map(|o| o.label.clone()).collect::<Vec<_>>();
+        assert_eq!(all(&m, true), ["Update all (1)"]);
+        assert!(all(&m, false).is_empty());
+        m.entries.push((entry("q", "pack"), Some(true)));
+        assert_eq!(all(&m, false), ["Update all (2)"]);
+        // A queued update is not waiting, and is not queued twice.
+        m.queue.push("a".into());
+        assert_eq!(m.waiting(true), 0);
+        assert!(m.update("a"));
+        assert_eq!(m.queue, ["a"]);
+        assert!(!m.update("b"));
     }
 }

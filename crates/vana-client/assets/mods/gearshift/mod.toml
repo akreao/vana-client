@@ -1,6 +1,6 @@
 name = "Gearshift"
-version = "0.1.4"
-description = "Swaps gear around your actions from GearSwap job files and LuAshitacast and Ashitacast XML profiles, unchanged (the gear-swap add-ons)."
+version = "0.2.7"
+description = "Swaps gear around your actions from GearSwap job files and LuAshitacast and Ashitacast XML profiles, unchanged (the gear-swap add-ons), or builds every set of your job from the gear you hold (//gearshift)."
 permissions = ["packets.read", "packets.write", "automation"]
 
 [settings.on]
@@ -9,25 +9,46 @@ default = true
 label = "Gear Swapping"
 help = "Runs your GearSwap job file, LuAshitacast profile or Ashitacast XML profile for the job you play (in this mod's data folder: gearswap/ or ashitacast/)."
 
+[settings.builder]
+type = "bool"
+default = true
+label = "Set Builder"
+help = "Builds every set of your job from the gear you hold (//gearshift shows them). With Wear These Sets on in that window, it wears them around your actions when no GearSwap, LuAshitacast, Ashitacast or Spellcast file is loaded for the job."
+
+[settings.cap]
+type = "enum"
+default = "Auto"
+options = ["Auto", "75", "99"]
+label = "Level Cap"
+help = "The level cap the best-in-slot references are for: Auto takes 75 up to level 75 and 99 above it."
+
+[settings.ws_line]
+type = "bool"
+default = true
+label = "Weapon Skill Line"
+help = "With the set builder wearing sets: a chat line before each weapon skill naming the set it put on and how many pieces it changed. The model may show the set late or not at all (the game holds a look change during the weapon skill), but the gear is on before the skill."
+
 [commands.gs]
-help = "GearSwap's own commands, for the loaded GearSwap file."
+help = "GearSwap's commands, for the loaded GearSwap file."
 args = "<command>"
 
 [commands.lac]
-help = "LuAshitacast's own commands, for the loaded profile."
+help = "LuAshitacast's commands, for the loaded profile."
 args = "<command>"
 
 [commands.ac]
-help = "Ashitacast's own commands, for the loaded profile."
+help = "Ashitacast's commands, for the loaded profile."
 args = "<command>"
 
 [commands.spellcast]
-help = "Spellcast's own commands, for the loaded file."
+help = "Spellcast's commands, for the loaded file."
 args = "<command>"
 
 [commands.gearshift]
-help = "Shows the loaded gear file."
+help = "Opens the set builder's window."
 args = ""
 forms = [
+  { args = "file", help = "Shows the loaded gear file, or that the set builder's sets are worn." },
   { args = "reload", help = "Reads the gear file again." },
+  { args = "mode <hybrid|acc|pdt|mdt|mb|macc|off>", help = "The set builder's toggles: hybrid or accuracy TP, physical or magic defence, magic burst or magic accuracy nukes; off clears them." },
 ]

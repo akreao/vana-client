@@ -1,4 +1,4 @@
-//! One mod's Lua VM (docs/lua-mods.md 3.1): its own Lua 5.4 state with a fixed library set, a memory limit, a time
+//! One mod's Lua VM (docs/lua-mods.md 3.1): its Lua 5.4 state with a fixed library set, a memory limit, a time
 //! budget per call, and every handler run as a coroutine that may sleep.
 
 use super::manifest::Manifest;
@@ -25,7 +25,7 @@ const SOFT_CAP: Duration = Duration::from_millis(2);
 const ERROR_LIMIT: usize = 20;
 const ERROR_WINDOW: Duration = Duration::from_secs(60);
 
-/// The prelude: sleeping yields our token, so the scheduler can tell its own yields from a mod's. A `__gc`
+/// The prelude: sleeping yields our token, so the scheduler can tell its yields from a mod's. A `__gc`
 /// finalizer runs with hooks off (lgc.c GCTM), out of the budget's reach, so setmetatable refuses one.
 const PRELUDE: &str = r#"
 local token = ...
@@ -41,12 +41,10 @@ function setmetatable(t, mt)
 end
 "#;
 
-/// Where a mod's files come from: its folder, or the binary (a bundled mod, assets/mods).
+/// Where a mod's files come from: its folder.
 #[derive(Clone)]
 pub(super) enum Source {
     Dir(PathBuf),
-    #[cfg_attr(not(test), allow(dead_code))]
-    Bundled(&'static [(&'static str, &'static str)]),
 }
 
 /// A path a mod gave that names something outside its folder: absolute (a root or a drive), or with a ".." part. A
@@ -77,11 +75,6 @@ impl Source {
     pub fn read(&self, rel: &str) -> std::io::Result<String> {
         match self {
             Source::Dir(d) => std::fs::read_to_string(inside(d, rel)?),
-            Source::Bundled(files) => files
-                .iter()
-                .find(|f| f.0 == rel)
-                .map(|f| f.1.to_string())
-                .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound)),
         }
     }
 
@@ -89,25 +82,19 @@ impl Source {
     pub fn read_bytes(&self, rel: &str) -> std::io::Result<Vec<u8>> {
         match self {
             Source::Dir(d) => std::fs::read(inside(d, rel)?),
-            Source::Bundled(files) => files
-                .iter()
-                .find(|f| f.0 == rel)
-                .map(|f| f.1.as_bytes().to_vec())
-                .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound)),
         }
     }
 
     pub fn exists(&self, rel: &str) -> bool {
         match self {
             Source::Dir(d) => inside(d, rel).is_ok_and(|p| p.is_file()),
-            Source::Bundled(files) => files.iter().any(|f| f.0 == rel),
         }
     }
 }
 
 pub(super) struct Vm {
     pub manifest: Manifest,
-    /// The folder (a bundled mod's is "bundled/<id>"), and where its files are read.
+    /// The folder, where its files are read.
     pub dir: PathBuf,
     pub src: Source,
     pub lua: Lua,
@@ -212,7 +199,7 @@ impl ModState {
     }
 }
 
-/// A filter's budget per call (it runs inside the game's own paths).
+/// A filter's budget per call (it runs inside the game's paths).
 pub(super) const FILTER_CAP: Duration = Duration::from_millis(20);
 
 /// The client's start, for os.clock.
@@ -285,7 +272,7 @@ impl Vm {
             keep.raw_set(name, os.get::<Value>(name)?)?;
         }
         // os.clock as wall time (seconds on a monotonic clock since the client started): C's clock() is the process's
-        // CPU time, which runs at its own pace in a many-threaded client and broke mods' countdowns.
+        // CPU time, which runs at its pace in a many-threaded client and broke mods' countdowns.
         keep.raw_set("clock", lua.create_function(|_, ()| Ok(process_start().elapsed().as_secs_f64()))?)?;
         g.raw_set("os", keep)?;
         for name in ["dofile", "loadfile"] {

@@ -86,7 +86,7 @@ pub fn adapter_names(instance: &wgpu::Instance, surface: Option<&wgpu::Surface>)
         .filter(|a| surface.is_none_or(|s| a.is_surface_supported(s)))
         .map(|a| a.get_info().name)
         .collect();
-    // One per card: each backend (Vulkan, GL, ...) lists it, with its own driver part ("... (RADV NAVI21)", "...
+    // One per card: each backend (Vulkan, GL, ...) lists it, with its driver part ("... (RADV NAVI21)", "...
     // (radeonsi, navi21, ...)"); the first (the preferred backend's) stays.
     let mut seen = std::collections::HashSet::new();
     names.retain(|n| seen.insert(n.split(" (").next().unwrap_or(n).trim().to_string()));
@@ -467,7 +467,7 @@ pub struct ZoneRenderer {
     cull: Option<cull::Cull>,
     cull_pipes: [wgpu::ComputePipeline; 2],
     cull_layout: wgpu::BindGroupLayout,
-    /// Ours (the Lamp Lights setting): each zone instance's own light slots and world sphere, the light slots
+    /// Ours (the Lamp Lights setting): each zone instance's light slots and world sphere, the light slots
     /// written over them now (instance -> slots), and lamps waiting for the streamed geometry (set_lamps).
     inst_lights: Vec<[u32; 4]>,
     spheres: Vec<[f32; 4]>,
@@ -554,6 +554,11 @@ pub struct ZoneRenderer {
     /// A streamed zone (the world's): mips wait for the frame budget, textures and geometry still to go up
     /// (geometry by byte offset), the last mip job of its textures, and (bytes before, RGBA bytes, count) for the log.
     budgeted: bool,
+    /// Faded actors are composited later, by render_faded_after (the world: after the effects, as retail's sorted
+    /// transparent list puts them over what is behind them); others draw them at the end of render.
+    pub defer_faded: bool,
+    /// The shine slots render used, for render_faded_after's.
+    faded_slot: std::cell::Cell<u64>,
     pending: std::collections::VecDeque<(usize, crate::dat::zone::Texture, Option<upload::TexUp>)>,
     geo_pending: Option<(std::sync::Arc<ZoneGeometry>, u64)>,
     mips_seq: u64,
@@ -579,7 +584,7 @@ pub struct ZoneRenderer {
     /// Ship model actors (client/ships.rs) by entity.
     model_actors: HashMap<u32, ModelGeo>,
     /// Zone instances standing in for a sub-area (instance, link, as built), the link hidden now, and how many of
-    /// `light_keys` are the zone's own.
+    /// `light_keys` are the zone's.
     links: Vec<(u32, u32, Instance)>,
     hidden: u32,
     /// Layout mode's top-down view hides the link-999 placements (show_link999).
@@ -613,7 +618,7 @@ pub struct ZoneRenderer {
     pub retail_reach: f32,
 }
 
-/// A sub-area's scenery (FUN_101787c0 loads it into zone slot 1): its own buffers and draws, its textures in the
+/// A sub-area's scenery (FUN_101787c0 loads it into zone slot 1): its buffers and draws, its textures in the
 /// slots after the zone's; drawn once all of it is on the GPU.
 struct SubGeometry {
     vertices: wgpu::Buffer,
@@ -625,15 +630,15 @@ struct SubGeometry {
     tex_base: usize,
     link: u32,
     shown: bool,
-    /// Ours (Lamp Lights, a sub-area only): each instance's own light slots and world sphere, and the lamp slots
+    /// Ours (Lamp Lights, a sub-area only): each instance's light slots and world sphere, and the lamp slots
     /// written over them now.
     inst_lights: Vec<[u32; 4]>,
     spheres: Vec<[f32; 4]>,
     lamp_patch: HashMap<u32, [u32; 4]>,
 }
 
-/// A ship's model (FUN_100c4c20 -> FUN_101844c0, drawn as furniture is): its own buffers, one instance that moves with
-/// the actor, and its own textures (slot 0 white), since the shared list is cut back by sub-areas and furniture; drawn
+/// A ship's model (FUN_100c4c20 -> FUN_101844c0, drawn as furniture is): its buffers, one instance that moves with
+/// the actor, and its textures (slot 0 white), since the shared list is cut back by sub-areas and furniture; drawn
 /// once they and their mips are up and while the actor shows.
 struct ModelGeo {
     vertices: wgpu::Buffer,
@@ -921,6 +926,8 @@ pub struct ActorGpu {
     skin: Option<Skinned>,
     /// Model colour alpha, 1 = opaque (actor fades); goes into the vertex alpha.
     pub alpha: f32,
+    /// render left it for the faded composite (`defer_faded`): render_faded_after draws it.
+    faded_pending: std::cell::Cell<bool>,
     /// Retail's no-shadow latch (+0x12c bits 10 / 11): no real shadow either.
     pub shadow_off: bool,
     /// Model colour RGB, 1 = 0x80 (scheduler op 0x29): the material colour of the lit terms.
@@ -935,7 +942,7 @@ pub struct ActorGpu {
     /// vec4s each in model space: position (w 1 = set) and normal (w 1 = set), in SkinMesh's order; missing ones
     /// draw skinned.
     pub cloth: Vec<[f32; 4]>,
-    /// Its cloth's particle state on the GPU (render/cloth.rs), its own: a clone starts without.
+    /// Its cloth's particle state on the GPU (render/cloth.rs), one per actor: a clone starts without.
     cloth_state: cloth::ClothState,
     /// The last mip job of its textures; drawn once the GPU has it.
     mips: u64,
@@ -944,7 +951,7 @@ pub struct ActorGpu {
     /// Its box's screen rect this frame (NDC x0, y0, x1, y1; FUN_100c63d0's), so a faded actor's passes cover only
     /// it; none: the whole screen.
     pub screen: Option<[f32; 4]>,
-    /// Casts lamp shadows this frame (ours: only our own character does; render/lampshadow.rs).
+    /// Casts lamp shadows this frame (ours: only our character does; render/lampshadow.rs).
     pub lamp_caster: bool,
     /// A lamp map takes this actor in this frame (render/lampshadow.rs): the sun's map leaves it out while one of
     /// those lamps is lit and near (zone.wgsl vs_skinned_sun_lamped).
@@ -956,6 +963,11 @@ impl ActorGpu {
     /// no-shadow latch); `done` the mips finished. The others keep retail's shadow.
     pub fn casts_shadow(&self, done: u64) -> bool {
         self.mips <= done && self.refract.is_none() && self.alpha >= 0.5 && !self.shadow_off && self.skin.is_some()
+    }
+
+    /// Its key among the effects' sorted elements: the view depth of its origin, clamped as theirs.
+    pub fn sort_key(&self, view: &Mat4) -> f32 {
+        (-view.transform_point3(self.origin).z).clamp(0.0, 512.0)
     }
 }
 
@@ -1100,7 +1112,7 @@ impl ZoneRenderer {
         self.scenery_wire.as_ref().filter(|_| self.wireframe).map(|w| &w[c])
     }
 
-    /// A skinned actor's shine group: the shared uniform slots and its own vertices.
+    /// A skinned actor's shine group: the shared uniform slots and its vertices.
     fn shine_group<'a>(&self, gpu: &Gpu, skin: &'a Skinned) -> &'a wgpu::BindGroup {
         skin.shine.get_or_init(|| {
             gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1407,7 +1419,7 @@ impl ZonePipes {
         // Scenery: front faces clockwise as D3D's; normal placements cull CCW (back), mirrored ones CW (front).
         // Bit-31 models: SRCALPHA / INVSRCALPHA, depth tested (LESSEQUAL) but not written, ZBIAS 8 *(inf: as a constant
         // depth bias of -8)*.
-        // `furn`: furniture's own pass (FUN_101844c0) sets neither ZWRITEENABLE nor ZBIAS, so its blended meshes keep
+        // `furn`: furniture's pass (FUN_101844c0) sets neither ZWRITEENABLE nor ZBIAS, so its blended meshes keep
         // the actor pass's depth writes and bias 0 (batch 7 item 23).
         // Config 0017's type-3 meshes and Surface Detail's pack (FUN_10175ac0 case 3 / ours): the colour texture,
         // then the normal map or the pack's slopes at group 2.
@@ -1985,7 +1997,7 @@ impl ZonePipes {
                     cache: None,
                 })
             });
-        // Culling binds the globals (camera, voyage, door parts) at group 0 and its own buffers at group 3.
+        // Culling binds the globals (camera, voyage, door parts) at group 0 and its buffers at group 3.
         let cull_layout = cull::layout(device);
         let cull_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("cull"),
@@ -2039,7 +2051,7 @@ impl ZonePipes {
 
 /// Point-light table entries (DAT_105ecae8: 256).
 pub const LIGHTS: usize = 256;
-/// Ours: how far past an instance's bounding sphere a lamp's light is offered to it (set_lamps; the light's own range
+/// Ours: how far past an instance's bounding sphere a lamp's light is offered to it (set_lamps; the light's range
 /// cuts it in the shader).
 const LAMP_REACH: f32 = 16.0;
 
@@ -2369,7 +2381,7 @@ impl ZoneGeometry {
                 if indices.is_empty() || model.vertices.is_empty() {
                     continue;
                 }
-                // Type 3: every triangle unrolled to its own corners, each with its tangent (FUN_10169d10).
+                // Type 3: every triangle unrolled to its corners, each with its tangent (FUN_10169d10).
                 if let Some(slot) = bumped
                     .as_ref()
                     .map(|b| b[mi])
@@ -2847,6 +2859,8 @@ impl ZoneRenderer {
             models: HashMap::new(),
             builds: Vec::new(),
             budgeted,
+            defer_faded: false,
+            faded_slot: Default::default(),
             pending: std::collections::VecDeque::new(),
             geo_pending: None,
             mips_seq: 0,
@@ -2913,6 +2927,24 @@ impl ZoneRenderer {
         Some(PartGpu::at(p.pos_from, p.pos_to, p.pos_time, self.now))
     }
 
+    /// Door `door`'s parts in the world as drawn now (FUN_100acef0: base * T(t) * Rx * Ry * Rz, as vs_main).
+    pub fn door_frames(&self, door: u32) -> Option<Vec<Mat4>> {
+        let (slots, bases) = (self.door_parts.get(&door)?, self.door_bases.get(&door)?);
+        let frames = slots.iter().zip(bases).filter_map(|(&s, base)| {
+            let p = self.parts.get(s as usize)?;
+            let a = PartGpu::at(p.rot_from, p.rot_to, p.rot_time, self.now);
+            let t = PartGpu::at(p.pos_from, p.pos_to, p.pos_time, self.now);
+            Some(
+                *base
+                    * Mat4::from_translation(t.into())
+                    * Mat4::from_rotation_x(a[0])
+                    * Mat4::from_rotation_y(a[1])
+                    * Mat4::from_rotation_z(a[2]),
+            )
+        });
+        Some(frames.collect())
+    }
+
     /// Area 4ccs by slot - 1 (zone's, then the shown sub-area's).
     pub fn area_keys(&self) -> &[u32] {
         &self.area_keys
@@ -2967,7 +2999,7 @@ impl ZoneRenderer {
     }
 
     /// Ours (the Lamp Lights setting, client/lamps.rs): the lamps' lights (position, table slot) go into the free light
-    /// slots of the zone instances near them, nearest first; an empty list puts the instances' own back. Waits for a
+    /// slots of the zone instances near them, nearest first; an empty list puts the instances' back. Waits for a
     /// streamed zone's geometry.
     pub fn set_lamps(&mut self, gpu: &Gpu, lamps: &[(Vec3, u32)]) {
         self.lamps_wanted = Some(lamps.to_vec());
@@ -2988,7 +3020,7 @@ impl ZoneRenderer {
                     && lamps.iter().any(|(p, _)| p.distance(Vec3::new(s[0], s[1], s[2])) - s[3] < LAMP_REACH)
             })
             .count();
-        // A sub-area's instances (its own buffer) take them the same way.
+        // A sub-area's instances (its buffer) take them the same way.
         if let Some(sub) = &mut self.sub {
             let snext = lamp_slots(&sub.inst_lights, &sub.spheres, &lamps);
             let put = |i: u32, l: &[u32; 4]| {
@@ -3147,7 +3179,7 @@ impl ZoneRenderer {
         }
     }
 
-    /// Mog House furniture replaces the set before it: each model file is its own geometry with its own textures
+    /// Mog House furniture replaces the set before it: each model file is its geometry with its textures
     /// (names repeat across files), drawn once all of the set's textures are up.
     pub fn set_furniture(
         &mut self,
@@ -3676,6 +3708,7 @@ impl ZoneRenderer {
                 mapped_at_creation: false,
             });
             let actor = ActorGpu {
+                faded_pending: Default::default(),
                 textures: vec![self.magenta.clone(); ch.textures.len() + 1],
                 slot,
                 vertices: None,
@@ -3849,6 +3882,7 @@ impl ZoneRenderer {
             mapped_at_creation: false,
         });
         ActorGpu {
+            faded_pending: Default::default(),
             textures,
             slot,
             vertices: None,
@@ -4150,7 +4184,7 @@ impl ZoneRenderer {
             pass.set_bind_group(1, &self.textures[0], &[]);
             pass.draw(0..3, 0..1);
         }
-        // The zone's own scenery draws from its culled instances when it is culled, only runs that may show.
+        // The zone's scenery draws from its culled instances when it is culled, only runs that may show.
         let shown = self.cull.as_ref().map(|c| c.runs_shown(vp, camera.eye, self.clip)).unwrap_or_default();
         let (zone_inst, zone_args) = match &self.cull {
             Some(c) => (&c.out, Some((c, &c.args, shown.as_slice()))),
@@ -4294,6 +4328,9 @@ impl ZoneRenderer {
             _ => Vec::new(),
         };
         let solid = |i: usize| !faded.contains(&i);
+        for (i, a) in actors.iter().enumerate() {
+            a.faded_pending.set(self.defer_faded && faded.contains(&i));
+        }
         let mut slot = 0u64;
         if let Some((_, group, _)) = &self.pose_gpu {
             pass.set_pipeline(&self.skin_pipeline);
@@ -4350,9 +4387,39 @@ impl ZoneRenderer {
             }
         }
         drop(pass);
+        if self.defer_faded {
+            self.faded_slot.set(slot);
+            return;
+        }
         let mut list: Vec<&ActorGpu> = faded.iter().map(|&i| actors[i]).collect();
         list.sort_by(|a, b| b.origin.distance(camera.eye).total_cmp(&a.origin.distance(camera.eye)));
         self.render_faded(gpu, encoder, color, depth, &list, slot);
+    }
+
+    /// The faded actors render left out (`defer_faded`), farthest first, with their sort keys (view depth, as the
+    /// effect elements'): the caller composites each where it falls among the effects (render_faded_one), so what is
+    /// behind it shows through and what is in front stays in front. `actors`: any list holding them.
+    pub fn faded_pending<'a>(&self, camera: &Camera, actors: &[&'a ActorGpu]) -> Vec<(f32, &'a ActorGpu)> {
+        let view = camera.view();
+        let mut list: Vec<(f32, &ActorGpu)> =
+            actors.iter().copied().filter(|a| a.faded_pending.replace(false)).map(|a| (a.sort_key(&view), a)).collect();
+        list.sort_by(|a, b| b.0.total_cmp(&a.0));
+        list
+    }
+
+    /// One of faded_pending's actors (`k`: its place in that list).
+    pub fn render_faded_one(
+        &self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        color: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
+        a: &ActorGpu,
+        k: usize,
+    ) {
+        let mut slot = self.faded_slot.get();
+        self.faded_one(gpu, encoder, color, depth, a, k, &mut slot);
+        self.faded_slot.set(slot);
     }
 
     /// One actor posed this frame drawn alone into `color` / `depth` (cleared to `clear`, premultiplied) from `camera`,
@@ -4448,13 +4515,31 @@ impl ZoneRenderer {
         list: &[&ActorGpu],
         mut shine_slot: u64,
     ) {
+        for (k, a) in list.iter().enumerate() {
+            self.faded_one(gpu, encoder, color, depth, a, k, &mut shine_slot);
+        }
+    }
+
+    /// One faded actor: drawn opaque into the helper target inside its rect, then blended over `color` at its alpha.
+    /// `k` picks its uniforms (one per actor a frame).
+    #[allow(clippy::too_many_arguments)]
+    fn faded_one(
+        &self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        color: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
+        a: &ActorGpu,
+        k: usize,
+        shine_slot: &mut u64,
+    ) {
         let (Some((rt_tex, rt, rt_group)), Some((_, group, _))) = (&self.faded_rt, &self.pose_gpu) else { return };
         let size = rt_tex.size();
-        for (k, a) in list.iter().enumerate() {
-            let Some(skin) = a.skin.as_ref() else { continue };
+        {
+            let Some(skin) = a.skin.as_ref() else { return };
             // Ours: both passes only inside the actor's rect; the composite reads nothing outside it, so the target is
             // zeroed there alone (retail clears and blends the whole viewport per actor).
-            let Some([sx, sy, sw, sh]) = faded_rect(a.screen, size.width, size.height) else { continue };
+            let Some([sx, sy, sw, sh]) = faded_rect(a.screen, size.width, size.height) else { return };
             let off = k as u64 * SHINE_STRIDE;
             gpu.queue.put(
                 &self.faded_buf,
@@ -4495,22 +4580,22 @@ impl ZoneRenderer {
                 }
                 if let Some(s) = a.shine
                     && let Some(tex) = self.shine_tex.get(&s.key)
-                    && shine_slot < SHINE_SLOTS as u64
+                    && *shine_slot < SHINE_SLOTS as u64
                 {
                     gpu.queue.put(
                         &self.shine_buf,
-                        shine_slot * SHINE_STRIDE,
+                        *shine_slot * SHINE_STRIDE,
                         bytemuck::cast_slice(&[s.u, s.v, shine_wrap(), 0.0, s.tf[0], s.tf[1], s.tf[2], s.tf[3]]),
                     );
                     pass.set_pipeline(&self.shine_pipeline);
-                    pass.set_bind_group(3, self.shine_group(gpu, skin), &[(shine_slot * SHINE_STRIDE) as u32]);
+                    pass.set_bind_group(3, self.shine_group(gpu, skin), &[(*shine_slot * SHINE_STRIDE) as u32]);
                     pass.set_bind_group(1, tex, &[]);
                     for (_, range, wep) in &a.draws {
                         if shown(*wep) {
                             pass.draw(range.clone(), 0..1);
                         }
                     }
-                    shine_slot += 1;
+                    *shine_slot += 1;
                 }
             }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -4857,7 +4942,7 @@ fn faded_rect(screen: Option<[f32; 4]>, w: u32, h: u32) -> Option<[u32; 4]> {
 impl ZoneRenderer {
     /// Actors with the refraction pass (scheduler ops 0x48 / 0x49), in the given order (farthest first, retail's sorted
     /// list): per actor the scene so far is copied whole (FUN_10025870 into DAT_10456e6c), then its batches, its shine
-    /// and the refraction pass (FUN_1002dc10 -> FUN_10025330) sampling that copy at the pixel's own screen point shifted
+    /// and the refraction pass (FUN_1002dc10 -> FUN_10025330) sampling that copy at the pixel's screen point shifted
     /// by (L P11, L P22) / w. Without a copyable target they draw plainly.
     pub fn render_refraction(
         &mut self,
@@ -4870,6 +4955,22 @@ impl ZoneRenderer {
         aspect: f32,
         actors: &[&ActorGpu],
     ) {
+        self.render_refraction_at(gpu, encoder, color, color_tex, depth, camera, aspect, actors, 0);
+    }
+
+    /// render_refraction from uniform slot `base` on: one actor at a time among the effects, each its slot.
+    pub fn render_refraction_at(
+        &mut self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        color: &wgpu::TextureView,
+        color_tex: Option<&wgpu::Texture>,
+        depth: &wgpu::TextureView,
+        camera: &Camera,
+        aspect: f32,
+        actors: &[&ActorGpu],
+        base: usize,
+    ) {
         let done = gpu.mips_done();
         let list: Vec<&ActorGpu> = actors
             .iter()
@@ -4877,7 +4978,7 @@ impl ZoneRenderer {
             .filter(|a| {
                 a.mips <= done && a.refract.is_some() && a.skin.as_ref().is_some_and(|s| s.frame == self.pose_frame)
             })
-            .take(SHINE_SLOTS)
+            .take(SHINE_SLOTS.saturating_sub(base))
             .collect();
         if list.is_empty() || self.pose_gpu.is_none() {
             return;
@@ -4905,7 +5006,8 @@ impl ZoneRenderer {
         let proj = camera.proj(aspect);
         let (p00, p11) = (proj.x_axis.x, proj.y_axis.y);
         let Some((_, group, _)) = &self.pose_gpu else { return };
-        for (slot, a) in list.iter().enumerate() {
+        for (i, a) in list.iter().enumerate() {
+            let slot = base + i;
             let (Some(rf), Some(skin)) = (a.refract, a.skin.as_ref()) else { continue };
             let off = (slot as u64 * SHINE_STRIDE) as u32;
             gpu.queue.put(
@@ -4944,7 +5046,7 @@ impl ZoneRenderer {
                     pass.draw(range.clone(), 0..1);
                 }
             }
-            // Its shine in a slot from the top of the shine buffer (render's own take the bottom).
+            // Its shine in a slot from the top of the shine buffer (render's take the bottom).
             if let Some(s) = a.shine
                 && let Some(tex) = self.shine_tex.get(&s.key)
             {
@@ -5146,7 +5248,7 @@ pub fn render_pngs_post(
         (std::env::var("FFXI_BENCH").ok().and_then(|v| v.parse::<u32>().ok()), frames.first())
     {
         renderer.lighting = *lighting;
-        // With timestamps, the GPU's own time for render() too (one pair a frame, up to 2048 frames).
+        // With timestamps, the GPU's time for render() too (one pair a frame, up to 2048 frames).
         let ts = gpu
             .device
             .features()

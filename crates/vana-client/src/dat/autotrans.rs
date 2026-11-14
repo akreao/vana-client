@@ -3,7 +3,7 @@
 //! dictionary" (loader FUN_101bb7a0, resolver FUN_101bc100, expander FUN_101ac990).
 
 use super::DatIndex;
-use super::font::{PHRASE_BASE, decode_sjis, raw_byte};
+use super::font::{KIND_VARIABLE, PHRASE_MARK, decode_sjis, is_phrase, raw_byte};
 use super::msg::Messages;
 use super::names::NameSource;
 use anyhow::{Context, Result};
@@ -128,13 +128,8 @@ impl Dictionary {
         .filter(|n| !n.is_empty())
     }
 
-    /// FUN_101bcd10, run when the root category list opens (FUN_101bd060 with no word and no category): the Key Items
-    /// group (FUN_101bcc50) and then the Items group (FUN_101bc880) are built again; a group with no entry is not
-    /// there at all.
-    /// - `recent`: the item record cache's filled slots (FUN_101bc700 / FUN_101bc770); names starting '.', and ids
-    ///   0x7400..0xfffe (FUN_101bc6d0) are left out.
-    /// - `key_items`: the key item table in file order as (id, name, owned) (FUN_101bca00 / FUN_101bca80): the owned
-    ///   ones (FUN_1022c600) up to the first owned id 0x181..0x183, 0xfe at most.
+    /// FUN_101bcd10 on the root category list: Key Items, then Items, built again from the record cache's slots
+    /// (`recent`) and the key item table as (id, name, owned); a group with no entry is not there.
     pub fn rebuild(&self, recent: &[(u32, String)], key_items: &[(u32, String, bool)]) {
         let mut built = Vec::new();
         let mut keys = Vec::new();
@@ -144,7 +139,8 @@ impl Dictionary {
             }
             keys.push((id_block(KIND_KEY_ITEMS, *id as u16), name.clone()));
         }
-        if !keys.is_empty() {
+        // A title that did not load (group 0xb) leaves its group out: no blank category, no empty brackets.
+        if !keys.is_empty() && !self.titles[1].0.is_empty() {
             let (title, key) = self.titles[1].clone();
             built.push(Built { kind: KIND_KEY_ITEMS, title, key, words: keys });
         }
@@ -153,7 +149,7 @@ impl Dictionary {
             .filter(|(id, name)| *id != 0 && !name.starts_with('.') && !(0x7400..=0xfffe).contains(id))
             .map(|(id, name)| (id_block(KIND_ITEMS, *id as u16), name.clone()))
             .collect();
-        if !items.is_empty() {
+        if !items.is_empty() && !self.titles[0].0.is_empty() {
             let (title, key) = self.titles[0].clone();
             built.push(Built { kind: KIND_ITEMS, title, key, words: items });
         }
@@ -162,17 +158,13 @@ impl Dictionary {
         }
     }
 
-    /// The groups built at run time as they stand.
-    pub fn built(&self) -> Vec<Built> {
-        self.built.read().map(|b| b.clone()).unwrap_or_default()
+    /// The groups built at run time as they stand (held read: `rebuild` waits).
+    pub fn built(&self) -> std::sync::RwLockReadGuard<'_, Vec<Built>> {
+        self.built.read().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// FUN_101bba90 / FUN_101bbc60 / FUN_101bbe60 for the candidate list: a group's phrases sorted by key (`filter`,
-    /// a category's block id: FUN_101bc640 finds a file group by its group byte, else a built group by its kind
-    /// byte); else the words (titles and phrases) whose key starts with `word`, ignoring case, sorted by key, a text
-    /// only once and none starting with a space; no word or no match: every group's title (the categories: the file's
-    /// groups, then Key Items and Items). (text, block id) and whether the word matched (not the categories in its
-    /// place).
+    /// FUN_101bba90 / FUN_101bbc60 / FUN_101bbe60: the phrases of category `filter` (FUN_101bc640), else the words
+    /// whose key starts with `word`, else the categories. (text, block id) by key, and whether the word matched.
     pub fn query(&self, word: &str, filter: Option<[u8; 4]>) -> (Vec<(String, [u8; 4])>, bool) {
         let sorted = |mut v: Vec<(String, String, [u8; 4])>| {
             v.sort_by_key(|w| w.1.to_lowercase());
@@ -206,7 +198,7 @@ impl Dictionary {
             all.push((g.title.clone(), g.key.clone(), [GROUP_KIND, LANG_EN, g.id, 0]));
             all.extend(g.phrases.iter().map(|p| (p.1.clone(), p.2.clone(), [GROUP_KIND, LANG_EN, g.id, p.0])));
         }
-        for b in &built {
+        for b in built.iter() {
             all.push((b.title.clone(), b.key.clone(), [b.kind, LANG_EN, 0, 0]));
             all.extend(b.words.iter().map(|w| (w.1.clone(), w.1.clone(), w.0)));
         }
@@ -282,11 +274,8 @@ impl Dictionary {
         })
     }
 
-    /// FUN_101bd6d0: a block's text (the language byte is ignored: the client's own dictionary answers). Kinds 7..0x12
-    /// are items, 0x13.. key items (`block_id`). An item is the record cache's name (the lookup takes a cache slot, so
-    /// an item seen in chat joins the Items group); item id 0 is the Items group's title while that group stands,
-    /// else nothing. Key item id 0 is the Key Items group's title while that stands, else key item 0's name. Any
-    /// other kind is a phrase (id 0 the group's title). None: unknown (the line ends there).
+    /// FUN_101bd6d0: a block's text, the language byte ignored. Kinds 7.. are items / key items (`block_id`, id 0 the
+    /// built group's title), any other kind (6 too) a phrase. None: unknown (the line ends there).
     pub fn resolve(&self, b: [u8; 4], names: Option<&dyn NameSource>) -> Option<String> {
         let [kind, _, hi, lo] = b;
         if kind >= 7 {
@@ -325,7 +314,7 @@ impl Dictionary {
             } else if let Some(block) = block_at(&chars, at) {
                 at += 4;
                 // A 6-byte block of kind 6 is a variable block whose length byte is FD (negative): the line ends.
-                match Some(block).filter(|b| b[0] != 6).and_then(|b| self.resolve(b, names)) {
+                match Some(block).filter(|b| b[0] != KIND_VARIABLE).and_then(|b| self.resolve(b, names)) {
                     Some(t) => {
                         out.push('\u{E008}');
                         out.push_str(&t);
@@ -344,12 +333,8 @@ impl Dictionary {
         out
     }
 
-    /// FUN_101adbb0 on a variable block, `FD 06 x x x nn <nn bytes> x` (font::decode_sjis keeps its bytes): the nn
-    /// bytes are a template, copied out as they are, in which each FD starts a 6-byte place. A place takes the next
-    /// block after the variable block in the line (any kind, expanded without brackets, and used up); when no block
-    /// follows, the place's own four id bytes are resolved, and one that resolves to nothing takes the byte before it
-    /// off the output (retail adds the resolver's -1 to the length). nn is a signed byte: over 0x7f the line ends
-    /// there, as it does when a following block does not resolve.
+    /// FUN_101adbb0: `FD 06 x x x nn <template> x`; each FD in the template is a place, filled by the next block in
+    /// the line, else by the place's id bytes. None (the line ends): nn over 0x7f, or a following block that fails.
     fn variable(&self, chars: &[char], at: &mut usize, names: Option<&dyn NameSource>) -> Option<String> {
         let byte = |i: usize| chars.get(i).and_then(|&c| raw_byte(c));
         let nn = byte(*at + 5).filter(|&n| n < 0x80)? as usize;
@@ -360,7 +345,7 @@ impl Dictionary {
         let mut run = Vec::new();
         let mut i = 0;
         while i < nn {
-            if body[i] != 0xFD {
+            if body[i] != PHRASE_MARK {
                 run.push(body[i]);
                 i += 1;
                 continue;
@@ -369,9 +354,14 @@ impl Dictionary {
             if is_variable(chars, *at) {
                 out.push_str(&self.variable(chars, at, names)?);
             } else if let Some(block) = block_at(chars, *at) {
+                // Kind 6 there is a variable block with a negative length: FUN_101adbb0 fails on it.
+                if block[0] == KIND_VARIABLE {
+                    return None;
+                }
                 *at += 4;
                 out.push_str(&self.resolve(block, names)?);
             } else {
+                // A failed id adds the resolver's -1 to this call's length (its buffer, not the caller's).
                 let id = [1, 2, 3, 4].map(|k| body.get(i + k).copied().unwrap_or(0));
                 match self.resolve(id, names) {
                     Some(t) => out.push_str(&t),
@@ -387,16 +377,12 @@ impl Dictionary {
     }
 }
 
-fn is_phrase(c: char) -> bool {
-    (PHRASE_BASE..PHRASE_BASE + 0x400).contains(&(c as u32))
-}
-
 /// The four id bytes of the block starting at `at` (four phrase chars, positions 0..3).
 fn block_at(chars: &[char], at: usize) -> Option<[u8; 4]> {
     let mut b = [0u8; 4];
     for (k, x) in b.iter_mut().enumerate() {
         let cp = *chars.get(at + k)? as u32;
-        if !is_phrase(chars[at + k]) || (cp - PHRASE_BASE) / 0x100 != k as u32 {
+        if !is_phrase(chars[at + k]) || (cp - super::font::PHRASE_BASE) / 0x100 != k as u32 {
             return None;
         }
         *x = cp as u8;
@@ -406,7 +392,8 @@ fn block_at(chars: &[char], at: usize) -> Option<[u8; 4]> {
 
 /// A variable block starts at `at`: the kept bytes FD 06 (font::decode_sjis).
 fn is_variable(chars: &[char], at: usize) -> bool {
-    chars.get(at).and_then(|&c| raw_byte(c)) == Some(0xFD) && chars.get(at + 1).and_then(|&c| raw_byte(c)) == Some(6)
+    let byte = |i: usize| chars.get(i).and_then(|&c| raw_byte(c));
+    byte(at) == Some(PHRASE_MARK) && byte(at + 1) == Some(KIND_VARIABLE)
 }
 
 #[cfg(test)]
@@ -461,7 +448,7 @@ mod tests {
         assert_eq!(d.resolve([7, 2, 0x40, 0x97], n).as_deref(), Some("Bronze Sword"));
         assert_eq!(d.resolve([8, 2, 0xff, 0xff], n), None);
         d.rebuild(&names.items.recent(), &[]);
-        let b = d.built();
+        let b = d.built().clone();
         assert_eq!(b.len(), 1);
         assert_eq!((b[0].kind, b[0].words.as_slice()), (7, &[([7, 2, 0x40, 0x97], "Bronze Sword".to_string())][..]));
         assert_eq!(d.query("", None).0.len(), 43);
@@ -521,7 +508,7 @@ mod tests {
             (0x300, s("After"), true),
         ];
         d.rebuild(&recent, &keys);
-        let b = d.built();
+        let b = d.built().clone();
         assert_eq!(b.iter().map(|g| g.kind).collect::<Vec<_>>(), vec![0x13, 7]);
         assert_eq!(b[0].words, vec![([0x15, 2, 0xff, 0x45], s("Airship pass")), ([0x16, 2, 2, 0xff], s("Map"))]);
         assert_eq!(
@@ -568,7 +555,18 @@ mod tests {
         assert!(d.built().is_empty());
     }
 
-    /// FUN_101adbb0's variable block: the template's places take the blocks that follow it, else their own ids; no
+    /// A title that did not load leaves its group out: no blank category, and id 0 still ends the line.
+    #[test]
+    fn untitled_groups() {
+        let mut d = small();
+        d.titles = Default::default();
+        d.rebuild(&[(0x1010, "Potion".into())], &[(0x45, "Airship pass".into(), true)]);
+        assert!(d.built().is_empty());
+        assert_eq!(d.query("", None).0.len(), 1);
+        assert_eq!(d.resolve([8, 2, 0xff, 0xff], None), None);
+    }
+
+    /// FUN_101adbb0's variable block: the template's places take the blocks that follow it, else their id bytes; no
     /// brackets; a length byte over 0x7f ends the line.
     #[test]
     fn variable_block() {
@@ -576,12 +574,12 @@ mod tests {
         // "<" place ">" then the block that fills the place.
         let line = decode_sjis(b"a \xFD\x06\x02\x01\x01\x08<\xFD\x02\x02\x01\x02\xFD>\xFD\xFD\x02\x02\x01\x01\xFD b");
         assert_eq!(d.expand(&line, None), "a <Hello!> b");
-        // No block follows: the place's own id; the next plain block keeps its brackets.
+        // No block follows: the place's id bytes; the next plain block keeps its brackets.
         let line = decode_sjis(b"\xFD\x06\x00\x00\x00\x06\xFD\x02\x02\x01\x02\xFD\xFD!");
         assert_eq!(d.expand(&line, None), "Thanks.!");
         let line = decode_sjis(b"\xFD\x06\x00\x00\x00\x00\xFD\xFD\x02\x02\x01\x01\xFD");
         assert_eq!(d.expand(&line, None), "\u{E008}Hello!\u{E009}");
-        // A variable block fills a place of another; an unknown place of its own takes one byte off.
+        // A variable block fills a place of another; an unknown place id takes one byte off.
         let line = decode_sjis(
             b"\xFD\x06\x00\x00\x00\x07[\xFD\x02\x02\x01\x02\xFD\xFD\xFD\x06\x00\x00\x00\x08xy\xFD\x02\x02\x09\x09\xFD\xFD.",
         );
@@ -591,6 +589,15 @@ mod tests {
         assert_eq!(d.expand(&line, None), "ok");
         let line = decode_sjis(b"ok\xFD\x06\x00\x00\x00\xFDtail");
         assert_eq!(d.expand(&line, None), "ok");
+        // The template's text before a failing place goes with it: the call builds its text apart and returns -1.
+        let line =
+            decode_sjis(b"ok\xFD\x06\x00\x00\x00\x09Hi \xFD\x02\x02\x01\x02\xFD\xFD\xFD\x02\x02\x09\x09\xFDtail");
+        assert_eq!(d.expand(&line, None), "ok");
+        // A following kind-6 block (its length byte FD) ends the line; a place's id bytes of kind 6 are a phrase.
+        let line = decode_sjis(b"ok\xFD\x06\x00\x00\x00\x06\xFD\x02\x02\x01\x02\xFD\xFD\xFD\x06\x02\x01\x01\xFDtail");
+        assert_eq!(d.expand(&line, None), "ok");
+        let line = decode_sjis(b"\xFD\x06\x00\x00\x00\x06\xFD\x06\x02\x01\x01\xFD\xFD!");
+        assert_eq!(d.expand(&line, None), "Hello!!");
         // The bytes survive a round trip.
         let raw = b"\xFD\x06\x02\x01\x01\x08<\xFD\x02\x02\x01\x02\xFD>\xFD";
         assert_eq!(crate::dat::font::encode_sjis(&decode_sjis(raw)), raw);

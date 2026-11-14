@@ -31,6 +31,7 @@ end)
 | [`game.synth()`](#gamesynth) | Whether a synthesis is under way, and whether the synthesis window is open. |
 | [`game.clock()`](#gameclock) | Earth time, the moon and the next Vana'diel day, as the clock slot shows them. |
 | [`game.weather()`](#gameweather) | The current weather id. |
+| [`game.usable(kind, id)`](#gameusable) | Whether a spell or ability can be used now, and the game's refusal. |
 | [`game.key_items()`](#gamekey_items) | The key items you hold. |
 | [`game.treasure()`](#gametreasure) | The items in the treasure pool. |
 | [`game.countdown()`](#gamecountdown) | The content countdown the client shows: seconds left and the whole limit. |
@@ -64,7 +65,7 @@ end)
 game.player() -> Player
 ```
 
-Your own character: name, ids, zone, position, heading, status, HP, MP and TP, their maxima, your jobs and your target. Call it whenever you need "me".
+Your character: name, ids, zone, position, heading, status, HP, MP and TP, their maxima, your jobs and your target. Call it whenever you need "me".
 
 **Returns** `Player`: see [Player](types.md#player). Never nil. `hp`, `mp`, `tp`, `hpp` and `mpp` are nil until the server has sent your vitals; `hp_max`, `mp_max` and the job fields are nil until it has sent your stats; `target` is nil without a target.
 
@@ -113,9 +114,9 @@ Looks up one entity (a player, NPC or monster the client knows) by its server id
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `key` | `integer` | yes | A server id or an index. Your own id and index are checked first, then server ids, then indexes. |
+| `key` | `integer` | yes | A server id or an index. Your id and index are checked first, then server ids, then indexes. |
 
-**Returns** `Entity?`: see [Entity](types.md#entity). Your own id or index gives your own entity (with `me = true`). nil when nothing with that id or index is in range.
+**Returns** `Entity?`: see [Entity](types.md#entity). Your id or index gives your entity (with `me = true`). nil when nothing with that id or index is in range.
 
 **Errors** "game state is not available here" in the lobby or a chat filter; an error when `key` is not a whole number of 0 or more.
 
@@ -174,7 +175,7 @@ game.target() -> Entity?
 
 The entity you have targeted.
 
-**Returns** `Entity?`: see [Entity](types.md#entity). Your own entity when you target yourself. nil when you have no target, or when the target is no longer in range.
+**Returns** `Entity?`: see [Entity](types.md#entity). Your entity when you target yourself. nil when you have no target, or when the target is no longer in range.
 
 **Errors** "game state is not available here" in the lobby or a chat filter.
 
@@ -195,7 +196,7 @@ end)
 game.party() -> Member[]
 ```
 
-The members of your party and alliance, in slot order. Slots keep the game's numbers: 0 to 5 are your own party (slot 0 is you), 6 to 11 and 12 to 17 the alliance's other two parties.
+The members of your party and alliance, in slot order. Slots keep the game's numbers: 0 to 5 are your party (slot 0 is you), 6 to 11 and 12 to 17 the alliance's other two parties.
 
 **Returns** `Member[]`: a list (index 1, 2, ...) of [Member](types.md#member) tables, only the slots in use. Never nil.
 
@@ -211,7 +212,7 @@ for _, m in ipairs(game.party()) do
 end
 ```
 
-Members in another zone are listed too (`in_zone` is false). The members' own entities, when they are near, come from `game.entity(m.id)`.
+Members in another zone are listed too (`in_zone` is false). The members' entities, when they are near, come from `game.entity(m.id)`.
 
 ## `game.items`
 
@@ -277,7 +278,7 @@ game.zone_lines() -> table[]
 ```
 
 The zone lines of the zone we are in: the boxes in the zone's data that zone us when we touch them (their names are 8
-letters, the line's own tag and its destination's).
+letters, the line's tag and its destination's).
 
 **Returns** a list of:
 
@@ -285,7 +286,7 @@ letters, the line's own tag and its destination's).
 | --- | --- | --- |
 | `name` | `string` | Its 8-letter name. |
 | `centre` | `{x, y, z}` | The box's centre. |
-| `size` | `{x, y, z}` | Its size along its own axes. |
+| `size` | `{x, y, z}` | Its size along its axes. |
 | `yaw` | `number` | Its turn about the vertical, in radians. |
 | `corners` | `{x, y, z}[]` | The four corners of the floor it stands on (its bottom face), in order around it. |
 
@@ -310,7 +311,7 @@ game.quests() -> table
 ```
 
 Every quest area's quests in the journal's order, and where we stand in each, as the server sent it (the Quests
-window's own data).
+window's data).
 
 **Returns** a table keyed by area: 0 San d'Oria, 1 Bastok, 2 Windurst, 3 Jeuno, 4 Other Areas, 5 Outlands, 6 Aht
 Urhgan, 7 Crystal War, 8 Abyssea, 9 Adoulin, 10 Coalition. Each is a list of:
@@ -399,7 +400,7 @@ end
 game.can_wear(item) -> boolean
 ```
 
-Whether our character can wear the item now, by the client's own rule (the one that colours wearable gear yellow in
+Whether our character can wear the item now, by the client's rule (the one that colours wearable gear yellow in
 shops): the item's races, our main job and its level, the superior level, and no encumbrance on the item's slots.
 
 **Parameters**
@@ -519,6 +520,7 @@ Seconds left before you can use spells and abilities again, and how long each ru
 | `spells` | `table<integer, number>` | Seconds left, by spell id. |
 | `abilities` | `table<integer, number>` | Seconds left, by recast id (an ability's `recast_id` in `res.ability`). |
 | `totals` | `table` | `totals.spells` and `totals.abilities`: each running recast's whole length in seconds, with the same keys. |
+| `calc` | `table<integer, table>` | By recast id, the server's two adjustments to an ability's recast: `{calc1, calc2}`. `calc1`'s low 6 bits take that many sixtieths off the whole recast, `calc2` adds seconds. The charge abilities (Quick Draw, Stratagems, Ready) share their recast between their charges by them. |
 
 `totals` is the recast as it started: the length the server gave, with gear, merits and job points already in. A recast
 that was already running when you logged in has its base length (`res.ability`'s `recast`) when that is longer than
@@ -631,6 +633,34 @@ local el = res.weather_element(w)
 print("Weather:", res.weather(w), el and res.element(el) or "no element")
 ```
 
+## `game.usable`
+
+```lua
+game.usable(kind, id) -> boolean, integer?
+```
+
+Whether a spell or an ability can be used now, as the game's magic and ability lists decide: your status (asleep,
+fishing, mounted ...), the recast, your jobs and levels, MP, TP, a blue spell being set.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `kind` | `string` | yes | `"spell"` or `"ability"`. |
+| `id` | `integer` | yes | The spell id, or the ability id as `res.ability` takes it. |
+
+**Returns** `boolean, integer?`: `true` when it can be used; else `false` and the game's refusal, a group 7 message id
+(nil for a refusal the game does not word).
+
+**Errors** "game state is not available here" in the lobby or a chat filter; `usable: kind "<k>" (spell or ability)`.
+
+**Example**
+
+```lua
+local ok, why = game.usable("spell", 1) -- Cure
+print(ok and "Cure is ready" or ("no Cure: message " .. tostring(why)))
+```
+
 ## `game.key_items`
 
 ```lua
@@ -729,7 +759,7 @@ The event (a cutscene or NPC conversation) under way, the menu it shows, and its
 | `text.waiting` | `boolean` | The message waits for a key (Enter, or `actions.advance()`) before it goes on. |
 | `text.open` | `number` | Seconds its page has been on screen. |
 | `text.lines` | `string[]` | The page's lines as the log wraps them, read as the window shows them (colour codes left out). NPC talk starts with the speaker's name and ` : `. |
-| `text.actor` | `integer` | The event's NPC (or our own character) by server id: who was talked to. |
+| `text.actor` | `integer` | The event's NPC (or our character) by server id: who was talked to. |
 
 **Errors** "game state is not available here" in the lobby or a chat filter.
 
@@ -771,7 +801,7 @@ The entity a target tag names, as text commands understand them, or a player fou
 | --- | --- | --- | --- |
 | `tag` | `string` | yes | One of: a tag `t` (your target), `me`, `bt` (your party's battle target), `pet`, `ht` (the call-for-help target), `scan` (the Wide Scan tracked entity), with or without `<>`; a party slot `p0` to `p5` or alliance slot `a10` to `a15`, `a20` to `a25` (with or without `<>`); a player's name (any case); or a server id written as a number (decimal, or hex as `0x1A2B`). |
 
-**Returns** `Entity?`: see [Entity](types.md#entity). nil when the tag names nobody, or the entity is not in range. A name finds players (and your own or your party's pets and trusts), not NPCs or monsters.
+**Returns** `Entity?`: see [Entity](types.md#entity). nil when the tag names nobody, or the entity is not in range. A name finds players (and yours or your party's pets and trusts), not NPCs or monsters.
 
 **Errors** "game state is not available here" in the lobby or a chat filter.
 
@@ -938,6 +968,7 @@ Capacity points and job points for every job.
 | `capacity` | `integer` | Capacity points. |
 | `points` | `integer` | Job points you have to spend. |
 | `spent` | `integer` | Job points spent on this job. |
+| `upgrades` | `table<integer, integer>` | Each of the job's job point upgrades' level, by the upgrade's id (the job is in the id's upper bits: `id >> 5`). Empty until the server has sent them. |
 
 **Errors** "game state is not available here" in the lobby or a chat filter.
 
@@ -1096,7 +1127,7 @@ The map record for where you stand, and how the map window shows it. Use it with
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `kind` | `string` | `"map"`: the map, which you own. `"not_owned"`: the map exists but you don't have it (or the client doesn't know you do yet, just after zoning): the map window, and `hud.map`, show the game's NO MAP image over the map's place, markers where they would be. `"no_map_needed"`: a record whose place needs no map: its own image, no markers. |
+| `kind` | `string` | `"map"`: the map, which you own. `"not_owned"`: the map exists but you don't have it (or the client doesn't know you do yet, just after zoning): the map window, and `hud.map`, show the game's NO MAP image over the map's place, markers where they would be. `"no_map_needed"`: a record whose place needs no map: its image, no markers. |
 | `owned` | `boolean` | `kind == "map"`. |
 | `zone` | `integer` | The zone the map belongs to. |
 | `number` | `integer` | The map's number within the zone. |

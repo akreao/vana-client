@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Runs .github/workflows/release-builds.yml on custom (HEAD, pushed), waits for it and puts its binaries (Linux
-# aarch64, macOS aarch64 and x86_64) in target/assets, where release/publish.sh signs them with the rest.
+# aarch64, macOS aarch64 and x86_64, Windows x86_64) in target/assets, where release/publish.sh signs them with the rest.
 #   release/fetch-ci-builds.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 repo=akreao/vana-client
-names=(vana-client-linux-aarch64 vana-client-macos-aarch64 vana-client-macos-x86_64)
+names=(vana-client-linux-aarch64 vana-client-macos-aarch64 vana-client-macos-x86_64 vana-client-windows-x86_64.exe)
 git fetch -q origin custom
 head=$(git rev-parse HEAD)
 [ "$(git rev-parse origin/custom)" = "$head" ] || { echo "HEAD is not origin/custom: push the release commit first" >&2; exit 1; }

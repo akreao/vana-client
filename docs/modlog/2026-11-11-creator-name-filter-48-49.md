@@ -83,8 +83,17 @@ sizes plus 0x20 must be the file's size. Retail's is 626,608 bytes: sections of 
   extracted copy, or the MSI). ffxi-wrapper installs through `vana-client install`, so it needs no change.
 - Creator: FFXI-3322 and the name step after the length checks; a refused random name is dropped. Event op 0x71
   sub 3 answers through `Host::name_refused`.
+- The filter loads off the UI thread when the creator opens (the name step waits for it) and is dropped on every way
+  out, as retail unloads it.
+- The copy takes the "entryz.dic" File row whose component installs and whose directory resolves to
+  SquareEnix\PlayOnlineViewer\data\dic under INSTALLDIR, as `install` picks rows (the US viewer has one).
+- A node with no keys still compares key 0 (polcore's caller passes count − 1 as the signed upper bound). A run node
+  with no characters uses no byte; more of them in a row than the section can hold nodes is a damaged tree, where
+  polcore recurses without end, and ours gives no match.
 - Deviation: with no dictionary file at all, retail would refuse every name (the load fails). Installs made before
   this change have no file, so there the creator lets the name through, logs a warning that names the `dictionary`
   command, and leaves the check to the server. A file that is there and does not load refuses, as retail.
-- `cabx::extract_all` now skips a cabinet entry that shares another's bytes when nobody asked for it (the viewer's
-  cabinet has such entries; before, the first one stopped the extraction).
+- `cabx::extract_all` takes entries that share bytes (same folder offset and size, WiX's stored-once copies) as one
+  run: the bytes are streamed once, to the first wanted entry of the run, and every other wanted one is copied from
+  it, whichever entry comes first (the viewer's cabinet has such runs; before, an unwanted first copy stopped the
+  extraction). An entry that overlaps another's bytes without being a copy still fails, wanted or not.

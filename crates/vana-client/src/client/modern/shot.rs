@@ -231,60 +231,62 @@ fn edge_sample(m: &Modern, ctx: &egui::Context) {
 
 /// The skillchain helper on the left edge: a Liquefaction just made, three trusts and long names.
 fn skillchain_sample(m: &Modern, ctx: &egui::Context) {
-    use crate::client::skillchain::{ChainWays, Closer, Now, View, Way};
-    let way = |a: &str, sa: &str, b: &str, sb: &str, ready: bool| Way {
-        opener: (a.into(), sa.into()),
-        closer: (b.into(), sb.into()),
-        ready,
-        chain: 0,
+    use crate::client::lua::window::{Span, TextLine, Tone};
+    let span = |text: &str, tone: Tone| Span { text: text.into(), tone, ..Default::default() };
+    let chain = |name: &str, tone: Tone, els: &[u8], strong: bool| Span {
+        text: name.into(),
+        tone,
+        strong,
+        elements: els.to_vec(),
     };
-    let closer = |who: &str, skill: &str, chain, ready| Closer { who: who.into(), skill: skill.into(), chain, ready };
-    let v = View {
-        now: Some(Now {
-            mob: "Bloodthirsty Troll".into(),
-            props: vec![3],
-            chain: Some(3),
-            by: "Shantotto II: Final Exquisite Exquisite".into(),
-            age: 4.2,
-            left: 4.8,
-            life: 9.0,
-            closers: vec![
-                closer("You", "Blade: Retsu", 11, true),
-                closer("Ayame", "Tachi: Kasha", 11, false),
-                closer("Naji", "Vorpal Blade", 4, true),
-                closer("Apururu (UC)", "Nott", 8, false),
+    let text = |t: &str, tone: Tone| TextLine { spans: vec![span(t, tone)], ..Default::default() };
+    let closer = |c: Span, who: &str, ready: bool| TextLine {
+        spans: vec![c, span(who, if ready { Tone::Text } else { Tone::Muted })],
+        column: 128.0,
+        ..Default::default()
+    };
+    let fold = |c: Span, ways: usize, open: bool| TextLine {
+        spans: vec![c],
+        right: Some(span(&format!("{ways} ways"), Tone::Muted)),
+        fold: Some(String::new()),
+        open,
+        gap: if open { 0.0 } else { 3.0 },
+        ..Default::default()
+    };
+    let way = |t: &str, ready: bool| TextLine { indent: 16.0, ..text(t, if ready { Tone::Text } else { Tone::Muted }) };
+    let mut lines = vec![
+        TextLine {
+            spans: vec![span("Bloodthirsty Troll", Tone::Muted)],
+            right: Some(span("4.8 s left", Tone::Gold)),
+            ..Default::default()
+        },
+        TextLine {
+            spans: vec![
+                Span { strong: true, ..span("Skillchain:", Tone::Gold) },
+                chain("Liquefaction", Tone::Bronze, &[0], true),
             ],
-        }),
-        chains: vec![
-            ChainWays {
-                chain: 14,
-                ways: vec![
-                    Way { chain: 16, ..way("You", "Blade: Chi", "Ayame", "Tachi: Yukikaze", true) },
-                    Way { chain: 14, ..way("Naji", "Vorpal Blade", "You", "Blade: Ten", false) },
-                    Way { chain: 14, ..way("Ayame", "Tachi: Gekko", "Naji", "Burning Blade", false) },
-                ],
-            },
-            ChainWays {
-                chain: 11,
-                ways: vec![
-                    way("You", "Blade: Retsu", "Shantotto II", "Final Exquisite Exquisite", true),
-                    way("Naji", "Red Lotus Blade", "Ayame", "Tachi: Kasha", false),
-                ],
-            },
-            ChainWays { chain: 12, ways: vec![way("Ayame", "Tachi: Enpi", "You", "Blade: Jin", false)] },
-            ChainWays {
-                chain: 3,
-                ways: vec![
-                    way("Naji", "Fast Blade", "You", "Blade: Teki", true),
-                    way("You", "Blade: Rin", "Naji", "Burning Blade", true),
-                    way("Shantotto II", "Shantotto Pson", "You", "Blade: To", false),
-                    way("Ayame", "Tachi: Hobaku", "Naji", "Red Lotus Blade", false),
-                ],
-            },
-        ],
-    };
-    m.sc_open.borrow_mut().extend([3, 14]);
-    let width = super::extras::skillchain_width(ctx, m, &v);
+            ..Default::default()
+        },
+        text("Magic burst: Fire", Tone::Text),
+        TextLine { bar: Some((0.8, Tone::Gold)), ..Default::default() },
+        TextLine { gap: 4.0, ..text("by Shantotto II: Final Exquisite Exquisite", Tone::Muted) },
+        TextLine { heading: true, ..text("Close with", Tone::Gold) },
+        closer(chain("Fusion", Tone::Gold, &[6, 0], false), "You: Blade: Retsu", true),
+        closer(chain("Fusion", Tone::Gold, &[6, 0], false), "Ayame: Tachi: Kasha", false),
+        closer(chain("Scission", Tone::Bronze, &[3], false), "Naji: Vorpal Blade", true),
+        TextLine { gap: 8.0, ..closer(chain("Impaction", Tone::Bronze, &[4], false), "Apururu (UC): Nott", false) },
+        TextLine { heading: true, big: true, ..text("Party chains", Tone::Gold) },
+        fold(chain("Darkness", Tone::Text, &[7, 3, 5, 1], true), 3, true),
+        way("You: Blade: Chi  \u{2192}  Ayame: Tachi: Yukikaze  (level 4)", true),
+        way("Naji: Vorpal Blade  \u{2192}  You: Blade: Ten", false),
+        TextLine { gap: 3.0, ..way("Ayame: Tachi: Gekko  \u{2192}  Naji: Burning Blade", false) },
+        fold(chain("Fusion", Tone::Gold, &[6, 0], true), 2, false),
+        fold(chain("Fragmentation", Tone::Gold, &[2, 4], true), 1, false),
+    ];
+    if let Some(l) = lines.last_mut() {
+        l.right = Some(span("1 way", Tone::Muted));
+    }
+    let width = super::extras::lines_width(ctx, m, &lines) + 30.0 + 14.0;
     let screen = ctx.content_rect();
     let at = pos2(screen.min.x, 120.0);
     let shown = egui::Area::new(Id::unique("skillchain sample"))
@@ -299,7 +301,7 @@ fn skillchain_sample(m: &Modern, ctx: &egui::Context) {
                     ui.set_width(width - 30.0);
                     ui.visuals_mut().override_text_color = Some(m.theme.color("text"));
                     ui.label(egui::RichText::new("Skillchains").size(m.theme.small + 1.0).color(m.theme.color("gold")));
-                    super::extras::skillchain_body(ui, m, &v);
+                    super::extras::lines_body(ui, m, &lines);
                 },
             );
             ui.painter().set(
@@ -528,7 +530,7 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
         ("[18:42:33] ".to_string(), "(Raven) lenon, cure me pls", [0x80, 0x70, 0x40, 0x80], 13),
         // Japanese game text (zone 70's Sakura) through the system CJK font.
         (String::new(), "Sakura : \u{30D4}\u{30E8}\u{30D4}\u{30E8}\u{FF01} \u{65E5}\u{672C}\u{8A9E}", wh, NO_MODE),
-        // The game's own glyphs and an event item name (1e 02 .. 1e 01).
+        // The game's glyphs and an event item name (1e 02 .. 1e 01).
         (
             String::new(),
             "Kupipi : A pre\u{FF5E}sent? Take this \u{100402}Fire Crystal\u{100401} to the \u{F87B2}Mog House\u{F87B3}.",

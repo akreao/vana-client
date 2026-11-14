@@ -5,8 +5,9 @@ Two lists the client reads from the `custom` branch (`updater::CATALOGUE_BRANCH`
 - `dats.json`: the DAT packs offered on the **DATs** page (its Available tab, "From the catalogue"), as archives.
 - `mods.json`: the standard Lua mods offered by **Mods > Download Standard Mods**, each as its files in this repository
   (`crates/vana-client/assets/mods/<id>/`), every file pinned by its SHA-256. No mod comes with the client. This list is
-  generated: after changing a mod, run `VANA_WRITE_CATALOGUE=1 cargo test standard_mods_listed` (the same test fails
-  while the list is out of date).
+  generated: after changing a mod, raise its `version` in `mod.toml` and run
+  `VANA_WRITE_CATALOGUE=1 cargo test standard_mods_listed` (the same test fails while the list is out of date, and
+  refuses a mod whose files changed under the same version: installed copies would never be offered the update).
 
 To list a mod, open a pull request that adds an entry. Each entry pins one version: to publish a new version, change
 its `version` and `files`.

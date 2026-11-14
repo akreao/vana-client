@@ -1,5 +1,5 @@
 name = "Loot Tracker"
-version = "1.0.4"
+version = "1.0.5"
 description = "Treasure Hunter on your target, what each kind of monster has dropped this session, and the treasure pool's time left (the loot tracker add-ons)."
 permissions = []
 

@@ -1,4 +1,4 @@
-"""Writes data/resistances.txt from LandSandBoat's data/ (YAML): the monsters' elemental resistance ranks.
+"""Writes the Suggestions mod's data/resistances.txt (assets/mods/suggestions/data) from LandSandBoat's data/ (YAML): the monsters' elemental resistance ranks.
 
 usage: python3 -I resist_gen.py LSB_DIR OUT
 

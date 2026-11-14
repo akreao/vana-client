@@ -112,7 +112,7 @@ pub struct Font {
     /// Shape textures by IMG name (e.g. "font    elfire").
     pub textures: HashMap<String, Texture>,
     pub lang: u8,
-    /// The colours of in-line codes `1e 00..10` (FUN_10161fd0's table; 0 = the line's own colour).
+    /// The colours of in-line codes `1e 00..10` (FUN_10161fd0's table; 0 = the line's colour).
     pub codes: [u32; 17],
 }
 
@@ -343,7 +343,7 @@ impl Font {
         };
         for g in glyphs(sjis) {
             // FUN_10162140: `1e xx` replaces the colour, keeping the draw's alpha: below 0x11 the 17-entry table (0 = the
-            // line's own), from 0x11 the colour-id table (FUN_10129d00, 0x80808080 when absent); `1f xx` mode xx's
+            // line's), from 0x11 the colour-id table (FUN_10129d00, 0x80808080 when absent); `1f xx` mode xx's
             // colour (FUN_10129c70).
             if (-0x1ff..=-0x100).contains(&g) {
                 let xx = (-0x100 - g) as usize;
@@ -492,7 +492,7 @@ const PAIR_BASE: u32 = 0xF0000;
 /// PAIR_BASE + 0x1000.. is free, and it stays clear of the chat icons at U+F0000..U+F0FFF (chaticons::BASE).
 const BYTE_BASE: u32 = PAIR_BASE + 0x1000;
 
-/// The game's own glyphs as Unicode for faces that lack them (the modern interface's): its apostrophe (0x8552) and
+/// The game's glyphs as Unicode for faces that lack them (the modern interface's): its apostrophe (0x8552) and
 /// curly quotes (0x87B2 / 0x87B3); the other private-use characters (gaiji, pairs Shift-JIS lacks, the in-line colour
 /// codes and phrase bytes kept in plane 16) are left out.
 pub fn plain_char(c: char) -> Option<char> {
@@ -540,6 +540,15 @@ pub fn strip_codes(s: &str) -> String {
 /// An auto-translate phrase (`FD kind lang hi lo FD`) kept in a String: its four inner bytes as U+100000 + 0x100 x
 /// position + byte, so encode_sjis gives the block back.
 pub const PHRASE_BASE: u32 = 0x10_0000;
+/// The byte that opens (and closes) an auto-translate block.
+pub const PHRASE_MARK: u8 = 0xFD;
+/// The kind byte of a variable auto-translate block (`FD 06 ..`).
+pub const KIND_VARIABLE: u8 = 6;
+
+/// One of a phrase's four chars (`PHRASE_BASE`).
+pub fn is_phrase(c: char) -> bool {
+    (PHRASE_BASE..PHRASE_BASE + 0x400).contains(&(c as u32))
+}
 
 /// The byte a char keeps for a byte Shift-JIS has no character for, or of a variable auto-translate block.
 pub fn raw_byte(c: char) -> Option<u8> {
@@ -553,8 +562,8 @@ pub fn decode_sjis(sjis: &[u8]) -> String {
         let b = sjis[i];
         // A variable auto-translate block, FD 06 x x x nn <nn bytes> x (FUN_101adbb0: nn + 7 bytes, nn a signed
         // byte): every byte is kept as it is for autotrans::Dictionary::expand, and encode_sjis gives them back.
-        if b == 0xFD
-            && sjis.get(i + 1) == Some(&6)
+        if b == PHRASE_MARK
+            && sjis.get(i + 1) == Some(&KIND_VARIABLE)
             && let Some(&nn) = sjis.get(i + 5).filter(|&&n| n < 0x80)
             && let Some(block) = sjis.get(i..i + nn as usize + 7)
         {
@@ -562,7 +571,7 @@ pub fn decode_sjis(sjis: &[u8]) -> String {
             i += block.len();
             continue;
         }
-        if b == 0xFD && sjis.get(i + 5) == Some(&0xFD) {
+        if b == PHRASE_MARK && sjis.get(i + 5) == Some(&PHRASE_MARK) {
             for (k, &x) in sjis[i + 1..i + 5].iter().enumerate() {
                 out.push(char::from_u32(PHRASE_BASE + 0x100 * k as u32 + x as u32).unwrap());
             }
@@ -581,7 +590,7 @@ pub fn decode_sjis(sjis: &[u8]) -> String {
             if pair[0] == 0xEF && (GAIJI_FIRST..GAIJI_END).contains(&g) {
                 out.push(char::from_u32(0xE000 + (g - GAIJI_FIRST) as u32).unwrap());
             } else {
-                // Pairs standard Shift-JIS lacks are the game's own glyphs (e.g. 0x87B2 / 0x87B3, its curly double
+                // Pairs standard Shift-JIS lacks are the game's glyphs (e.g. 0x87B2 / 0x87B3, its curly double
                 // quotes): kept as private-use U+F0000 + pair so encode_sjis gives the bytes back for the font.
                 // Retail never converts chat (FUN_1011c940 indexes the pair as it is), so a pair that encoding_rs
                 // would encode back as other bytes (NEC row 13 duplicates, the NEC-selected IBM rows 0xED / 0xEE) is
@@ -651,7 +660,7 @@ pub fn encode_sjis(text: &str) -> Vec<u8> {
 mod tests {
     use super::*;
 
-    /// A pair kept as its bytes still reaches the modern faces as its character; the game's own glyphs stay theirs.
+    /// A pair kept as its bytes still reaches the modern faces as its character; the game's glyphs stay theirs.
     #[test]
     fn kept_pairs_plain() {
         for (pair, ch) in [([0x87u8, 0x90], '≒'), ([0x87, 0x9A], '∵'), ([0xFA, 0x4A], 'Ⅰ')] {

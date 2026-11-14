@@ -289,7 +289,14 @@ impl Synth {
     pub(in crate::client) fn egui_events(&self) -> Vec<egui::Event> {
         let Some(key) = egui_of(self.key) else { return Vec::new() };
         let modifiers =
-            egui::Modifiers { alt: self.alt, ctrl: self.ctrl, shift: self.shift, mac_cmd: false, command: self.ctrl };
+            // As egui-winit gives it (and the script's keys): Ctrl is also `command` off macOS.
+            egui::Modifiers {
+                alt: self.alt,
+                ctrl: self.ctrl,
+                shift: self.shift,
+                mac_cmd: false,
+                command: self.ctrl && !cfg!(target_os = "macos"),
+            };
         let ev = |pressed| egui::Event::Key { key, physical_key: Some(key), pressed, repeat: false, modifiers };
         match self.down {
             None => vec![ev(true), ev(false)],
@@ -448,7 +455,7 @@ pub(in crate::client) fn drive_events(w: &mut World, events: Vec<egui::Event>, p
 }
 
 /// A key going down, repeating or up: the mods' filters, then their binds. `mods` overrides the window's modifiers
-/// (a drive's events carry their own).
+/// (a drive's events carry theirs).
 fn key_edge(w: &mut World, code: K, down: bool, repeat: bool, mods: Option<ModifiersState>) -> bool {
     let st = w.lua.input.clone();
     let taken = {

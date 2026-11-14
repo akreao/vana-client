@@ -34,10 +34,39 @@ sub 5 to 21 and the next request goes out on the same link, the old one still un
 
 Ours: each table frame knows whether it is its step's first call and whether it counts (`netwait::counted`); a
 reply wait repeats its frame, so the count runs while it waits. Past 3599 the run ends with `End::TimedOut`. The
-worker is told through `lobby::Watch::abandon`: the lobby link's reads now wake every 100 ms (they had no time-out
+worker is told through `lobby::Watch::give_up`: the lobby link's reads now wake every 100 ms (they had no time-out
 at all), stop with `Abandoned`, and keep the bytes read so far; the worker hands the link back
 (`Task::LobbyBack`), request still open, so the lobby goes on as retail's does. At 30 calls a second that is two
 minutes per step.
+
+The link keeps what each request written still has to come (`lobby::Owed`): a view reply, or on LSB for 0x1F and
+0x07 a data message first (0x01 / 0x02), then after the loader's 0xA1 / 0xA2 the view reply (0xA1 also the data
+0x03). A view reply goes to the oldest request owing one, a data message to the oldest waiting for its type; one
+that goes to an earlier request than the current one (its wait given up) is read whole and dropped, its key
+counter step kept (LSB stepped its counter when it sent it), and the netbar does not count it.
+
+LSB's paths that skip or replace a step's messages (src/login, read 2026-11-13):
+- A refused 0xA1 (maintenance and no character to list): view 0x04, no data 0x03.
+- 0x1F with no data session: view 0x04 in place of the data 0x01.
+- A refused 0xA2 (zone full, character already logged in, maintenance or login limit, no zone row, no map
+  address, the session insert failed): view 0x04 in place of the 0x0B, one for one.
+- Refusals of view-only requests (0x26 version, 0x14 deletion off, 0x22 name or pass, 0x28 name): one 0x04 for one
+  reply.
+- Closed sockets (0xA1 or 0xA2 with no account, 0x07 / 0x14 / 0x21 / 0x28 account or name checks, database
+  failures): the link is broken, nothing to account.
+- No answer at all: 0xA1 whose account id is not the session's, 0x07 with no data session.
+A refusal settles what it replaces: a 0x04 ends the data message its request still waited for. While a data
+message is awaited, the view link is watched too (a 1 ms look each round, the view link first, since LSB sent a
+late refusal there before it took the later requests): a 0x04 for the current request is its result at once, as
+for a refused 0xA1 (before this, ours waited for a 0x03 that never came until the time-out). Not covered: the two
+no-answer paths leave their request owed for good, so the next replies of the same kind go to it (nothing can tell
+an answer that never comes from a late one).
+
+The
+time-out and the worker's result race for one state (`Watch::give_up` / `Watch::finish`): a result in before the
+3600th call goes on as usual, and a worker that finds the run given up hands the link back instead of its result.
+The time-out frees the UI at once (the popup's OK, the login form), since a worker can be held up outside a read
+(a PlayOnline transaction, a connect); the late `LobbyBack` then leaves `busy` alone.
 
 **After a failed run, by caller.** Read from each caller; ours now follows them for a time-out, a refusal, and a
 failed refresh:
@@ -72,15 +101,20 @@ additively (source alpha 145 and 97 of 128, the lower one at half colour), and t
 - The delete and the rename keep their screen under the run.
 
 Ours: `GameUi::backdrop_window` draws the sprite scaled. The entry draws it over black, which hides our login form
-and title for the run (retail has neither there); the run starts 24 frames in, and a good entry fades out before
-the title menu comes up. The log-in is a screen of its own, `LobbyScreen::Run`: the title's scene, the backdrop,
-the run after 8 frames, and the error popup if it fails.
+and title for the run (retail has neither there); the run starts 24 frames in (at once in the modern UI, which
+has no backdrop or fade there), and a good entry fades out before the title menu comes up. The log-in is a screen
+of its own, `LobbyScreen::Run`: the title's scene, the backdrop, the run after 8 frames (every log-in, scripted
+ones too), and the error popup if it fails. A character the held list lacks fails before anything is sent
+(`lobby::Unsent`): FFXI-3101 over the backdrop and the title menu, the link kept.
 
 **Test hook.** `FFXI_LOBBY_MUTE=CMD[:N]` (hex, e.g. `07` or `1f:2`) holds back that view request, every time or
 only the Nth on the link, so its reply never comes.
 
 **Checked.** 1004 tests pass (new: the 3600-call count, the refresh's own count, the counted sub-steps, the lead
-frames, a given-up read that keeps the link and takes the late reply). Live on the test server, classic UI: the
+frames, a given-up read that keeps the link and drops the late reply ahead of the next one, the same on LSB's data
+link, the race between the time-out and the result, a log-in of an unlisted character that keeps the link, LSB's
+refusals of 0xA1, of 0x1F with no data session and of 0xA2, each at once and after a time-out). Live
+on the test server, before the late-reply and race changes, classic UI: the
 entry backdrop; a log-in through the select screen into the world; `FFXI_LOBBY_MUTE=07`: FFXI-3113 after 120 s
 over the backdrop, OK, the title menu, and the select screen works again on the same link; `FFXI_LOBBY_MUTE=1f:2`
 on a delete: FFXI-3113, then FFXI-3115, then out of the lobby.

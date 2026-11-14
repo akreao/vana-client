@@ -54,7 +54,7 @@ fn place(lua: &Lua, data: &Path, path: &str) -> mlua::Result<PathBuf> {
             no_links(&super::data_dir(), &Path::new(".shared").join(rest), path)
         }
         // From mod-data down, so a link at <id> or <id>/files is caught too (mod-data itself may be a link: the
-        // user's own choice of where it lives).
+        // user's choice of where it lives).
         Err(_) => {
             let root = super::data_dir();
             match data.strip_prefix(&root) {
@@ -77,12 +77,11 @@ fn no_links(base: &Path, r: &Path, path: &str) -> mlua::Result<PathBuf> {
     Ok(p)
 }
 
-/// Whether the mod's own files have this path (a file or a folder).
+/// Whether the mod's files have this path (a file or a folder).
 fn in_mod(src: &super::vm::Source, r: &Path) -> bool {
     let name = r.to_string_lossy().replace('\\', "/");
     match src {
         super::vm::Source::Dir(d) => super::vm::inside(d, &name).is_ok_and(|p| p.exists()),
-        super::vm::Source::Bundled(files) => files.iter().any(|f| f.0 == name || f.0.starts_with(&format!("{name}/"))),
     }
 }
 
@@ -91,7 +90,7 @@ fn io_err(path: &str, e: std::io::Error) -> mlua::Error {
 }
 
 pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<()> {
-    // fs: the mod's data folder (mod-data/<id>/files), reads falling back to the mod's own files.
+    // fs: the mod's data folder (mod-data/<id>/files), reads falling back to the mod's files.
     let data = super::data_dir().join(&vm.manifest.id).join("files");
     let src = vm.src.clone();
     let fs = lua.create_table()?;
@@ -169,21 +168,6 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
                         }
                         if !names.contains(&n) {
                             names.push(n);
-                        }
-                    }
-                }
-                if let super::vm::Source::Bundled(files) = &src {
-                    let prefix = rel(&path)?.to_string_lossy().replace('\\', "/");
-                    for (f, _) in files.iter() {
-                        let rest = if prefix.is_empty() { Some(*f) } else { f.strip_prefix(&format!("{prefix}/")) };
-                        if let Some(rest) = rest {
-                            let n = match rest.split_once('/') {
-                                Some((d, _)) => format!("{d}/"),
-                                None => rest.to_string(),
-                            };
-                            if !names.contains(&n) {
-                                names.push(n);
-                            }
                         }
                     }
                 }
@@ -354,9 +338,9 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
         "to_shift_jis",
         lua.create_function(|lua, s: String| lua.create_string(crate::dat::font::encode_sjis(&s)))?,
     )?;
-    text.set("plain", lua.create_function(|lua, s: String| Ok(super::super::fep::plain(world(lua)?, &s)))?)?;
+    text.set("plain", lua.create_function(|lua, s: String| Ok(super::super::fep::plain_peek(world(lua)?, &s)))?)?;
     text.set("strip", lua.create_function(|_, s: String| Ok(crate::dat::font::strip_codes(&s)))?)?;
-    // `s` in the log's in-line colour code `code` (as the game colours names and items), then back to the line's own.
+    // `s` in the log's in-line colour code `code` (as the game colours names and items), then back to the line's.
     text.set(
         "colour",
         lua.create_function(|_, (s, code): (String, u8)| {
@@ -621,7 +605,7 @@ fn copies(args: impl IntoIterator<Item = Value>, what: &str) -> mlua::Result<Vec
         .collect()
 }
 
-/// mods.call: the other mod's provided function with copies of the values (plain data), in its own VM.
+/// mods.call: the other mod's provided function with copies of the values (plain data), in its VM.
 fn call(lua: &Lua, id: &str, name: &str, args: mlua::Variadic<Value>) -> mlua::Result<MultiValue> {
     let dir = directory(lua);
     let (tl, st) = {
@@ -647,7 +631,7 @@ fn call(lua: &Lua, id: &str, name: &str, args: mlua::Variadic<Value>) -> mlua::R
     };
     let vals = copies(args, "mods.call argument")?;
     let targs = vals.iter().map(|j| super::api::to_lua(&tl, j)).collect::<mlua::Result<Vec<_>>>()?;
-    // The callee reads the world the caller was lent, under its own budget.
+    // The callee reads the world the caller was lent, under its budget.
     let lent = tl.app_data_ref::<super::api::WorldRef>().is_some();
     if !lent && let Some(p) = lua.app_data_ref::<super::api::WorldRef>().map(|r| r.0) {
         tl.set_app_data(super::api::WorldRef(p));
@@ -677,7 +661,7 @@ mod tests {
         assert_eq!(b(s("item"), 0x1010), Some([7, 2, 0x10, 0x10]));
         assert_eq!(b(s("item"), 0x50), Some([9, 2, 0xff, 0x50]));
         assert_eq!(b(s("key_item"), 0x200), Some([0x16, 2, 2, 0xff]));
-        // A built group's title in a line is id 0 written by the game's own encoder: no 00 byte (it would cut the
+        // A built group's title in a line is id 0 written by the game encoder: no 00 byte (it would cut the
         // line); the category block is the query's alone.
         assert_eq!((b(s("item"), 0), b(s("key_item"), 0)), (Some([8, 2, 0xff, 0xff]), Some([0x14, 2, 0xff, 0xff])));
         let c = |g: Value| super::phrase_category(&g).ok();
@@ -712,7 +696,7 @@ mod tests {
         assert!(p("new/b.txt").is_ok());
         assert!(p("out").is_err());
         assert!(p("out/x.txt").is_err());
-        // A link as the mod's own folder is caught from the root down.
+        // A link as the mod's folder is caught from the root down.
         assert!(super::no_links(&base, std::path::Path::new("out/files/a.txt"), "a.txt").is_err());
         let _ = std::fs::remove_dir_all(&base);
     }

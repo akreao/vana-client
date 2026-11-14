@@ -275,7 +275,7 @@ pub struct EffectsGpu {
     depth: Option<(wgpu::TextureView, Mat4)>,
     no_depth: wgpu::TextureView,
     /// Ours (the Lamp Lights setting, client/lamps.rs): each lamp's slot of the light table copied from its template
-    /// light after the update, at the lamp's own position. The lamps (count, then position + slot | template << 16),
+    /// light after the update, at the lamp's position. The lamps (count, then position + slot | template << 16),
     /// the pass's layout and its bind group (gone when the table changes).
     lamp_pipe: wgpu::ComputePipeline,
     lamp_layout: wgpu::BindGroupLayout,
@@ -373,7 +373,7 @@ pub struct EffectsGpu {
     keys: (wgpu::Buffer, usize),
     key_desc: (wgpu::Buffer, usize),
     paths: (wgpu::Buffer, usize),
-    /// The zone's point-light table (ZoneRenderer::lights), or a black one of our own until a zone gives it.
+    /// The zone's point-light table (ZoneRenderer::lights), or a black one of ours until a zone gives it.
     lights: wgpu::Buffer,
     slots: (wgpu::Buffer, usize),
     sverts: (wgpu::Buffer, usize),
@@ -402,7 +402,7 @@ pub struct EffectsGpu {
 const STAGES: usize = 3;
 
 /// The lamps' copy (EffectsGpu::lamp_pipe): a lamp's slot takes its template's range, colour and intensity at its
-/// own position; a lamp with no template (0xffff) its glow's colour (after the n lamps) at range 8 and intensity 20,
+/// position; a lamp with no template (0xffff) its glow's colour (after the n lamps) at range 8 and intensity 20,
 /// the gate tunnel lights' (op 0x49 of glr1 .. gll2) *(inf: a stand-in)*.
 const LAMP_WGSL: &str = r#"
 @group(0) @binding(0) var<storage, read_write> lights: array<vec4<f32>>;
@@ -1362,8 +1362,9 @@ impl EffectsGpu {
             self.meshes.get(id as usize).and_then(|m| m.as_ref()).map(|m| (m.mmb, m.groups.iter().any(|g| g.2)))
         };
         let items: Vec<(u32, StageDraw)> = fx
-            .draw_items()
+            .draw_items_keyed()
             .into_iter()
+            .map(|(_, e)| e)
             .filter(|&e| e & crate::fx::TRAIL_ITEM == 0 && e < self.count)
             .filter_map(|e| {
                 let c = fx.elems[e as usize].as_ref()?;
@@ -1512,7 +1513,7 @@ impl EffectsGpu {
         }
     }
 
-    /// The lamps (client/lamps.rs): position, slot, template slot (0xffff: its own light) and the glow's colour
+    /// The lamps (client/lamps.rs): position, slot, template slot (0xffff: its light) and the glow's colour
     /// (BGRA, 0x80 = 1.0).
     pub fn set_lamps(&mut self, gpu: &Gpu, lamps: &[(glam::Vec3, u32, u32, u32)]) {
         let n = lamps.len().min(crate::render::LIGHTS);
@@ -1856,8 +1857,29 @@ impl EffectsGpu {
         fog_color: [f32; 3],
         fog: [f32; 2],
     ) {
+        self.draw_with_breaks(gpu, encoder, target, color_tex, fx, cam, clip, fog_color, fog, &[], &mut |_, _| {});
+    }
+
+    /// As draw, with other transparent things in the sorted list: `breaks` are their keys (view depth, as the
+    /// elements', back to front); before the first element nearer than break i, the pass ends, `on_break(encoder, i)`
+    /// draws it, and a new pass goes on. Returns how many breaks it ran (the caller draws the rest, all nearer).
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_with_breaks(
+        &mut self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        target: (&wgpu::TextureView, &wgpu::TextureView, [u32; 2]),
+        color_tex: Option<&wgpu::Texture>,
+        fx: &Effects,
+        cam: (Mat4, Mat4, glam::Vec3),
+        clip: [f32; 2],
+        fog_color: [f32; 3],
+        fog: [f32; 2],
+        breaks: &[f32],
+        on_break: &mut dyn FnMut(&mut wgpu::CommandEncoder, usize),
+    ) -> usize {
         if self.draw_group.is_none() || (self.count == 0 && fx.trails.iter().all(|t| t.is_none())) {
-            return;
+            return 0;
         }
         let order = fx.draw_order();
         let any_dist = order.iter().any(|&e| {
@@ -1955,7 +1977,7 @@ impl EffectsGpu {
             self.gp_vb = Some((b, fx.decal_version, ranges));
         }
         let soft = self.copy_depth(gpu, encoder, target.1, fx, &order);
-        let Some(group) = self.draw_group.as_ref() else { return };
+        let Some(group) = self.draw_group.as_ref() else { return 0 };
         let (color, depth, size) = target;
         let (proj, view, eye) = cam;
         let u = DrawU {
@@ -1976,7 +1998,7 @@ impl EffectsGpu {
         u_rt.fog[2] = 0.0;
         u_rt.fog[3] = 0.0;
         gpu.queue.put(&self.draw_u_rt, 0, bytemuck::bytes_of(&u_rt));
-        // FUN_10040e70 steps 2-4: each projection's image, cleared to 0 (depth 1), the mesh as its own mode draws it.
+        // FUN_10040e70 steps 2-4: each projection's image, cleared to 0 (depth 1), the mesh as its mode draws it.
         let mut gp_layer: HashMap<u32, usize> = HashMap::new();
         if let (Some((_, views, _)), Some(g_rt)) = (self.gp_rt.as_ref(), self.draw_group_rt.as_ref()) {
             for (k, &e) in gps.iter().enumerate() {
@@ -2102,7 +2124,16 @@ impl EffectsGpu {
         // Unknown modes keep the previous element's blend (additive before the first).
         let mut class = 2usize;
         let mut bound: Option<(bool, usize, bool)> = None;
-        for e in fx.draw_items() {
+        let mut next_break = 0;
+        for (key, e) in fx.draw_items_keyed() {
+            // Another transparent thing farther than this item: it goes first, outside the pass.
+            while let Some(i) = break_before(breaks, next_break, key) {
+                drop(pass);
+                on_break(encoder, i);
+                next_break = i + 1;
+                pass = new_pass(encoder);
+                bound = None;
+            }
             // An after-image among the elements (0x1001c930 from the shared depth list).
             if e & crate::fx::TRAIL_ITEM != 0 {
                 let slot = e & !crate::fx::TRAIL_ITEM;
@@ -2172,7 +2203,7 @@ impl EffectsGpu {
                     pass.draw(first..first + n, base..base + 1);
                 }
                 // FUN_10043720: the scene squeezed into the 256x256 copy (FUN_10042d00), which the ring samples at
-                // its own screen points; retail's soft, shifted band.
+                // its screen points; retail's soft, shifted band.
                 Draw::DistRing => {
                     let Some(dc) = self.dist_copy.as_ref() else { continue };
                     drop(pass);
@@ -2212,7 +2243,7 @@ impl EffectsGpu {
                     }
                 }
                 // FUN_10043590: the scene squeezed into the 256x256 copy (FUN_10042d00), then the morph's triangles over
-                // it (WRAP; no texture of its own).
+                // it (WRAP; no texture).
                 Draw::DistMorph(id) => {
                     let Some(m) = fx.reg.morph_data_of(id) else { continue };
                     let Some(dc) = self.dist_copy.as_ref() else { continue };
@@ -2374,11 +2405,36 @@ impl EffectsGpu {
                 pass.draw(0..3, e * PER_ELEM..e * PER_ELEM + 1);
             }
         }
+        next_break
     }
+}
+
+/// The next break (from `next`) farther than an item at `key`, if any: breaks are back to front, so it is `next`
+/// when its key is larger.
+fn break_before(breaks: &[f32], next: usize, key: f32) -> Option<usize> {
+    breaks.get(next).filter(|&&b| b > key).map(|_| next)
 }
 
 #[cfg(test)]
 mod tests {
+    /// A faded actor at view depth 10 between effects at 30, 12 (behind it) and 8, 2 (in front): it goes after the
+    /// farther two and before the nearer two; a second one at 1 goes after all of them (the caller draws it).
+    #[test]
+    fn breaks_interleave_by_depth() {
+        let items = [30.0f32, 12.0, 8.0, 2.0];
+        let breaks = [10.0f32, 1.0];
+        let (mut next, mut out) = (0usize, Vec::new());
+        for (k, &key) in items.iter().enumerate() {
+            while let Some(i) = super::break_before(&breaks, next, key) {
+                out.push(format!("actor{i}"));
+                next = i + 1;
+            }
+            out.push(format!("fx{k}"));
+        }
+        assert_eq!(out, ["fx0", "fx1", "actor0", "fx2", "fx3"]);
+        assert_eq!(next, 1);
+    }
+
     #[test]
     fn vu_dist_weather_density() {
         use super::vu_dist_count;

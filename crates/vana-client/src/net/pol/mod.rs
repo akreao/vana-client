@@ -123,12 +123,8 @@ impl Profile {
         self.tables.find(world_key, content_id).is_some_and(|i| !self.tables.entries[i].linked)
     }
 
-    /// Subs 0x10..0x13: a character PlayOnline lists but no handle holds yet (one just made: the list's reload after
-    /// the create has it unlinked). FFXiMain picks the first handle with a free slot (FUN_100efe60; none: code -1), has
-    /// polcore unlink then link the pair (slots 0xb8 / 0xb7; a refusal is the code), and stores the character list
-    /// (slot 0xb3, polled through 0xb4): one 1/10 transaction with a header-only reply. polcore keeps the link
-    /// whether or not the store goes through. Sub 0x12 then starts the handle list's store (slot 0xb5) but polls
-    /// it with the character list's call (0xb4 again): with nothing changed that ends at once, so nothing is sent.
+    /// Subs 0x10..0x13: links a character no handle holds yet to the first handle with a free slot (FUN_100efe60),
+    /// then stores the character list (1/10); the link stays if the store fails (docs/modlog row 146).
     fn register(&mut self, index: usize) -> Result<()> {
         let Some(handle) = self.tables.free_handle() else {
             return Err(anyhow::Error::from(Failed(-1)).context("No PlayOnline handle has a free character slot."));
@@ -197,7 +193,7 @@ pub fn sign_in(c: &Credentials) -> Result<(Session, Pol)> {
 }
 
 /// Signs the member in as Viewer 1.18.15e and FFXiMain do: the chat login; polcore's connect, the member login (4/7)
-/// and its own ChangeMyStatus `(-2, -2, 1, -2, -1, -2)` (POLCON 0x1b, 0x28; both skipped when the chat said so);
+/// and its ChangeMyStatus `(-2, -2, 1, -2, -1, -2)` (POLCON 0x1b, 0x28; both skipped when the chat said so);
 /// app.dll's LoadMyStatus (4/6), handle and character lists (0/9, 1/3) and ChangeMyStatus `(handle, -2, 1, 2, 0, -2)`;
 /// then FFXiMain's `(-2, -1, 0, -2, -1, 1)`, whose reply makes the lobby's session.
 pub fn sign_in_at(c: &Credentials, servers: &Servers) -> Result<(Session, Pol)> {

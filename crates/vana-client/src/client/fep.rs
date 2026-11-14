@@ -5,7 +5,7 @@
 use super::World;
 use super::game_ui::GameUi;
 use crate::audio::Ui as Se;
-use crate::dat::font::PHRASE_BASE;
+use crate::dat::font::{PHRASE_BASE, is_phrase};
 
 /// Raw and expanded limits of the chat line (E+0xa54 = 0x78).
 pub(super) const MAX: usize = 120;
@@ -29,10 +29,6 @@ pub struct Fep {
     root: (String, usize),
     /// The chars of the word being completed at the end of the line.
     word_len: usize,
-}
-
-fn is_phrase(c: char) -> bool {
-    (PHRASE_BASE..PHRASE_BASE + 0x400).contains(&(c as u32))
 }
 
 /// The line's unit boundaries (FUN_1018fb00 / FUN_1018fa80): a phrase block is one unit, any other char one.
@@ -177,9 +173,18 @@ pub(super) fn lengths(w: &World, line: &str) -> (usize, usize) {
 
 /// The line with its phrases as plain text (no brackets).
 pub(super) fn plain(w: &World, line: &str) -> String {
-    let names = w.names.clone();
+    plain_with(w, line, w.names.as_deref().map(|n| n as &dyn crate::dat::names::NameSource))
+}
+
+/// `plain` for a mod: its item lookups take no slot of the record cache (`names::Peek`).
+pub(super) fn plain_peek(w: &World, line: &str) -> String {
+    let peek = w.names.as_deref().map(crate::dat::names::Peek);
+    plain_with(w, line, peek.as_ref().map(|n| n as &dyn crate::dat::names::NameSource))
+}
+
+fn plain_with(w: &World, line: &str, names: Option<&dyn crate::dat::names::NameSource>) -> String {
     match w.battle.as_ref().and_then(|b| b.phrases.as_ref()) {
-        Some(d) => d.expand_plain(line, names.as_deref().map(|n| n as &dyn crate::dat::names::NameSource)),
+        Some(d) => d.expand_plain(line, names),
         None => line.chars().filter(|c| !is_phrase(*c)).collect(),
     }
 }
@@ -505,7 +510,7 @@ pub(super) fn draw_list(gu: &mut GameUi, cands: &[Cand], sel: usize, x: f32, lin
     let first = sel / ROWS * ROWS;
     for (k, c) in cands.iter().enumerate().skip(first).take(ROWS) {
         let mut t = c.text.clone();
-        // The text from x + 6 (inf: retail cuts at the width - 15 from its own start).
+        // The text from x + 6 (inf: retail cuts at the width - 15 from its start).
         if gu.text_width(&t) > w - 12.0 {
             while !t.is_empty() && gu.text_width(&format!("{t}...")) > w - 12.0 {
                 t.pop();

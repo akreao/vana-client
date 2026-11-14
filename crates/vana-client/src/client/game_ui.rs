@@ -1,4 +1,4 @@
-//! The game's own 2D UI, drawn from its menu DATs and font: the lobby screens (title art, buttons,
+//! The game's 2D UI, drawn from its menu DATs and font: the lobby screens (title art, buttons,
 //! expansion logos, help bar, credentials window) and the in-game HUD windows.
 
 use crate::dat::DatIndex;
@@ -628,7 +628,7 @@ impl GameUi {
         }
     }
 
-    /// The press ring on `child` of `name` (a window that draws its own hand).
+    /// The press ring on `child` of `name` (a window that draws its hand).
     pub fn press_on(&self, name: &str, child: u16) {
         self.presses.borrow_mut().insert(name.to_string(), (child, 9.0));
     }
@@ -1071,7 +1071,7 @@ impl GameUi {
         m.and_then(|m| m.get(id)).filter(|s| !s.is_empty())
     }
 
-    /// A lobby window in a rect of its own (FUN_1011a5a0 resized or moved it): the style frame over (x, y, w, h) and its
+    /// A lobby window in a custom rect (FUN_1011a5a0 resized or moved it): the style frame over (x, y, w, h) and its
     /// window sprite at (x, y); no children.
     pub fn window_sized(&mut self, name: &str, x: f32, y: f32, w: f32, h: f32) -> bool {
         if !self.win_gate(name, [x, y, w, h]) {
@@ -1101,7 +1101,7 @@ impl GameUi {
         self.lobby_window_swaps(name, w, h, off, sel, hand, hide, &[])
     }
 
-    /// `lobby_window_off` with children's own sprites replaced (FUN_1011ae50: (child, sprite in the same library)).
+    /// `lobby_window_off` with children's sprites replaced (FUN_1011ae50: (child, sprite in the same library)).
     pub fn lobby_window_swaps(
         &mut self,
         name: &str,
@@ -1233,8 +1233,8 @@ impl GameUi {
         Some(LobbyWin { frame: [fx, fy, fw, fh], children })
     }
 
-    /// Ours: window `name` drawn `s` times its size with its own top left at `at` (the frame keeps its header offset,
-    /// scaled), its cursor child `sel` lifted and tinted, `hide` not drawn. No hand: the caller draws its own.
+    /// Ours: window `name` drawn `s` times its size with its top left at `at` (the frame keeps its header offset,
+    /// scaled), its cursor child `sel` lifted and tinted, `hide` not drawn. No hand: the caller draws its hand.
     pub fn window_scaled(
         &mut self,
         name: &str,
@@ -1357,13 +1357,12 @@ impl GameUi {
         }
     }
 
-    /// The lobby's error popup (FUN_1023d440): a code of the lobby's shows as FFXI-3000 + code; 0x6c and PlayOnline's
-    /// negative codes go to the PlayOnline path (FUN_10018310; the -POLCON start switch, state +0xa4, is off):
-    /// 0x6c as the FFXI code it is, a negative one as group 7 id 0 with its magnitude. Retail adds polerr.bin's
-    /// message for the code on a second line (the job table 0x103632c8); ours has no polerr.bin.
+    /// The lobby's error popup (FUN_1023d440): FFXI-3000 + code; 0x6c as FFXI-0108 and a negative code as "POL-%04d"
+    /// (group 7 id 0), the PlayOnline path (FUN_10018310), without polerr.bin's second line.
     pub fn lobby_error_text(&self, code: i32) -> String {
+        use crate::net::lobby::POL_PATH_CODE;
         match code {
-            0x6c => self.error_text(0x6c),
+            POL_PATH_CODE => self.error_text(POL_PATH_CODE as u32),
             c if c >= 0 => self.error_text(3000 + c as u32),
             c => super::select::printf(&self.lobby_msg(7, 0, ""), &[&c.unsigned_abs().to_string()]),
         }
@@ -1521,7 +1520,7 @@ impl GameUi {
         self.sprite_affine_blend(lib, k, x, y, m, tint, 0);
     }
 
-    /// The same with a blend word (0: the cells' own; 0x44 alpha blended).
+    /// The same with a blend word (0: the cells'; 0x44 alpha blended).
     pub fn sprite_affine_blend(&mut self, lib: &str, k: usize, x: f32, y: f32, m: [f32; 4], tint: u32, blend: u32) {
         let Some(l) = self.data.lobby.lib(lib) else { return };
         if let Some(s) = l.sprites.get(k) {
@@ -1587,7 +1586,7 @@ impl GameUi {
         }
     }
 
-    /// Back to the lobby: the startup images return. Retail's lobby draws from its own menu files, which no style
+    /// Back to the lobby: the startup images return. Retail's lobby draws from its menu files, which no style
     /// touches; ours share one image table with the game's windows.
     pub fn reset_style(&mut self) {
         for (name, img) in self.style_saved.drain() {
@@ -1669,7 +1668,7 @@ impl GameUi {
     }
 
     /// A menu layout by name (window element first, then the children).
-    /// A menu child's caption as text (its normal sprite's caption glyphs), for the modern layer's own pages.
+    /// A menu child's caption as text (its normal sprite's caption glyphs), for the modern layer's pages.
     pub fn child_caption(&self, menu: &str, child: u16) -> Option<String> {
         let e = self.data.lobby.menu(menu)?.elements.iter().skip(1).find(|e| e.id == child)?;
         let r = e.refs.iter().find(|r| r.kind == 0)?;
@@ -1685,7 +1684,7 @@ impl GameUi {
         Some(hyphens(&runs.into_iter().map(|r| r.2).collect::<Vec<_>>().join(" "))).filter(|t| !t.is_empty())
     }
 
-    /// A menu window's own captions (its headings) with their places in it: (text, x, y).
+    /// A menu window's captions (its headings) with their places in it: (text, x, y).
     pub fn window_captions(&self, menu: &str) -> Vec<(String, f32, f32)> {
         let Some(e) = self.data.lobby.menu(menu).and_then(|m| m.elements.first()) else { return Vec::new() };
         e.refs
@@ -1773,7 +1772,7 @@ impl GameUi {
         self.data.lobby_msgs.get(&0x0b).and_then(|m| m.get(id)).filter(|s| !s.is_empty()).map(|s| self.shown(s))
     }
 
-    /// Text as the faces drawing it can show: with the modern skin the game's own glyphs become Unicode.
+    /// Text as the faces drawing it can show: with the modern skin the game's glyphs become Unicode.
     fn shown(&self, s: String) -> String {
         if self.skin_on { crate::dat::font::plain(&s) } else { s }
     }
@@ -2180,7 +2179,7 @@ impl GameUi {
 
     /// What a focused window puts in the bars' slot 1 (FUN_10115380): the child's first string (group 0xe) as
     /// help and its second (group 0xd) as title, each falling back to the window header's (FUN_101152c0 / FUN_10115320).
-    /// A layout child's own sprite (FUN_10118ad0: its state-0 reference), as (library, index).
+    /// A layout child's sprite (FUN_10118ad0: its state-0 reference), as (library, index).
     pub fn child_sprite(&self, name: &str, child: u16) -> Option<(String, usize)> {
         let m = self.data.lobby.menu(name)?;
         let r = m.elements.iter().skip(1).find(|e| e.id == child)?.refs.iter().find(|r| r.kind == 0)?;
@@ -2761,10 +2760,8 @@ impl GameUi {
         Some((x, y))
     }
 
-    /// "menu    ptcbgwin" / "menu    hnbackwi", the backdrop behind a lobby run (registry flags 0x11002f: no frame, no
-    /// open animation, 0x100000 scaled): the window's sprite (lobbywin 85: two dark 640 x 240 halves and the small
-    /// logo), every cell, at the file place and size scaled by (w / 640, h / 480).
-    /// `black`: nothing shows through it (ours, for the entry: retail has no scene behind it yet).
+    /// "menu    ptcbgwin" / "menu    hnbackwi", the backdrop behind a lobby run: sprite lobbywin 85, every cell, scaled
+    /// by (w / 640, h / 480) (registry flags 0x11002f). `black`: over black (ours, for the entry: no scene behind yet).
     pub fn backdrop_window(&mut self, name: &str, w: f32, h: f32, black: bool) {
         let (fx, fy) = (w / 640.0, h / 480.0);
         if black {

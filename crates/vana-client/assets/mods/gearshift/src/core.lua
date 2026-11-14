@@ -92,9 +92,30 @@ end
 
 -- ---- What is worn: the server's, with what we sent over it ----
 
--- slot -> {bag, index, id, at}: sent, not yet seen worn.
+-- slot -> {bag, index, id, at, gen, was_bag, was_index, tries}: sent, not yet seen worn (`was_*`: what the slot held).
 M.sent = {}
 M.SENT_HOLD = 2
+-- Sent changes the server refused (the slot still holds what it held): sent again by retry, up to RETRIES times.
+-- Only those sent around a weapon skill or a shot (LandSandBoat refuses weapons and ammo while one is under way)
+-- and not overtaken by a later wear: other refusals would only fail again.
+M.refused = {}
+M.RETRIES = 4
+M.gen = 0
+M.LOCK = 6
+M.lock_until = -1
+-- slot -> {bag, index, id}: what we last put in each slot (a piece the player put on is not in here).
+M.mine = {}
+
+-- An action going out: a weapon skill or a shot opens the window in which refusals are retried.
+function M.note_action(act)
+  if act and (act.category == 7 or act.category == 16) then M.lock_until = M.H.now() + M.LOCK end
+end
+
+-- Whether the piece in `slot` (as worn() gives it) is the one we put there.
+function M.put_by_us(slot, w)
+  local m = M.mine[slot]
+  return m ~= nil and w ~= nil and m.bag == w.bag and m.index == w.index and m.id == w.id
+end
 
 function M.worn()
   local now, eq = M.H.now(), M.H.equipment() or {}
@@ -102,7 +123,13 @@ function M.worn()
   for s = 0, 15 do
     local cur = eq[s] or {}
     local p = M.sent[s]
-    if p and (now - p.at > M.SENT_HOLD or (cur.bag == p.bag and cur.slot == p.index)) then
+    if p and cur.bag == p.bag and cur.slot == p.index then
+      M.sent[s], p = nil, nil
+    elseif p and now - p.at > M.SENT_HOLD then
+      -- Still what it held: refused. Anything else is a change the player made.
+      if cur.bag == p.was_bag and cur.slot == p.was_index and p.gen == M.gen and p.at <= M.lock_until then
+        M.refused[s] = p
+      end
       M.sent[s], p = nil, nil
     end
     if p then
@@ -110,6 +137,9 @@ function M.worn()
     elseif cur.id then
       out[s] = { bag = cur.bag, index = cur.slot, id = cur.id }
     end
+    -- Our piece seen gone: if it comes back, the player put it on.
+    local m = M.mine[s]
+    if not p and m and not (cur.bag == m.bag and cur.slot == m.index and cur.id == m.id) then M.mine[s] = nil end
   end
   return out
 end
@@ -136,8 +166,21 @@ end
 -- item); `opt`: {log_names, bags (search order)}.
 -- Returns the changes, in send order: {slot, bag, index, id, priority} (index 0 takes the slot off).
 function M.resolve(wants, opt)
+  -- A new wear: refusals of earlier ones are not sent again (this one decides each slot).
+  M.gen = M.gen + 1
+  M.refused = {}
   local p = M.H.player() or {}
   local worn = M.worn()
+  -- Each bag read once: a read is a call into the game, and a wear runs inside the action packet's hook.
+  local bags = {}
+  local function items(bag)
+    local l = bags[bag]
+    if not l then
+      l = M.H.items(bag) or {}
+      bags[bag] = l
+    end
+    return l
+  end
   local out, used, left = {}, {}, {}
   local function key(bag, index) return bag * 256 + index end
   for slot, w in pairs(wants) do
@@ -148,7 +191,7 @@ function M.resolve(wants, opt)
       local r = cur and M.record(cur.id)
       local ext
       if cur then
-        for _, it in ipairs(M.H.items(cur.bag) or {}) do
+        for _, it in ipairs(items(cur.bag)) do
           if it.slot == cur.index then ext = it.extdata break end
         end
       end
@@ -166,7 +209,7 @@ function M.resolve(wants, opt)
   end
   if next(left) then
     for _, bag in ipairs(opt.bags or M.EQUIP_BAGS) do
-      for _, it in ipairs(M.H.items(bag) or {}) do
+      for _, it in ipairs(items(bag)) do
         local lock = it.locked or 0
         if (lock == 0 or lock == 5) and not used[key(bag, it.slot)] then
           local r = M.record(it.id)
@@ -217,11 +260,32 @@ function M.packets(list, style, max)
   else
     for _, c in ipairs(list) do out[#out + 1] = M.equip_packet(c) end
   end
-  local now = M.H.now()
+  local now, eq = M.H.now(), M.H.equipment() or {}
   for _, c in ipairs(list) do
-    M.sent[c.slot] = { bag = c.bag, index = c.index, id = c.id, at = now }
+    local cur = eq[c.slot] or {}
+    M.sent[c.slot] = { bag = c.bag, index = c.index, id = c.id, at = now, gen = M.gen, was_bag = cur.bag,
+      was_index = cur.slot, tries = c.tries or 0 }
+    M.mine[c.slot] = c.index ~= 0 and { bag = c.bag, index = c.index, id = c.id } or nil
   end
   return out
+end
+
+-- The changes the server refused, sent again one by one (a piece no longer where it was is dropped).
+function M.retry()
+  M.worn()
+  local again = {}
+  for s, p in pairs(M.refused) do
+    if p.tries < M.RETRIES and M.sent[s] == nil then
+      local there = p.index == 0
+      for _, it in ipairs(p.index ~= 0 and M.H.items(p.bag) or {}) do
+        if it.slot == p.index and it.id == p.id then there = true break end
+      end
+      if there then again[#again + 1] = { slot = s, bag = p.bag, index = p.index, id = p.id, tries = p.tries + 1 } end
+    end
+  end
+  M.refused = {}
+  if #again > 0 then M.send(M.packets(again, "single")) end
+  return #again
 end
 
 function M.send(pkts)

@@ -13,6 +13,8 @@ use std::sync::{Arc, Mutex};
 const PACKAGE_DIR: &str = "FFXIFullSetup_US";
 const FFXI_MSI: &str = "FINAL_FANTASY_XI/FINAL_FANTASY_XI.msi";
 const POL_MSI: &str = "PlayOnline/PlayOnlineViewer.msi";
+/// The viewer's dictionary folder under its INSTALLDIR (the "PlayOnline" folder), as `DirResolver` writes it.
+const VIEWER_DIC_DIR: &str = "SquareEnix\\PlayOnlineViewer\\data\\dic\\";
 
 #[derive(Default)]
 pub struct Progress {
@@ -87,10 +89,20 @@ fn unpack_rar(
 /// layout has it (poldic::name_dic_path). The package's one cabinet is a stream inside the MSI.
 pub fn copy_name_dic(msi: &Path, game_dir: &Path, verify: bool) -> Result<PathBuf> {
     let (db, mut pkg) = Database::open(msi)?;
+    // The row the viewer installs into its data\dic folder, as install() picks rows.
+    let resolver = DirResolver::new(&db, HashMap::from([("INSTALLDIR".to_string(), String::new())]));
     let row = db
         .files
         .iter()
-        .find(|f| f.name.eq_ignore_ascii_case(crate::poldic::NAME_DIC))
+        .find(|f| {
+            f.name.eq_ignore_ascii_case(crate::poldic::NAME_DIC)
+                && db.component_installed(&f.component)
+                && db
+                    .components
+                    .get(&f.component)
+                    .and_then(|c| resolver.resolve(&c.directory).ok())
+                    .is_some_and(|d| d.eq_ignore_ascii_case(VIEWER_DIC_DIR))
+        })
         .ok_or_else(|| anyhow!("{} holds no {}", msi.display(), crate::poldic::NAME_DIC))?;
     let dest = crate::poldic::name_dic_path(game_dir);
     for media in &db.media {

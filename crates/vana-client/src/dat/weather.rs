@@ -141,7 +141,7 @@ fn turn_dir(a: [u8; 4], b: [u8; 4], w: u8, t: f32) -> [u8; 4] {
 
 type Keys = BTreeMap<String, Vec<(u32, Env)>>;
 
-/// Weather tag -> keys (minute of day, env), from the zone DAT's `weat` folder; the area environments' own keys
+/// Weather tag -> keys (minute of day, env), from the zone DAT's `weat` folder; the area environments' keys
 /// by area 4cc (`<zone>/<id>/<tag>` or `<zone>/<id>/weat/<tag>`, FUN_10180380 / FUN_10183780).
 pub struct ZoneWeather {
     pub keys: Keys,
@@ -503,6 +503,16 @@ pub fn weather_tag(number: u16) -> &'static str {
 /// Earth seconds since: one Vana'diel minute is 2.4 Earth seconds (LSB vanadiel_clock).
 pub fn vana_minute(game_time: u32, since_secs: f32) -> f32 {
     ((game_time as f64 + since_secs as f64) / 2.4).rem_euclid(24.0 * 60.0) as f32
+}
+
+/// Op 0x72's table: files 0x1b78 / 0x1b79 (zones under 100) or 0x1b7c / 0x1b7d give the zone's row, then 0x870 days
+/// of 3 bytes a row (FUN_100b84b0).
+pub fn forecast_day(index: &super::DatIndex, zone: u32, day: u32) -> Option<[u8; 3]> {
+    let (rows, data, z) = if zone < 100 { (0x1b78, 0x1b79, zone) } else { (0x1b7c, 0x1b7d, zone - 100) };
+    let row = *index.read(rows).ok()?.get(z as usize)? as usize;
+    let d = index.read(data).ok()?;
+    let at = row * 0x1950 + (day % 0x870) as usize * 3;
+    d.get(at..at + 3).map(|b| [b[0], b[1], b[2]])
 }
 
 #[cfg(test)]

@@ -86,7 +86,7 @@ pub(super) fn on_list(w: &mut World, l: TrophyList) {
 }
 
 /// 0x0D3 by JudgeFlg: 0 a lot (0x11 "X's lot for the Y: N points."), 1 won (that lot line, then 0x12 "X obtains
-/// Y."), 2 won but refused (0x0f with the winner, 0x1f without), 3 lost (no line here). 1..3 end the slot. Our own
+/// Y."), 2 won but refused (0x0f with the winner, 0x1f without), 3 lost (no line here). 1..3 end the slot. Our
 /// entry sets our lot and action (EntryFlg ? lotted : passed); the highest lot always follows.
 pub(super) fn on_solution(
     w: &mut World,
@@ -147,7 +147,7 @@ fn line(w: &mut World, id: u16, actor: Option<u32>, target: u32, para0: i32, str
         me: w.name.clone(),
         work: [para0, 0, 0, 0, 0],
         strings,
-        keys: w.names.clone().map(crate::dat::battle::Keys),
+        names: super::combat::tables(w),
     };
     match bt.system(id, &ctx) {
         Some(l) => {

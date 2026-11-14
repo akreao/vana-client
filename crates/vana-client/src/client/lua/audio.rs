@@ -1,4 +1,4 @@
-//! Sound for mods (docs/lua-mods.md 4.14): the mod's own WAV (or SeWave) files and the game's effects through our
+//! Sound for mods (docs/lua-mods.md 4.14): the mod's WAV (or SeWave) files and the game's effects through our
 //! mixer, at the effects volume.
 
 use mlua::{Lua, Table};
@@ -38,7 +38,6 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
                 super::vm::Source::Dir(d) => super::vm::inside(d, &path)
                     .and_then(std::fs::read)
                     .map_err(|e| mlua::Error::runtime(format!("{path}: {e}")))?,
-                super::vm::Source::Bundled(_) => return Err(mlua::Error::runtime("bundled mods carry no sound files")),
             };
             crate::audio::format::Header::parse(&bytes)
                 .map_err(|e| mlua::Error::runtime(format!("{path}: {e} (16-bit PCM WAV, mono or stereo)")))?;

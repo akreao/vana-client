@@ -23,7 +23,7 @@ const JOB_WORDS: usize = HEAD + 4 * MAX_SET;
 const NO_BONE: u32 = u32::MAX;
 const UNKEYED: u32 = crate::dat::animpack::UNKEYED;
 
-/// Where a layer's animation is: the model's own list, or a motion file's.
+/// Where a layer's animation is: the model's list, or a motion file's.
 #[derive(Clone, Copy)]
 pub enum AnimSrc<'a> {
     Model(usize),
@@ -40,7 +40,7 @@ pub struct JobLayer<'a> {
     pub over: u8,
 }
 
-/// A plain list of the model's own (animation, frame) where the latest track wins, as layers: each its own region,
+/// A plain list of the model's (animation, frame) where the latest track wins, as layers, one region each,
 /// last first (the first region to write a bone keeps it).
 pub fn plain_layers<'a>(ch: &Character, to: &[(&Animation, f32)]) -> Vec<JobLayer<'a>> {
     to.iter()
@@ -217,7 +217,7 @@ fn local_tf(skel: u32, b: u32, job: u32, count: u32, q: ptr<function, vec4<f32>>
         var nt = rt;
         var ns = vec3<f32>(1.0);
         if (ti == UNKEYEDu) {
-            // Named but not keyed: back toward the rest pose over an older layer of its own body region.
+            // Named but not keyed: back toward the rest pose over an older layer of its body region.
             if (kind != 0u || !written) { continue; }
         } else {
             let frame = jf(at + 1u);
@@ -342,7 +342,7 @@ fn pose_actors(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
                 if (i == 0u) { q3 = qi; } else { q7 = qi; }
             }
         }
-        // The neck turns by its share; the head by both, about its own pivot (bone locals turned against the neck's
+        // The neck turns by its share; the head by both, about its pivot (bone locals turned against the neck's
         // pre-look rotation, FUN_1002ac60's second loop).
         if (look_w > 0.0 && (b == look_a || b == look_b)) {
             let r = select(qmul(qmul(q7, q3), qconj(q7)), q7, b == look_b);
@@ -350,7 +350,7 @@ fn pose_actors(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
         }
         emit(sc, b, out);
     }
-    // Pass 1: each carry bone on its grip (its own scale kept), then the held subtrees in order.
+    // Pass 1: each carry bone on its grip (its scale kept), then the held subtrees in order.
     for (var i = 0u; i < 2u; i = i + 1u) {
         if (grips[i] == NO_BONEu) { continue; }
         let c = grips[i] & 0xffffu;

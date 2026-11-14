@@ -1,5 +1,5 @@
 name = "Chat Alerts"
-version = "1.0.0"
+version = "1.0.1"
 description = "A call sound when you get a tell, someone says your name or a word you chose, invites you or checks you (the chat monitor add-ons)."
 permissions = []
 

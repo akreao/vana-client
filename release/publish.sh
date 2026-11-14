@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Publishes a GitHub release vVERSION of akreao/vana-client (updater.rs RELEASE_REPO) with the assets release/build-*.sh made, and those
-# release/fetch-ci-builds.sh downloaded (Linux aarch64, macOS) when present, each with its .sig. VERSION must be the
+# Publishes a GitHub release vVERSION of akreao/vana-client (updater.rs RELEASE_REPO) with the assets release/build-linux.sh made and those
+# release/fetch-ci-builds.sh downloaded (Windows always; Linux aarch64 and macOS when present), each with its .sig. VERSION must be the
 # crate's version (crates/vana-client/Cargo.toml), newer than the last release: clients offer the update when the tag
 # is newer and its signature checks against release/signing-key.pub, built in.
 # The private key: VANA_SIGNING_KEY, or ~/.config/vana-client-release/signing-key.pem (Ed25519; never in the repo).
@@ -21,7 +21,7 @@ pub=$(tr -d '[:space:]' < release/signing-key.pub)
     || { echo "$key is not the key of release/signing-key.pub" >&2; exit 1; }
 sigs=()
 for a in "${assets[@]}"; do
-    [ -f "$a" ] || { echo "missing $a (run release/build-linux.sh and release/build-windows.sh)" >&2; exit 1; }
+    [ -f "$a" ] || { echo "missing $a (run release/build-linux.sh and release/fetch-ci-builds.sh)" >&2; exit 1; }
     # A binary built without this key could never update itself to the next release.
     grep -a -q "$pub" "$a" || { echo "$a was not built with release/signing-key.pub" >&2; exit 1; }
     # Its updater's user agent: an asset left from another version is never signed as this one.

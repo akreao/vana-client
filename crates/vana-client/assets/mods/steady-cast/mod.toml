@@ -1,5 +1,5 @@
 name = "Steady Cast"
-version = "1.0.0"
+version = "1.0.1"
 description = "Holds a spell, item or ranged shot you start while moving until you stand still, so moving doesn't interrupt it (castdelay)."
 permissions = ["packets.read", "packets.write"]
 

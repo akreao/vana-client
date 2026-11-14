@@ -48,7 +48,7 @@ pub struct Who {
     pub named: bool,
     /// u32 @0x24 bit 30 (FUN_10089320): plural verb forms.
     pub plural: bool,
-    /// 0x00D u32 @0x20 bit 15 clear (our own: the race): [his/her] (7f 90 / 91).
+    /// 0x00D u32 @0x20 bit 15 clear (ours: the race): [his/her] (7f 90 / 91).
     pub female: bool,
     /// Ours (the mods' battle filters, filters.battle): the name drawn in this `1e` colour code, 0 none.
     pub colour: u8,
@@ -62,7 +62,7 @@ impl Who {
     }
 }
 
-/// What the codes read: the two actors, our own name and work[5] (message object +0xc50).
+/// What the codes read: the two actors, our name and work[5] (message object +0xc50).
 #[derive(Clone, Debug, Default)]
 pub struct Ctx {
     pub actor: Option<Who>,
@@ -71,17 +71,17 @@ pub struct Ctx {
     pub work: [i32; 5],
     /// String slots 2 / 3 of the queue entry (+0xd04; 0 / 1 are the actor and target names): FUN_100a1ab0's strings.
     pub strings: [String; 2],
-    /// The key item names, for grammar kinds 0x36 / 0x45.
-    pub keys: Option<Keys>,
+    /// The name tables, for the items, objectives and key items a message names.
+    pub names: Option<Tables>,
 }
 
-/// The name tables, for the key items a message names.
+/// The client's name tables (one item reader for all text).
 #[derive(Clone)]
-pub struct Keys(pub std::sync::Arc<super::names::Names>);
+pub struct Tables(pub std::sync::Arc<super::names::Names>);
 
-impl std::fmt::Debug for Keys {
+impl std::fmt::Debug for Tables {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        f.write_str("Keys")
+        f.write_str("Tables")
     }
 }
 
@@ -108,7 +108,6 @@ pub struct BattleText {
     spells: Option<Messages>,
     abilities: Option<Messages>,
     statuses: Option<Messages>,
-    items: Option<super::items::Items>,
     /// File 7031 (language slot 0x65): s2c 0x053 system messages; group 9 (file 55648) client messages.
     system: Option<Dialog>,
     group7: Option<Messages>,
@@ -118,6 +117,7 @@ pub struct BattleText {
     pub phrases: Option<super::autotrans::Dictionary>,
     /// Group 0x17: equipment slot names for /equip ("main" .. "feet").
     slot_names: Option<Messages>,
+    slot_names_alt: Option<Messages>,
     group9: Option<Messages>,
     /// Group 10: formatted client lines (the guild shop's hours, ...); group 0x10: the weekday names.
     group10: Option<Messages>,
@@ -241,11 +241,12 @@ impl BattleText {
             spells: file(SLOT_SPELLS).ok().and_then(msgs),
             abilities: file(SLOT_ABILITIES).ok().and_then(msgs),
             statuses: msgs(STATUS_FILE),
-            items: super::items::Items::load(index, super::items::Lang::En).ok(),
             system: dialog(SLOT_SYSTEM).map_err(|e| log::warn!("system messages: {e:#}")).ok(),
             group7: super::msg::group_file(ffximain, 1, 7).and_then(msgs),
             emotes: dialog(SLOT_EMOTES).map_err(|e| log::warn!("emote messages: {e:#}")).ok(),
             slot_names: super::msg::group_file(ffximain, 1, 0x17).and_then(msgs),
+            // Group 0x18: FUN_10153b70 loads it from this fixed file in every language.
+            slot_names_alt: msgs(0xd8af),
             group9: super::msg::group_file(ffximain, 1, 9).and_then(msgs),
             group10: super::msg::group_file(ffximain, 1, 10).and_then(msgs),
             group12: super::msg::group_file(ffximain, 1, 0xc).and_then(msgs),
@@ -379,10 +380,10 @@ impl BattleText {
         m.as_ref().and_then(|m| m.raw(id.max(0) as usize)).unwrap_or_default()
     }
 
-    /// English item name: form 0 singular, 1 with its article, 2 plural.
-    /// The noun of form 0 (bare), 1 (singular, mode 3) or 2 (plural, mode 4) and whether it takes "an".
-    fn item_noun(&self, id: u32, form: u8) -> Option<(String, u8, bool)> {
-        let n = self.items.as_ref()?.noun(id)?;
+    /// The noun of form 0 (bare), 1 (singular, mode 3) or 2 (plural, mode 4) and whether it takes "an". No record
+    /// cache slot (`Items::noun`).
+    fn item_noun(ctx: &Ctx, id: u32, form: u8) -> Option<(String, u8, bool)> {
+        let n = ctx.names.as_ref()?.0.items.noun(id)?;
         Some(match form {
             0 => (n.bare, n.mode, n.an),
             1 => (n.singular, 3, n.singular_an),
@@ -415,6 +416,11 @@ impl BattleText {
     /// Group 0x17 entry `id` (an /equip slot name).
     pub fn slot_name(&self, id: usize) -> Option<String> {
         self.slot_names.as_ref()?.get(id)
+    }
+
+    /// Group 0x18 entry `id`: /equip's other spellings, 0x17's then ear1, ear2, ring1, ring2.
+    pub fn slot_name_alt(&self, id: usize) -> Option<String> {
+        self.slot_names_alt.as_ref()?.get(id)
     }
 
     /// A race name of language slot 0x1c (the toteboard's FUN_101c8450) by grade.
@@ -559,26 +565,26 @@ impl BattleText {
                         // num (0x23..0x25) or work (0x26..0x28), num read as work here (equal for FUN_100a1ab0 lines).
                         Some(&k @ 0x20..=0x28) => {
                             let id = if k < 0x23 { idx as i32 } else { work(slot) };
-                            noun(out, &mut start, self.item_noun(id as u32, (k - 0x20) % 3));
+                            noun(out, &mut start, Self::item_noun(ctx, id as u32, (k - 0x20) % 3));
                         }
                         // 0x39 / 0x40 / 0x41: an RoE objective's name, id + 0xe000 from the index, num or work (num read
                         // as work here).
                         Some(&k @ (0x39 | 0x40 | 0x41)) => {
                             let n = if k == 0x39 { idx as i32 } else { work(slot) };
                             if let Some(o) =
-                                self.items.as_ref().and_then(|it| super::roe::objective(it, (n + 0xe000) as u16))
+                                ctx.names.as_ref().and_then(|t| super::roe::objective(&t.0.items, (n + 0xe000) as u16))
                             {
                                 out.extend([0x1e, 8]);
                                 out.extend(encode_sjis(&o.name));
                                 out.extend([0x1e, 1]);
                             }
                         }
-                        // 0x36 / 0x45 (FUN_100be760): a key item (num / work, num read as work here) with its own article,
+                        // 0x36 / 0x45 (FUN_100be760): a key item (num / work, num read as work here) with its article,
                         // "the" for key item types 0 / 1, else a / an / some by the entry's mode; named in `1e 03`.
                         Some(0x36 | 0x45) => {
                             use super::names::NameSource;
                             let id = work(slot);
-                            if let Some(Keys(names)) = ctx.keys.as_ref()
+                            if let Some(Tables(names)) = ctx.names.as_ref()
                                 && id > 0
                                 && let Some(n) = names.key_item(id as u32)
                             {
@@ -609,7 +615,7 @@ impl BattleText {
                             let first = body.get(1..).unwrap_or_default();
                             let item = grammar_index(first.get(grammar_len(first)..).unwrap_or_default()) as u8;
                             let n = work(slot);
-                            noun(out, &mut start, self.item_noun(work(item) as u32, if n == 1 { 1 } else { 2 }));
+                            noun(out, &mut start, Self::item_noun(ctx, work(item) as u32, if n == 1 { 1 } else { 2 }));
                         }
                         _ => {}
                     }
@@ -851,6 +857,41 @@ mod tests {
         Some(BattleText::load(&index, &dll).unwrap())
     }
 
+    /// The client's name tables, loaded once for every test.
+    fn tables() -> Option<Tables> {
+        static T: std::sync::OnceLock<Option<Tables>> = std::sync::OnceLock::new();
+        T.get_or_init(|| {
+            let cfg = crate::config::Config::load();
+            let index = DatIndex::open(&cfg.ffxi_dir()).ok()?;
+            let n = crate::dat::names::Names::load(&index, crate::dat::items::Lang::En).ok()?;
+            Some(Tables(std::sync::Arc::new(n)))
+        })
+        .clone()
+    }
+
+    fn named() -> Ctx {
+        Ctx { names: tables(), ..Default::default() }
+    }
+
+    /// Items and objectives come from the client's name tables (one item reader) and take no record cache slot:
+    /// message text reads records through the raw pool (FUN_100be6a0 -> FUN_1015b9e0), never FUN_1015bc40.
+    #[test]
+    fn items_from_shared_names() {
+        let Some(bt) = load() else { return };
+        let cfg = crate::config::Config::load();
+        let Ok(index) = DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let t =
+            Tables(std::sync::Arc::new(crate::dat::names::Names::load(&index, crate::dat::items::Lang::En).unwrap()));
+        let ctx = Ctx { work: [4112, 3, 0, 0, 0], names: Some(t.clone()), ..Default::default() };
+        assert_eq!(bt.system(180, &ctx).unwrap().plain(), ["You throw away 3 potions."]);
+        let ctx = Ctx { work: [1, 0, 0, 0, 0], names: Some(t.clone()), ..Default::default() };
+        assert!(bt.expand(704, &ctx).unwrap().lines[0].contains("First Step Forward"));
+        assert!(t.0.items.recent().is_empty());
+        // Without the tables, the line names no item.
+        let ctx = Ctx { work: [4112, 3, 0, 0, 0], ..Default::default() };
+        assert!(!bt.system(180, &ctx).unwrap().plain()[0].contains("potion"));
+    }
+
     /// The on-screen kinds (0x1035cae0): 1 hit damage, 15 miss, 24 recovers HP, 6 "defeats" none; Screen mode keeps
     /// a kinded line off the log, Log mode its number off the screen.
     #[test]
@@ -871,7 +912,7 @@ mod tests {
     fn trust_party_line() {
         let Some(b) = load() else { return };
         let who = Who { name: "Valaineral".into(), named: true, ..Default::default() };
-        let ctx = Ctx { actor: Some(who.clone()), target: Some(who), work: [11201, 0, 0, 0, 0], ..Default::default() };
+        let ctx = Ctx { actor: Some(who.clone()), target: Some(who), work: [11201, 0, 0, 0, 0], ..named() };
         let l = b.expand(711, &ctx).unwrap();
         assert!(l.lines[0].starts_with("(Valaineral) The time is at hand"), "{:?}", l.lines);
     }
@@ -880,7 +921,7 @@ mod tests {
     #[test]
     fn roe_objective_name() {
         let Some(b) = load() else { return };
-        let ctx = Ctx { work: [1, 0, 0, 0, 0], ..Default::default() };
+        let ctx = Ctx { work: [1, 0, 0, 0, 0], ..named() };
         let l = b.expand(704, &ctx).unwrap();
         assert!(l.lines[0].contains("First Step Forward"), "{:?}", l.lines);
     }
@@ -903,7 +944,7 @@ mod tests {
     #[test]
     fn status_noun_and_adjective() {
         let Some(b) = load() else { return };
-        let ctx = Ctx { target: pc("Lnxtest"), work: [10, 0, 0, 0, 0], ..Default::default() };
+        let ctx = Ctx { target: pc("Lnxtest"), work: [10, 0, 0, 0, 0], ..named() };
         assert_eq!(b.expand(204, &ctx).unwrap().plain(), ["Lnxtest is no longer stunned."]);
         assert_eq!(b.expand(206, &ctx).unwrap().plain(), ["Lnxtest's stun effect wears off."]);
     }
@@ -912,7 +953,7 @@ mod tests {
     #[test]
     fn throw_away_counts() {
         let Some(bt) = load() else { return };
-        let ctx = |n: i32| Ctx { work: [4112, n, 0, 0, 0], ..Default::default() };
+        let ctx = |n: i32| Ctx { work: [4112, n, 0, 0, 0], ..named() };
         assert_eq!(bt.system(180, &ctx(1)).unwrap().plain(), vec!["You throw away a potion.".to_string()]);
         assert_eq!(bt.system(180, &ctx(3)).unwrap().plain(), vec!["You throw away 3 potions.".to_string()]);
     }
@@ -921,12 +962,12 @@ mod tests {
     #[test]
     fn delivery_gil_and_string() {
         let Some(bt) = load() else { return };
-        let ctx = Ctx { work: [2, 0, 12345, 0, 0], strings: ["delivery".into(), String::new()], ..Default::default() };
+        let ctx = Ctx { work: [2, 0, 12345, 0, 0], strings: ["delivery".into(), String::new()], ..named() };
         assert_eq!(
             bt.system(0xbe, &ctx).unwrap().plain(),
             vec!["You take the 12,345 gil out of delivery slot 2.".to_string()]
         );
-        let ctx = Ctx { work: [3, 1, 0, 0, 0], strings: ["Lnxcsfix".into(), String::new()], ..Default::default() };
+        let ctx = Ctx { work: [3, 1, 0, 0, 0], strings: ["Lnxcsfix".into(), String::new()], ..named() };
         assert_eq!(
             bt.system(0xaa, &ctx).unwrap().plain(),
             vec!["Slot 3:".to_string(), "1 gil, sent to you by Lnxcsfix.".to_string()]
@@ -938,13 +979,13 @@ mod tests {
     #[test]
     fn skill_up_and_counts() {
         let Some(b) = load() else { return };
-        let ctx = Ctx { target: pc("Lnxcsfix"), work: [49, 1, 0, 0, 0], ..Default::default() };
+        let ctx = Ctx { target: pc("Lnxcsfix"), work: [49, 1, 0, 0, 0], ..named() };
         assert_eq!(b.expand(38, &ctx).unwrap().plain(), ["Lnxcsfix's woodworking skill rises 0.1 points."]);
-        let ctx = Ctx { work: [698, 1, 0, 0, 0], ..Default::default() };
+        let ctx = Ctx { work: [698, 1, 0, 0, 0], ..named() };
         assert_eq!(b.system(0x111, &ctx).unwrap().plain(), ["1 ash log."]);
-        let ctx = Ctx { work: [698, 2, 0, 0, 0], ..Default::default() };
+        let ctx = Ctx { work: [698, 2, 0, 0, 0], ..named() };
         assert_eq!(b.system(0x111, &ctx).unwrap().plain(), ["2 ash logs."]);
-        let ctx = Ctx { work: [715, 1, 0, 0, 0], ..Default::default() };
+        let ctx = Ctx { work: [715, 1, 0, 0, 0], ..named() };
         assert_eq!(b.system(0xa0, &ctx).unwrap().plain(), ["You synthesized a piece of ash lumber."]);
     }
 
@@ -952,9 +993,9 @@ mod tests {
     #[test]
     fn synthesis_lost_lines() {
         let Some(bt) = load() else { return };
-        let ctx = Ctx { work: [698, 0, 0, 0, 0], ..Default::default() };
+        let ctx = Ctx { work: [698, 0, 0, 0, 0], ..named() };
         assert_eq!(bt.system(0xa4, &ctx).unwrap().plain(), vec!["An ash log was lost.".to_string()]);
-        let ctx = Ctx { work: [698, 0, 0, 0, 0], strings: ["Lnxcsfix".into(), String::new()], ..Default::default() };
+        let ctx = Ctx { work: [698, 0, 0, 0, 0], strings: ["Lnxcsfix".into(), String::new()], ..named() };
         assert_eq!(bt.system(0xcc, &ctx).unwrap().plain(), vec!["Lnxcsfix lost an ash log.".to_string()]);
     }
 
@@ -966,7 +1007,7 @@ mod tests {
     #[test]
     fn random_roll() {
         let Some(bt) = load() else { return };
-        let ctx = Ctx { strings: ["Lnxtest".into(), "523".into()], ..Default::default() };
+        let ctx = Ctx { strings: ["Lnxtest".into(), "523".into()], ..named() };
         assert_eq!(bt.system(88, &ctx).unwrap().plain(), ["Dice roll! Lnxtest rolls 523!"]);
     }
 
@@ -975,20 +1016,20 @@ mod tests {
     #[test]
     fn treasure_lines() {
         let Some(bt) = load() else { return };
-        let ctx = Ctx { target: mob("Wild Rabbit"), work: [698, 0, 0, 0, 0], ..Default::default() };
+        let ctx = Ctx { target: mob("Wild Rabbit"), work: [698, 0, 0, 0, 0], ..named() };
         assert_eq!(bt.system(0x10, &ctx).unwrap().plain(), ["You find an ash log on the Wild Rabbit."]);
         let ctx = Ctx {
             target: mob("Wild Rabbit"),
             work: [698, 0, 0, 0, 0],
             strings: ["523".into(), "Lnxtest".into()],
-            ..Default::default()
+            ..named()
         };
         assert_eq!(bt.system(0x11, &ctx).unwrap().plain(), ["Lnxtest's lot for the ash log: 523 points."]);
         let ctx = Ctx {
             target: mob("Wild Rabbit"),
             work: [698, 0, 0, 0, 0],
             strings: ["Lnxtest".into(), String::new()],
-            ..Default::default()
+            ..named()
         };
         assert_eq!(bt.system(0x12, &ctx).unwrap().plain(), ["Lnxtest obtains an ash log."]);
     }
@@ -1001,11 +1042,11 @@ mod tests {
         let ctx = Ctx {
             actor: me(false),
             target: Some(Who { name: "Rahal".into(), named: true, ..Default::default() }),
-            ..Default::default()
+            ..named()
         };
         assert_eq!(bt.emote(17, &ctx).unwrap().plain(), ["Lnxtest waves."]);
         assert_eq!(bt.emote(16, &ctx).unwrap().plain(), ["Lnxtest waves to Rahal."]);
-        let line = |female| bt.emote(13, &Ctx { actor: me(female), ..Default::default() }).unwrap().plain().join(" ");
+        let line = |female| bt.emote(13, &Ctx { actor: me(female), ..named() }).unwrap().plain().join(" ");
         assert!(line(false).contains("his") && line(true).contains("her"));
     }
 
@@ -1016,7 +1057,7 @@ mod tests {
     #[test]
     fn basic_messages() {
         let Some(b) = load() else { return };
-        let ctx = Ctx { actor: pc("Tuxedo"), target: mob("Wild Rabbit"), work: [0, 5, 0, 0, 0], ..Default::default() };
+        let ctx = Ctx { actor: pc("Tuxedo"), target: mob("Wild Rabbit"), work: [0, 5, 0, 0, 0], ..named() };
         assert_eq!(b.expand(1, &ctx).unwrap().plain(), ["Tuxedo hits the Wild Rabbit for 5 points of damage."]);
         let one = Ctx { work: [0, 1, 0, 0, 0], ..ctx.clone() };
         assert_eq!(b.expand(1, &one).unwrap().plain(), ["Tuxedo hits the Wild Rabbit for 1 point of damage."]);
@@ -1032,13 +1073,13 @@ mod tests {
         };
         assert_eq!(b.expand(1, &bats).unwrap().plain(), ["Ding Bats hit Tuxedo for 5 points of damage."]);
         // Experience (0x02D work[0]) and level up, which sets mode 0x79 with 1f 'y'.
-        let exp = Ctx { actor: pc("Tuxedo"), target: pc("Tuxedo"), work: [50, 0, 0, 0, 0], ..Default::default() };
+        let exp = Ctx { actor: pc("Tuxedo"), target: pc("Tuxedo"), work: [50, 0, 0, 0, 0], ..named() };
         assert_eq!(b.expand(8, &exp).unwrap().plain(), ["Tuxedo gains 50 experience points."]);
         let lv = Ctx { work: [2, 0, 0, 0, 0], ..exp };
         let l = b.expand(9, &lv).unwrap();
         assert_eq!((l.lines.as_slice(), l.mode), (["Tuxedo attains level 2!".to_string()].as_slice(), Some(0x79)));
         // Spell names (55702) and two-line messages.
-        let cure = Ctx { actor: pc("Tuxedo"), target: pc("Tuxedo"), work: [1, 12, 0, 0, 0], ..Default::default() };
+        let cure = Ctx { actor: pc("Tuxedo"), target: pc("Tuxedo"), work: [1, 12, 0, 0, 0], ..named() };
         assert_eq!(b.expand(7, &cure).unwrap().plain(), ["Tuxedo casts Cure.", "Tuxedo recovers 12 HP."]);
     }
 
@@ -1061,7 +1102,7 @@ mod tests {
     #[test]
     fn ids_match_lsb() {
         let Some(b) = load() else { return };
-        let ctx = Ctx { actor: pc("A"), target: mob("B"), work: [3, 4, 5, 6, 0], me: "A".into(), ..Default::default() };
+        let ctx = Ctx { actor: pc("A"), target: mob("B"), work: [3, 4, 5, 6, 0], me: "A".into(), ..named() };
         let t = |id| b.expand(id, &ctx).map(|l| l.lines.join(" ")).unwrap_or_default();
         assert_eq!(t(264), "The B takes 4 points of damage.");
         assert_eq!(t(282), "The B evades.");

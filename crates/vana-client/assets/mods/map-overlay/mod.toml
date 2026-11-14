@@ -1,5 +1,5 @@
 name = "Map Overlay"
-version = "1.1.0"
+version = "1.1.1"
 description = "Ctrl or Alt + O shows the zone map over the game (the map add-ons): pan it with a drag, zoom it with the wheel."
 permissions = ["input.capture"]
 

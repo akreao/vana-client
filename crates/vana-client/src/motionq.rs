@@ -1,4 +1,4 @@
-//! The model's motion queues as FFXiMain keeps them (30261102_0; docs/re/notes/2026-11-11-motion-queues.md):
+//! The model's motion queues as FFXiMain keeps them (30261102_0):
 //! seven body regions, each a list of weighted entries, oldest first. A new motion is appended to the regions
 //! it has chunks for, fades in over its blend and starts the fade-out of the entry before it; the poser walks
 //! each region oldest to newest and blends each entry over the ones before by its weight (FUN_1001a420).
@@ -7,6 +7,12 @@
 
 /// Regions 0..4 pose the body (higher ones win a bone); 5 and 6 are overlays blended over it by the region weight.
 pub const REGIONS: usize = 7;
+/// The eyes (a blink), the mouth (a line's face motion), the overlay a reaction or moving guard plays in, and the
+/// overlay a `mou6` talk plays in.
+pub const EYES: usize = 3;
+pub const MOUTH: usize = 4;
+pub const OVERLAY: usize = 5;
+pub const OVERLAY_TALK: usize = 6;
 
 /// Entry state (+8): playing, fading in, fading out, fading in while already on its way out.
 pub const PLAYING: u8 = 0;
@@ -245,12 +251,12 @@ impl<A: Clone> Queues<A> {
             end: e.end,
         };
         if let Some(l) = list.last_mut() {
-            n.frame = carry(l.frame, (l.frames, l.speed), (frames, speed), e.rate, e.blend);
+            n.frame = carry(l.frame, (l.frames, l.speed), (frames, speed), e.rate, blend);
             // FUN_1001acb0 puts the given start back.
             if !e.carry {
                 n.frame = e.start;
             }
-            l.fade(e.blend);
+            l.fade(blend);
         }
         list.push(n);
         // More than three: the oldest extras go within a tick. The oldest one left stands at full weight.
@@ -354,7 +360,7 @@ impl<A: Clone> Queues<A> {
 
     /// FUN_1001a420 / FUN_1001b230: the entries to pose, in order, and the weights of the overlay regions 5 and 6.
     /// Regions 4 down to 0 (a bone a higher region wrote is taken), then 5 and 6; an entry is left out when the one
-    /// after it stands at full weight, or its own weight is under 1e-4.
+    /// after it stands at full weight, or its weight is under 1e-4.
     pub fn layers(&self, out: &mut Vec<Layer<A>>) -> [f32; 2] {
         out.clear();
         let mut over = [0.0f32; 2];
@@ -398,7 +404,7 @@ mod tests {
         Queues::default()
     }
 
-    /// FUN_1001ad00: half way through a 40-frame cycle at speed 1, a 20-frame cycle starts half way through its own,
+    /// FUN_1001ad00: half way through a 40-frame cycle at speed 1, a 20-frame cycle starts half way through its cycle,
     /// plus half the 16-tick blend at the new rate (0.5 frames a tick x 16 / 2 = 4 frames): frame 14.
     #[test]
     fn carry_keeps_the_fraction() {
@@ -411,7 +417,7 @@ mod tests {
         assert!((carry(10.0, (40.0, 2.0), (20.0, 2.0), 1.0, 0.0) - 10.0).abs() < 1e-4);
     }
 
-    /// Row 9: each region carries its own phase. The legs (region 0) stand at frame 30 of 40 and the upper body
+    /// Row 9: each region carries its phase. The legs (region 0) stand at frame 30 of 40 and the upper body
     /// (region 1) at frame 5 of 40 when a 20-frame motion is queued in both.
     #[test]
     fn phase_is_per_region() {
@@ -497,6 +503,53 @@ mod tests {
         assert!(m.regions[1].is_empty());
     }
 
+    /// A blend of 0 counts as 1 tick (0x1001ad77) in the new entry, the phase carry and the old entry's fade alike, so
+    /// at a fraction of a tick both are still posed.
+    #[test]
+    fn blend_zero_is_one_tick() {
+        let mut m = q();
+        m.enqueue(0, 1, 40.0, 1.0, &Enq::status(1.0, 16.0, true));
+        for _ in 0..16 {
+            m.tick(1.0);
+        }
+        m.regions[0][0].frame = 20.0;
+        m.enqueue(0, 2, 20.0, 1.0, &Enq::status(1.0, 0.0, true));
+        // Half of the 20-frame cycle, plus half a tick at rate 1 (0.25 frames).
+        assert!((m.regions[0][1].frame - 10.25).abs() < 1e-4, "{}", m.regions[0][1].frame);
+        m.tick(0.2);
+        assert_eq!(m.regions[0].len(), 2, "the old entry stays for its one tick");
+        assert!((m.regions[0][1].weight - 0.2).abs() < 1e-4);
+    }
+
+    /// Region 5 or 6 given: every chunk goes there and only the first is taken (a reaction, a moving guard).
+    #[test]
+    fn overlay_region_takes_one_chunk() {
+        let mut m = q();
+        let e = Enq { share: 1.0, rate: 1.0, count: 1, blend: 2.0, out_len: 4.0, start: 0.0, end: 0.0, carry: false };
+        let mask = m.enqueue_motion([(0, 1, 10.0, 1.0), (1, 2, 10.0, 1.0)], 5, &e, |_| 1.0);
+        assert_eq!(mask, 1 << 5);
+        assert_eq!(m.regions[5].iter().map(|x| x.anim).collect::<Vec<_>>(), [1]);
+        assert!(m.regions[..5].iter().all(|l| l.is_empty()));
+    }
+
+    /// A motion that does not take region 0 leaves the regions holding a finished counted motion as they are.
+    #[test]
+    fn finished_regions_kept_without_region_0() {
+        let mut m = q();
+        m.enqueue_motion([(0, 1, 40.0, 1.0), (1, 2, 40.0, 1.0)], 0, &Enq::status(1.0, 16.0, true), |_| 1.0);
+        let swing =
+            Enq { share: 1.0, rate: 1.0, count: 1, blend: 4.0, out_len: 10.0, start: 0.0, end: 0.0, carry: false };
+        m.enqueue_motion([(1, 3, 10.0, 1.0)], 0, &swing, |_| 1.0);
+        for _ in 0..21 {
+            m.tick(1.0);
+        }
+        assert!(m.done && m.finished(1));
+        let mask = m.enqueue_motion([(2, 4, 10.0, 1.0)], 0, &Enq::status(1.0, 4.0, false), |_| 1.0);
+        assert_eq!(mask, 1 << 2);
+        assert!(m.finished(1), "region 1's finished swing stays");
+        assert!(m.done, "no region 0 entry, so the flag stays up");
+    }
+
     /// Row 4 (FUN_100ce160 -> FUN_1001b170(8.0)): the mouth region's entries go on for 8 ticks, then are dropped; a
     /// playing one keeps its weight, one still fading in keeps rising.
     #[test]
@@ -516,11 +569,11 @@ mod tests {
         for _ in 0..5 {
             m.tick(1.0);
         }
-        // The newer one still rises on its own slope under the older one.
+        // The newer one still rises on its slope under the older one.
         assert_eq!(m.regions[4].len(), 2);
         assert!((m.regions[4][1].weight - 7.0 / 8.0).abs() < 1e-4);
         m.tick(1.0);
-        // The older one's own 8 ticks (from the newer one's enqueue) are up.
+        // The older one's 8 ticks (from the newer one's enqueue) are up.
         assert_eq!(m.regions[4].len(), 1);
         let f = m.regions[4][0].frame;
         m.tick(1.0);

@@ -135,9 +135,10 @@ pub struct Plan {
     pub motions: Vec<Motion>,
     pub hit_at: Option<u32>,
     pub length: u32,
-    /// Op 0x28 (FUN_100c6b70 + FUN_100cb8e0): from here the status motion is chosen again, a 10-tick blend
-    /// *(inf: back to the stance)*.
+    /// Op 0x28 (FUN_100c6b70 + FUN_100cb8e0): from here the status motion is chosen again.
     pub stance_at: Option<u32>,
+    /// Op 0x28's blend-in, its f32 @8 (0x1005b112 -> FUN_100cd920 arg 5).
+    pub stance_blend: Option<f32>,
     /// When the holds end, from the start: op 0x59 on the attacker (FUN_10062650, about 30 ticks past the hit: no
     /// reactions, server status changes wait) and op 0x20 on the target (FUN_100601f0, hit + 4); u16 @6 each.
     pub attacker_hold: Option<u32>,
@@ -167,7 +168,10 @@ pub fn plan(data: &[u8], hit: &[&str]) -> Plan {
                 }
             }
             0x03 if op.name().is_some_and(|n| hit.contains(&n)) && p.hit_at.is_none() => p.hit_at = Some(t),
-            0x28 => p.stance_at = Some(t),
+            0x28 => {
+                p.stance_at = Some(t);
+                p.stance_blend = op.raw.get(8..12).map(|b| f32::from_le_bytes(b.try_into().unwrap()));
+            }
             0x59 | 0x20 => {
                 let end = t + op.raw.get(6..8).map_or(0, |b| u16::from_le_bytes([b[0], b[1]]) as u32);
                 let slot = if op.code == 0x59 { &mut p.attacker_hold } else { &mut p.target_hold };

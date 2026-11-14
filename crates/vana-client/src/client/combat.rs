@@ -397,14 +397,14 @@ pub(super) struct Pending {
     messages: Vec<Msg>,
 }
 
-/// The name tables for a message's key items.
-fn keys(w: &World) -> Option<crate::dat::battle::Keys> {
-    w.names.clone().map(crate::dat::battle::Keys)
+/// The name tables for a message line.
+pub(super) fn tables(w: &World) -> Option<crate::dat::battle::Tables> {
+    w.names.clone().map(crate::dat::battle::Tables)
 }
 
 pub(super) fn who(w: &World, id: u32) -> Option<Who> {
     if id == w.my_id {
-        // Our own gender from the race (inf: retail reads 0x40db0): 2, 4, 6 and 7 are female.
+        // Our gender from the race (inf: retail reads 0x40db0): 2, 4, 6 and 7 are female.
         return Some(Who {
             name: super::monstrosity::my_name(w).to_string(),
             pc: true,
@@ -425,7 +425,7 @@ pub(super) fn who(w: &World, id: u32) -> Option<Who> {
 
 /// s2c 0x05A (LAB_100a06e0): dropped for emote 0x61+ or a caster / target not here. The caster plays it (FUN_100a0b90)
 /// unless busy with one, not idle / sitting / seated, or Mode 1; /aim failing prints group 9 0x66 instead. The line
-/// (file 7025, emote * 2 + no target) in mode 7 for our own untargeted emote, else 0x0f, unless Mode 2 or the Emotes
+/// (file 7025, emote * 2 + no target) in mode 7 for our untargeted emote, else 0x0f, unless Mode 2 or the Emotes
 /// filter (config 0x32 bit 3), and dropped for a caster on the block list (FUN_100a1a00 kind 2). Not done: the pet
 /// copying the motion, trusts copying it.
 pub(super) fn on_emote(w: &mut World, caster: u32, target: u32, emote: u16, param: u16, mode: u8) {
@@ -462,7 +462,7 @@ pub(super) fn on_emote(w: &mut World, caster: u32, target: u32, emote: u16, para
         target: (target != 0).then(|| who(w, target)).flatten(),
         me: w.name.clone(),
         work: [0; 5],
-        keys: keys(w),
+        names: tables(w),
         ..Default::default()
     };
     let entry = emote as u32 * 2 + (target == 0) as u32;
@@ -667,7 +667,7 @@ fn condense_targets(w: &mut World, bt: &battle::BattleText, m: &Msg, lines: &[(S
     else {
         return false;
     };
-    // A possessive ("X's attacks"): each name keeps its own ("Lnxcsfix's and Aurelie's"), not the plural's "X'".
+    // A possessive ("X's attacks"): each name keeps its possessive ("Lnxcsfix's and Aurelie's"), not the plural's "X'".
     let mut name = target_name(&target);
     if template.contains(&format!("{NAME}'")) {
         template = template.replacen(&format!("{NAME}'"), NAME, 1);
@@ -818,7 +818,7 @@ fn print(w: &mut World, m: Msg) {
         target: who(w, m.target),
         me: w.name.clone(),
         work: m.work,
-        keys: keys(w),
+        names: tables(w),
         ..Default::default()
     };
     let rel = relation(w, m.actor, m.target);
@@ -944,7 +944,7 @@ pub(super) fn on_system_message(w: &mut World, id: u16, work: [i32; 2]) {
         target: who(w, me),
         me: w.name.clone(),
         work: [work[0], work[1], 0, 0, 0],
-        keys: keys(w),
+        names: tables(w),
         ..Default::default()
     };
     match bt.system(id, &ctx) {
@@ -980,7 +980,7 @@ pub(super) fn on_message_std(w: &mut World, id: u16, cas: u32, para: [i32; 4], s
         me: w.name.clone(),
         work: [para[0], para[1], para[2], para[3], 0],
         strings,
-        keys: keys(w),
+        names: tables(w),
     };
     match bt.system(id, &ctx) {
         Some(line) => {
@@ -1106,7 +1106,7 @@ fn msg_target_status(w: &World, m: &BattleMessage) -> Option<u8> {
     w.entities.get(&m.target).map(|e| e.motion.status)
 }
 
-/// FUN_100c33d0: every queued message steps on its own; a due one runs its effect (file 0xaf0 + id `main` on the
+/// FUN_100c33d0: every queued message steps independently; a due one runs its effect (file 0xaf0 + id `main` on the
 /// caster's model, FUN_100a9700) and prints.
 pub(super) fn message_queue(w: &mut World, dt: f32) {
     let mut due = Vec::new();
@@ -1194,7 +1194,7 @@ pub struct Casting {
     pub skill: bool,
     pub id: u16,
     pub start: Instant,
-    /// The spell's base cast time (the record's; the caster's own speed is not sent): none for a skill.
+    /// The spell's base cast time (the record's; the caster's speed is not sent): none for a skill.
     pub secs: Option<f32>,
 }
 
@@ -1227,7 +1227,6 @@ fn track_cast(w: &mut World, a: &Action) {
 /// work = [cmd_arg, value, proc value, react value, bit]; melee waits for the attacker's hit.
 fn one_action(w: &mut World, a: &Action) {
     track_cast(w, a);
-    super::skillchain::on_action(w, a);
     // Our cast finished (category 4, magic file 0xaf0): the spell's recast (asm 0x100a900d).
     if a.actor == w.my_id && a.category == category::MAGIC_FINISH {
         super::magic::set_recast(w, a.arg as u16, a.info);
@@ -1280,12 +1279,9 @@ fn one_action(w: &mut World, a: &Action) {
         if let Some(t) = att {
             w.holds.insert(a.actor, ticks(*t));
             w.noreact.insert(a.actor, ticks(*t));
-            w.hold_list.retain(|h| h.1 != a.actor);
-            w.hold_list.push((0, a.actor, crate::fx::HOLD_STATUS | crate::fx::HOLD_REACT, ticks(*t)));
         }
         if let (Some(t), Some(id)) = (tgt, first) {
             let until = ticks(*t);
-            w.hold_list.push((0, id, crate::fx::HOLD_STATUS, until));
             let e = w.holds.entry(id).or_insert(until);
             *e = (*e).max(until);
         }
@@ -1346,6 +1342,7 @@ pub(super) fn print_record(w: &mut World, a: &Action, k: usize, which: u8) {
 pub(super) fn held(w: &World, id: u32) -> bool {
     let now = Instant::now();
     w.holds.get(&id).is_some_and(|t| *t > now)
+        || w.effects.held.get(&id).is_some_and(|k| k & crate::fx::HOLD_STATUS != 0)
         || w.loads.get(&id).is_some_and(|l| l.1 > now)
         || w.knocks.contains_key(&id)
         || w.rounds.values().any(|(_, rest)| rest.iter().any(|a| a.targets.iter().any(|t| t.id == id)))
@@ -1460,46 +1457,10 @@ pub(super) fn fx_load(w: &mut World, id: u32) {
     e.1 = Instant::now() + Duration::from_secs(30);
 }
 
-/// The skill holds from fx (ops 0x20 / 0x1f / 0x56 / 0x59 / 0x07 / 0x08) for their ticks, the longest winning.
-pub(super) fn fx_hold(w: &mut World, id: u32, ticks: f32, kind: u8, owner: u64) {
-    let until = Instant::now() + Duration::from_secs_f32(ticks.max(0.0) / 60.0);
-    w.hold_list.push((owner, id, kind, until));
-    if kind & crate::fx::HOLD_STATUS != 0 {
-        let e = w.holds.entry(id).or_insert(until);
-        *e = (*e).max(until);
-    }
-    if kind & crate::fx::HOLD_REACT != 0 {
-        let e = w.noreact.entry(id).or_insert(until);
-        *e = (*e).max(until);
-    }
-}
-
-/// The holds of a scheduler task that was killed end with it (retail's hold tasks are its children; their destructors
-/// let the actor go): each actor keeps the longest of its other holds, as `klbt`'s kill of `bntg` leaves the
-/// sheathe's own.
-pub(super) fn fx_hold_cut(w: &mut World, owner: u64) {
-    cut_holds(&mut w.hold_list, &mut w.holds, &mut w.noreact, owner);
-}
-
-fn cut_holds(
-    list: &mut Vec<(u64, u32, u8, Instant)>,
-    holds: &mut std::collections::HashMap<u32, Instant>,
-    noreact: &mut std::collections::HashMap<u32, Instant>,
-    owner: u64,
-) {
-    let cut: Vec<(u32, u8)> = list.iter().filter(|h| h.0 == owner).map(|h| (h.1, h.2)).collect();
-    list.retain(|h| h.0 != owner);
-    for (id, kind) in cut {
-        for (bit, map) in [(crate::fx::HOLD_STATUS, &mut *holds), (crate::fx::HOLD_REACT, &mut *noreact)] {
-            if kind & bit == 0 {
-                continue;
-            }
-            match list.iter().filter(|h| h.1 == id && h.2 & bit != 0).map(|h| h.3).max() {
-                Some(t) => map.insert(id, t),
-                None => map.remove(&id),
-            };
-        }
-    }
+/// +0x80 up: a swing's hold or a live scheduler's op 0x07 / 0x08 / 0x59 (no reactions, no status motion re-pick).
+pub(super) fn no_react(w: &World, id: u32) -> bool {
+    w.noreact.get(&id).is_some_and(|t| *t > Instant::now())
+        || w.effects.held.get(&id).is_some_and(|k| k & crate::fx::HOLD_REACT != 0)
 }
 
 /// FUN_100a9610: one load hold ends (busy -1); op 0x20 holds run on.
@@ -1512,7 +1473,7 @@ pub(super) fn fx_release(w: &mut World, id: u32) {
     }
 }
 
-/// FUN_100cdd60 for op 0x25 / 0x21: none when the reactor is dead, riding, in its own no-reaction hold or the level
+/// FUN_100cdd60 for op 0x25 / 0x21: none when the reactor is dead, riding, in its no-reaction hold or the level
 /// is 0; standing "dfi?" / "dbi?" (side 0 by where the other actor stands, 1 front, 2 back), moving "dfm?" unless side
 /// 2 ("dbm?"); an overlay at amount x {0.25, 0.5, 1.0}[level] with the op's rate, count, blend-in and fade.
 pub(super) fn react_op(w: &mut World, r: &crate::fx::React) {
@@ -1522,10 +1483,7 @@ pub(super) fn react_op(w: &mut World, r: &crate::fx::React) {
         w.entities.get(&r.reactor).map_or(0, |e| e.motion.status)
     };
     // FUN_1005e5f0: none while the reactor is being knocked back.
-    if r.level == 0
-        || w.noreact.get(&r.reactor).is_some_and(|t| *t > Instant::now())
-        || w.knocks.contains_key(&r.reactor)
-        || matches!(status, 2 | 3 | 5 | 0x55)
+    if r.level == 0 || no_react(w, r.reactor) || w.knocks.contains_key(&r.reactor) || matches!(status, 2 | 3 | 5 | 0x55)
     {
         return;
     }
@@ -1563,7 +1521,7 @@ pub(super) fn react_op(w: &mut World, r: &crate::fx::React) {
         fade: r.fade,
         rate: r.rate,
         blend_in: r.blend_in,
-        region: 5,
+        region: crate::motionq::OVERLAY as u8,
     });
 }
 
@@ -1582,7 +1540,7 @@ pub(super) fn sdep(w: &World, id: u32) -> bool {
 /// session state too. The server prints the defeat (0x029 #97 / #20).
 /// FUN_1008c6c0: the scheduler an applied status change runs: a model-id actor leaving battle `bton`, engaging
 /// `ntob`; a death the pick's (death_scheduler; its ded? / cor? are die()'s, so the task's motions are off), or
-/// `sdep` with its own motions (vtable +0x298). Not done: fishing.
+/// `sdep` with its motions (vtable +0x298). Not done: fishing.
 pub(super) fn status_schedulers(
     fx: &mut crate::fx::Effects,
     actors: &std::collections::HashMap<u32, Actor>,
@@ -1631,7 +1589,6 @@ pub(super) fn apply_status(w: &mut World, id: u32, status: u8) {
 
 /// Fires pending hits whose time has come, and applies statuses whose swing hold has ended.
 pub(super) fn tick(w: &mut World) {
-    super::skillchain::tick(w);
     let now = Instant::now();
     // The next swing of a round whose last swing has ended.
     let due: Vec<u32> = w.rounds.iter().filter(|(_, (at, _))| *at <= now).map(|(id, _)| *id).collect();
@@ -1659,7 +1616,6 @@ pub(super) fn tick(w: &mut World) {
     }
     w.holds.retain(|_, t| *t > now);
     w.noreact.retain(|_, t| *t > now);
-    w.hold_list.retain(|h| h.3 > now);
     let (due, rest): (Vec<Pending>, Vec<Pending>) =
         std::mem::take(&mut w.pending).into_iter().partition(|p| p.at <= now);
     w.pending = rest;
@@ -1779,7 +1735,7 @@ pub(super) fn start_attack(
     ))
 }
 
-/// FUN_100cde70 / FUN_100cdf00 for ops 0x5a / 0x5b: none while the reactor is in its own no-reaction hold or riding;
+/// FUN_100cde70 / FUN_100cdf00 for ops 0x5a / 0x5b: none while the reactor is in its no-reaction hold or riding;
 /// standing `gdi?` / `pyi?`, moving `gdm?` / `pym?`, no fallback between them; an overlay at amount 1.0 with the op's
 /// rate, count, blend-in and fade (no level, no direction, no dead check).
 pub(super) fn guard_op(w: &mut World, g: &crate::fx::Guard) {
@@ -1788,10 +1744,7 @@ pub(super) fn guard_op(w: &mut World, g: &crate::fx::Guard) {
     } else {
         w.entities.get(&g.reactor).map_or(0, |e| e.motion.status)
     };
-    if w.noreact.get(&g.reactor).is_some_and(|t| *t > Instant::now())
-        || w.knocks.contains_key(&g.reactor)
-        || matches!(status, 5 | 0x55)
-    {
+    if no_react(w, g.reactor) || w.knocks.contains_key(&g.reactor) || matches!(status, 5 | 0x55) {
         return;
     }
     let name = match (g.parry, moving(w, g.reactor)) {
@@ -1806,8 +1759,7 @@ pub(super) fn guard_op(w: &mut World, g: &crate::fx::Guard) {
         return;
     }
     log::debug!(target: "motion", "actor {:#x}: {name} count {} fade {}", g.reactor, g.count, g.fade);
-    // Standing (`gdi?` / `pyi?`) the region argument is 0: the chunks go to their own regions as a counted motion;
-    // moving, to the overlay region 5.
+    // Standing (`gdi?` / `pyi?`) a counted motion in its chunks' regions; moving, in the overlay region.
     a.overlays.push(actmotion::Overlay {
         name: name.to_string(),
         weight: 1.0,
@@ -1815,13 +1767,13 @@ pub(super) fn guard_op(w: &mut World, g: &crate::fx::Guard) {
         fade: g.fade,
         rate: g.rate,
         blend_in: g.blend_in,
-        region: if name.ends_with('m') { 5 } else { 0 },
+        region: if name.ends_with('m') { crate::motionq::OVERLAY as u8 } else { 0 },
     });
 }
 
 /// Death: the actor's death scheduler (dead, or the op 0xac pick's) plays "ded?" for its op length, then the corpse
 /// loop takes over; a picked one without a motion (the Ghrah's `1ead`) plays none.
-/// The death's motion from the death scheduler's plan; `sdep` plays its own through fx.
+/// The death's motion from the death scheduler's plan; `sdep` plays its through fx.
 pub(super) fn die(actor: &mut Actor, sdep: bool) {
     let Some(ch) = actor.character.clone() else { return };
     if sdep {
@@ -2149,7 +2101,7 @@ struct Facts {
     invitable: bool,
     /// +0x140 bit 3 (0x00D flags3 bit 1): recruiting party members.
     recruiting: bool,
-    /// FUN_1012aed0: one of our own trusts.
+    /// FUN_1012aed0: one of our trusts.
     our_trust: bool,
     /// FUN_1013eff0: the treasure pool holds items.
     treasure: bool,
@@ -2200,7 +2152,7 @@ fn shown(f: &Facts, c: u8) -> Option<u8> {
         cmd::TRADE => (f.target.is_some() && !npc && !on_team(f.team, false, false)).then_some(c),
         // Cases 10 / 11: Quarry / Scout / Sprint on a Conflict team (Sprint becomes Scout with Petra: not parsed).
         0x16..=0x18 => on_team(f.team, true, true).then_some(c),
-        // Case 12: Release on our own trust.
+        // Case 12: Release on our trust.
         cmd::RELEASE => f.our_trust.then_some(c),
         // Case 13: Request to join a target that is recruiting.
         0x1b => (f.target.is_some() && f.recruiting).then_some(c),
@@ -2508,29 +2460,6 @@ mod tests {
         assert_eq!(swing_patterns(true, 1, 4).0, "a1l?");
     }
 
-    /// A killed scheduler's holds end with it: `bntg`'s 300 ticks go when `klbt` kills it and the sheathe's own 72
-    /// stay; an actor with no other hold is free at once; a hold of another kind is untouched.
-    #[test]
-    fn killed_scheduler_frees_its_holds() {
-        use crate::fx::{HOLD_REACT, HOLD_STATUS};
-        let now = Instant::now();
-        let at = |ticks: u64| now + Duration::from_millis(ticks * 1000 / 60);
-        let mut list = vec![
-            (7, 1, HOLD_REACT, at(300)),
-            (8, 1, HOLD_REACT, at(72)),
-            (8, 1, HOLD_STATUS, at(72)),
-            (7, 2, HOLD_REACT, at(300)),
-        ];
-        let mut holds = std::collections::HashMap::from([(1, at(72))]);
-        let mut noreact = std::collections::HashMap::from([(1, at(300)), (2, at(300))]);
-        cut_holds(&mut list, &mut holds, &mut noreact, 7);
-        assert_eq!(noreact, std::collections::HashMap::from([(1, at(72))]));
-        assert_eq!(holds, std::collections::HashMap::from([(1, at(72))]));
-        assert_eq!(list.len(), 2);
-        cut_holds(&mut list, &mut holds, &mut noreact, 99);
-        assert_eq!((list.len(), noreact.len()), (2, 1));
-    }
-
     /// The log holds KEPT lines (the oldest DROP go at once past KEPT + DROP); a line keeps its number while held, and
     /// one gone reads as nothing.
     #[test]
@@ -2725,7 +2654,7 @@ mod tests {
             entries: vec![("the Wild Rabbit".into(), 50), ("the Orc".into(), 48), ("Raven".into(), 45)],
         };
         assert_eq!(targets_text(&g), "The Wild Rabbit, the Orc, and Raven take 50, 48, and 45 points of damage.");
-        // A status by id: no number in the line; a possessive keeps each name's own.
+        // A status by id: no number in the line; a possessive keeps each name's.
         let ctx = Ctx { work: [0, 68, 0, 0, 0], ..ctx };
         let t =
             render(&bt, 285, Relation::Other, &ctx, &Default::default())[0].0.replacen(&format!("{NAME}'"), NAME, 1);
@@ -2955,13 +2884,4 @@ mod queue_tests {
         assert_eq!(crate::client::net::battle_message2(&pkt(0x2d, 0x32b)).queued, 0x32b);
         assert_eq!(crate::client::net::battle_message2(&pkt(0x2d, 6)).queued, 0);
     }
-}
-
-/// Us, a party member, or the pet of either (its master's ActIndex).
-pub(super) fn ours(w: &World, actor: u32) -> bool {
-    if actor == w.my_id || w.party.party().any(|m| m.id == actor) {
-        return true;
-    }
-    let Some(master) = w.entities.get(&actor).map(|e| e.master).filter(|&m| m != 0) else { return false };
-    master == w.my_index || w.party.party().any(|m| w.entities.get(&m.id).is_some_and(|e| e.index == master))
 }
