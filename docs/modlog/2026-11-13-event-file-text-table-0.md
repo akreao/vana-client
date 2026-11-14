@@ -2,7 +2,7 @@
 
 <!-- dll-build: 30261102_0 -->
 
-Steven's report: NPCs in Aht Urhgan Whitegate do not play their cutscenes. Seen live on the test server with
+Symptom: NPCs in Aht Urhgan Whitegate do not play their cutscenes. Seen live on the test server with
 `!cs 3000 0 0 0 0 0 0 0 0 0` (Treasures of Aht Urhgan mission 1, Naja Salaheem): the event bound its actors, ran
 nothing, and was cancelled after 10 s.
 
@@ -19,8 +19,8 @@ nothing, and was cancelled after 10 s.
   missions, the Assault globals, hidden quests and Hugo (Whitegate's map marker NPC). All were broken the same way.
 - Checked live after the fix: event 3000 plays (cameras dn00..dn16, Naja Salaheem's lines).
 
-**The whole game, and every start parameter (same day).** Steven asked that the fix not stop at one NPC and that
-everything LSB can send with an event start be checked.
+**The whole game, and every start parameter (same day).** The fix is not limited to one NPC:
+everything LSB can send with an event start was checked.
 
 - Second event files: of the 300 possible (event DATs 57881..58180, file zones 1000..1299) only file 1000 has
   scripts: 339 blocks, all of zone 50 actors. File 1001 is one empty player block and the rest do not exist. So
@@ -42,12 +42,32 @@ everything LSB can send with an event start be checked.
   (FUN_1009dee0 / FUN_1009dd20 / FUN_1009d9d0); 0x400 drops an s2c 0x028 whose actor or first target is bound, and
   our own finishing actions (categories 3..6, 0xb, 0xd..0xf) are dropped while an event runs unless 0x1000
   (FUN_1009e400). 0x08 and 0x4000 have no reader.
-- Not built: 0x100 (FUN_100aeea0: without it the start waits until each bound actor is idle and its motion is
-  free; ours never waits, which is the 0x100 behaviour for every event) and 0x8000 (FUN_100ae3f0 puts the actors
-  back on the floor at the end).
+- 0x100 (LSB NO_IDLE_WAIT), FUN_100aeea0 at 0x100aef86..0x100af0f3. Once every bound actor is here with its
+  model, each is passed in block order or the start waits on it. Without the bit (the packet's Mode alone, not op
+  0x38's flags): the wait is DAT_1048aabc 7 while the actor's status machine is not at rest (FUN_1008b460's state
+  byte +0x1bc: engaged or sheathing, resting or getting up, on a mount, leaving a chair) unless its applied status
+  is 0x2f or a chair's (FUN_10095790) or the event is being cancelled (FUN_10087030, not modelled); a player
+  character that passes has its casting effect ended (FUN_10085450(0), then model +0x7d8 = "    "); then the wait
+  is 8 while an actor the server does not hide (+0x120 bits 14 / 15) still plays an action (model +0x70 -> +0x11c,
+  the count FUN_100a4140 raises and FUN_100a4160 lowers, cleared after 1800 ticks; ours `World.loads`). With the
+  bit nothing waits and every actor's casting effect ends. Ours never waited, so an event began over a drawn
+  weapon or a kneeling character: `event::actors_idle`. Not carried over: model +0x88 bit 0x20 (set from +0x1d0
+  bit 10), which lets the second wait pass.
+- 0x8000 (LSB GROUND_SNAP_ON_END), FUN_100ae3f0 at 0x100ae452: at the end every actor's place (+4 and +0x24)
+  becomes its model's (+0x44, which FUN_1008cd90 keeps each frame), the height put on the floor: a player
+  character's by FUN_10182860 (50 down, else up), an NPC's by FUN_101828d0 unless +0x128 bit 14 or +0x120 bits
+  20 / 21 hold it or it is a door or lift (+0xee 3 / 4). It runs before flag 1's return to +0x24, so with both we
+  stay where the event left us. Ours does it for the bound actors, whose models the event moved (`event::finish`).
+- Answer and update packets, read again, all as ours already has them. c2s 0x05B (FUN_100a0660 end, FUN_100a0510
+  update): UniqueNo @4, EndPara @8 (0x40000000 for a cancel), ActIndex @0xc, Mode @0xe (0 / 1), EventNum @0x10
+  (the packet's first number, not the second), EventPara @0x12. c2s 0x05C (FUN_100a05e0): position @4, UniqueNo
+  @0x10, EndPara @0x14, EventNum @0x18, EventPara @0x1a, ActIndex @0x1c, Mode 1 @0x1e, direction @0x1f. s2c 0x05C
+  (FUN_100a00f0) copies num[8] @4 and nothing else; s2c 0x05D (FUN_100a0110) copies the four strings @0x28 into
+  both string tables; neither lets a waiting script go, that is 0x052 mode 1.
 - Params: 0x034 copies num[8] to DAT_104899b0 and 0x033 copies Data[8] only with Mode & 8. 0x032 and FUN_100aed00
   leave them alone, so retail keeps the previous event's numbers; ours zeroes them. Kept on purpose: LSB sends
   0x032 whenever a script passes no parameters, where a retail script would expect zeros.
 - Seen in LSB, no client change: 0x032 goes out with Mode 0 where 0x033 / 0x034 default to 8 (no reader of 8),
   and a text table without parameters still picks 0x034, so EventNum2 is always sent when it matters.
-- Checked live: `!cs 893` (0x032) and `!cs 3000 ... 0` both run to their end.
+- Checked live: `!cs 893` (0x032) and `!cs 3000 ... 0` both run to their end; an event sent to a resting
+  character starts 1.4 s later, after `res2` has it standing; an event with Mode 0x8008 ends cleanly.
