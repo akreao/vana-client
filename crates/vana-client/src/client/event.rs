@@ -2443,6 +2443,69 @@ fn actors_ready(w: &World, wt: &mut Waiting, ticks: f32) -> bool {
     ready
 }
 
+/// FUN_1008b460's state byte (+0x1bc) is not 0: engaged or sheathing (states 1..3, 0x11, 6, 5), sitting down to
+/// rest, resting or getting up (7 / 8), on a mount or leaving it (0xe..0x10), or getting up from a chair (0x19 /
+/// 0x1a).
+fn machine_busy(w: &World, id: u32) -> bool {
+    let b = w.actors.get(&id).map(|a| &a.battle);
+    b.is_some_and(|b| !b.on.is_empty() || b.wait || b.leaving)
+        || w.rests.contains_key(&id)
+        || w.rides.contains_key(&id)
+        || super::chair::holding(w, id)
+}
+
+/// FUN_100aeea0's wait on one actor that is here with its model, for an event whose Mode lacks 0x100 (0x100af007):
+/// the status machine must be at rest, unless the applied status is sitting (0x2f) or a chair's (FUN_10095790);
+/// and an actor the server does not hide (+0x120 bits 14 / 15) must have no action still playing (+0x11c, the
+/// count FUN_100a4140 raises and its 1800 ticks end).
+fn idle_wait(status: u8, machine: bool, hidden: bool, acting: bool) -> Option<u8> {
+    if status != 0x2f && !super::chair::is_chair(status) && machine {
+        return Some(7);
+    }
+    (!hidden && acting).then_some(8)
+}
+
+/// FUN_100aeea0, the part after every bound actor is here with its model: in block order each actor is passed or
+/// the start waits on it (DAT_1048aabc 7 / 8). A player character passed by the first test has its casting effect
+/// ended (FUN_10085450(0); retail also clears +0x7d8 so the status motion starts over). With Mode 0x100 (LSB
+/// NO_IDLE_WAIT) nothing waits and every actor's casting effect ends. The test is on the packet's Mode alone.
+fn actors_idle(w: &mut World, wt: &Waiting) -> bool {
+    let ev = wt.start.event;
+    let no_wait = wt.start.mode & 0x100 != 0;
+    let now = Instant::now();
+    let ids: Vec<u32> = wt
+        .blocks
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .filter(|b| bound_block(b, ev))
+        .filter_map(|b| resolve((w.my_id, w.my_index), b.actor).map(|(id, _)| id))
+        .collect();
+    for id in ids {
+        if no_wait {
+            w.effects.end_cast(id);
+            continue;
+        }
+        let me = id == w.my_id;
+        let (status, hidden) = match w.entities.get(&id) {
+            _ if me => (w.my_motion.status, self_hidden(w)),
+            Some(e) => (e.motion.status, e.flags & 2 != 0),
+            None => continue,
+        };
+        if idle_wait(status, machine_busy(w, id), true, false).is_some() {
+            return false;
+        }
+        if id >> 24 == 0 {
+            w.effects.end_cast(id);
+        }
+        let acting = w.loads.get(&id).is_some_and(|l| l.0 > 0 && l.1 > now);
+        if idle_wait(status, false, hidden, acting).is_some() {
+            return false;
+        }
+    }
+    true
+}
+
 fn begin(w: &mut World, mut wt: Box<Waiting>, index: &DatIndex) {
     let s = wt.start.clone();
     let fz = file_zone(&s, w.zone.unwrap_or(s.zone));
@@ -2532,7 +2595,7 @@ pub fn update(w: &mut World, dt: f32) {
                 }
                 wt.blocks = Some(blocks);
             }
-            if actors_ready(w, &mut wt, ticks) {
+            if actors_ready(w, &mut wt, ticks) && actors_idle(w, &wt) {
                 begin(w, wt, &index);
             } else {
                 w.event_pending = Some(wt);
@@ -2748,8 +2811,32 @@ fn finish(w: &mut World, live: Box<Live>) {
         let wt = w.weather;
         w.effects.set_weather(crate::dat::weather::weather_tag(wt), 0.0);
     }
+    // FUN_100ae3f0 (0x100ae452) with flag 0x8000 (LSB GROUND_SNAP_ON_END): an actor's place (+4 and the server's
+    // +0x24) becomes where its model is (+0x44) with the height put back on the floor: a player character's by
+    // FUN_10182860 (down to 50 below, else up), an NPC's by FUN_101828d0 unless a no-snap bit holds it (+0x128 bit
+    // 14, +0x120 bits 20 / 21) or it is a door or lift (+0xee 3 / 4). It comes before & 1's return to +0x24, so
+    // with both flags we stay at this place too. Ours does the bound actors: the others' models are where they are.
+    let reseat = live.st.flags() & 0x8000 != 0;
+    if reseat {
+        for id in &live.st.bound {
+            let Some(mut p) = live.st.poses.get(id).copied() else { continue };
+            let floor = |p: Vec3| w.ground.as_ref().and_then(|g| g.snap(p.x, p.z, p.y));
+            if *id == w.my_id {
+                p.pos.y = floor(p.pos).unwrap_or(p.pos.y);
+                keep_pose(w, p);
+            } else if let Some(e) = w.entities.get(id) {
+                if id >> 24 == 0 || (id >> 24 == 1 && !e.no_snap && !matches!(e.sub_kind, 2 | 3)) {
+                    p.pos.y = floor(p.pos).unwrap_or(p.pos.y);
+                }
+                if let Some(e) = w.entities.get_mut(id) {
+                    (e.pos, e.slide, e.last_pos, e.remain) = (p.pos, p.pos, p.pos, 0.0);
+                }
+            }
+        }
+    }
     // We stay where the event left us (FUN_10089a60 once unbound), unless & 1 puts us back at the bind place (+0x24).
     if live.st.bound.contains(&w.my_id)
+        && !reseat
         && live.st.flags() & 1 == 0
         && let Some(p) = live.st.poses.get(&w.my_id).copied()
     {
@@ -4198,6 +4285,18 @@ mod tests {
         assert_eq!(file_zone(&s, 230), 1012);
         let s = EventStart { zone: 50, zone2: 0, ..Default::default() };
         assert_eq!(file_zone(&s, 50), 1000);
+    }
+
+    #[test]
+    fn idle_gate() {
+        // Engaged or resting: the start waits (state 7); sitting and chairs do not hold it.
+        assert_eq!(idle_wait(1, true, false, false), Some(7));
+        assert_eq!(idle_wait(0x2f, true, false, false), None);
+        assert_eq!(idle_wait(0x3f, true, false, false), None);
+        // An action still playing holds a visible actor (state 8), not a hidden one.
+        assert_eq!(idle_wait(0, false, false, true), Some(8));
+        assert_eq!(idle_wait(0, false, true, true), None);
+        assert_eq!(idle_wait(0, false, false, false), None);
     }
 
     #[test]
