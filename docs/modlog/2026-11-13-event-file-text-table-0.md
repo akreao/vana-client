@@ -2,7 +2,7 @@
 
 <!-- dll-build: 30261102_0 -->
 
-Steven's report: NPCs in Aht Urhgan Whitegate do not play their cutscenes. Seen live on the test server with
+Symptom: NPCs in Aht Urhgan Whitegate do not play their cutscenes. Seen live on the test server with
 `!cs 3000 0 0 0 0 0 0 0 0 0` (Treasures of Aht Urhgan mission 1, Naja Salaheem): the event bound its actors, ran
 nothing, and was cancelled after 10 s.
 
@@ -19,8 +19,8 @@ nothing, and was cancelled after 10 s.
   missions, the Assault globals, hidden quests and Hugo (Whitegate's map marker NPC). All were broken the same way.
 - Checked live after the fix: event 3000 plays (cameras dn00..dn16, Naja Salaheem's lines).
 
-**The whole game, and every start parameter (same day).** Steven asked that the fix not stop at one NPC and that
-everything LSB can send with an event start be checked.
+**The whole game, and every start parameter (same day).** The fix is not limited to one NPC:
+everything LSB can send with an event start was checked.
 
 - Second event files: of the 300 possible (event DATs 57881..58180, file zones 1000..1299) only file 1000 has
   scripts: 339 blocks, all of zone 50 actors. File 1001 is one empty player block and the rest do not exist. So
