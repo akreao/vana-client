@@ -650,6 +650,12 @@ struct Entity {
     reset_bases: bool,
     /// +0x138 bit 31 (event op 0xac sub 2 / 3): while its model is hidden its schedulers' sounds stay off.
     ev_reserved: bool,
+    /// Entity +0x13c bits 0..1 (event op 0xac sub 4, OR'd in; cleared with the slot): bit 0 makes a reserved actor
+    /// keep its position against 0x00E mask 0x01 (0x1009b9f3). Bit 1 has no reader.
+    pos_hold: u8,
+    /// Entity +0x145 = 0 after a despawn that came while an event held the actor (0x1009b90f / 0x10099c80): the next
+    /// update must be a full one, or the slot is reset and asked for again.
+    awaiting_full: bool,
     /// +0x12c bit 17 (event op 0x94, FUN_100b7e20): no occlusion test (FUN_100c9da0); never cleared.
     no_occlusion: bool,
     /// +0x12c bit 26 (event op 0xa4): the eye near it does not fade it (FUN_100c63d0 sets model +0x664 to 1); cleared
@@ -1445,6 +1451,45 @@ fn charreq(w: &mut World, e: &net::EntityUpdate) {
     w.index_masks.insert(e.index, slot);
 }
 
+/// The entities an update's slot rules reset before it is read. `slot`: another id filed under the update's index.
+/// `moved`: the update's id is filed under another index. 0x00E (FUN_1009b550) looks for the id's other slots
+/// whenever its own slot held another id or none; 0x00D (FUN_10099ae0) only when its slot held another id, or with
+/// the full mask (`sweeps`). A moved entity left alone stays where it was, and the update is a first one here.
+fn slot_resets(id: u32, slot: Option<u32>, moved: bool, sweeps: bool) -> Vec<u32> {
+    let mut out: Vec<u32> = slot.into_iter().collect();
+    if moved && (sweeps || slot.is_some()) {
+        out.push(id);
+    }
+    out
+}
+
+/// FUN_1008ee30 / FUN_10092900 / FUN_1008a350(0) as ours has it: the entity and all it owns go.
+fn drop_entity(w: &mut World, id: u32) {
+    w.forget_entity(id);
+    w.actors.remove(&id);
+    w.rests.remove(&id);
+    w.effects.forget_actor(id);
+}
+
+/// FUN_10093430 from the 0x00D / 0x00E handlers: the packet's name, or for an 0x00E without one below index 0x700
+/// the zone list's by UniqueNo (FUN_1008a930), else "NPC" (0x1035cb44), on every update. An actor with a
+/// Monstrosity word (+0x210) keeps its name.
+fn name_update(entry: &mut Entity, e: &net::EntityUpdate, list: &HashMap<u32, String>) {
+    if entry.monstrosity != 0 {
+        return;
+    }
+    if let Some(name) = e.name_for(list).filter(|n| entry.name != *n) {
+        log::debug!(
+            "name of {:#x} (index {:#x}): {:?} -> {name:?} ({})",
+            e.id,
+            e.index,
+            entry.name,
+            if e.listed { "zone list" } else { "packet" }
+        );
+        entry.name = name.into();
+    }
+}
+
 /// How many c2s 0x017 an update asks: the slot's id `old` and masks `seen` so far, this update's id and mask `m`.
 /// A mask-0 0x00E for an index not yet fully known asks too (the server's way of naming an NPC to ask for).
 fn reasks(kind: EntityKind, look_kind: u8, id: u32, old: u32, seen: u16, m: u16) -> usize {
@@ -2112,6 +2157,8 @@ fn self_entity(w: &World) -> Entity {
         motion_bases: Vec::new(),
         reset_bases: false,
         ev_reserved: false,
+        pos_hold: 0,
+        awaiting_full: false,
         no_occlusion: false,
         no_near_fade: false,
         half_fade: false,
@@ -5736,6 +5783,8 @@ fn place_mogdoor(w: &mut World) {
             motion_bases: Vec::new(),
             reset_bases: false,
             ev_reserved: false,
+            pos_hold: 0,
+            awaiting_full: false,
             no_occlusion: false,
             no_near_fade: false,
             half_fade: false,
@@ -6324,6 +6373,8 @@ fn npc_names(index: &DatIndex, zone: u16) -> HashMap<u32, String> {
             let name = &r[..r[..0x18].iter().position(|&b| b == 0).unwrap_or(0x18)];
             (id != 0).then(|| (id, String::from_utf8_lossy(name).into_owned()))
         })
+        // FUN_1008a930 takes the first record with the id.
+        .rev()
         .collect()
 }
 
@@ -11174,7 +11225,8 @@ impl App {
                 world.lua.raise("zone_change", vec![zone_id.into(), old_zone.into()]);
                 world.scene = Some(map_no);
                 world.npc_names = world.index.as_ref().map(|i| npc_names(i, zone_id)).unwrap_or_default();
-                for (id, e) in world.entities.iter_mut() {
+                // An NPC that came before the list has the fallback name (retail reads the list before any packet).
+                for (id, e) in world.entities.iter_mut().filter(|(_, e)| e.index < 0x700 && e.name == "NPC") {
                     if let Some(n) = world.npc_names.get(id) {
                         e.name = n.clone();
                     }
@@ -11773,11 +11825,15 @@ impl App {
                 NetEvent::Entity(e) => {
                     charreq(world, &e);
                     // FUN_1009b550 ignores an 0x00E whose mask is 0 (0x1009b55b); the wrapper above still asks for the
-                    // entity it names, which is how a server announces one (the Mog House moogle).
-                    if e.mask == 0 && e.kind == EntityKind::Npc {
+                    // entity it names, which is how a server announces one (the Mog House moogle). Both handlers
+                    // drop an index outside their range (FUN_1009ceb0 / FUN_1009aad0).
+                    if (e.mask == 0 && e.kind == EntityKind::Npc) || !e.in_range() {
                         continue;
                     }
-                    if e.king {
+                    // A reserved actor (+0x138 bit 31) is the event's: 0x00E moves it and names it, no more.
+                    let reserved = e.kind == EntityKind::Npc
+                        && world.entities.get(&e.id).is_some_and(|x| x.ev_reserved && x.index == e.index);
+                    if e.king && !reserved {
                         world.res_rdy.kings.insert(e.id);
                     }
                     if e.id == world.my_id {
@@ -11790,23 +11846,56 @@ impl App {
                         }
                         continue;
                     }
-                    if e.despawn {
-                        // 0x1009a04d: an event participant stays until the event ends.
-                        if !event::holds(world, e.id) {
-                            world.forget_entity(e.id);
-                            world.actors.remove(&e.id);
-                            world.rests.remove(&e.id);
-                            world.effects.forget_actor(e.id);
+                    // The slot is the index's: another UniqueNo in it resets it, and the slot that held this id
+                    // goes too (FUN_10099a40; 0x00D looks for it only with a slot in use or the full mask).
+                    let slot = world.entity_index.get(&e.index).copied().filter(|o| *o != e.id && *o != world.my_id);
+                    let moved = world.entities.get(&e.id).is_some_and(|x| x.index != e.index);
+                    for old in slot_resets(e.id, slot, moved, e.kind == EntityKind::Npc || e.complete()) {
+                        log::info!("index {:#x} takes {:#x}: {old:#x} is reset", e.index, e.id);
+                        drop_entity(world, old);
+                    }
+                    // The name, before the despawn and first-update tests (0x1009b666).
+                    if e.kind == EntityKind::Npc
+                        && let Some(x) = world.entities.get_mut(&e.id).filter(|x| x.index == e.index)
+                    {
+                        name_update(x, &e, &world.npc_names);
+                    }
+                    // Any update lifts the despawn mark (+0x124 bit 12, 0x1009b7db / 0x10099c07).
+                    event::respawned(world, e.id);
+                    if e.despawn && !reserved {
+                        // 0x1009b90f: +0x145 = 0 always; the hide bit (+0x120 bit 14) only for an actor no event
+                        // holds (bit 8), so a participant stays until the event ends, and must be sent whole again.
+                        if event::holds(world, e.id) {
+                            if let Some(x) = world.entities.get_mut(&e.id) {
+                                x.awaiting_full = true;
+                                // 0x00E: +0x124 back to its 0x880, no sub-animation wanted or applied.
+                                if e.kind == EntityKind::Npc {
+                                    (x.sub[0], x.sub[1], x.sub_prev) = (0, 8, 8);
+                                }
+                            }
+                        } else {
+                            drop_entity(world, e.id);
                         }
                         continue;
                     }
                     // 0x1009a0bf: a first update without the full mask is dropped and the actor asked for again
-                    // (+0x12c bit 15, FUN_1008d280).
-                    if !world.entities.contains_key(&e.id) && !e.complete() {
+                    // (+0x12c bit 15, FUN_1008d280). A reserved actor takes any (0x1009b963).
+                    let known = world.entities.get(&e.id).filter(|x| x.index == e.index).map(|x| !x.awaiting_full);
+                    if known != Some(true) && !reserved && !e.complete() {
                         log::info!("partial first update {:#x} (mask {:#x}): asking again", e.id, e.mask);
+                        // The reset takes an event's actor out of the event too (FUN_1008ee30).
+                        if known == Some(false) {
+                            event::unbind(world, e.id);
+                            drop_entity(world, e.id);
+                        }
                         let _ = world.net.commands.send(NetCommand::CharReq(e.index));
                         continue;
                     }
+                    if let Some(x) = world.entities.get_mut(&e.id) {
+                        x.awaiting_full = false;
+                    }
+                    let hold = world.entities.get(&e.id).is_some_and(|x| x.pos_hold & 1 != 0);
+                    let e = if reserved { e.reserved(hold) } else { e };
                     if let Some(tbl) = e.look {
                         let tbl = if e.id != world.my_id && world.game.get(0xa5) != 0 { hide_armour(tbl) } else { tbl };
                         looks.push((e.id, look_source(tbl)));
@@ -11885,6 +11974,8 @@ impl App {
                         motion_bases: Vec::new(),
                         reset_bases: false,
                         ev_reserved: false,
+                        pos_hold: 0,
+                        awaiting_full: false,
                         no_occlusion: false,
                         no_near_fade: false,
                         half_fade: false,
@@ -12047,14 +12138,8 @@ impl App {
                     }
                     // FUN_10093430 via the 0x00E handler: the packet's name where it carries one (players, index >= 0x700,
                     // text marked 0x01), else the zone list by server id (FUN_1008a930), else "NPC" (0x1035bb44).
-                    if let Some(n) = e.name {
-                        entry.name = n;
-                    } else if let Some(n) = world.npc_names.get(&e.id) {
-                        if entry.name != *n {
-                            entry.name = n.clone();
-                        }
-                    } else if e.kind == EntityKind::Npc && e.index < 0x700 && entry.name.is_empty() {
-                        entry.name = "NPC".into();
+                    if fresh || e.kind == EntityKind::Player {
+                        name_update(entry, &e, &world.npc_names);
                     }
                     if let Some(h) = e.hpp {
                         entry.hpp = h;
@@ -12112,7 +12197,7 @@ impl App {
                     // The 0x00E look handler (jump table 0x1009ce88) ORs +0x128 bit 3 for doors, elevators and ships
                     // (SubKind 2..4) and for SubKind 0 models in fixed id ranges (asm 0x1009ca3c..0x1009caff): no gauge,
                     // no plate (FUN_101501a0, FUN_100ce4d0). The bit stays.
-                    if e.kind == EntityKind::Npc {
+                    if e.kind == EntityKind::Npc && !reserved {
                         let model_object = |m: u16| matches!(m, 0x32..=0x3b | 0x32e..=0x331 | 0x3c0..=0x3c9 | 0x737..=0x746 | 0x974..=0x97d | 0x9ba..=0x9c3);
                         if e.npc.is_some() {
                             entry.sub_kind = e.look_kind;
@@ -21510,6 +21595,17 @@ mod tests {
     #[test]
     fn new_install_private() {
         assert!(!is_playonline(&crate::config::Config::default().server));
+    }
+
+    /// The slot rules of FUN_1009b550 / FUN_10099ae0: another id in the slot is reset; the id's old slot goes when
+    /// an 0x00E takes a new one, and for an 0x00D only with a slot in use or the full mask.
+    #[test]
+    fn slot_reset_rules() {
+        assert_eq!(slot_resets(7, None, false, true), Vec::<u32>::new());
+        assert_eq!(slot_resets(7, Some(5), false, false), [5]);
+        assert_eq!(slot_resets(7, None, true, true), [7]);
+        assert_eq!(slot_resets(7, None, true, false), Vec::<u32>::new());
+        assert_eq!(slot_resets(7, Some(5), true, false), [5, 7]);
     }
 
     /// A mask-0 0x00E names an NPC: one ask until a full update; a full first update asks nothing.

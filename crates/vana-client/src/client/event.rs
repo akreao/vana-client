@@ -1317,13 +1317,29 @@ impl Host for LiveHost<'_> {
             }
             // FUN_100bb180 subs 2 / 3: the event actor's entity +0x138 bit 31 (its schedulers mute while its model is
             // hidden); sub 3 clears it and asks for the entity again (c2s 0x016, FUN_100aec70).
-            Effect::Op { op: 0xac, sub: Some(s @ (2 | 3)), actor, .. } => {
-                let id = self.wid(actor);
-                if let Some(e) = self.w.entities.get_mut(&id) {
+            // The actor is actor@2 (FUN_100afac0(2)), in the scripts another one than the running actor nearly every
+            // time (census: 1,400 of 1,430, all in zone 280).
+            Effect::Op { op: 0xac, sub: Some(s @ (2 | 3)), args, .. } => {
+                if let Some(e) = self.arg_actor(&args, 0).and_then(|id| self.w.entities.get_mut(&id)) {
+                    log::debug!(
+                        "event: {} (index {:#x}) {}",
+                        e.name,
+                        e.index,
+                        if s == 2 { "reserved" } else { "released" }
+                    );
                     e.ev_reserved = s == 2;
                     if s == 3 {
                         let _ = self.w.net.commands.send(NetCommand::CharReq(e.index));
                     }
+                }
+            }
+            // FUN_100bb180 sub 4: actor@2's entity +0x13c |= val@6 & 3. Bit 0 keeps a reserved actor where it is
+            // against 0x00E positions (0x1009b9f3); the slot's reset clears both. Retail's scripts only pass 0.
+            Effect::Op { op: 0xac, sub: Some(4), args, .. } => {
+                if let (Some(v), Some(e)) =
+                    (Self::arg_int(&args, 1), self.arg_actor(&args, 0).and_then(|id| self.w.entities.get_mut(&id)))
+                {
+                    e.pos_hold |= v as u8 & 3;
                 }
             }
             // FUN_100bac90 sub 3 locks the event actor's event status; sub 4 (after its wait) unlocks it.
@@ -3089,6 +3105,21 @@ pub fn drops_action(w: &World, actor: u32, first_target: Option<u32>, category: 
 
 fn drops_action_in(flags: u32, bound: bool, own: bool, category: u8) -> bool {
     (flags & 0x400 != 0 && bound) || (own && flags & 0x1000 == 0 && matches!(category, 3..=6 | 0xb | 0xd..=0xf))
+}
+
+/// An update came for `id`: the despawn mark (entity +0x124 bit 12) is off, so the event's end leaves the actor.
+pub fn respawned(w: &mut World, id: u32) {
+    if let Some(l) = &mut w.event {
+        l.st.despawned.remove(&id);
+    }
+}
+
+/// FUN_1008ee30 from a slot reset: the actor leaves the event (+0x120 bits 7 / 8 off).
+pub fn unbind(w: &mut World, id: u32) {
+    if let Some(l) = &mut w.event {
+        l.st.bound.remove(&id);
+        l.st.despawned.remove(&id);
+    }
 }
 
 /// An event holds this actor (bound, or taking part while it waits): a despawn waits for the end.

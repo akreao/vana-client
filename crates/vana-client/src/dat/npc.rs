@@ -58,9 +58,10 @@ pub fn parse_look(b: &[u8]) -> Result<NpcLook> {
             hands: id(4),
             legs: id(5),
             feet: id(6),
-            main: 0,
-            sub: 0,
-            range: 0,
+            // FUN_1009b3f0 writes all nine words @0x32..@0x42 into the look slots (+0xfc..+0x10c).
+            main: id(7),
+            sub: id(8),
+            range: id(9),
         }),
         k => bail!("look kind {k} (door/elevator/ship) has no model"),
     })
@@ -416,6 +417,11 @@ mod tests {
             panic!()
         };
         assert_eq!(c.race, 32);
+        // SubKind 7 carries all eight slot words, the weapons @0x3E..@0x42 too (FUN_1009b3f0).
+        let NpcLook::Equipped(w) = parse_look(&hex("0700050001100220033004400550066007700880")).unwrap() else {
+            panic!()
+        };
+        assert_eq!((w.race, w.head, w.feet, w.main, w.sub, w.range), (5, 1, 5, 6, 7, 8));
     }
 
     #[test]
