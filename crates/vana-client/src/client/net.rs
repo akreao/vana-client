@@ -1155,7 +1155,7 @@ pub fn event_end_body(target: u32, index: u16, option: u32, zone: u16, event: u1
 /// an event a packet started; only the 0x00A login event keeps its Mode as sent.
 pub fn event_start(p: &SubPacket) -> EventStart {
     let mut s = event_start_raw(p);
-    s.mode |= 0x2000;
+    s.mode |= super::event::mode::PACKET_START as u16;
     s
 }
 

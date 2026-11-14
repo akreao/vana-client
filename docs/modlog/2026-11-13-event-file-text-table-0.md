@@ -26,7 +26,7 @@ everything LSB can send with an event start was checked.
   scripts: 339 blocks, all of zone 50 actors. File 1001 is one empty player block and the rest do not exist. So
   Aht Urhgan Whitegate is the only zone with a second file, 0 is the only meaningful second number, and 203 event
   ids have their script only there (73..75, 150..216, 269, 582..584, 823..978, 3000..3217 and 5000..5093 in part).
-- LSB's 490 Whitegate event calls checked against the two files (`re-notes/whitegate-notes`): 488 name the right
+- LSB's 490 Whitegate event calls checked against the two files: 488 name the right
   file. Two do not, and are LSB script bugs (branch `claude/whitegate-text-tables` on akreao/lsb): event 3114
   (Seal of the Serpent) is only in file 1000 and is sent without the text table; event 923 (Embers of His Past) is
   only in the zone's file and is sent with it. The old test for 0 hid the second one.
@@ -46,7 +46,7 @@ everything LSB can send with an event start was checked.
   model, each is passed in block order or the start waits on it. Without the bit (the packet's Mode alone, not op
   0x38's flags): the wait is DAT_1048aabc 7 while the actor's status machine is not at rest (FUN_1008b460's state
   byte +0x1bc: engaged or sheathing, resting or getting up, on a mount, leaving a chair) unless its applied status
-  is 0x2f or a chair's (FUN_10095790) or the event is being cancelled (FUN_10087030, not modelled); a player
+  is 0x2f or a chair's (FUN_10095790) or the event is being cancelled (FUN_10087030: a 0x052 mode 2 for the waiting event sets `Waiting.cancel`, the state tests are skipped and the event is released with mode 2 as soon as it has loaded); a player
   character that passes has its casting effect ended (FUN_10085450(0), then model +0x7d8 = "    "); then the wait
   is 8 while an actor the server does not hide (+0x120 bits 14 / 15) still plays an action (model +0x70 -> +0x11c,
   the count FUN_100a4140 raises and FUN_100a4160 lowers, cleared after 1800 ticks; ours `World.loads`). With the
@@ -57,7 +57,7 @@ everything LSB can send with an event start was checked.
   becomes its model's (+0x44, which FUN_1008cd90 keeps each frame), the height put on the floor: a player
   character's by FUN_10182860 (50 down, else up), an NPC's by FUN_101828d0 unless +0x128 bit 14 or +0x120 bits
   20 / 21 hold it or it is a door or lift (+0xee 3 / 4). It runs before flag 1's return to +0x24, so with both we
-  stay where the event left us. Ours does it for the bound actors, whose models the event moved (`event::finish`).
+  stay where the event left us. Ours does it for the bound actors, whose models the event moved (`event::finish`). An NPC that op 0x33 lifted with bit 21 keeps its height (`Live::no_ground`).
 - Answer and update packets, read again, all as ours already has them. c2s 0x05B (FUN_100a0660 end, FUN_100a0510
   update): UniqueNo @4, EndPara @8 (0x40000000 for a cancel), ActIndex @0xc, Mode @0xe (0 / 1), EventNum @0x10
   (the packet's first number, not the second), EventPara @0x12. c2s 0x05C (FUN_100a05e0): position @4, UniqueNo
