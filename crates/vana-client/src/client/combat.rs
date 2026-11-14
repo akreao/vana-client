@@ -1264,7 +1264,7 @@ fn one_action(w: &mut World, a: &Action) {
     // Skill, magic, item and mob TP actions run from effect files (FUN_100a9230): the caster and every target are held
     // from now until "main" starts (fx releases them; 1800-tick safety, +0x11e); the reactions and messages come from
     // its ops 0x25 / 0x2b.
-    let by_file = matches!(a.category, 3..=6 | 0xb | 0xd..=0xf);
+    let by_file = category::by_file(a.category);
     if by_file {
         for id in std::iter::once(a.actor).chain(a.records().iter().map(|r| r.0)) {
             fx_load(w, id);
