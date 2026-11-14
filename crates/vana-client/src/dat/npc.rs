@@ -158,7 +158,9 @@ pub fn init_scheduler(file: &[u8]) -> InitScheduler {
 }
 
 pub fn load_model(index: &DatIndex, model: u16) -> Result<Character> {
-    load_model_depth(index, model, 0)
+    let mut ch = load_model_depth(index, model, 0)?;
+    ch.hide_covered();
+    Ok(ch)
 }
 
 fn load_model_depth(index: &DatIndex, model: u16, depth: u32) -> Result<Character> {
@@ -199,7 +201,9 @@ pub fn load_file_model(index: &DatIndex, id: u32) -> Result<Character> {
     let file = index.read(id)?;
     let mut f = load_file(&file)?;
     let Some(skeleton) = f.skeleton.take() else { bail!("file {id} has no skeleton") };
-    Ok(self_contained(id, &file, f, skeleton, "riding model"))
+    let mut ch = self_contained(id, &file, f, skeleton, "riding model");
+    ch.hide_covered();
+    Ok(ch)
 }
 
 fn self_contained(

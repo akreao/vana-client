@@ -1,5 +1,5 @@
 name = "Typing Helpers"
-version = "1.0.0"
+version = "1.0.1"
 description = "[[words]] in a chat line become the auto-translate phrase, and <tags> such as <star> or <note> become the game's symbols (the translate and chars add-ons)."
 permissions = []
 

@@ -627,18 +627,16 @@ impl Effects {
                 t.a1 == who && u32::from_le_bytes(self.reg.libs[t.res.0].tree.nodes[t.res.1].name) == name
             });
             if hit {
-                // Its hold tasks are its children and go with it (as in kill_tasks).
-                if let Some(t) = self.tasks[i].take() {
-                    self.hold_cuts.push(t.uid);
-                }
+                // Its hold tasks are its children and go with it (`task_holds` drops them at the next tick).
+                self.tasks[i] = None;
             }
         }
     }
 
     /// The actor's destructor (FUN_100c5c00 -> FUN_10082b10, its caster and target links): every scheduler task and
     /// generator clone linked to it goes with it (the links' callbacks FUN_10057cf0 delete the task, FUN_10054380 ->
-    /// FUN_100543a0 the clone and its elements at once, no burst); a generator run as its own template only forgets
-    /// it and runs on (the attach modes then give the identity, 0x1003c5f0); starts waiting on its own files go. Its
+    /// FUN_100543a0 the clone and its elements at once, no burst); a generator run as its template only forgets
+    /// it and runs on (the attach modes then give the identity, 0x1003c5f0); starts waiting on its files go. Its
     /// dolls go with it (their link at +0xc4, vtable 0x1032f91c +0x10 / +0x14 = FUN_100abd50 / FUN_100abd70, deletes
     /// the doll), and with each doll what is linked to it.
     pub fn forget_actor(&mut self, id: u32) {
@@ -945,10 +943,10 @@ impl Effects {
     }
 
     /// Op 0x2c's Afb. FUN_100ce480(actor1, 0x54, name & 0xffffff): the actor's motion list (+0x7e4) newest first, then
-    /// its own resources (vtable +0x400 / +0x1dc), each file to its root, matched on 3 letters. Failing those vtable
+    /// its resources (vtable +0x400 / +0x1dc), each file to its root, matched on 3 letters. Failing those vtable
     /// +0x1e8 (FUN_100ceb00): the first Afb of any name from each mesh's folder up (the part files), then in the model
-    /// file. The scheduler's own file is never searched (unlike op 0x05's motions), and nothing puts an effect file on
-    /// the +0x7e4 list (FUN_100d4410's callers are the actor's own loaders), so an Afb that sits only in a mob-move
+    /// file. The scheduler's file is never searched (unlike op 0x05's motions), and nothing puts an effect file on
+    /// the +0x7e4 list (FUN_100d4410's callers are the actor's loaders), so an Afb that sits only in a mob-move
     /// effect file is not found: the files our op 0x05 put on the actor (`owned_motions`) are left out. Err while a
     /// file is still loading.
     fn find_afb(&mut self, actor: u32, name: u32, actors: &dyn Actors) -> Result<Option<super::trail::Afb>, ()> {
@@ -1084,6 +1082,15 @@ impl Effects {
         let live: Vec<u64> = self.tasks.iter().flatten().map(|t| t.uid).collect();
         self.step_shine(f.dt, &live);
         self.step_wep_timers(f.dt, &live);
+        // The hold sub-tasks end with their time or their task (its dtor deletes its children, FUN_10074890).
+        self.held.clear();
+        for (owner, id, kind, left) in std::mem::take(&mut self.task_holds) {
+            let left = left - f.dt;
+            if left >= 0.0 && live.contains(&owner) {
+                *self.held.entry(id).or_default() |= kind;
+                self.task_holds.push((owner, id, kind, left));
+            }
+        }
         // Op 0xb5's holds end with their time or their task (FUN_100ce0c0).
         self.no_blink.clear();
         for (owner, id, left) in std::mem::take(&mut self.blink_holds) {
@@ -1297,7 +1304,7 @@ impl Effects {
         let outer = self.stepping.first().copied();
         self.stepping.push(i);
         // Inside an `init`'s first step a task stepped at once sees its wanted sub-animation too (kept over a file
-        // retry); one that steps later (ops 0x30, 0x5c, 0x76 / 0x77, 0x84) sees the model's own.
+        // retry); one that steps later (ops 0x30, 0x5c, 0x76 / 0x77, 0x84) sees the model's.
         t.init_sub = t.init_sub.or(self.sub_now);
         // The first step is the whole update (FUN_100748c0 -> vt+0x20 = FUN_10057e10): the frame's ticks come off
         // before the first op, so the wait after it is already one frame down.
@@ -1461,7 +1468,7 @@ impl Effects {
                 }
                 Flow::Next
             }
-            // The caster's own scheduler, call-and-wait, no global fallback.
+            // The caster's scheduler, call-and-wait, no global fallback.
             0x3c => {
                 let Some(id) = t.a1.id() else { return Flow::Next };
                 match self.find_on_actor(id, op.name(), actors, Parts::Last, false) {
@@ -1653,7 +1660,7 @@ impl Effects {
                 }
                 Flow::Next
             }
-            // FUN_10057fb0 case 0x1d: the lift move; its own duration @6 is unused (the packet's end time sets it).
+            // FUN_10057fb0 case 0x1d: the lift move; its duration @6 is unused (the packet's end time sets it).
             0x1d => {
                 if let Some(actor) = t.a1.id() {
                     let name = self.reg.libs[t.res.0].tree.nodes[t.res.1].name;
@@ -1669,7 +1676,7 @@ impl Effects {
             0xb3 if !actors.bells() => Flow::Next,
             0x0a | 0x0b | 0x53 | 0x4a | 0xb3 => {
                 let mut who = if matches!(op.code, 0x0a | 0xb3) { t.a1 } else { t.a2 };
-                // Op 0x53 (all.c 67094): the action target nearest our own actor (actor1 with no player).
+                // Op 0x53 (all.c 67094): the action target nearest our actor (actor1 with no player).
                 if op.code == 0x53
                     && let Some(a) = &t.action
                 {
@@ -1811,7 +1818,7 @@ impl Effects {
             // On the actor a doll stands for (case 5, all.c 64927).
             0x05 if t.motions => {
                 if let Some(id) = self.doll_of(t.a1).id() {
-                    // A motion in the scheduler's own file plays from there: that file goes on the actor first.
+                    // A motion in the scheduler's file plays from there: that file goes on the actor first.
                     let (lib, raw) = (t.res.0, op.name().to_le_bytes());
                     let has = |n: u32| self.reg.libs[lib].find(t.res.1, kind::MOTION, n).is_some();
                     let in_file = if raw[3] == b'?' {
@@ -1962,7 +1969,7 @@ impl Effects {
                     _ => (t.a2, HOLD_REACT),
                 };
                 if let Some(id) = self.doll_of(who).id() {
-                    self.holds.push((id, op.dur.max(0) as f32 * t.speed, kind, t.uid));
+                    self.task_holds.push((t.uid, id, kind, op.dur.max(0) as f32 * t.speed));
                 }
                 Flow::Next
             }
@@ -1972,11 +1979,11 @@ impl Effects {
                 match &t.action {
                     Some(a) => {
                         let ids: Vec<u32> = a.borrow().action.targets.iter().map(|x| x.id).collect();
-                        self.holds.extend(ids.into_iter().map(|id| (id, ticks, HOLD_STATUS, t.uid)));
+                        self.task_holds.extend(ids.into_iter().map(|id| (t.uid, id, HOLD_STATUS, ticks)));
                     }
                     None => {
                         if let Some(id) = self.doll_of(t.a2).id() {
-                            self.holds.push((id, ticks, HOLD_STATUS, t.uid));
+                            self.task_holds.push((t.uid, id, HOLD_STATUS, ticks));
                         }
                     }
                 }
@@ -2156,7 +2163,7 @@ impl Effects {
                 Flow::Next
             }
             // FUN_10057000 case 4 / 0x81 (0x1005908c): the camera path 4cc @8 (resource kind 6) for dur x speed. Only an
-            // event's tasks move the cutscene camera; the event's own scheduler is client/event.rs's to play.
+            // event's tasks move the cutscene camera; the event's scheduler is client/event.rs's to play.
             0x04 | 0x81 => {
                 if t.event && !t.event_root {
                     let file = self.reg.libs[t.res.0].file_id;
@@ -2174,7 +2181,7 @@ impl Effects {
             // FUN_10057000 cases 0x0f / 0x72 / 0x0e: the scene multiply, the additive screen flash and the feedback
             // blur, a global task each (a new one ends the last at its target).
             // Cases 0x10 (crossfade, FUN_1005f020) and 0xb0 (FUN_1003bd70: the camera task playing path u32 @8 ends) in an
-            // event's task; the event's own scheduler's are the runner's.
+            // event's task; the event's scheduler's are the runner's.
             0x10 => {
                 if t.event && !t.event_root {
                     self.event_crosses.push(op.dur.max(1) as f32 * t.speed);
@@ -2187,7 +2194,7 @@ impl Effects {
                 }
                 Flow::Next
             }
-            // An event's own scheduler's fade is client/event.rs's runner's (played twice, the second started at the
+            // An event's scheduler's fade is client/event.rs's runner's (played twice, the second started at the
             // first's target: a cut).
             0x0f | 0x51 if t.event_root => Flow::Next,
             0x0f | 0x51 | 0x72 | 0x0e => {
@@ -2889,9 +2896,8 @@ impl Effects {
     /// FUN_10055f00 / FUN_10055f40: tasks running scheduler `r` (on one actor pair when given) end now.
     pub(super) fn kill_tasks(&mut self, r: Ref, pair: Option<(Who, Who)>) {
         for t in self.tasks.iter_mut() {
-            if let Some(x) = t.as_ref().filter(|t| t.res == r && pair.is_none_or(|(a, b)| t.a1 == a && t.a2 == b)) {
-                // Its hold tasks are its children and go with it.
-                self.hold_cuts.push(x.uid);
+            if t.as_ref().is_some_and(|t| t.res == r && pair.is_none_or(|(a, b)| t.a1 == a && t.a2 == b)) {
+                // Its hold tasks are its children and go with it (`task_holds`).
                 *t = None;
             }
         }
@@ -3387,7 +3393,7 @@ impl Effects {
     }
 
     pub(super) fn model_generators(&mut self, actors: &dyn Actors) {
-        // Listed once a frame (the hide pass took its own copy) and looked up by id (a search of the list per model).
+        // Listed once a frame (the hide pass took its copy) and looked up by id (a search of the list per model).
         let present = actors.models();
         let by_id: std::collections::HashMap<u32, &[u32]> = present.iter().map(|(id, f)| (*id, f.as_slice())).collect();
         self.model_hide(actors, &present, &by_id);
@@ -3476,7 +3482,7 @@ impl Effects {
     }
 
     /// The shine drives' frame (FUN_10060680, FUN_1005e870): a drive whose task is gone ends there (U / V snap to the
-    /// target, the overlay goes if still its own, the colour stays where it was).
+    /// target, the overlay goes if still the drive's, the colour stays where it was).
     fn step_shine(&mut self, dt: f32, live: &[u64]) {
         use crate::fx::ShineKind;
         for mut d in std::mem::take(&mut self.shine_drives) {
@@ -3949,7 +3955,7 @@ mod tests {
         std::mem::take(&mut fx.fades)
     }
 
-    /// FUN_1005f6c0: another scheduler's op 0x88 on the actor keeps a drive from writing; the lock's own passes.
+    /// FUN_1005f6c0: another scheduler's op 0x88 on the actor keeps a drive from writing; the lock's passes.
     #[test]
     fn color_lock() {
         use crate::fx::ColorOp::*;
@@ -5377,34 +5383,35 @@ mod skillchain_tests {
         let name = |n: &[u8; 4]| u32::from_le_bytes(*n);
         fx.on_scheduler_alone(1, name(b"bntg"));
         fx.tick(&f, &Pair);
-        let holds = std::mem::take(&mut fx.holds);
-        assert_eq!(holds.iter().map(|h| (h.0, h.1, h.2)).collect::<Vec<_>>(), [(1, 300.0, HOLD_REACT)]);
+        let holds: Vec<_> = fx.task_holds.iter().map(|h| (h.0, h.1, h.2)).collect();
         let task = fx.tasks.iter().flatten().find(|t| t.a1 == Who::Actor(1)).unwrap();
-        assert_eq!((task.a2, task.uid), (Who::None, holds[0].3));
+        assert_eq!(holds, [(task.uid, 1, HOLD_REACT)]);
+        assert_eq!(task.a2, Who::None);
         // Another actor's `klbt` does it: the kill is by resource.
         fx.on_scheduler_alone(2, name(b"klbt"));
         for _ in 0..8 {
             fx.tick(&f, &Pair);
         }
-        assert!(fx.actor_scheduler_running(1, name(b"bntg")) && fx.hold_cuts.is_empty());
+        assert!(fx.actor_scheduler_running(1, name(b"bntg")) && fx.held.contains_key(&1));
         for _ in 0..6 {
             fx.tick(&f, &Pair);
         }
         assert!(!fx.actor_scheduler_running(1, name(b"bntg")));
-        assert_eq!(fx.hold_cuts, [holds[0].3]);
+        fx.tick(&f, &Pair);
+        assert!(!fx.held.contains_key(&1));
         fx.weapons.clear();
         fx.on_scheduler(1, 1, name(b"hwat"));
         fx.tick(&f, &Pair);
         let op = |n, hide| crate::fx::WeaponOp { actor: 1, n, byte: 0, hide };
         assert_eq!(fx.weapons, [op(0, false), op(1, false), op(2, true)]);
         // An explicit stop (model vtable +0x29c) frees the stopped task's holds too.
-        fx.hold_cuts.clear();
         fx.on_scheduler_alone(1, name(b"bntg"));
         fx.tick(&f, &Pair);
-        let uid = fx.tasks.iter().flatten().find(|t| t.a1 == Who::Actor(1)).unwrap().uid;
+        assert!(fx.held.contains_key(&1));
         fx.stop_actor_scheduler(1, name(b"bntg"));
         assert!(!fx.actor_scheduler_running(1, name(b"bntg")));
-        assert_eq!(fx.hold_cuts, [uid]);
+        fx.tick(&f, &Pair);
+        assert!(!fx.held.contains_key(&1));
     }
 
     /// MODLOG "Skillchains": DAT 0 `proc` (op 0x80) with record 0's proc kind 14 plays Impaction (3268) on the
@@ -5458,12 +5465,20 @@ mod skillchain_tests {
                 client_swing: false,
             }));
             fx.spawn_task((g, proc_), Who::Actor(1), Who::Actor(2), Some(ctx), 1.0, None);
-            let (mut prints, mut reacts, mut holds) = (Vec::new(), Vec::new(), Vec::new());
-            for _ in 0..600 {
+            let (mut prints, mut reacts, mut holds) = (Vec::new(), Vec::new(), Vec::<(u32, u8)>::new());
+            // The file loads in the background: a busy machine gets more ticks, until the task ends (10 s at most).
+            let start = std::time::Instant::now();
+            let mut n = 0;
+            while n < 600 || (burst && fx.releases.len() < 2 && start.elapsed().as_secs() < 10) {
+                n += 1;
                 fx.tick(&f, &Pair);
                 prints.extend(fx.action_prints.drain(..).map(|p| (p.1, p.2)));
                 reacts.extend(fx.reacts.drain(..).map(|r| r.reactor));
-                holds.extend(fx.holds.drain(..).map(|h| (h.0, h.1)));
+                for (&id, &kind) in &fx.held {
+                    if !holds.contains(&(id, kind)) {
+                        holds.push((id, kind));
+                    }
+                }
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
             if burst {
@@ -5471,7 +5486,7 @@ mod skillchain_tests {
                 assert_eq!(std::mem::take(&mut fx.releases), vec![1, 2]);
                 assert_eq!(prints, vec![(0, 1)]);
                 assert_eq!(reacts, vec![2]);
-                assert_eq!(holds, vec![(2, 64.0)]);
+                assert_eq!(holds, vec![(2, HOLD_STATUS)]);
             } else {
                 assert!(prints.is_empty() && reacts.is_empty() && holds.is_empty() && fx.loads.is_empty());
             }
@@ -5511,7 +5526,7 @@ mod damage_number_tests {
             let mut seen = Vec::new();
             for _ in 0..300 {
                 fx.tick(&f, &super::skillchain_tests::Pair);
-                // The task's own instances carry the number; mis0's op 0x3c burst of mis1 runs without one.
+                // The task's instances carry the number; mis0's op 0x3c burst of mis1 runs without one.
                 for x in fx.insts.iter().flatten() {
                     let n = String::from_utf8_lossy(&x.name).into_owned();
                     if x.parent_elem.is_none() && !seen.contains(&n) {

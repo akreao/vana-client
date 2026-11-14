@@ -1,5 +1,5 @@
 name = "Tell Inbox"
-version = "1.0.4"
+version = "1.0.5"
 description = "Keeps the tells that come while you are away, answers the last tell with //r, and can send an away reply (the answering machine add-ons)."
 permissions = ["automation"]
 

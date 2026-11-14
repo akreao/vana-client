@@ -406,7 +406,8 @@ fn tag(w: &World, tag: &str, target_cmd: bool) -> Option<String> {
                 None => job(s.main)?,
             })
         }
-        "<pos>" if !w.room_flag => Some(w.hud_top.grid().to_string()).filter(|g| !g.is_empty()),
+        // Type 0xe: FUN_101f7600(1), worked out now (not the compass's cached suffix).
+        "<pos>" => Some(super::map::grid_text(w, &w.map_regions)).filter(|g| !g.is_empty()),
         // FUN_10076ff0 type 0x15: the tracked target's name from the zone NPC list.
         "<scan>" => w.scan.tracking().and_then(|t| {
             w.npc_names.iter().find(|(id, _)| (*id & 0x3ff) as u16 == t.index & 0x3ff).map(|(_, n)| n.clone())
@@ -619,7 +620,7 @@ fn state_gate(w: &mut World, flags: u16) -> bool {
         }
         return false;
     }
-    // Flag 0x10: refusal indices 0 / 0xd / 3 of table 0x103763b0 (skipped for the full log's own commands, which ours
+    // Flag 0x10: refusal indices 0 / 0xd / 3 of table 0x103763b0 (skipped for the full log's commands, which ours
     // does not have).
     if flags & flag::UI_FREE != 0 {
         let line = if w.full_log.is_some() {
@@ -646,7 +647,7 @@ pub fn run(w: &mut World, line: &str, mode: Mode) {
     // Macro lines carry the same auto-translate phrase blocks as a submitted chat line.
     let macro_line = (mode == Mode::Macro).then(|| super::fep::outgoing(w, line.to_string()));
     let line = macro_line.as_deref().unwrap_or(line);
-    // Ours (docs/lua-mods.md): //anything, /lua and the mods' own commands go to the mods.
+    // Ours (docs/lua-mods.md): //anything, /lua and the mods' commands go to the mods.
     if line.starts_with('/') && w.lua.takes(line) {
         w.lua.type_line(line);
         return;
@@ -660,7 +661,7 @@ pub fn run(w: &mut World, line: &str, mode: Mode) {
     run_unfiltered(w, &filtered, mode);
 }
 
-/// A line past the mods' dispatch and typed filters: a mod's own action lines start here.
+/// A line past the mods' dispatch and typed filters: a mod's action lines start here.
 pub(super) fn run_unfiltered(w: &mut World, line: &str, mode: Mode) {
     let line = line.trim();
     if line.is_empty() {
@@ -670,7 +671,7 @@ pub(super) fn run_unfiltered(w: &mut World, line: &str, mode: Mode) {
     let line = if line.starts_with('/') { line.to_string() } else { format!("{}{line}", w.chat_prefix) };
     let first = line.split([' ', '\t']).next().unwrap_or("");
     // Ours (Extras, not retail): /timers [in | out] slides the timers window's drawer; alone it toggles.
-    if first.eq_ignore_ascii_case("/timers") && w.lua.timers_panels().iter().any(Option::is_some) {
+    if first.eq_ignore_ascii_case("/timers") && w.lua.has_timers() {
         match line.split_whitespace().nth(1).map(str::to_ascii_lowercase).as_deref() {
             Some("in") if w.timers.out => w.timers.toggle(),
             Some("out") if !w.timers.out => w.timers.toggle(),
@@ -948,7 +949,7 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             if super::items::open_daf70(w, c, c == 5, false) { Ok(()) } else { Err(()) }
         }
         // /bank2 (FUN_1007e440): without Safe 2 (s2c 0x067 @0x27 bit 0) group 7 0xa8, counted as done.
-        // FUN_1007e490 / FUN_1007e560 (/mailbox, /deliverybox, /sendpost): one's own Mog House, not visiting (0xbc),
+        // FUN_1007e490 / FUN_1007e560 (/mailbox, /deliverybox, /sendpost): one's Mog House, not visiting (0xbc),
         // the status gate, the job-change cooldown, the window manager busy (FUN_10160c80: +0xae, set while leaving the
         // house after the exit prompt or the mogdoor pick, 0x101d5f90 / FUN_101d6540), the moogle home (0x48); then
         // c2s 0x04D PostOpen / DeliOpen.
@@ -977,7 +978,7 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             super::post::open_cmd(w, if cid == id::MAILBOX { 0xe } else { 0xd });
             Ok(())
         }
-        // FUN_1007e630 (/layout): a Mog House of one's own, the status gate, the job-change cooldown, a furnished room
+        // FUN_1007e630 (/layout): one's Mog House, the status gate, the job-change cooldown, a furnished room
         // (7 0x47), not open to visitors or asked to be (SE 0004), the moogle home (7 0x48); the moogle's line 0x36.
         id::LAYOUT => {
             if !w.room_flag || w.myroom.is_none() {
@@ -1347,7 +1348,7 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             act(w, (w.my_id, w.my_index), 0x18, param);
             Ok(())
         }
-        // FUN_1007f500: config 0x99 bit 0, battle music for our own engagement only (else client::party_battle too).
+        // FUN_1007f500: config 0x99 bit 0, battle music for our engagement only (else client::party_battle too).
         id::BATTLEBGM => {
             let cur = bit(w, 0x99, 0);
             toggle(w, only_on_off(args), cur, |w, on| cfg_bit(w, 0x99, 0, on), [0xf2, 0xf3]);
@@ -1781,7 +1782,7 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             Ok(())
         }
         // FUN_1007ede0: the job master stars shown / hidden (config 0x99 bit 8 set = hidden); a change sends c2s 0x11B
-        // {u8 show} and 9 0x143 / 0x144. No word toggles from our own job master flag.
+        // {u8 show} and 9 0x143 / 0x144. No word toggles from our job master flag.
         id::JOBMASTERDISP => {
             let show = match arg(1) {
                 Some("on") => true,
@@ -1877,7 +1878,7 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
         }
         id::RECAST => recast(w, args),
         id::CLOCK => clock(w, args),
-        // FUN_10080340 (/servmes, /smes): a transfer unless one runs; no line of its own.
+        // FUN_10080340 (/servmes, /smes): a transfer unless one runs; prints no line.
         id::SERVMES => {
             super::servmes::start(w);
             Ok(())
@@ -1949,7 +1950,9 @@ fn chat(w: &mut World, cid: u16, msg: &str) -> Done {
     }
     // FUN_100e3400 builds 0x0B5 through FUN_100fc3c0's gate; a refusal skips the echo and the dispatcher prints the
     // line and the command error (FUN_10080dc0).
-    if send_it && !super::net::call_gate(&mut w.call_gate, 0x0B5, std::time::Instant::now()) {
+    if send_it
+        && !super::net::call_gate(&mut w.call_gate, super::net::C2S_CHAT, &w.net.stats, std::time::Instant::now())
+    {
         return Err(());
     }
     // The echoes (all.c 90072..90740): our name and the text as typed, in the sender's mode.
@@ -2060,7 +2063,7 @@ fn tell(w: &mut World, args: &[String], line: &str) -> Done {
     }
     let msg = tail(line, 2).trim().to_string();
     // As chat: the gate before the echo.
-    if !super::net::call_gate(&mut w.call_gate, 0x0B6, std::time::Instant::now()) {
+    if !super::net::call_gate(&mut w.call_gate, super::net::C2S_TELL, &w.net.stats, std::time::Instant::now()) {
         return Err(());
     }
     super::push_chat_from(w, format!(">>{name} : {msg}"), 4, 3, &name);
@@ -2113,9 +2116,9 @@ fn attack(w: &mut World, args: &[String], mode: Mode) -> Done {
     Ok(())
 }
 
-/// Table 0x1036f7a8 {group, id, slot}, group 0x17's rows: slot name id -> equipment slot. (Group 0x18's alternate
-/// spellings, ids 0..0x13, have no file mapped in ours.)
-const SLOT_OF: [u8; 16] = [0, 1, 2, 3, 4, 9, 11, 12, 5, 6, 13, 14, 15, 10, 7, 8];
+/// Table 0x1036f7a8 {group, id, slot}: slot name id -> equipment slot, group 0x17's rows (0..15) and group 0x18's
+/// (the same, then ear1, ear2, ring1, ring2).
+const SLOT_OF: [u8; 20] = [0, 1, 2, 3, 4, 9, 11, 12, 5, 6, 13, 14, 15, 10, 7, 8, 11, 12, 13, 14];
 
 /// The bags /equip looks in, and its third argument's choices ("0" inventory, "1" wardrobe 8, "2".."8" 10..16).
 const EQUIP_BAGS: [u8; 9] = [0, 8, 10, 11, 12, 13, 14, 15, 16];
@@ -2274,7 +2277,7 @@ pub(super) fn log9(w: &mut World, id: usize) {
 }
 
 /// FUN_1007b390: /equip slot (unequip, group 9 0x44 "Equipment removed.") or /equip slot item [bag] (0x43 "Equipment
-/// changed."), both through FUN_101327d0 (its own refusals 7 0x8b / 0x98 / 0x99); gate 0x46; already worn or not found:
+/// changed."), both through FUN_101327d0 (its refusals 7 0x8b / 0x98 / 0x99); gate 0x46; already worn or not found:
 /// nothing; a locked item (+8) or a failed equip: 7 0x8e. Not done: the equipment-message setting (FUN_100e48d0).
 fn equip(w: &mut World, args: &[String]) -> Done {
     if !status_gate(w, 0x46) {
@@ -2282,7 +2285,9 @@ fn equip(w: &mut World, args: &[String]) -> Done {
     }
     let bt = w.battle.clone().ok_or(())?;
     let want = args.get(1).ok_or(())?;
-    let k = (0..16).find(|&k| bt.slot_name(k).is_some_and(|n| n.eq_ignore_ascii_case(want))).ok_or(())?;
+    let named = |n: Option<String>| n.is_some_and(|n| n.eq_ignore_ascii_case(want));
+    let k =
+        (0..16).find(|&k| named(bt.slot_name(k))).or_else(|| (0..20).find(|&k| named(bt.slot_name_alt(k)))).ok_or(())?;
     let slot = SLOT_OF[k];
     // FUN_100e48d0: SAVE_CONF byte 1 bits 3..4 (s2c 0x0B4, session +0x2cfd9) silence the success lines.
     let quiet = w.conf_sys[1] >> 3 & 3 != 0;
@@ -2731,7 +2736,7 @@ pub(super) fn system_line(w: &mut World, id: u16) {
         return;
     }
     let Some(bt) = w.battle.clone() else { return };
-    let ctx = crate::dat::battle::Ctx { me: w.name.clone(), ..Default::default() };
+    let ctx = crate::dat::battle::Ctx { me: w.name.clone(), names: super::combat::tables(w), ..Default::default() };
     if let Some(line) = bt.system(id, &ctx) {
         let colour = bt.colour_in(line.mode.unwrap_or(0x79), &w.game);
         for l in line.lines.into_iter().filter(|l| !l.is_empty()) {

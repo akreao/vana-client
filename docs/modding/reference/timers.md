@@ -1,9 +1,10 @@
 # `timers`
 
-Rows in the client's Timers window: a name, a countdown and a gauge, in one of the window's three sections (recasts,
-buffs, debuffs), optionally under a group heading. A mod's rows show even when the Timers Extra is off. Each mod has
-its own rows, known by name. The calls are queued and take effect after the mod phase; in the lobby they raise `not available in the lobby (before login)`.
-No permission is needed.
+Rows in the Timers mod's windows: a name, a countdown and a gauge, in one of its three sections (recasts, buffs,
+debuffs), optionally under a group heading. The calls go to the Timers mod's service (`mods.call("timers", ...)` with
+your mod's id): without the Timers mod running they do nothing. A mod's rows show even when the Timers mod's
+tracking is off. Each mod has its rows, known by name; they show at the Timers mod's next refresh (a quarter of a
+second at most). No permission is needed.
 
 ```lua
 -- A row counting down each buff we gain, with its icon (60 s, for the example).

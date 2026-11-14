@@ -74,9 +74,13 @@ Then `FUN_10239cc0(race, face, hint, out)` with the race window's and the face w
   our source, since the first random names) and read at fixed distances from them; the syllable pointers go through
   the PE section table. A DLL without that block (or with it twice) gives no tables: then only a Galka gets a
   name, from the lists and those numbers.
-- Both callers pass the race and the face: Num+ and the modern creator's random button.
-- Deviation: there is no PlayOnline handle, so the account name stands in for it. As in retail only its lower-case
-  letters count, so a capital first letter is lost.
+- Both callers (Num+ and the modern creator's random button) go through `creator::random_name`: the race, the face,
+  and the name filter's check.
+- There is no PlayOnline handle here, so the hint is always empty: what retail does when polcore has no member slot
+  or record for it (FUN_10239b10: either lookup below 0 leaves the hint empty). A Mithra's name is then built from
+  syllables alone. The account login never stands in for the handle: it is not public, and a Mithra roll keeps most
+  of its letters.
+- The tables load off the UI thread the first time the creator opens; the name step waits for them.
 - Not built: retail's reads are asynchronous, so a list name lands a frame or more after the key; ours is there the
   same frame. Retail's fixed stack buffers (a Tarutaru man's 28 bytes) can overflow on names that only very rare
   rolls make; ours just builds the name and cuts it.

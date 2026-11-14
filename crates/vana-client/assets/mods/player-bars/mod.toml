@@ -1,5 +1,5 @@
 name = "Player Bars"
-version = "1.0.0"
+version = "1.0.1"
 description = "Your HP, MP and TP as large bars near the middle of the screen (the player bar add-ons)."
 permissions = []
 

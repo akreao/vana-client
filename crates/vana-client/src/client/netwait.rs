@@ -69,12 +69,8 @@ const fn c(text: Option<u16>, sub: u32, reply: bool) -> Call {
 }
 
 /// FUN_100dbac0: a step's sub-step count, and its calls (FUN_100ed7e0, FUN_100edfb0, FUN_100ee160, FUN_100ee690 /
-/// FUN_100ee900 / FUN_100eeb70, FUN_100ef020, FUN_100ee0a0). Step 1 on a live link jumps from sub 5 to 21; step 3 takes
-/// the PlayOnline short path (14 -> 15 -> 22): polcore's entry for the character is linked to a handle (+0x10 bit
-/// 0x8000), as every entry xiloader writes is, so sub 14 asks ChangeMyStatus and sub 15 polls it. An entry not
-/// linked yet (`registers`) goes 14 -> 16 (the link is made and the list's store started) -> 17 (its poll) -> 18 (the
-/// handle list's store) -> 19 (its poll) -> 20 -> 21 (14 and 15 again) -> 22, each with its own text.
-/// docs/modlog/2026-11-12-lobby-playonline-returns-145.md, 2026-11-12-playonline-register-146.md.
+/// FUN_100ee900 / FUN_100eeb70, FUN_100ef020, FUN_100ee0a0). Step 1 on a live link jumps from sub 5 to 21; step 3
+/// goes 14 -> 15 -> 22 for a linked character, through subs 16..21 for one it `registers` (docs/modlog rows 145, 146).
 fn step(id: u8, fresh: bool, registers: bool) -> (u32, Vec<Call>) {
     match id {
         1 if fresh => {
@@ -247,6 +243,7 @@ impl NetWait {
             });
             done += n;
         }
+        replies.start();
         let base = replies.replies.load(Ordering::Relaxed);
         Self {
             op,
@@ -323,10 +320,9 @@ impl NetWait {
             self.calls = 0;
         } else if f.counted {
             self.calls += 1;
-            if self.calls > TIMEOUT_CALLS {
-                // The worker stops waiting and hands the link back, its request still open (retail's link stays up).
-                self.replies.abandon.store(true, Ordering::Relaxed);
-                self.parked = None;
+            // The worker stops waiting and hands the link back, its request still open (retail's link stays up). A
+            // result already in wins: the step polls its reply first.
+            if self.calls > TIMEOUT_CALLS && self.replies.give_up() {
                 return Some(End::TimedOut { op: self.op, refresh: f.refresh });
             }
         }
@@ -392,9 +388,22 @@ mod tests {
         let mut nw = NetWait::new(Op::Connect, watch.clone());
         // Two pump frames and the calls of subs 0..13 pass; the wait's calls 1..=3599 do not fail.
         assert!(run(&mut nw, 2 + 14 + TIMEOUT_CALLS).is_none());
-        assert!(!watch.abandon.load(Ordering::Relaxed));
+        assert!(!watch.given_up());
         assert!(matches!(nw.tick(), Some(End::TimedOut { op: Op::Connect, refresh: false })));
-        assert!(watch.abandon.load(Ordering::Relaxed));
+        assert!(watch.given_up() && !watch.finish());
+    }
+
+    /// A worker whose result is in when the count runs out wins the race: no time-out, its Task goes on.
+    #[test]
+    fn a_result_in_before_the_time_out_goes_on() {
+        let watch: Arc<Watch> = Default::default();
+        let mut nw = NetWait::new(Op::Connect, watch.clone());
+        assert!(run(&mut nw, 2 + 14 + TIMEOUT_CALLS).is_none());
+        assert!(watch.finish());
+        assert!(nw.tick().is_none() && !watch.given_up());
+        watch.replies.fetch_add(3, Ordering::Relaxed);
+        nw.park(Task::LobbyBack(None), false);
+        assert!(matches!(run(&mut nw, 100), Some(End::Task(t)) if matches!(*t, Task::LobbyBack(None))));
     }
 
     /// Step 3 for a character no PlayOnline handle holds yet (FUN_100ee2a0 subs 0xe, 0x10..0x15): the same calls up

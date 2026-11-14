@@ -356,6 +356,17 @@ mod tests {
         let lua = |l: &serde_json::Value| {
             l["mods"].as_array().unwrap().iter().filter(|e| e["kind"] == "lua").cloned().collect::<Vec<_>>()
         };
+        // A mod whose files changed keeps no version: installed copies would never be offered the update.
+        let unbumped: Vec<String> = want
+            .iter()
+            .filter(|w| {
+                lua(&list)
+                    .iter()
+                    .any(|o| o["id"] == w["id"] && o["version"] == w["version"] && o["files"] != w["files"])
+            })
+            .map(|w| format!("{} {}", w["id"].as_str().unwrap_or(""), w["version"].as_str().unwrap_or("")))
+            .collect();
+        assert!(unbumped.is_empty(), "files changed without a version bump (raise it in mod.toml): {unbumped:?}");
         if std::env::var_os("VANA_WRITE_CATALOGUE").is_some() {
             let packs: Vec<serde_json::Value> =
                 list["mods"].as_array().unwrap().iter().filter(|e| e["kind"] != "lua").cloned().collect();
@@ -389,6 +400,10 @@ mod tests {
             for e in std::fs::read_dir(dir).unwrap().flatten() {
                 let p = e.path();
                 if e.file_name().to_string_lossy().starts_with('.') {
+                    continue;
+                }
+                // A mod's tests (tests/ beside mod.toml) stay in the repository.
+                if p.is_dir() && dir == root && e.file_name() == "tests" {
                     continue;
                 }
                 if p.is_dir() {

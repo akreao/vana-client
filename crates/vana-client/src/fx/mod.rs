@@ -49,7 +49,7 @@ pub trait Actors {
     fn sound_muted(&self, _id: u32) -> bool {
         false
     }
-    /// The model's own files (vtable +0x1e0), without the motion files. None by default: `files` mixes the two, and
+    /// The model's files (vtable +0x1e0), without the motion files. None by default: `files` mixes the two, and
     /// a motion file taken for the model's would pass the lookups that only search the model (op 0x2c's any-name
     /// Afb, the equipment schedulers).
     fn model_files(&self, _id: u32) -> Vec<u32> {
@@ -154,7 +154,7 @@ pub trait Actors {
     fn off_hand(&self, _id: u32) -> bool {
         false
     }
-    /// Our own actor (FUN_10081550), for op 0x53's nearest target.
+    /// Our actor (FUN_10081550), for op 0x53's nearest target.
     fn player(&self) -> Option<u32> {
         None
     }
@@ -221,7 +221,7 @@ pub enum Draw {
     DistModel(u32),
     /// CMoDistMorphElem (D3b + 0x100000, FUN_10043590): a registered morph drawn shifted over the scene copy.
     DistMorph(u32),
-    /// CMoVuDist (batched 0x22, FUN_10043110): the element's own CMoDist diamond N times, each over a new copy;
+    /// CMoVuDist (batched 0x22, FUN_10043110): the element's CMoDist diamond N times, each over a new copy;
     /// the flag is a weather generator's (+0xde bit 0), whose N from 20 up is scaled by the weather density.
     VuDist(u32, bool),
     /// CMoDistRingElem (ring + 0x100000, FUN_10043720).
@@ -286,7 +286,7 @@ pub struct ElemCpu {
     pub back: Option<emit::Parent>,
     /// Generator instance linked to this element (+0x164).
     pub child: Option<usize>,
-    /// Flag 0x800000: the emitter frame at spawn, in its own matrix slot.
+    /// Flag 0x800000: the emitter frame at spawn, in its matrix slot.
     pub snapshot: Option<Mat4>,
     pub mslot: u32,
     /// The matrix slot its parent frame comes from (FUN_10046440), borrowed from another generator by op 0x45.
@@ -381,7 +381,7 @@ pub enum Owner {
     Step(u32),
 }
 
-/// A running generator (the CMoGenerator object, or a CMoGeneratorClone of it): its own copy of the streams
+/// A running generator (the CMoGenerator object, or a CMoGeneratorClone of it): its copy of the streams
 /// (generator-update ops rewrite emission operands) and the FUN_10048740 counters.
 pub struct Instance {
     pub src: Ref,
@@ -425,7 +425,7 @@ pub struct Instance {
     pub parent_elem: Option<u32>,
     /// Actor1 / actor2 (gen +0x30: +0x3c / +0x40).
     pub actors: [sched::Who; 2],
-    /// A clone linked to an element (+0x164): not a task of its own; the element runs it (FUN_10048740 from
+    /// A clone linked to an element (+0x164): not a separate task; the element runs it (FUN_10048740 from
     /// emission ops 0x44 / 0x53 / 0x6a once, then update ops 0x25 / 0x33 / 0x46 every frame).
     pub driven: Option<u32>,
     /// Emission op 0x8e: the source actor's foot contact and ground frame (FUN_100d3750), when the stream has it.
@@ -439,7 +439,7 @@ pub struct Instance {
 }
 
 /// `Effects::run_order`'s key: the tick the element was made in, its generator's place in the walk (attach mode,
-/// start serial), its own serial.
+/// start serial), its serial.
 fn run_key(born: u32, mode: u8, started: u32, serial: u32) -> (u32, (u8, u32), u32) {
     (born, if matches!(mode, 0 | 0xe | 0xf | 0x14) { (0, started) } else { (1, !started) }, serial)
 }
@@ -477,7 +477,7 @@ pub enum Write {
 pub struct Registry {
     pub libs: Vec<Library>,
     by_file: HashMap<u32, usize>,
-    /// DAT 0, searched once a file's own scope runs out.
+    /// DAT 0, searched once a file's scope runs out.
     pub global: Option<usize>,
     zone_keys: Option<Arc<zone::Keys>>,
     /// Keyframes: (start, count) into `key_data`, by global id.
@@ -1035,15 +1035,12 @@ pub struct Effects {
     pub anchor_points: Vec<(u32, u8, u8)>,
     /// Op 0x9a for the client: actor, entity +0x130 bit 1.
     pub gens_off: Vec<(u32, bool)>,
-    /// Skill / magic actions' holds for the client: op 0x20 (actor2) / 0x59 (actor1, no reactions) as (actor, ticks,
-    /// no reactions, the task's uid), and the actors whose load hold ends (their "main" started or was given up,
-    /// FUN_100a9610).
-    pub holds: Vec<(u32, f32, u8, u64)>,
-    /// Tasks killed by name (op 0x5f, the stops): a hold is a child task of its scheduler (FUN_100607e0 /
-    /// FUN_100601f0 take it as parent, FUN_10074790), deleted with it (FUN_10074ad0 -> FUN_10074890), and its
-    /// destructor lets the actor go (FUN_100608b0 -> vtable +0x164), so their holds end now.
-    pub hold_cuts: Vec<u64>,
-    /// Ops 0x2e (actor1's move input, our own player only) and 0x2f (actor1's facing) locked for ticks.
+    /// Ops 0x20 / 0x1f / 0x56 / 0x59 / 0x07 / 0x08's holds: (owner task uid, actor, HOLD_* kind, ticks left). They are
+    /// child sub-tasks of their scheduler task, so they end with their time or their task.
+    pub(crate) task_holds: Vec<(u64, u32, u8, f32)>,
+    /// The HOLD_* kinds the live task holds put on each actor this frame.
+    pub held: HashMap<u32, u8>,
+    /// Ops 0x2e (actor1's move input, our player only) and 0x2f (actor1's facing) locked for ticks.
     pub locks: Vec<(u32, u8, f32)>,
     /// Op 0x2e: (owner task uid, actor1, ticks left); the actors whose move input is off this frame, and those whose
     /// root ended (their status motion restarts).
@@ -1084,7 +1081,7 @@ pub struct Effects {
     pub action_prints: Vec<(crate::net::action::Action, usize, u8)>,
     /// Motion files to put on an actor's list (FUN_100d22a0 kind 6: weapon-skill files).
     pub motion_files: Vec<(u32, Vec<u32>)>,
-    /// Op 0x05 motions found in their scheduler's own file (FUN_10057000 case 5 looks there before the actor's
+    /// Op 0x05 motions found in their scheduler's file (FUN_10057000 case 5 looks there before the actor's
     /// files): (actor, file) to put on the actor, and those to take off once no live task owns them.
     pub effect_motions: Vec<(u32, u32)>,
     /// The last frame's inputs, for attachments made between frames (the eye for point 0x33, the camera for 7 / 8).
@@ -1164,6 +1161,8 @@ pub struct Effects {
     pub sound_cmds: Vec<sound::SoundCmd>,
     alive: HashSet<u32>,
     next_voice: u32,
+    /// High bits of this engine's voice handles, so engines sharing the mixer never reuse one another's.
+    voice_base: u32,
     /// FUN_10036460's start list this retail frame: ticks into the frame, SeSep resources started.
     start_window: (f32, Vec<(usize, usize)>),
     /// DAT_104638f4: the 2239 / 2063 voice playing.
@@ -1180,6 +1179,8 @@ struct WeatherSet {
 
 /// Elements and batched particles the GPU buffers hold.
 pub const MAX_ELEMS: usize = 8192;
+/// The counter part of an effect voice handle; the bits above it are the engine's base (set_voice_base).
+pub const VOICE_MASK: u32 = 0x00ff_ffff;
 pub const MAX_PARTS: usize = 65536;
 
 impl Default for Effects {
@@ -1240,8 +1241,8 @@ impl Effects {
             self_moves: Vec::new(),
             anchor_points: Vec::new(),
             gens_off: Vec::new(),
-            holds: Vec::new(),
-            hold_cuts: Vec::new(),
+            task_holds: Vec::new(),
+            held: HashMap::new(),
             locks: Vec::new(),
             roots: Vec::new(),
             rooted: HashSet::new(),
@@ -1309,6 +1310,7 @@ impl Effects {
             sound_cmds: Vec::new(),
             alive: HashSet::new(),
             next_voice: 0,
+            voice_base: 0,
             start_window: (0.0, Vec::new()),
             solo: None,
         }
@@ -1926,7 +1928,7 @@ impl Effects {
         if let Some(ch) = c.child
             && self.insts.get(ch).is_some_and(|x| x.is_some())
         {
-            // The linked clone stops emitting; its own elements finish.
+            // The linked clone stops emitting; its elements finish.
             if let Some(x) = self.insts[ch].as_mut() {
                 x.stopping = true;
             }
@@ -2066,7 +2068,7 @@ impl Effects {
         }
     }
 
-    /// How instance `i` runs this frame (FUN_1004a980, the element update stream): its own task once; an element's
+    /// How instance `i` runs this frame (FUN_1004a980, the element update stream): its task once; an element's
     /// clone (+0x164) once per op 0x25 / 0x33 / 0x46 in the element's update stream, in stream order. Each entry is
     /// the placement to apply first (ops 0x33 / 0x46) and whether the clone then runs (FUN_100496f0):
     /// - 0x25 (0x1004b5d0): runs while the element's life (+0x110) is not 0; no placement.
@@ -2074,7 +2076,7 @@ impl Effects {
     ///   rotation (FUN_100473f0: its borrowed frame, else its generator's attach matrix; skipped when it has none),
     ///   for 0x46 through the inverse view rotation (FUN_10015240, DAT_104568fc + 0x294) instead; translation the
     ///   element's world position (FUN_10044c40); clone +0x78 = the element generator's +0x78 x the element's scale
-    ///   (+0xec; +0x84 untouched). Runs while the element's or the clone's own life (+0xd0) is not 0.
+    ///   (+0xec; +0x84 untouched). Runs while the element's or the clone's life (+0xd0) is not 0.
     ///
     /// The clone of a dead element stops.
     fn drive(&mut self, i: usize, f: &Frame) -> Vec<(Option<(Mat4, Vec3)>, bool)> {
@@ -2404,7 +2406,7 @@ impl Effects {
                     // Ops 0x53 / 0x6a (FUN_1004e8d0 0x1004eef5): the clone's matrix is the element's rotation
                     // through its frame's rotation (FUN_100473f0: the borrowed frame, else the emitter's attach
                     // matrix) and the camera's c10 for 0x6a, at the element's world position; +0x78 the element's
-                    // scale, +0x84 its frame's scale B (FUN_10047490). 0x44 leaves the clone's own placement.
+                    // scale, +0x84 its frame's scale B (FUN_10047490). 0x44 leaves the clone's placement.
                     let pf = self.elems[e as usize].as_ref().and_then(|c| self.parent_frame(c));
                     let actors = self.insts[inst].as_ref().map_or([sched::Who::None; 2], |x| x.actors);
                     let emitter = pf.as_ref().and_then(|p| p.matrix);
@@ -2735,6 +2737,36 @@ impl Effects {
         self.alive = alive.into_iter().collect();
     }
 
+    /// Leaving the world: every effect voice (the zone's scenery loops among them) stops at once.
+    pub fn stop_sounds(&mut self) {
+        for s in std::mem::take(&mut self.sounds) {
+            if s.handle != 0 {
+                self.sound_cmds.push(sound::SoundCmd::Stop { handle: s.handle, ticks: 0 });
+                self.voice_ended(s.handle);
+            }
+        }
+    }
+
+    /// The scene stopped ticking (a lobby screen left): voices stop; persistent sounds start again when it resumes,
+    /// one-shots are dropped.
+    pub fn pause_sounds(&mut self) {
+        for k in (0..self.sounds.len()).rev() {
+            let h = std::mem::take(&mut self.sounds[k].handle);
+            if h != 0 {
+                self.sound_cmds.push(sound::SoundCmd::Stop { handle: h, ticks: 0 });
+                self.voice_ended(h);
+            }
+            if !self.sounds[k].persistent() {
+                self.sounds.swap_remove(k);
+            }
+        }
+    }
+
+    /// Voice handles from this engine carry `base` in their high byte (see VOICE_MASK).
+    pub fn set_voice_base(&mut self, base: u32) {
+        self.voice_base = base & !VOICE_MASK;
+    }
+
     /// FUN_10036b90 / FUN_10036af0: a voice of the one-at-a-time ids stopping frees the flag.
     fn voice_ended(&mut self, handle: u32) {
         if self.solo == Some(handle) {
@@ -2815,8 +2847,8 @@ impl Effects {
                 if !self.start_window.1.contains(&s.res) {
                     self.start_window.1.push(s.res);
                 }
-                self.next_voice = self.next_voice.wrapping_add(1).max(1);
-                s.handle = self.next_voice;
+                self.next_voice = (self.next_voice.wrapping_add(1) & VOICE_MASK).max(1);
+                s.handle = self.voice_base | self.next_voice;
                 if solo {
                     self.solo = Some(s.handle);
                 }
@@ -2906,8 +2938,8 @@ impl Effects {
     }
 
     /// The draw order with the after-images among the elements (`TRAIL_ITEM | slot`), farthest first (ties by
-    /// `insert_order`).
-    pub fn draw_items(&self) -> Vec<u32> {
+    /// `insert_order`), each with its sort key (view depth: larger is farther).
+    pub fn draw_items_keyed(&self) -> Vec<(f32, u32)> {
         let view = self.last_frame.map_or(Mat4::IDENTITY, |f| f.view);
         let mut v: Vec<(f32, (u32, u32), u32)> = self
             .elems
@@ -2923,7 +2955,7 @@ impl Effects {
             }))
             .collect();
         v.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
-        v.into_iter().map(|(_, _, i)| i).collect()
+        v.into_iter().map(|(k, _, i)| (k, i)).collect()
     }
 
     /// Live elements to draw, back to front (the CMoOT walk: larger keys first, insertion order within one).
@@ -3155,7 +3187,7 @@ mod tests {
 
     /// Retail's element walk (task bucket 0xb, each new element at its front): newest first. Within one tick the
     /// generators ran unattached first in start order, then the attached ones newest first, so their elements come
-    /// in the reverse of that; a generator's own burst, last made first.
+    /// in the reverse of that; a generator's burst, last made first.
     #[test]
     fn elements_run_newest_first() {
         // (born, generator mode, generator start serial, element serial), as the walk reaches them.

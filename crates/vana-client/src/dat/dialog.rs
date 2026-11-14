@@ -94,7 +94,7 @@ fn grammar(kind: u8, args: &[u8]) -> String {
         // Names through FUN_1014e180 (key items, inferred).
         0x30..=0x35 => format!("{{keyitem{} {}{arg}}}", form(kind - 0x30), src(kind - 0x30)),
         0x42..=0x44 => format!("{{keyitem{} work{arg}}}", form(kind - 0x42)),
-        // With its own article (current FUN_100be760).
+        // With its article (current FUN_100be760).
         0x36 => format!("{{keyitem art num{arg}}}"),
         0x45 => format!("{{keyitem art work{arg}}}"),
         0x03 => format!("{{count num{arg}}}"),
@@ -107,6 +107,8 @@ fn grammar(kind: u8, args: &[u8]) -> String {
         0x89 => format!("{{unity num{arg}}}"),
         0x8a => format!("{{0x1b line work{arg}}}"),
         0x04 => format!("{{count work{arg}}}"),
+        0x17 => format!("{{weather adj num{arg}}}"),
+        0x18 => format!("{{weather noun num{arg}}}"),
         _ => format!("{{grammar {kind:02x} {arg}}}"),
     }
 }
@@ -368,7 +370,7 @@ fn grammar_expand(kind: u8, args: &[u8], ctx: &Ctx, lines: &mut [Vec<u8>], pendi
                 noun(lines, pending, n, k % 3, 3);
             }
         }
-        // 0x36 / 0x45 (current FUN_100be760): a key item from num[] / work[] with its own article, "the" for key item
+        // 0x36 / 0x45 (current FUN_100be760): a key item from num[] / work[] with its article, "the" for key item
         // types 0 / 1 (FUN_101552e0), else "a" / "an" / none by the entry's mode (FUN_101540a0).
         0x36 | 0x45 => {
             if let Some(id) = at(if kind == 0x36 { 1 } else { 2 }).filter(|&id| id != 0)
@@ -405,6 +407,12 @@ fn grammar_expand(kind: u8, args: &[u8], ctx: &Ctx, lines: &mut [Vec<u8>], pendi
         }
         0x12 => {
             if let Some(t) = at(1).and_then(|id| names?.title(id)) {
+                push(lines, &t);
+            }
+        }
+        // FUN_100be760 0x17 / 0x18: weather num[k] from language slot 0x14, its adjective (field 1) or noun (field 0).
+        0x17 | 0x18 => {
+            if let Some(t) = at(1).and_then(|id| names?.weather(id, kind == 0x17)) {
                 push(lines, &t);
             }
         }

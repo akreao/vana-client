@@ -175,7 +175,6 @@ pub struct Modern {
     /// The top bar this frame: the span its boxes take and how far faded in (the top edge's windows sit under it).
     top_bar: std::cell::Cell<Option<(Rect, f32)>>,
     /// The skillchain helper's chains shown with all their ways.
-    sc_open: std::cell::RefCell<std::collections::HashSet<u8>>,
     /// Each keyboard list's cursor last frame (`moved`).
     cursors: std::cell::RefCell<HashMap<&'static str, usize>>,
     /// The chat window's mouse selection (chatsel.rs): over the lines and its text this frame, the chat line's caret /
@@ -250,7 +249,6 @@ impl Modern {
             edge_grip: Default::default(),
             edge_ghost: Default::default(),
             top_bar: Default::default(),
-            sc_open: Default::default(),
             cursors: Default::default(),
             log_sel: Default::default(),
             log_text: Default::default(),
@@ -320,7 +318,7 @@ impl Modern {
             // egui's widget colours come from the palette.
             self.styled = false;
         }
-        // egui's own text (tooltips, the few labels without a size) a little larger than its defaults.
+        // egui's text (tooltips, the few labels without a size) a little larger than its defaults.
         if !self.styled {
             let (bronze, gold, track) =
                 (self.theme.color("bronze"), self.theme.color("gold"), self.theme.color("charcoal"));
@@ -361,12 +359,12 @@ impl Modern {
         let mode = modes::current(w, &self.engaged_at, focus);
         let mod_windows = w.lua.mode_windows();
         let vis = modes::visibility(ctx, &cfg.modern_modes, mode, &mod_windows);
-        // The Lua mods' HUD elements, under every panel, as the modern layer draws its own (each HUD window faded by
+        // The Lua mods' HUD elements, under every panel, as the modern layer draws its elements (each HUD window faded by
         // the mode as a panel is).
         hudmods::draw(self, ctx, gu, w, &vis);
         self.prune_images(ctx);
         // Places per display: this window size and UI scale's layout, else the character's last one (the
-        // template); a change saves both. A display shown the template for 2 s keeps it as its own, so a change on
+        // template); a change saves both. A display shown the template for 2 s keeps it as its layout, so a change on
         // another display doesn't move its panels; sizes passed through while resizing store nothing.
         let key = display_key(&w.name, window, cfg.modern_scale);
         let steady = match &self.display {
@@ -530,7 +528,7 @@ fn pointer_look(tint: u32) -> (&'static str, Color32) {
     }
 }
 
-/// With the layer off egui is back at its own size (the F12 lines).
+/// With the layer off egui is back at its size (the F12 lines).
 pub fn off(ctx: &Context, m: Option<&mut Modern>) {
     let Some(m) = m else { return };
     if m.zoom != 0.0 {
@@ -701,7 +699,7 @@ impl Dock {
     }
 }
 
-/// Where each panel starts (the user's own arrangement, 2026-10-26): the chat and party windows on the screen's
+/// Where each panel starts (the user's arrangement, 2026-10-26): the chat and party windows on the screen's
 /// bottom, the location panel on the chat window and the combat window on it (retail's compass and action menu ride
 /// the log), the target on the party window (retail's targetwi, flag 0x2000), the status icons, the command window and
 /// the Timers at the left under the top bar, the main menu and the minimap at the right.
@@ -1225,7 +1223,7 @@ impl<'a> Panels<'a> {
     fn show(&mut self, id: &str, o: Show, add: impl FnOnce(&mut Ui, Vec2)) -> Option<Rect> {
         // Hidden by the mode (modes.rs) or by a Lua mod (ui.native.hide): not drawn, so what docks on it falls to
         // what it sits on.
-        // A mod's place (ui.native.place) fades it too, and its own opacity (per-window opacity); faded out, it is
+        // A mod's place (ui.native.place) fades it too, and its opacity (per-window opacity); faded out, it is
         // not drawn either.
         let placed = self.placed.get(id).copied();
         let vis = self.vis(id) * placed.map_or(1.0, |p| p.alpha) * self.opacity.get(id).copied().unwrap_or(1.0);
@@ -1249,7 +1247,7 @@ impl<'a> Panels<'a> {
         let room = if o.resizable { self.room(id, o.size) } else { o.size };
         let h = o.height.or_else(|| m.rects.borrow().get(id).map(|r| r.height())).unwrap_or(0.0);
         // A mod's top left (window pixels, negative from the right or bottom edge) makes it a panel at a fixed point:
-        // the player's drag no longer moves it, and its own place stays saved.
+        // the player's drag no longer moves it, and its place stays saved.
         let ppp = ctx.pixels_per_point();
         let at = o.at.or_else(|| {
             let p = placed.filter(|p| p.x.is_some() || p.y.is_some())?;
@@ -1846,6 +1844,7 @@ mod layout_tests {
 #[cfg(test)]
 mod panel_tests {
     use super::*;
+    use crate::client::egui_pass;
 
     /// A docked panel whose contents grow or shrink keeps its bottom on the panel it sits on the same frame (the item
     /// info moving between a long and a short item stood a frame too high or too low).
@@ -1853,8 +1852,7 @@ mod panel_tests {
     fn docked_panel_keeps_its_bottom_as_it_resizes() {
         let ctx = egui::Context::default();
         let side = Some(16384);
-        let mut o = ctx.run_ui(egui::RawInput { max_texture_side: side, ..Default::default() }, |_| {});
-        o.textures_delta.clear();
+        egui_pass(&ctx, egui::RawInput { max_texture_side: side, ..Default::default() }, |_| {});
         let m = Modern::new(&ctx);
         let mut layout = Layout::new();
         let mut bottoms = Vec::new();
@@ -1866,7 +1864,7 @@ mod panel_tests {
                 ..Default::default()
             };
             let mut info = None;
-            let mut o = ctx.run_ui(raw, |ui| {
+            egui_pass(&ctx, raw, |ui| {
                 let ctx = ui.ctx();
                 let (mut changed, mut chat_font) = (false, 14.0);
                 let mut p = Panels {
@@ -1902,7 +1900,6 @@ mod panel_tests {
                     .zip(combat);
                 *m.rects.borrow_mut() = std::mem::take(&mut p.this);
             });
-            o.textures_delta.clear();
             // Frame 0 has egui's default screen.
             if f > 0 {
                 let (r, under) = info.unwrap();
@@ -1920,8 +1917,7 @@ mod panel_tests {
     fn mod_placed_panel_moves_and_scales() {
         let ctx = egui::Context::default();
         let side = Some(16384);
-        let mut o = ctx.run_ui(egui::RawInput { max_texture_side: side, ..Default::default() }, |_| {});
-        o.textures_delta.clear();
+        egui_pass(&ctx, egui::RawInput { max_texture_side: side, ..Default::default() }, |_| {});
         let m = Modern::new(&ctx);
         let mut layout = Layout::new();
         let place =
@@ -1949,7 +1945,7 @@ mod panel_tests {
                 max_texture_side: side,
                 ..Default::default()
             };
-            let mut o = ctx.run_ui(raw, |ui| {
+            egui_pass(&ctx, raw, |ui| {
                 let ctx = ui.ctx();
                 let (mut changed, mut chat_font) = (false, 14.0);
                 let placed = placed.map(|p| HashMap::from([("focus".to_string(), p)])).unwrap_or_default();
@@ -1979,7 +1975,6 @@ mod panel_tests {
                 }));
                 *m.rects.borrow_mut() = std::mem::take(&mut p.this);
             });
-            o.textures_delta.clear();
         }
         let r: Vec<Rect> = seen.into_iter().skip(1).map(Option::unwrap).collect();
         let ppp = ctx.pixels_per_point();
@@ -1992,7 +1987,7 @@ mod panel_tests {
             r[3]
         );
         assert!((r[4].min.x - (1280.0 - 400.0 / ppp)).abs() < 0.5, "{:?}", r[4]);
-        // Released: its own place again, at its own size.
+        // Released: its place again, at its size.
         assert!(
             (r[5].min - r[0].min).length() < 0.5 && (r[5].width() - r[0].width()).abs() < 0.5,
             "{:?} {:?}",
@@ -2008,13 +2003,12 @@ mod panel_tests {
         );
     }
 
-    /// Mods' sprites keep the pack's logical size, with their own pixels; frames take their colours; released, the
+    /// Mods' sprites keep the pack's logical size, with their pixels; frames take their colours; released, the
     /// pack's again.
     #[test]
     fn skin_replaces_and_gives_back() {
         let ctx = egui::Context::default();
-        let mut o = ctx.run_ui(egui::RawInput { max_texture_side: Some(16384), ..Default::default() }, |_| {});
-        o.textures_delta.clear();
+        egui_pass(&ctx, egui::RawInput { max_texture_side: Some(16384), ..Default::default() }, |_| {});
         let m = Modern::new(&ctx);
         let base = m.art.sprite("gauges/hp_full").unwrap();
         let img = std::sync::Arc::new((64u32, 8u32, vec![255u8; 64 * 8 * 4]));

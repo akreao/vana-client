@@ -1,11 +1,11 @@
-//! Game actions for mods (docs/lua-mods.md 4.8), each through the code the player's own menus, keys and text commands
+//! Game actions for mods (docs/lua-mods.md 4.8), each through the code the player's menus, keys and text commands
 //! take: the same checks, refusal lines and packets. Queued by the `actions` namespace, applied after the mod phase.
 
 use super::super::{World, game_ui::GameUi, net::NetCommand, textcmd};
 use glam::Vec3;
 use mlua::{Lua, Table, Value};
 
-/// A target as a mod gave it: a server id, a tag ("<t>", "<me>", "<bt>", ...) or a name; none takes the command's own
+/// A target as a mod gave it: a server id, a tag ("<t>", "<me>", "<bt>", ...) or a name; none takes the command's
 /// default (mostly the current target).
 pub(in crate::client) type Target = Option<String>;
 
@@ -489,7 +489,7 @@ pub(super) fn install(lua: &Lua, g: &Table) -> mlua::Result<()> {
             let it = w
                 .item_info
                 .as_ref()
-                .and_then(|c| c.item(item))
+                .and_then(|c| c.peek(item))
                 .ok_or_else(|| mlua::Error::runtime(format!("no item {item}")))?;
             let (name, targets) = (it.name.clone(), it.targets);
             let t = target_arg(to)?.or_else(|| default_target(w, targets));

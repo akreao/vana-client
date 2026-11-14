@@ -38,7 +38,7 @@ Playable on a local LSB server. Working today:
 - Login, the lobby, character creation (with the original creator scenes), character select and the new-character
   openings
 - Zones with GPU skinning, compressed textures with mipmaps, lighting, sky, fog and weather, plus settings beyond
-  retail: lamps that give off light of their own, character shadows, ambient occlusion, colour grading and
+  retail: lamps that give off light, character shadows, ambient occlusion, colour grading and
   anti-aliasing
 - Players, NPCs and monsters with their motions, collision (characters, doors, lifts) and name plates with their
   icons (GM, bazaar, New Adventurer, mentor, linkshell and the rest)
@@ -64,7 +64,7 @@ Playable on a local LSB server. Working today:
   actions with the player's permission. See [writing mods](docs/modding/README.md)
 - The standard mods, downloaded from Settings > Mods > Download Standard Mods: the map overlay, minimap, timers,
   skillchain helper and chat timestamps that used to be Extras, hotbars, Gearshift (which runs GearSwap files and
-  LuAshitacast profiles) and many more. None come with the client; the list is [catalogue/mods.json](catalogue/mods.json)
+  LuAshitacast profiles, or builds your sets itself from the gear you hold) and many more. None come with the client; the list is [catalogue/mods.json](catalogue/mods.json)
 
 ## Requirements
 
@@ -98,7 +98,7 @@ VS Code, see [docs/building-windows.md](docs/building-windows.md).
 
 The binary is `target/release/vana-client` (`vana-client.exe` on Windows). Release builds are incremental, without link-time optimisation; for a binary to hand out, `cargo build --profile dist` (fat LTO, one codegen unit) writes `target/dist/vana-client`.
 
-Published releases are built with `release/build-linux.sh` (in the Steam Runtime 3 "sniper" SDK container, so one binary runs on every current distro) and `release/build-windows.sh` (a MinGW cross build); `release/fetch-ci-builds.sh` runs the Release builds workflow on GitHub for Linux on ARM (the SDK's arm64 image) and macOS (Apple Silicon and Intel) and downloads those. Then `release/publish.sh VERSION` tags them, signs each with the release key (Ed25519, kept outside the repo; its public half is `release/signing-key.pub`, built into the client) and creates the GitHub release that the in-app Update offers. The client installs a release only when its signature checks.
+Published releases are built with `release/build-linux.sh` (in the Steam Runtime 3 "sniper" SDK container, so one binary runs on every current distro); `release/fetch-ci-builds.sh` runs the Release builds workflow on GitHub for Linux on ARM (the SDK's arm64 image), macOS (Apple Silicon and Intel) and Windows (MSVC, the C runtime linked in) and downloads those. Then `release/publish.sh VERSION` tags them, signs each with the release key (Ed25519, kept outside the repo; its public half is `release/signing-key.pub`, built into the client) and creates the GitHub release that the in-app Update offers. The client installs a release only when its signature checks.
 
 ## Install the game data
 
@@ -153,7 +153,7 @@ This writes the username and a generated password to `account.json`.
 ## Configuration
 
 Settings are in `config.json` in the config folder: `~/.config/vana-client` on Linux, `%APPDATA%\vana-client` on
-Windows and `~/Library/Application Support/vana-client` on macOS. The client's own data (the game files by default,
+Windows and `~/Library/Application Support/vana-client` on macOS. The client's data (the game files by default,
 mods, `known_servers.json` and the log, `vana-client.log`, with the run before it as `vana-client.prev.log`) is in the
 data folder: `~/.local/share/vana-client` on Linux, and the same folder as the config on Windows and macOS. The file
 is created on first save, and most options can be changed from the in-game Config menus. The fields you may need to set by hand:
@@ -172,7 +172,7 @@ is created on first save, and most options can be changed from the in-game Confi
 
 ### Gamepad
 
-Controllers work through the game's own pad path: the buttons set the pad bits the game's key functions test, and
+Controllers work through the game's pad path: the buttons set the pad bits the game's key functions test, and
 the sticks fill its stick bytes. The button settings are retail's: at start the client reads what the retail Gamepad
 Config tool (FFXiPadConfig.exe, which retail's Config > Gamepad starts) saved, `padsin000`, `padexsin000` and
 `padmode000`, from the registry on Windows or from a Wine prefix's `system.reg` elsewhere (the prefix the game folder is
@@ -189,7 +189,7 @@ XInput layout:
 | Left stick / right stick | Move / camera (the camera's invert rows in Mouse/Cam. apply to the stick) |
 | LB / L1 | Autorun; in a window with tabs (modern), the previous tab |
 | RB / R1 | The software keyboard (with Config > Misc. 4 > Software Keyboard on); with the windows hidden, a screenshot; in a window with tabs (modern), the next tab |
-| LT / L2, RT / R2 | In the field: open or close the Ctrl / Alt macro palette (the other trigger swaps; held, it opens on its own); in it the d-pad picks the macro and the set, A runs it, B closes. In a window: held, the d-pad pages lists; both held, left / right switch the item bag. In a Geo- spell's target prompt: held, the d-pad moves the spot it lands on |
+| LT / L2, RT / R2 | In the field: open or close the Ctrl / Alt macro palette (the other trigger swaps; held, it opens by itself); in it the d-pad picks the macro and the set, A runs it, B closes. In a window: held, the d-pad pages lists; both held, left / right switch the item bag. In a Geo- spell's target prompt: held, the d-pad moves the spot it lands on |
 | L3 | Rest, or lock on with a target; on the map, back to where you were when it opened |
 | R3 | First / third person |
 | Back / Select | Hide or show the windows |
@@ -198,7 +198,7 @@ XInput layout:
 Typing on the pad: turn on Config > Misc. 4 > Software Keyboard, then RB brings up the game's software keyboard over
 the text field (or opens the chat line with it). The d-pad moves its cursor, A types the key, B is Escape, LB
 Backspace, RB a space, X switches to capitals and symbols, Y is Enter, LT / RT move the caret, Start is Tab and Back
-closes it. Any key on a real keyboard closes it too. The modern UI draws it as one of its own panels.
+closes it. Any key on a real keyboard closes it too. The modern UI draws it as one of its panels.
 
 To change them in game, open Settings > Controller (in the modern interface): the Controller window is the tool's
 XInput page. Pick a function and press the button for it (on a Movement, Camera or Menus direction, push a stick to give
@@ -209,7 +209,7 @@ them again. Force feedback and the device choice (`padguid000`) are not used yet
 
 Many desktops do not count pad input as activity, so while the pad is in use the client keeps the screen awake
 (Linux: the screen saver inhibit, or the desktop portal's; Windows: the display timer; macOS: IOKit power assertions).
-Five minutes after the pad's last input it lets go, and the desktop's own timeout applies again.
+Five minutes after the pad's last input it lets go, and the desktop's timeout applies again.
 
 | Field | Default | Meaning |
 |---|---|---|
@@ -264,8 +264,7 @@ no code from the original client. To use it you need the game files from Square 
 
 vana-client is released under the [MIT License](LICENSE).
 
-Bundled third-party files keep their own licenses: the Fira Sans, Inter and JetBrains Mono fonts are under the SIL
-Open Font License (the texts are beside them in `crates/vana-client/assets/fonts`), the patched copy of
-gpu-allocator in `vendor/gpu-allocator` is under MIT or Apache-2.0, and SMAA's area and search textures in
+Bundled third-party files keep their licenses: the Fira Sans, Inter and JetBrains Mono fonts are under the SIL
+Open Font License (the texts are beside them in `crates/vana-client/assets/fonts`), and SMAA's area and search textures in
 `crates/vana-client/src/render/smaa` are under MIT (Jimenez et al., the text is beside them). The game's files are Square Enix's and are not
 covered by this license.

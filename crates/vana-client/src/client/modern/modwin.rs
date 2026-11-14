@@ -1,4 +1,4 @@
-//! The Lua mods' windows in the modern UI (docs/lua-mods.md 4.10): each open window a panel of its own, its place kept
+//! The Lua mods' windows in the modern UI (docs/lua-mods.md 4.10): each open window a separate panel, its place kept
 //! as `mod:<mod>:<window>`, its elements the kit's controls. Keys are the window model's (client/lua/window.rs); the
 //! mouse goes back to it as clicks.
 
@@ -37,6 +37,8 @@ pub enum Click {
     CanvasAt(usize, [f32; 2], [f32; 4], f32, bool),
     /// A `targets` row: the entity to target.
     Pick(u32),
+    /// A lines element's fold header: element, line.
+    Fold(usize, usize),
 }
 
 fn rgba(c: [u8; 4]) -> Color32 {
@@ -173,6 +175,7 @@ impl Click {
             Click::CanvasHover(i, x, y) => win.canvas_hover(i, x, y),
             Click::Docked(side) => win.docked(side),
             Click::CanvasDrag(i, phase, x, y) => win.canvas_drag(i, phase, x, y),
+            Click::Fold(i, line) => win.fold(i, line),
             // The client takes these (lua::window_click).
             Click::Pick(_) | Click::CanvasAt(..) => (Vec::new(), Vec::new()),
         }
@@ -320,8 +323,13 @@ pub(super) fn body(
         let here = win.focus && i == win.at;
         let top = ui.cursor().min.y;
         match e {
-            // The Timers' panels draw their sections (extras.rs).
-            Elem::Timers { .. } => {}
+            // The Timers' panels draw their sections, the minimap's its map (extras.rs).
+            Elem::Timers { .. } | Elem::Map { .. } => {}
+            Elem::Lines { lines, .. } => {
+                if let Some(line) = super::extras::lines_body(ui, m, lines) {
+                    clicks.push(Click::Fold(i, line));
+                }
+            }
             Elem::Chip { text, note, tone, detail, .. } => super::pending::chip(ui, m, text, note, *tone, detail),
             Elem::Targets { rows, .. } => {
                 if let Some(w) = world

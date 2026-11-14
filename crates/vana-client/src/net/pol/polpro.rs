@@ -190,10 +190,8 @@ impl Tables {
         }
     }
 
-    /// The character list's 0x68-byte records (FUN_1001d340 states 0, 6 and 8). Every entry loses its used and
-    /// linked bits and every slot its taken bit first. A record: [0] index, [1] order, [4] linked, [5] handle, [6]
-    /// slot. The entry's slot bits come from the handle byte (`[5] & 7`, 0x1001d641), as retail has it; the handle's
-    /// slot byte from [6] whenever [4] is not zero.
+    /// The character list's 0x68-byte records (FUN_1001d340): [0] index, [1] order, [4] linked, [5] handle, [6] slot,
+    /// over tables cleared of their used, linked and taken bits. The entry's slot is `[5] & 7`, as retail (0x1001d641).
     pub fn load_characters(&mut self, records: &[[u8; 0x68]]) {
         for e in &mut self.entries {
             e.used = false;
@@ -312,11 +310,8 @@ impl Tables {
         0
     }
 
-    /// StoreCharacterList's 0x244-byte payload (1/10; FUN_1001da90, then FUN_1001db80 state 3), or None when
-    /// nothing changed (state 1 ends the call without a connection). Bytes 0..0x40 are every entry's order byte;
-    /// then 8 bytes an entry: 0 for one that did not change, else 1 linked / 2 not, the handle and the slot. Retail
-    /// builds it in the transaction's buffer without clearing it: an unchanged entry's handle and slot bytes, a
-    /// changed but unused entry's three and the last 4 bytes are whatever the buffer held; zeros here.
+    /// StoreCharacterList's 0x244-byte payload (1/10, FUN_1001da90), None when nothing changed: the 64 order bytes,
+    /// then 8 bytes an entry, a changed one's 1 linked / 2 not, handle and slot. Retail's unwritten bytes are zero here.
     pub fn store_body(&mut self) -> Option<[u8; 0x244]> {
         self.normalise(true);
         if !self.reordered && self.dirty == 0 {
@@ -427,7 +422,7 @@ pub enum ReplyBody {
     Records(usize),
 }
 
-/// One transaction on its own connection (0x1001f0f0's states): the plain handshake and its token, the header
+/// One transaction on a separate connection (0x1001f0f0's states): the plain handshake and its token, the header
 /// (keystream reset) and body (continued), the reply header (reset) and body (continued). `server` is the address a
 /// reply cached, else the host is resolved.
 pub fn transact<S: Stream>(
@@ -688,8 +683,6 @@ mod tests {
         );
     }
 
-    /// polcore's bodies for FFXiMain's (-2,-1,0,-2,-1,1), then app.dll's (3,-2,1,2,0,-2), after a LoadMyStatus of
-    /// content 3, service 5, presence 2, p5 1, activity 0x123 (profile run1815e.txt).
     /// polcore's code for a failed transaction (FUN_10017cb0's mapping for a refusal; its own for a bad checksum).
     #[test]
     fn local_codes() {
@@ -699,6 +692,8 @@ mod tests {
         assert_eq!(local_code(&anyhow::anyhow!("connection reset")), None);
     }
 
+    /// polcore's bodies for FFXiMain's (-2,-1,0,-2,-1,1), then app.dll's (3,-2,1,2,0,-2), after a LoadMyStatus of
+    /// content 3, service 5, presence 2, p5 1, activity 0x123 (profile run1815e.txt).
     #[test]
     fn change_my_status_bodies() {
         let cur = Status { content: 3, service: 5, flag: 1, presence: 2, p5: 1, activity: 0x123, changed: false };

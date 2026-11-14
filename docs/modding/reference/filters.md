@@ -73,7 +73,7 @@ end)
 Notes:
 
 - Every line goes through the filters: players' chat, battle messages, system and event text, the client's notices,
-  and lines mods add with `print` and `chat.add` (this mod's own too: a line you `print` from a chat filter comes back
+  and lines mods add with `print` and `chat.add` (this mod's too: a line you `print` from a chat filter comes back
   through it).
 - With several filters, mods run in load order and each mod's filters in the order added. Each one sees the text and
   mode as the one before left them.
@@ -143,7 +143,7 @@ filters.battle(filter) -> integer
 ```
 
 Adds a battle message filter: `filter` is called for each battle message the log is about to print (an action's
-lines, s2c 0x029 and 0x02D messages), after the game's own Chat Filters have let it through, with what the message is
+lines, s2c 0x029 and 0x02D messages), after the game's Chat Filters have let it through, with what the message is
 about. It can colour the names in it, replace its lines or drop it. The bundled Battle Text mod is written with it.
 
 **Parameters**
@@ -177,7 +177,7 @@ about. It can colour the names in it, replace its lines or drop it. The bundled 
 **Example**
 
 ```lua
--- Our own name in the party colour, and every miss dropped.
+-- Our name in the party colour, and every miss dropped.
 filters.battle(function(m)
   if m.actor and m.actor.id == game.player().id then m.actor.colour = 6 end
   for _, line in ipairs(m.lines) do

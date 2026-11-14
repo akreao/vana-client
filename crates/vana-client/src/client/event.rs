@@ -203,7 +203,7 @@ impl Screen {
     }
 
     /// A zone-in that carries a login event: the scene stays black until the event fades it in. Retail starts the
-    /// zone's own fade-in (file 30904 `fdi0`, op 0x0f to 0x80 over 30 ticks) only when the 0x00A has no EventNum
+    /// zone's fade-in (file 30904 `fdi0`, op 0x0f to 0x80 over 30 ticks) only when the 0x00A has no EventNum
     /// (FUN_10093db0 sets the fade state to 1 only then), so the colour multiply stays at the black the zone change
     /// left it at; the event's `fdi1` (0x0f to 0x80 over 60 ticks, from the colour now) brings the picture in. Ours
     /// draws the zone fade separately (World::fade) and starts each zone at 1.0, so the hold is set here.
@@ -212,7 +212,7 @@ impl Screen {
         self.login_black = true;
     }
 
-    /// The login event ended (or never ran) without a 0x0f of its own: fade in as `fdi0` would (ours; retail has no
+    /// The login event ended (or never ran) without a 0x0f: fade in as `fdi0` would (ours; retail has no
     /// such fallback, its opening scripts all fade in).
     pub fn release_black(&mut self) {
         if std::mem::take(&mut self.login_black) {
@@ -255,7 +255,7 @@ impl Screen {
     }
 
     /// Scheduler op 0x04 / 0x81 in a task an event's scheduler started (main's `cut1`..: fx/tasks.rs): the path
-    /// plays from now as this runner's own 0x04 does.
+    /// plays from now as this runner's 0x04 does.
     pub fn fx_camera(&mut self, index: &DatIndex, c: crate::fx::EventCamera) {
         let four = |v: [u8; 4]| String::from_utf8_lossy(&v).trim_end_matches('\0').to_string();
         if let Some(f) = self.file(index, c.file) {
@@ -477,9 +477,9 @@ pub struct Msg {
     pub page: usize,
     /// Pages already written to the log (FUN_10131e30 writes each as it opens).
     pub logged: usize,
-    /// msg+4 from a 1f code; 0 (no colour of its own, no indent) without one.
+    /// msg+4 from a 1f code; 0 (no colour, no indent) without one.
     pub mode: Option<u8>,
-    /// An s2c 0x03B line's speaker (its UniqueNo); None for the event's own messages.
+    /// An s2c 0x03B line's speaker (its UniqueNo); None for the event's messages.
     pub actor: Option<u32>,
 }
 
@@ -582,6 +582,8 @@ pub struct State {
     pub hidden: HashSet<u32>,
     /// Actors the script faded (op 0x6c); made opaque again when the event ends (inferred).
     faded: HashSet<u32>,
+    /// Op 0x34 / 0x35 freed every model: actors are not modelled until they are made again.
+    models: ModelGate,
     pub idle: HashMap<u32, String>,
     /// The scheduler a motion op (0x5b / 0x66, 0x5f 3..6; FUN_100b5210) last started on an actor, and its second
     /// actor (+0x1ec / +0x1f4): ops 0x5e / 0x6b stop it before they set the idle motion (FUN_10087d40).
@@ -685,6 +687,7 @@ impl State {
             map_preview: false,
             hidden: HashSet::new(),
             faded: HashSet::new(),
+            models: ModelGate::default(),
             idle: HashMap::new(),
             event_sched: HashMap::new(),
             bound: HashSet::new(),
@@ -868,7 +871,7 @@ impl LiveHost<'_> {
         let _ = self.w.net.commands.send(c);
     }
 
-    /// Where an actor is drawn now: its VM body when bound, else its own position.
+    /// Where an actor is drawn now: its VM body when bound, else its position.
     fn drawn_at(&self, id: u32) -> Option<Vec3> {
         if let Some(p) = self.st.poses.get(&id) {
             return Some(p.pos);
@@ -1111,18 +1114,15 @@ impl Host for LiveHost<'_> {
                 let (id, target) = (self.wid(*a1), self.wid(*a2));
                 self.stop_scheduler(id, target, name);
             }
-            // FUN_100b7140: on a skeleton actor with a model (+0x120 bit 9), FUN_100ce070 gives every entry of two
-            // motion regions (+0x674 -> +0x44, queues +0x60 / +0x9c = regions 3 and 6: the eyes, and the overlay a
-            // `mou6` talk plays in) FUN_1001b520(8.0): each plays on for 8 ticks, then goes. The body's motions are
-            // not touched.
+            // FUN_100b7140 -> FUN_100ce070: the eyes' and the talk overlay's motions play on for 8 ticks, then go.
             Effect::Op { op: 0xd3, sub: Some(0), args, .. } => {
                 let Some(id) = self.arg_actor(&args, 0) else { return };
                 if let Some(a) = self.w.actors.get_mut(&id).filter(|a| a.character.is_some()) {
-                    a.q.fade_region(3, 8.0);
-                    a.q.fade_region(6, 8.0);
+                    a.q.fade_region(crate::motionq::EYES, 8.0);
+                    a.q.fade_region(crate::motionq::OVERLAY_TALK, 8.0);
                 }
             }
-            // FUN_100b72c0 subs 0 / 1: the thread's own actor (+0x124 bit 29 = sub).
+            // FUN_100b72c0 subs 0 / 1: the thread's actor (+0x124 bit 29 = sub).
             Effect::Op { op: 0x5f, sub: Some(s @ (0 | 1)), actor, .. } => {
                 let id = self.wid(actor);
                 if s == 1 {
@@ -1306,7 +1306,7 @@ impl Host for LiveHost<'_> {
                 }
             }
             // FUN_100bb180 sub 1: the event actor's event status +0x174 = val@2, which a bound actor poses with (5 / 0x55
-            // ride on its own ChocoboIndex / mount id, ride.rs).
+            // ride on its ChocoboIndex / mount id, ride.rs).
             Effect::Op { op: 0xac, sub: Some(1), actor, args } => {
                 let id = self.wid(actor);
                 // No +0x120 bit 2 test here (asm 0x100bb1ee..0x100bb215), unlike op 0x7e and the door ops.
@@ -1701,26 +1701,14 @@ impl Host for LiveHost<'_> {
             }
             Effect::Op { op: 0xd9, args, .. } => self.w.event_voices = Self::arg_int(&args, 0) == Some(0),
             // FUN_10184380 with the area: the App loads it (or brings the zone's scene back) and ends the wait.
-            Effect::Op { op: 0x34 | 0x35, args, .. } => match args.first() {
-                Some(Arg::Int(v)) if (0..0x10000).contains(v) => {
-                    // evop_34 / evop_35, first frame (0x100b5a9c..): FUN_10092900 on every entity, ours too. The
-                    // models go and load again in the new area, their load fade from 0; the scripts' `80 <actor>`
-                    // after the swap waits for that.
-                    let me = self.w.my_id;
-                    let ids: Vec<u32> = self
-                        .w
-                        .actors
-                        .keys()
-                        .copied()
-                        .filter(|&id| id == me || self.w.entities.contains_key(&id))
-                        .collect();
-                    for id in ids {
-                        remake_model(self.w, id);
-                    }
-                    self.w.area.want = Some(*v as u16);
+            Effect::Op { op: 0x34 | 0x35, args, .. } => {
+                self.st.models.free();
+                remade(&mut self.w.actors);
+                match args.first() {
+                    Some(Arg::Int(v)) if (0..0x10000).contains(v) => self.w.area.want = Some(*v as u16),
+                    _ => self.w.area.done = true,
                 }
-                _ => self.w.area.done = true,
-            },
+            }
             Effect::Op { op: op @ (0x2e | 0x42 | 0x38), args, .. } => self.st.cancel_op(op, &args),
             // FUN_100b5b90 / FUN_100b5bf0: FUN_10132030(1, x, y) / (0, 0, 0) on both event message windows.
             Effect::Op { op: 0x67, args, .. } => {
@@ -2047,7 +2035,13 @@ impl Host for LiveHost<'_> {
                     || a.oneshot.as_ref().is_some_and(|o| o.name.starts_with(n) && o.ticks < o.len)
             }
             // Asked before the op's effect runs, so the first frame waits too (retail spends three frames on it).
-            Busy::Op { op: 0x34 | 0x35, .. } => !std::mem::take(&mut self.w.area.done),
+            Busy::Op { op: 0x34 | 0x35, .. } => {
+                let busy = !std::mem::take(&mut self.w.area.done);
+                if !busy {
+                    self.st.models.area_done();
+                }
+                busy
+            }
             Busy::Op { op: 0x6c, actor, .. } => {
                 let id = self.wid(*actor);
                 self.w.actors.get(&id).is_some_and(|a| a.fade.is_some())
@@ -2107,6 +2101,10 @@ impl Host for LiveHost<'_> {
     fn ready(&self, actor: u32) -> bool {
         let id = self.wid(actor);
         id == self.w.my_id || self.w.entities.contains_key(&id)
+    }
+
+    fn modelled(&self, actor: u32) -> bool {
+        self.st.models.on() && self.ready(actor)
     }
 
     fn name(&self, actor: u32) -> String {
@@ -2232,7 +2230,7 @@ impl Host for LiveHost<'_> {
     }
 
     fn weather_day(&mut self, zone: u32, day: u32) -> Option<[u8; 3]> {
-        weather_day(self.w.index.as_ref()?, zone, day)
+        crate::dat::weather::forecast_day(self.w.index.as_ref()?, zone, day)
     }
 
     /// Bounded as retail's (50 down, else 15 up): a place far off any floor keeps its height (the Ark Angels'
@@ -2280,6 +2278,52 @@ impl LiveHost<'_> {
                 self.st.hidden.remove(&id);
             }
         }
+    }
+}
+
+/// Op 0x34 / 0x35's models (FUN_100b3df0): every one freed on the op's first frame (FUN_10091150, +0x120 bit 9 clear),
+/// made again by FUN_10094150 at the end of the frame after the area loads; the threads the op starts run modelless.
+#[derive(Default)]
+struct ModelGate {
+    off: bool,
+    /// VM ticks left without models once the area wait has ended.
+    back: Option<u8>,
+}
+
+impl ModelGate {
+    fn free(&mut self) {
+        (self.off, self.back) = (true, None);
+    }
+
+    /// The op's wait ended: its tick and the next run without models.
+    fn area_done(&mut self) {
+        if self.off {
+            self.back = Some(2);
+        }
+    }
+
+    /// After each VM tick.
+    fn ticked(&mut self) {
+        if let Some(n) = self.back {
+            self.back = n.checked_sub(1).filter(|n| *n > 0);
+            self.off = self.back.is_some();
+        }
+    }
+
+    fn on(&self) -> bool {
+        !self.off
+    }
+
+    /// Freed and the area still loading: the VM waits, as retail's synchronous load does.
+    fn loading(&self, area_done: bool) -> bool {
+        self.off && self.back.is_none() && !area_done
+    }
+}
+
+/// FUN_1008f740 makes a model at colour 0x80808080: whatever fade an actor had is gone.
+fn remade(actors: &mut HashMap<u32, super::Actor>) {
+    for a in actors.values_mut() {
+        (a.alpha, a.rgb, a.fade) = (super::actmotion::OPAQUE, [super::actmotion::OPAQUE; 3], None);
     }
 }
 
@@ -2611,11 +2655,13 @@ pub fn update(w: &mut World, dt: f32) {
     // a faster frame limit does not speed the script up; a slow frame runs up to 4 ticks.
     live.st.vm_ticks = (live.st.vm_ticks + ticks).min(4.0);
     let mut ran = 0;
-    while live.st.vm_ticks >= 1.0 && !live.rt.done() {
+    // Retail loads op 0x34's area inside the op's last frame: no thread runs while ours loads in the background.
+    while live.st.vm_ticks >= 1.0 && !live.rt.done() && !live.st.models.loading(w.area.done) {
         live.st.vm_ticks -= 1.0;
         ran += 1;
         let mut host = LiveHost { w: &mut *w, st: &mut live.st, index: &index };
         live.rt.tick(&mut host, 1.0);
+        live.st.models.ticked();
     }
     // The bodies only move when the VM ticks: their motion ratios count VM ticks, not frames (at 300 fps a
     // frame-based ratio flipped between 0 and a capped run, and the legs blurred).
@@ -2660,14 +2706,14 @@ fn close_msg(st: &mut State, w: &mut World) {
     }
 }
 
-/// The post-event request of our own character (FUN_100ac9c0 sets +0x1f8 = 300 / +0x1fa; FUN_1008d280 sends
+/// The post-event request of our character (FUN_100ac9c0 sets +0x1f8 = 300 / +0x1fa; FUN_1008d280 sends
 /// 0x016 when it runs out, then every 600 ticks) until a full 0x00D about us arrives.
 fn self_request(w: &mut World, ticks: f32) {
     let Some(left) = &mut w.self_lock else { return };
     *left -= ticks;
     if *left < 0.0 {
         *left = 600.0;
-        log::info!("event: asking for our own character (index {})", w.my_index);
+        log::info!("event: asking for our character (index {})", w.my_index);
         let _ = w.net.commands.send(NetCommand::CharReq(w.my_index));
     }
 }
@@ -2759,14 +2805,14 @@ fn motion_files(op: u8, file: i32, id: u32, a: &super::Actor) -> Vec<u32> {
     }
 }
 
-/// FUN_10089a60, each frame on our own character: its place (+4, facing +0x14) follows its model. Bound in an event it
+/// FUN_10089a60, each frame on our character: its place (+4, facing +0x14) follows its model. Bound in an event it
 /// waits unless (DAT_1046df04 | Mode) & 4, so the model the event moved is where we stand once it ends.
 fn keep_pose(w: &mut World, p: Pose) {
     (w.pos, w.step_hist, w.step_ticks, w.step_to, w.draw_pos) = (p.pos, [p.pos; 4], 0.0, p.pos, p.pos);
     w.yaw = super::player_yaw(p.yaw);
 }
 
-/// FUN_100ac9c0 / FUN_100bb750 / FUN_1008d710: the bound actors go back to their own transforms and status
+/// FUN_100ac9c0 / FUN_100bb750 / FUN_1008d710: the bound actors go back to their transforms and status
 /// bits, event motions and looks end, deferred despawns happen.
 fn finish(w: &mut World, live: Box<Live>) {
     w.screen.release_black();
@@ -2863,7 +2909,7 @@ fn finish(w: &mut World, live: Box<Live>) {
         w.actors.remove(id);
     }
     w.event_mem = live.rt.mem.clone();
-    // FUN_100ae3f0 (0x100ae8a2), only when the zone's own reset hasn't run yet (a zone-in cutscene): the ambient and
+    // FUN_100ae3f0 (0x100ae8a2), only when the zone's reset hasn't run yet (a zone-in cutscene): the ambient and
     // the world effects fade back to full over 30 ticks. After the zone reset an event's end restores nothing, so a
     // script has to put back what it lowered (batch 6 item 18).
     if !std::mem::replace(&mut w.sound_reset, true) {
@@ -2986,7 +3032,7 @@ pub fn position_ack(w: &mut World, mode: u8) {
     }
 }
 
-/// Where the running event draws us (the VM bodies are a draw override; our own position stays).
+/// Where the running event draws us (the VM bodies are a draw override; our position stays).
 pub fn own_pose(w: &World) -> Option<Vec3> {
     pose(w, w.my_id).map(|p| p.pos)
 }
@@ -3291,7 +3337,7 @@ impl<'a> HideRule<'a> {
     }
 
     fn entity(&self, w: &World, id: u32, e: &super::Entity) -> bool {
-        // FUN_1008e4d0: /hidetrust (config 0x99 bit 5) takes the model of every trust outside our own party (its plate
+        // FUN_1008e4d0: /hidetrust (config 0x99 bit 5) takes the model of every trust outside our party (its plate
         // and targeting go with it; the radar dot stays).
         let trust = w.game.get(0x99) & 0x20 != 0 && e.marks.trust && !w.party.party().any(|m| m.index == e.index);
         let hide = match self.script {
@@ -3457,7 +3503,7 @@ pub(super) fn set_choice(w: &mut World, k: usize) -> bool {
 }
 
 /// The open message, for the event message window.
-/// The event's own message first; with none, the oldest s2c 0x03B line (both feed the same queues in retail; ours
+/// The event's message first; with none, the oldest s2c 0x03B line (both feed the same queues in retail; ours
 /// shows the event's first *(inf)*).
 pub fn message(w: &mut World) -> Option<&mut Msg> {
     if w.event.as_ref().is_some_and(|l| l.st.msg.is_some()) {
@@ -3531,7 +3577,7 @@ pub fn loose_key(w: &mut World) {
 }
 
 /// FUN_10127ea0: both event message queues emptied (after fishing's mode-3 sends, at an event's end, leaving the
-/// field). Ours: the 0x03B lines; an event's own message ends with its event.
+/// field). Ours: the 0x03B lines; an event's message ends with its event.
 pub fn cancel_queues(w: &mut World) {
     w.loose_msgs.clear();
 }
@@ -3554,16 +3600,6 @@ pub fn placement(w: &World, sw: f32, sh: f32) -> Option<(f32, f32)> {
     let px = if x < 0 { -176.0 - sw * x as f32 / 100.0 } else { x as f32 };
     let py = if y < 0 { -32.0 - sh * y as f32 / 100.0 } else { y as f32 };
     Some((px, py))
-}
-
-/// Op 0x72's table: files 0x1b78 / 0x1b79 (zones under 100) or 0x1b7c / 0x1b7d give the zone's row, then 0x870 days
-/// of 3 bytes a row (FUN_100b84b0).
-pub fn weather_day(index: &DatIndex, zone: u32, day: u32) -> Option<[u8; 3]> {
-    let (rows, data, z) = if zone < 100 { (0x1b78, 0x1b79, zone) } else { (0x1b7c, 0x1b7d, zone - 100) };
-    let row = *index.read(rows).ok()?.get(z as usize)? as usize;
-    let d = index.read(data).ok()?;
-    let at = row * 0x1950 + (day % 0x870) as usize * 3;
-    d.get(at..at + 3).map(|b| [b[0], b[1], b[2]])
 }
 
 /// The target window stays up in an event only with EventPara2 bit 1 (FUN_10085a00(0, 1)).
@@ -3608,7 +3644,7 @@ pub fn option_item(w: &World) -> Option<(u16, Option<[u8; 24]>, u8)> {
 }
 
 pub fn key(w: &mut World, key: egui::Key) {
-    // A 0x03B line shown during the event (no choice and no message of the event's own): Enter pages it.
+    // A 0x03B line shown during the event (no choice and no message of the event's): Enter pages it.
     if key == egui::Key::Enter && loose_waits(w) && w.event.as_ref().is_none_or(|l| l.st.choice.is_none()) {
         loose_key(w);
         return;
@@ -3738,7 +3774,7 @@ pub fn talk_with(w: &mut World, target: u32, param: u32) -> bool {
         super::textcmd::refuse(w, 0x4b);
         return false;
     }
-    // LAB_101d6040: the Mog House door is the client's own; it opens the exit menu or the prompt.
+    // LAB_101d6040: the Mog House door is the client's; it opens the exit menu or the prompt.
     if target == super::myroom::DOOR_ID && w.myroom.is_some() {
         super::open_mogdoor(w);
         return true;
@@ -3920,7 +3956,7 @@ pub fn zone_text(w: &mut World, t: &ZoneText) {
     // msg+0xc10: FUN_100ad5e0 / FUN_100ad660 get the speaker entity's name, else sName; 0x027 none.
     let msg_name = if t.packet == 0x027 { String::new() } else { entity.clone().unwrap_or_else(|| t.name.clone()) };
     // The "%s : " prefix (FUN_100abbb0; MesNum bit 15 none). 0x027: String1's, or with String2 / Flags 1 the NPC's
-    // own name (a PC: String2); bit 15 set: String2 when set and Flags 2.
+    // name (a PC: String2); bit 15 set: String2 when set and Flags 2.
     let prefix = match t.packet {
         0x027 if named && (!t.name2.is_empty() || t.flags & 1 != 0) => {
             if t.actor >> 24 != 0 {
@@ -3985,7 +4021,7 @@ pub fn zone_text(w: &mut World, t: &ZoneText) {
 }
 
 /// An s2c 0x017 Mes with Attr bit 3: "%x,%x,%x,%x,%x,%x,%x," read as source, number and num[0..5]; the line's
-/// own text starts past that prefix as "%02hx,%04hx,%08lx x5," would print it (FUN_100fd910).
+/// text starts past that prefix as "%02hx,%04hx,%08lx x5," would print it (FUN_100fd910).
 pub struct CodedChat<'a> {
     pub source: u16,
     pub id: u16,
@@ -4136,7 +4172,7 @@ mod tests {
     }
 
     /// A login event holds the scene black; `fdi1` (0x0f to 0x80 over 60 ticks) fades it in from there, and an event
-    /// that ends without a fade of its own gets one.
+    /// that ends without a fade gets one.
     #[test]
     fn login_event_holds_black_until_its_fade() {
         let mut sc = Screen::default();
@@ -4207,7 +4243,7 @@ mod tests {
         );
     }
 
-    /// Op 0x82's regions are RID records by 4cc: Lower Jeuno's e6t0 / e6t1 hold their own centres.
+    /// Op 0x82's regions are RID records by 4cc: Lower Jeuno's e6t0 / e6t1 hold their centres.
     #[test]
     fn region_ops() {
         let cfg = crate::config::Config::load();
@@ -4230,10 +4266,13 @@ mod tests {
     #[test]
     fn weather_table() {
         let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
-        let days: Vec<[u8; 3]> = (0..8).filter_map(|d| weather_day(&index, 230, d)).collect();
+        let days: Vec<[u8; 3]> = (0..8).filter_map(|d| crate::dat::weather::forecast_day(&index, 230, d)).collect();
         eprintln!("230: {days:?}");
         assert_eq!(days.len(), 8);
-        assert!(weather_day(&index, 100, 0x86f).is_some() && weather_day(&index, 11, 0x86f).is_some());
+        assert!(
+            crate::dat::weather::forecast_day(&index, 100, 0x86f).is_some()
+                && crate::dat::weather::forecast_day(&index, 11, 0x86f).is_some()
+        );
     }
 
     /// LSB 6439 "Obtained: <item>." sat in a gap of the 2019 zone 230 map (at 6432 there); retail 30261006_0's
@@ -4275,6 +4314,40 @@ mod tests {
         }
         assert!(!st.cancellable);
         assert!(st.flags_df04 & 0x2000 != 0, "op 0x38 keeps 0x052 mode 0 from enabling cancel");
+    }
+
+    /// Op 0x34: no thread runs while the area loads; once its wait ends, that tick and the next are modelless; then
+    /// the models are back. A remade model is opaque, its fade gone.
+    #[test]
+    fn area_switch_models() {
+        let mut g = ModelGate::default();
+        assert!(g.on() && !g.loading(false));
+        g.free();
+        assert!(!g.on());
+        assert!(g.loading(false), "the VM waits while the area loads");
+        assert!(!g.loading(true));
+        // The tick that takes the finished wait, and the one after.
+        g.area_done();
+        assert!(!g.loading(false));
+        for tick in 0..2 {
+            assert!(!g.on(), "tick {tick} after the wait is modelless");
+            g.ticked();
+        }
+        assert!(g.on());
+        g.ticked();
+        assert!(g.on());
+        // Ticks while the area loads count nothing.
+        g.free();
+        g.ticked();
+        assert!(!g.on() && g.loading(false));
+
+        let mut actors = HashMap::from([(1u32, super::super::Actor::new())]);
+        let a = actors.get_mut(&1).unwrap();
+        a.alpha = 0.0;
+        a.fade = Some(super::super::actmotion::Fade::to(0.0, 0x80, 10));
+        remade(&mut actors);
+        let a = &actors[&1];
+        assert!(a.alpha == super::super::actmotion::OPAQUE && a.fade.is_none());
     }
 
     #[test]
