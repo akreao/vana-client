@@ -2837,12 +2837,17 @@ pub fn release(w: &mut World, mode: u8, event: u16) {
     match mode {
         // 0x100a20d5: fishing's release only clears the /fish latch.
         4 => w.fish_pending = false,
-        // 100a070a: release, and cancel allowed unless (DAT_1046df04 | event Mode) & 0x2000.
+        // FUN_100a2050 case 0: the control lock off and cancel allowed, all of it only while (DAT_10481aac | Mode) &
+        // 0x2000 is clear. Every 0x032 / 0x033 / 0x034 event has the bit, so this reaches a talk request's lock, the
+        // login event and no event at all. (`released` only feeds our own idle ending, which retail does not have.)
         0 => {
-            w.control_lock = None;
+            let held = flags(w) & 0x2000 != 0;
+            if !held {
+                w.control_lock = None;
+            }
             if let Some(l) = &mut w.event {
                 l.st.released = true;
-                if l.st.flags() & 0x2000 == 0 {
+                if !held {
                     l.st.cancellable = true;
                 }
             }
@@ -2906,6 +2911,50 @@ pub fn own_step(w: &World) -> Option<Vec3> {
 
 pub fn active(w: &World) -> bool {
     w.event.is_some() || w.event_pending.is_some()
+}
+
+/// DAT_10481aac | DAT_10480cf0: op 0x38's flags and the Mode of the event that runs or still waits for its actors
+/// (the handlers store Mode on receipt); 0 with no event.
+pub fn flags(w: &World) -> u32 {
+    match (&w.event, &w.event_pending) {
+        (Some(l), _) => l.st.flags(),
+        (None, Some(p)) => p.start.mode as u32,
+        _ => 0,
+    }
+}
+
+/// Flag 0x40 (LSB NO_DIALOGUE): s2c 0x036 / 0x02A / 0x027 / 0x043 are dropped (FUN_100a0ef0 / FUN_100a12a0 /
+/// FUN_100a1dc0 / FUN_100a1070, each after it noted the speaker's index).
+pub fn drops_text(w: &World) -> bool {
+    flags(w) & 0x40 != 0
+}
+
+/// s2c 0x038 / 0x039 / 0x03A between two actors (FUN_1009dee0 / FUN_1009dd20 / FUN_1009d9d0): dropped through a
+/// whole event with flag 0x800 (LSB NO_MAGIC_ANIM), and with flag 0x20 (NO_PARTICIPANT_ANIM) when either actor is
+/// bound to it (+0x120 bit 7).
+pub fn drops_scheduler(w: &World, a: u32, b: u32) -> bool {
+    drops_scheduler_in(flags(w), active(w), bound(w, a) || bound(w, b))
+}
+
+fn drops_scheduler_in(flags: u32, active: bool, bound: bool) -> bool {
+    (flags & 0x800 != 0 && active) || (flags & 0x20 != 0 && bound)
+}
+
+/// s2c 0x028 while an event runs (FUN_1009e400, 0x1009e511..0x1009e5a0): with flag 0x400 (LSB NO_BATTLE_ANIM) an
+/// action whose actor or first target is bound is dropped, and our own finishing actions (categories 3..6, 0xb,
+/// 0xd..0xf) are dropped unless flag 0x1000 (ALLOW_OWN_ACTION).
+pub fn drops_action(w: &World, actor: u32, first_target: Option<u32>, category: u8) -> bool {
+    active(w)
+        && drops_action_in(
+            flags(w),
+            bound(w, actor) || first_target.is_some_and(|t| bound(w, t)),
+            actor == w.my_id,
+            category,
+        )
+}
+
+fn drops_action_in(flags: u32, bound: bool, own: bool, category: u8) -> bool {
+    (flags & 0x400 != 0 && bound) || (own && flags & 0x1000 == 0 && matches!(category, 3..=6 | 0xb | 0xd..=0xf))
 }
 
 /// An event holds this actor (bound, or taking part while it waits): a despawn waits for the end.
@@ -3737,6 +3786,9 @@ pub fn text_ctx(w: &World) -> dialog::Ctx {
 
 /// s2c 0x036 / 0x02A: zone dialogue by server id (mapped to the install with MsgShift), into the log.
 pub fn zone_text(w: &mut World, t: &ZoneText) {
+    if t.packet != 0x03B && drops_text(w) {
+        return;
+    }
     let Some(zone) = w.zone else { return };
     let Some(index) = w.index.clone() else { return };
     if w.zone_text.as_ref().is_none_or(|(z, _)| *z != zone) {
@@ -4145,6 +4197,23 @@ mod tests {
         assert_eq!(file_zone(&s, 230), 1012);
         let s = EventStart { zone: 50, zone2: 0, ..Default::default() };
         assert_eq!(file_zone(&s, 50), 1000);
+    }
+
+    #[test]
+    fn mode_flags_drop_packets() {
+        // 0x800 through a whole event, 0x20 only for bound actors.
+        assert!(drops_scheduler_in(0x800, true, false));
+        assert!(!drops_scheduler_in(0x800, false, false));
+        assert!(drops_scheduler_in(0x20, true, true));
+        assert!(!drops_scheduler_in(0x20, true, false));
+        assert!(!drops_scheduler_in(0x2008, true, true));
+        // 0x400 for bound actors; our own finishing actions unless 0x1000.
+        assert!(drops_action_in(0x400, true, false, 1));
+        assert!(!drops_action_in(0x400, false, false, 1));
+        assert!(drops_action_in(0x2008, false, true, 4));
+        assert!(!drops_action_in(0x1000, false, true, 4));
+        assert!(!drops_action_in(0x2008, false, true, 8));
+        assert!(!drops_action_in(0x2008, false, false, 4));
         assert_eq!(dir_of(rad_of(200)), 200);
     }
 
