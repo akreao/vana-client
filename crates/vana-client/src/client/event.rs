@@ -2448,7 +2448,7 @@ fn actors_ready(w: &World, wt: &mut Waiting, ticks: f32) -> bool {
 /// 0x1a).
 fn machine_busy(w: &World, id: u32) -> bool {
     let b = w.actors.get(&id).map(|a| &a.battle);
-    b.is_some_and(|b| !b.on.is_empty() || b.wait || b.leaving)
+    b.is_some_and(|b| !b.on.is_empty() || b.leaving)
         || w.rests.contains_key(&id)
         || w.rides.contains_key(&id)
         || super::chair::holding(w, id)
@@ -2488,7 +2488,7 @@ fn actors_idle(w: &mut World, wt: &Waiting) -> bool {
         }
         let me = id == w.my_id;
         let (status, hidden) = match w.entities.get(&id) {
-            _ if me => (w.my_motion.status, self_hidden(w)),
+            _ if me => (w.my_motion.status, w.self_flags & 1 != 0),
             Some(e) => (e.motion.status, e.flags & 2 != 0),
             None => continue,
         };
