@@ -2801,7 +2801,8 @@ fn finish(w: &mut World, live: Box<Live>) {
                     p.pos.y = floor(p.pos).unwrap_or(p.pos.y);
                 }
                 if let Some(e) = w.entities.get_mut(id) {
-                    (e.pos, e.slide, e.last_pos, e.remain) = (p.pos, p.pos, p.pos, 0.0);
+                    // +0x24 too: the slide's target, or the next frame takes the actor back.
+                    (e.pos, e.slide, e.last_pos, e.target, e.remain) = (p.pos, p.pos, p.pos, p.pos, 0.0);
                 }
             }
         }
