@@ -1465,6 +1465,7 @@ fn slot_resets(id: u32, slot: Option<u32>, moved: bool, sweeps: bool) -> Vec<u32
 
 /// FUN_1008ee30 / FUN_10092900 / FUN_1008a350(0) as ours has it: the entity and all it owns go.
 fn drop_entity(w: &mut World, id: u32) {
+    event::unbind(w, id);
     w.forget_entity(id);
     w.actors.remove(&id);
     w.rests.remove(&id);
@@ -11885,7 +11886,6 @@ impl App {
                         log::info!("partial first update {:#x} (mask {:#x}): asking again", e.id, e.mask);
                         // The reset takes an event's actor out of the event too (FUN_1008ee30).
                         if known == Some(false) {
-                            event::unbind(world, e.id);
                             drop_entity(world, e.id);
                         }
                         let _ = world.net.commands.send(NetCommand::CharReq(e.index));

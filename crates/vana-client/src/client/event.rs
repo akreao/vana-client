@@ -616,6 +616,8 @@ pub struct State {
     snap: HashSet<u32>,
     /// Despawned while bound (0x1009a04d keeps an event participant); removed at the end.
     despawned: HashSet<u32>,
+    /// Actors a slot reset took out of the event: no pose of the VM body is drawn for them any more.
+    detached: HashSet<u32>,
     /// 0x46: true = normal camera (FUN_10082b20).
     camera_flag: bool,
     /// s2c 0x052 mode 0 arrived.
@@ -702,6 +704,7 @@ impl State {
             status_lock: HashSet::new(),
             snap: HashSet::new(),
             despawned: HashSet::new(),
+            detached: HashSet::new(),
             camera_flag: false,
             released: false,
             cb0: true,
@@ -2742,6 +2745,9 @@ fn sync(live: &mut Live, w: &mut World, ticks: f32, dt: f32) {
     let mut steps = Vec::new();
     for (a, b) in live.rt.actors() {
         let id = if a == PLAYER { me } else { a };
+        if live.st.detached.contains(&id) {
+            continue;
+        }
         let p = Vec3::from(b.pos);
         let snap = live.st.snap.remove(&id);
         let pose = live.st.poses.entry(id).or_insert(Pose::new(p, b.dir, b.tilt));
@@ -3119,6 +3125,8 @@ pub fn unbind(w: &mut World, id: u32) {
     if let Some(l) = &mut w.event {
         l.st.bound.remove(&id);
         l.st.despawned.remove(&id);
+        l.st.poses.remove(&id);
+        l.st.detached.insert(id);
     }
 }
 
@@ -3217,7 +3225,11 @@ pub fn bound_set(w: &World) -> HashSet<u32> {
 
 /// A bound actor's drawn transform while the event runs: on its way to its last VM step, over the tick after it.
 pub fn pose(w: &World, id: u32) -> Option<Pose> {
-    w.event.as_ref()?.st.poses.get(&id).map(|p| p.drawn(p.since))
+    let l = w.event.as_ref()?;
+    if l.st.detached.contains(&id) {
+        return None;
+    }
+    l.st.poses.get(&id).map(|p| p.drawn(p.since))
 }
 
 /// A bound actor's event status (+0x174, op 0xac sub 1); 0 when none was set.
