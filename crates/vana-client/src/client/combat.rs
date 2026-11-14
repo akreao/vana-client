@@ -1924,6 +1924,10 @@ pub(super) fn on_magic_scheduler(w: &mut World, ids: (u32, u32), indices: (u16, 
 /// id and index is 0 (LSB's entityVisualPacket at zone-in: '1pb1', 'on00'), else on the two actors, both known by
 /// index and id with their models in. Held until the zone's effects are loaded (retail handles packets after the load).
 pub(super) fn on_map_scheduler(w: &mut World, ids: (u32, u32), indices: (u16, u16), name: [u8; 4]) {
+    // The event's flags as they are when the packet comes in (FUN_1009dd20), not when the held ones run.
+    if ids != (0, 0) && super::event::drops_scheduler(w, ids.0, ids.1) {
+        return;
+    }
     w.map_schedulers.push((ids, indices, name));
 }
 
@@ -1945,9 +1949,6 @@ pub(super) fn run_map_schedulers(w: &mut World) {
             known && w.actors.get(&id).is_some_and(|a| a.character.is_some())
         };
         if ok(ids.0, indices.0) && ok(ids.1, indices.1) {
-            if super::event::drops_scheduler(w, ids.0, ids.1) {
-                continue;
-            }
             w.effects.on_event_scheduler(
                 file,
                 n,

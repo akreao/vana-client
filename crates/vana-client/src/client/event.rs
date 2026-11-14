@@ -2839,15 +2839,13 @@ pub fn release(w: &mut World, mode: u8, event: u16) {
         4 => w.fish_pending = false,
         // FUN_100a2050 case 0: the control lock off and cancel allowed, all of it only while (DAT_10481aac | Mode) &
         // 0x2000 is clear. Every 0x032 / 0x033 / 0x034 event has the bit, so this reaches a talk request's lock, the
-        // login event and no event at all. (`released` only feeds our own idle ending, which retail does not have.)
+        // login event and no event at all. (`released` feeds our own idle ending, which retail does not have; a
+        // release the bit holds off must not shorten that either.)
         0 => {
-            let held = flags(w) & 0x2000 != 0;
-            if !held {
+            if flags(w) & 0x2000 == 0 {
                 w.control_lock = None;
-            }
-            if let Some(l) = &mut w.event {
-                l.st.released = true;
-                if !held {
+                if let Some(l) = &mut w.event {
+                    l.st.released = true;
                     l.st.cancellable = true;
                 }
             }
