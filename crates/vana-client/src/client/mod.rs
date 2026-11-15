@@ -377,15 +377,48 @@ fn world_window_open(w: &World) -> bool {
     w.action_menu.is_some() || window_over_actions(w)
 }
 
-/// FUN_101a33e0: in the field with the UI up, no event, target prompt (+0x59) or party cursor (+0xc4), alive, and no
-/// window holding the keys but the action menu (playermo / mp_pmode) or a palette.
+/// FUN_101a33e0's tests, in its order.
+#[derive(Clone, Copy, Default)]
+struct GateState {
+    /// Scene state 0x60.
+    field: bool,
+    /// FUN_1015dce0: cinema mode or the UI hidden.
+    hidden: bool,
+    /// The target prompt (+0x59).
+    prompt: bool,
+    /// The party cursor (+0xc4).
+    party_cursor: bool,
+    /// The Mog House mode (myroom +0x1c) is not 0: layout, a mannequin, gardening.
+    myroom: bool,
+    /// FUN_10087070(0): an event, frozen, charmed, fishing / digging.
+    busy: bool,
+    /// +0x170 2 / 3.
+    dead: bool,
+    /// A focused window other than playermo, mp_pmode or a palette (+0x68 not identified).
+    window: bool,
+}
+
+fn gate_open(s: GateState) -> bool {
+    s.field && !s.hidden && !s.prompt && !s.party_cursor && !s.myroom && !s.busy && !s.dead && !s.window
+}
+
+/// FUN_101a33e0: retail's macro gate (the macro keys, the palettes, game.info().macros).
+fn retail_macro_gate(w: &World) -> bool {
+    gate_open(GateState {
+        field: w.in_scene(),
+        hidden: w.ui_hidden || event::cinema(w),
+        prompt: w.prompt.is_some(),
+        party_cursor: w.party_cursor.is_some(),
+        myroom: w.layout.is_some() || w.garden.is_some(),
+        busy: textcmd::busy(w),
+        dead: w.dead(),
+        window: window_over_actions(w) || w.settings.is_some() || w.full_log.is_some(),
+    })
+}
+
+/// The gate, with our macro book loaded.
 fn macro_gate(w: &World) -> bool {
-    let window = window_over_actions(w)
-        || w.settings.is_some()
-        || w.full_log.is_some()
-        || w.prompt.is_some()
-        || w.party_cursor.is_some();
-    w.in_scene() && !w.ui_hidden && !event::active(w) && !w.dead() && !window && w.macros.is_some()
+    retail_macro_gate(w) && w.macros.is_some()
 }
 
 /// The open windows but the action menu (playermo), which stays up while engaged: macros run while it is the only one
@@ -20830,6 +20863,28 @@ pub(crate) fn egui_pass(ctx: &egui::Context, raw: egui::RawInput, ui: impl FnMut
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn macro_gate_closes_on_each_retail_test() {
+        use super::{GateState, gate_open};
+        let open = GateState { field: true, ..Default::default() };
+        assert!(gate_open(open));
+        assert!(!gate_open(GateState::default()), "out of the field");
+        let closers: [fn(&mut GateState); 7] = [
+            |s| s.hidden = true,
+            |s| s.prompt = true,
+            |s| s.party_cursor = true,
+            |s| s.myroom = true,
+            |s| s.busy = true,
+            |s| s.dead = true,
+            |s| s.window = true,
+        ];
+        for (k, close) in closers.iter().enumerate() {
+            let mut s = open;
+            close(&mut s);
+            assert!(!gate_open(s), "test {k}");
+        }
+    }
+
     #[test]
     fn colon_space() {
         use super::colon_space as cs;

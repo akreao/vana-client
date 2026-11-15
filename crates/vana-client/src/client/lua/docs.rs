@@ -1244,7 +1244,7 @@ pub const FUNCS: &[Func] = &[
     Func {
         ns: "game",
         name: "info",
-        doc: "The session: zone, server, mog_house, chat_open, menu_open, event, in_combat, locked (target lock), autorun, follow (server id), pet_index, map_grid (as <pos>), modern_ui.",
+        doc: "The session: zone, server, mog_house, chat_open, menu_open, event, in_combat, locked (target lock), autorun, follow (server id), pet_index, map_grid (as <pos>), modern_ui, macros (the game's macros may run now: in the field with the UI shown, no target prompt or party cursor, no Mog House layout or gardening, no event, freeze, charm or fishing, alive, and no window but the action menu or a macro palette has the keys; a mod running macros from the pad passes the press to the game while it is false).",
         params: &[],
         ret: "table",
     },
