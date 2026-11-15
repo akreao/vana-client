@@ -2352,11 +2352,14 @@ fn name_plates(gu: &mut GameUi, world: &World, sw: f32, sh: f32, view_proj: glam
         None => true,
         Some(others) => others && (*id >> 24 != 0 || *id == world.my_id),
     };
+    // FUN_10096000: outside a running event's cast, +0x130 bit 7 (0x00E @0x2B 0x08, LSB's HideName) leaves no name.
+    let bound = |id: &u32| world.event.as_ref().is_some_and(|l| l.st.bound.contains(id));
     for (id, e) in world.entities.iter().filter(|(id, e)| {
         !monstrosity::name(e).is_empty()
             && !e.name.starts_with('_')
             && !e.no_plate
             && !led(e)
+            && !(e.untargetable && !bound(id))
             && !(0xb22..=0xb31).contains(&e.model)
             && visible(id, e)
             && !hidden.contains(id)
@@ -2375,14 +2378,19 @@ fn name_plates(gu: &mut GameUi, world: &World, sw: f32, sh: f32, view_proj: glam
             gu.depth(Some(z));
             let look = looks.get(id);
             let tint = look.and_then(|l| l.plate_tint()).unwrap_or_else(|| name_colour(*id, e, world, |i| gu.ncol(i)));
-            let name = look.and_then(|l| l.name.as_deref()).unwrap_or_else(|| monstrosity::name(e));
+            // A mod's name (render.look) as given; the game's gets the modern UI's colon space.
+            let name = match look.and_then(|l| l.name.as_deref()) {
+                Some(n) => n.into(),
+                None if world.modern => colon_space(monstrosity::name(e)),
+                None => monstrosity::name(e).into(),
+            };
             let p = entity_plate(*id, e);
             let (prefix, icon) = plate::prefix(&p);
             if world.modern {
                 modern::plates::draw(
                     gu,
                     &prefix,
-                    name,
+                    &name,
                     x,
                     y,
                     scale,
@@ -2393,7 +2401,7 @@ fn name_plates(gu: &mut GameUi, world: &World, sw: f32, sh: f32, view_proj: glam
                     m,
                 );
             } else {
-                gu.name_plate(&prefix, name, x, y, scale, faded(tint), pulse, faded(icon), plate::stars(&p));
+                gu.name_plate(&prefix, &name, x, y, scale, faded(tint), pulse, faded(icon), plate::stars(&p));
             }
         }
     }
@@ -6377,6 +6385,23 @@ fn npc_names(index: &DatIndex, zone: u16) -> HashMap<u32, String> {
         // FUN_1008a930 takes the first record with the id.
         .rev()
         .collect()
+}
+
+/// The modern UI's one-line names get a space after every colon ("Door:House" -> "Door: House"); retail's target
+/// window breaks the name after the colon instead (FUN_101c9fa0), so the files have none.
+pub(crate) fn colon_space(name: &str) -> std::borrow::Cow<'_, str> {
+    if !name.contains(':') {
+        return name.into();
+    }
+    let mut out = String::with_capacity(name.len() + 2);
+    let mut chars = name.chars().peekable();
+    while let Some(c) = chars.next() {
+        out.push(c);
+        if c == ':' && chars.peek().is_some_and(|n| *n != ' ') {
+            out.push(' ');
+        }
+    }
+    out.into()
 }
 
 /// Lobby/zone GrapIDTbl: [0] is face | race << 8, the rest carry the slot in the top nibble.
@@ -13727,7 +13752,9 @@ impl App {
         }
         // Scheduler op 0x2e: the effect of our action holds the walk input (FUN_100a5ec0 skips FUN_100a6240).
         // `res2` (rest.rs) holds the walk the same way, from the frame it starts.
-        let move_locked = world.opts.move_lock && (world.effects.rooted.contains(&world.my_id) || rest::rising(world));
+        let move_locked = (world.opts.move_lock
+            && (world.effects.rooted.contains(&world.my_id) || rest::rising(world)))
+            || ride::dismounting(world);
         if resting || move_locked {
             (ax, ay) = (0.0, 0.0);
         }
@@ -18008,6 +18035,12 @@ impl App {
             if let Some(k) = dik("up:") {
                 self.input.set(k, false);
             }
+            // act:hold-w / act:release-w: run forward as a held W does, whatever the keyboard layout.
+            match action.as_deref() {
+                Some("hold-w") => _ = self.keys.insert(KeyCode::KeyW),
+                Some("release-w") => _ = self.keys.remove(&KeyCode::KeyW),
+                _ => {}
+            }
             // act:relogin (test drives): after a logout the drive logs in again, opens Select Character and
             // waits 8 s there.
             if action.as_deref() == Some("relogin") {
@@ -21342,6 +21375,17 @@ pub(crate) fn egui_pass(ctx: &egui::Context, raw: egui::RawInput, ui: impl FnMut
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn colon_space() {
+        use super::colon_space as cs;
+        assert_eq!(cs("Door:House"), "Door: House");
+        assert_eq!(cs("Door:\"Marble Bridge\""), "Door: \"Marble Bridge\"");
+        assert_eq!(cs("Gate: Hall of Binding"), "Gate: Hall of Binding");
+        assert_eq!(cs("Rally Point:Red"), "Rally Point: Red");
+        assert_eq!(cs("Ends:"), "Ends:");
+        assert_eq!(cs("Moogle"), "Moogle");
+    }
+
     #[test]
     fn full_keyboard_types_main_block_keys() {
         use egui::Key as K;
