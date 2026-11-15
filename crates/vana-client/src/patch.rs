@@ -706,6 +706,15 @@ pub fn plan_against(root: &Path, server: ServerVersion) -> Result<Plan> {
     plan_for(root, true, server)
 }
 
+/// Drops the applied manifest: the folder's files are about to be replaced by older ones, so the stamp would
+/// wrongly vouch for them (the next update then reads every file).
+pub fn forget_applied(root: &Path) -> Result<()> {
+    match std::fs::remove_file(root.join(STAMP_FILE)) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e).context("clearing the applied manifest"),
+        _ => Ok(()),
+    }
+}
+
 /// The FFXiMain.dll the client reads matches the stamped manifest's.
 fn code_current(root: &Path) -> bool {
     let Some(entries) = std::fs::read_to_string(root.join(STAMP_FILE)).ok().and_then(|t| parse_manifest(&t).ok())
@@ -748,7 +757,8 @@ fn check(root: &Path, e: &Entry, applied: Option<&str>) -> Result<((Action, u64)
             (Action::Deltas(i), n) => return Ok(((Action::StagedDeltas(i), n), None)),
             // Direct for a staged older version writes over it; one that matches nothing goes first.
             d if e.versions.iter().any(|v| v.sig == sig) => return Ok((d, None)),
-            _ => stale = Some(tmp2),
+            // Removed later: only a path no link leads out of the install (as for a write).
+            _ => stale = target(root, &e.path).is_ok().then_some(tmp2),
         }
     }
     let have = sig_of_path(&source(root, &e.path)?)?;
@@ -1193,5 +1203,39 @@ mod tests {
         std::os::unix::fs::symlink(&root, base.join("linked")).unwrap();
         assert!(writable(&base.join("linked"), "ROM/0/0.DAT").is_ok());
         std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// A staged file that matches no version is queued for removal only when no link leads out of the install.
+    #[cfg(unix)]
+    #[test]
+    fn stale_staged_file_behind_a_link_is_left() {
+        let base = std::env::temp_dir().join(format!("vana-patch-stale-{}", std::process::id()));
+        let (root, outside) = (base.join("game"), base.join("outside"));
+        std::fs::create_dir_all(root.join("ROM")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("ROM2")).unwrap();
+        let (a, b) = (Sig::of(b"one"), Sig::of(b"two"));
+        let line = |v: &str, s: Sig| format!("{v} {} {} {} {v}/Direct/x.slc 5\n", s.len, s.sum, s.md5);
+        let text = |p: &str| format!("file {p} {{\n{}{}}}\nend\n", line("1_0", a), line("2_0", b));
+        for (path, stale) in [("ROM/1.DAT", true), ("ROM2/1.DAT", false)] {
+            let m = parse_manifest(&text(path)).unwrap();
+            std::fs::write(root.join(format!("{path}.tmp2")), b"matches nothing").unwrap();
+            let (_, old) = check(&root, &m[0], None).unwrap();
+            assert_eq!(old.is_some(), stale, "{path}");
+        }
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn forgetting_the_applied_manifest() {
+        let root = std::env::temp_dir().join(format!("vana-patch-forget-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        forget_applied(&root).unwrap();
+        let line = "1_0 1 1 1 1_0/Direct/x.slc 5\n";
+        std::fs::write(root.join(STAMP_FILE), format!("file ROM/0/0.DAT {{\n{line}}}\nend\n")).unwrap();
+        assert_eq!(applied_version(&root).as_deref(), Some("1_0"));
+        forget_applied(&root).unwrap();
+        assert_eq!(applied_version(&root), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
