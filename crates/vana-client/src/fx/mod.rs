@@ -418,13 +418,16 @@ pub struct Instance {
     pub area_light: Option<Vec3>,
     /// The damage number of the task that started it (gen +0x64 -> task +0xa8 / +0xa4); clones inherit it.
     pub dam: Option<DamValue>,
-    /// Its start in the serial order: the task list runs generators in start order (FUN_10074170 appends).
+    /// Its start in the serial order: the task list runs unattached generators in start order (FUN_10075120
+    /// appends).
     pub started: u32,
 }
 
+type RunKey = (u32, (u8, u32), u32);
+
 /// `Effects::run_order`'s key: the tick the element was made in, its generator's place in the walk (attach mode,
 /// start serial), its serial.
-fn run_key(born: u32, mode: u8, started: u32, serial: u32) -> (u32, (u8, u32), u32) {
+fn run_key(born: u32, mode: u8, started: u32, serial: u32) -> RunKey {
     (born, if matches!(mode, 0 | 0xe | 0xf | 0x14) { (0, started) } else { (1, !started) }, serial)
 }
 
@@ -2147,7 +2150,7 @@ impl Effects {
     /// reached in order: the unattached kinds (0, 0xe, 0xf, 0x14: FUN_100531d0 -> FUN_10075120, appended) in start
     /// order, then the actor-attached ones (front of bucket 9), the last started first *(inf: an unattached generator
     /// started by a running task goes just before that task instead)*.
-    fn run_order(&self, c: &ElemCpu) -> (u32, (u8, u32), u32) {
+    fn run_order(&self, c: &ElemCpu) -> RunKey {
         let (mode, started) = self.insts.get(c.inst).and_then(|x| x.as_ref()).map_or((0, 0), |x| (x.mode, x.started));
         run_key(c.born, mode, started, c.serial)
     }
@@ -2843,48 +2846,49 @@ impl Effects {
         }
     }
 
-    /// The tie order for equal clamped keys: the ordering table (FUN_10054410) puts a key at its 512 clamp after the
-    /// bucket's nodes, so they draw as inserted, i.e. as the task list updates them. FUN_10074170 puts a generator's
-    /// new elements just before it: generators in start order, each one's elements oldest first.
-    fn insert_order(&self, c: &ElemCpu) -> (u32, u32) {
-        (self.insts.get(c.inst).and_then(|x| x.as_ref()).map_or(0, |x| x.started), c.serial)
+    /// The draw order of `(raw key, walk place, item)` nodes: retail's ordering table (FUN_10055300: 0x200 buckets
+    /// over 0..512, one list from the far end; walked by FUN_10055520). FUN_100553c0 puts a node after the last one
+    /// whose raw key is >= its own key clamped to [0, 512], so farther draws first, and equal clamped keys (every
+    /// key past 512 too) draw as inserted. A key below 0 clamps to 0 and so goes before every node already below
+    /// 0: those draw last, the last inserted first. Keys that are not normal numbers or 0 (FUN_1006ca20: NaN,
+    /// infinite, denormal) are not inserted. Nodes insert in their task's update, i.e. in the task walk: an
+    /// after-image's task sits by the scheduler that made it (`None`), ahead of the elements, which the factory
+    /// moves to the front of bucket 0xb (`run_order`): the newest element inserts, and draws, first.
+    fn table_order(mut v: Vec<(f32, Option<RunKey>, u32)>) -> Vec<(f32, u32)> {
+        v.retain(|n| n.0 == 0.0 || n.0.is_normal());
+        v.sort_by_key(|n| n.1.map(std::cmp::Reverse));
+        let mut v: Vec<(usize, (f32, Option<RunKey>, u32))> = v.into_iter().enumerate().collect();
+        v.sort_by(|(i, a), (j, b)| {
+            // + 0.0: -0.0 is 0 to retail's compare.
+            let (ka, kb) = (a.0.clamp(0.0, 512.0) + 0.0, b.0.clamp(0.0, 512.0) + 0.0);
+            let (na, nb) = (a.0 < 0.0, b.0 < 0.0);
+            kb.total_cmp(&ka).then(na.cmp(&nb)).then(if na { j.cmp(i) } else { i.cmp(j) })
+        });
+        v.into_iter().map(|(_, (k, _, i))| (k, i)).collect()
     }
 
-    /// The draw order with the after-images among the elements (`TRAIL_ITEM | slot`), farthest first (ties by
-    /// `insert_order`), each with its sort key (view depth: larger is farther).
+    fn elem_nodes(&self) -> impl Iterator<Item = (f32, Option<RunKey>, u32)> + '_ {
+        self.elems.iter().enumerate().filter_map(|(i, c)| {
+            c.as_ref().filter(|c| c.draw != Draw::None && !c.hidden).map(|c| (c.key, Some(self.run_order(c)), i as u32))
+        })
+    }
+
+    /// The draw order with the after-images among the elements (`TRAIL_ITEM | slot`), each with its sort key (view
+    /// depth: larger is farther; an element's clamped to the table's range): `table_order`.
     pub fn draw_items_keyed(&self) -> Vec<(f32, u32)> {
         let view = self.last_frame.map_or(Mat4::IDENTITY, |f| f.view);
-        let mut v: Vec<(f32, (u32, u32), u32)> = self
-            .elems
-            .iter()
-            .enumerate()
-            .filter_map(|(i, c)| {
-                c.as_ref()
-                    .filter(|c| c.draw != Draw::None && !c.hidden)
-                    .map(|c| (c.key.clamp(0.0, 512.0), self.insert_order(c), i as u32))
-            })
-            .chain(self.trails.iter().enumerate().filter_map(|(i, t)| {
-                t.as_ref().filter(|t| t.count >= 2).map(|t| (t.key(&view), (0, 0), TRAIL_ITEM | i as u32))
-            }))
-            .collect();
-        v.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
-        v.into_iter().map(|(k, _, i)| (k, i)).collect()
+        let trails = self.trails.iter().enumerate().filter_map(|(i, t)| {
+            t.as_ref().filter(|t| t.count >= 2).map(|t| (t.key(&view), None, TRAIL_ITEM | i as u32))
+        });
+        Self::table_order(trails.chain(self.elem_nodes()).collect())
+            .into_iter()
+            .map(|(k, i)| (if i & TRAIL_ITEM != 0 { k } else { k.clamp(0.0, 512.0) }, i))
+            .collect()
     }
 
-    /// Live elements to draw, back to front (the CMoOT walk: larger keys first, insertion order within one).
+    /// Live elements to draw, back to front (`table_order`).
     pub fn draw_order(&self) -> Vec<u32> {
-        let mut v: Vec<(f32, (u32, u32), u32)> = self
-            .elems
-            .iter()
-            .enumerate()
-            .filter_map(|(i, c)| {
-                c.as_ref()
-                    .filter(|c| c.draw != Draw::None && !c.hidden)
-                    .map(|c| (c.key.clamp(0.0, 512.0), self.insert_order(c), i as u32))
-            })
-            .collect();
-        v.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
-        v.into_iter().map(|(_, _, i)| i).collect()
+        Self::table_order(self.elem_nodes().collect()).into_iter().map(|(_, i)| i).collect()
     }
 
     /// One line per instance not owned by the zone, sub-area or weather: name, owner, actors, attach, elements.
@@ -3109,5 +3113,80 @@ mod tests {
         let mut sorted = walk;
         sorted.sort_by_key(|&(b, m, st, se)| std::cmp::Reverse(run_key(b, m, st, se)));
         assert_eq!(sorted, walk);
+    }
+
+    /// The ordering table (FUN_100553c0): farther first, equal clamped keys as inserted (after-images, then the
+    /// elements newest first), keys below 0 last and the last inserted first, keys that are no number left out.
+    #[test]
+    fn table_ties_draw_as_inserted() {
+        let e = |born, serial| Some(run_key(born, 0, 1, serial));
+        let nodes = vec![
+            (5000.0, e(1, 1), 1),
+            (4000.0, e(1, 2), 2),
+            (511.0, e(1, 3), 3),
+            (512.0, e(2, 4), 4),
+            (600.0, None, 5),
+            (0.0, e(1, 6), 6),
+            (-3.0, e(1, 7), 7),
+            (-9.0, e(2, 8), 8),
+            (0.0, e(2, 9), 9),
+            (f32::NAN, e(2, 10), 10),
+            (f32::INFINITY, e(2, 11), 11),
+            (1e-40, e(2, 12), 12),
+            (-0.0, e(3, 13), 13),
+        ];
+        let order: Vec<u32> = Effects::table_order(nodes).into_iter().map(|n| n.1).collect();
+        assert_eq!(order, [5, 4, 2, 1, 3, 13, 9, 6, 7, 8]);
+    }
+
+    /// Port Bastok's harbour (zone 236, DAT 336, t_ba/effe/esea): `col1`, `1sea` and `down` on one spot, keys 4500 /
+    /// 4000 / 5000, all past the table's 512. Their generators start with the zone in file order and each makes its
+    /// one element in its first update, so they draw `down`, `1sea`, `col1`: the last made first. Port San d'Oria's
+    /// (zone 232, DAT 332, t_sa/effe): `col1` 0.2 and `down` 0 by key, then `sea2` and `sea1` at -100, which the
+    /// table puts last, the last inserted (`sea2`, made before `sea1`) first.
+    #[test]
+    fn harbour_draws_newest_first() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else { return };
+        let eye = Vec3::new(10.0, -6.0, 20.0);
+        let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::new(0.0, -6.0, 20.0), Vec3::NEG_Y);
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view,
+            view_rot: view,
+            eye,
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        for (file, folder, want) in [
+            (336, &["esea"][..], &["down", "1sea", "col1"][..]),
+            (332, &["wate", "sea"], &["col1", "down", "sea2", "sea1"]),
+        ] {
+            let mut fx = Effects::new();
+            fx.set_keys(std::sync::Arc::new(crate::dat::zone::Keys::from_ffximain(&dll).unwrap()));
+            fx.set_global(lib::Library::load(0, index.read(0).unwrap()).unwrap());
+            let l = fx.load_zone(lib::Library::load(file, index.read(file).unwrap()).unwrap());
+            for _ in 0..3 {
+                fx.tick(&f, &NoActors);
+            }
+            let order: Vec<String> = fx
+                .draw_order()
+                .into_iter()
+                .filter_map(|e| {
+                    let x = fx.insts[fx.elems[e as usize].as_ref()?.inst].as_ref()?;
+                    let path = fx.reg.libs[l].tree.path(x.src.1);
+                    let under =
+                        path.iter().any(|p| folder.contains(&String::from_utf8_lossy(p).trim_end_matches(['\0', ' '])));
+                    (x.src.0 == l && under).then(|| String::from_utf8_lossy(&x.name).into_owned())
+                })
+                .collect();
+            assert_eq!(order, want, "DAT {file}");
+        }
     }
 }
