@@ -390,6 +390,11 @@ fn finish(w: &mut World, id: u32) {
     }
 }
 
+/// FUN_1008b3a0 (the local walk's gate): no walk while our ride ends, states 0xf (the stand) and 0x10 (`coff`).
+pub fn dismounting(w: &World) -> bool {
+    w.rides.get(&w.my_id).is_some_and(|r| matches!(r.phase, Phase::Stopping | Phase::Leaving { .. }))
+}
+
 /// A running op 0x6e (actor +0x101): the step a tick (+0x120) and the ticks left to move (+0x118); `goal`, another
 /// actor's slide goal when the op started (None while a slide was still under way).
 #[derive(Clone, Copy, Debug, PartialEq)]

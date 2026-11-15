@@ -21078,11 +21078,16 @@ From the 30261006_0 decompile; ours in client/swkbd.rs (classic) and modern/keyb
 - FUN_1008b460 going to state 0xf (the ride ended) calls FUN_100a6070(0) for our actor when +0xee is not 3 / 4 / 5
   (read as the status, inferred): autorun (DAT_10487f81) and /follow end, "Follow canceled." when one ran. State 0xf
   then waits for the stand (FUN_100d65b0(0)) as before. Ours skipped the FUN_100a6070 call, so with autorun or /follow
-  the stand never came and the dismount waited until the player stopped them; a held key still waits, as retail.
+  the stand never came and the dismount waited until the player stopped them. A held key: see below.
 - Live (Lnxcsfix, West Ronfaure, chocobo): /dismount while autorunning played `coff` 0.57 s after the command
   (standing: 0.44 s); before, only when autorun was switched off. A mount took 0.53 s running and 0.82 s standing
   (the next 400 ms datagram and the server's update); the first mount of a session waits for the chocobo's model
   (retail's state 0xe hides only a mount's rider, cVar7, so a chocobo's rider shows without the bird meanwhile).
+- A held key (2026-11-14): FUN_1008b3a0, the local walk's gate (FUN_100964f0 in FUN_100a6240), refuses the walk in
+  ride states 0xf and 0x10 too (also 1, 2, 4..8, 0x14..0x1a), so the bird stops, the stand plays and `coff` follows
+  with the key still down; the walk resumes when `coff` ends. Ours: ride::dismounting (Phase::Stopping / Leaving)
+  joins the walk lock, not behind the move_lock option. Live (Lnxcsfix, chocobo, W held): `coff` 0.21 s after
+  /dismount, the run on foot right after it.
 
 ## Event op 0x5f subs 0 / 1: keep s2c 0x038 schedulers off an actor (2026-11-02)
 
@@ -24119,3 +24124,60 @@ All of it is the mod's Lua over the general API; the client gained nothing.
   effects) is kept *(ours: only the colour is reset)*.
 - Op 0x62 with tag 0xfefefe00 (25 sites in this scene) finds no scheduler (FUN_10071310 compares the name exactly) and
   only loads and pins the file (FUN_10072200, +0x1a |= 0x10); ours logs "no scheduler" for them.
+
+## NPC names: a space after the colon (2026-11-13)
+
+- The zone name files (0x1a40 + zone) write door and gate names with no space after the colon and keep quotes around
+  shop names: Upper Jeuno 17776739 is `Door:"Marble Bridge"`, 17776740 `Door:House`. Prefixes over every zone: Door
+  (302), Gate (22), Liseran Door, Rally Point, Entrance, Exit; 44 names already have the space (Aht Urhgan zones).
+- Retail shows them as stored: FUN_101c9fa0 (the target window) breaks a name after its first colon onto two lines
+  and keeps the quotes ("Door:" / "\"Marble Bridge\"").
+- Ours (user, 2026-11-13): the modern UI, which draws names on one line, puts a space after every colon that has none
+  (colon_space: the target panel, the other-target rows, the right-click menu's title, the compass's tracked name,
+  the Wide Scan rows and the modern plates); quotes kept. The battle menu's title is left: it breaks after the colon
+  as retail's target window (name_lines). Entity names stay as the files and the server give them, so the classic UI,
+  the chat log and a mod's plate name (render.look) are as given.
+
+## Name plates: the hidden-name bit
+
+- FUN_10096000 (the plate name getter) returns no name when actor +0x130 bit 7 is set (0x00E u8 @0x2B bit 0x08),
+  unless the actor is bound (+0x120 bit 7) to a running event, where its own +0x12e bit 0 / bit 17 rule applies. So
+  no plate. LSB sets this bit (HideName) on stealth roamers and on Chigoes, which clear it when engaged and set it
+  again when disengaged: retail shows the model with no plate until the fight. Ours: the plate filter in
+  client/mod.rs skips `untargetable` actors that are not in the running event's bound list. Live (Caedarva Mire,
+  Chigoe 11): the plate is up while it attacks.
+
+## Camera lists on a voyage: the world slot is drawn whole (2026-11-14)
+
+- FUN_1017b510 walks the zone's two scene slots and applies the camera list (coll+0x1807c) only to a slot whose flag
+  (the dword before the slot's record, piVar6[-1]) is set; the list pointer stays for the next slot when the first
+  is not flagged. A slot drawn without the list draws all its placements, each still distance / frustum / LOD
+  tested.
+- The lists come from the collision MZB, which in a voyage zone is the ship's (the second MZB); the world MZB comes
+  first *(inf: the flagged slot is the lists' own MZB)*. Only the Aht Urhgan ships carry lists: zones 46 / 47 (0x695c,
+  156 placements on deck), 58 / 59 (0x69b0, 161); the other voyage zones have none.
+- Ours applied the ship's list to every placement, so the whole world MZB was masked: no sea, and at Draw Distance
+  past Retail only the far land beyond retail's distance drew (the "beyond" rule), as coasts and a city hanging over a
+  fog-coloured void, with the sea's ripple effects floating in it. Now ZoneScene::list_base (the lists' MZB's first
+  placement) leaves the placements before it out of the mask and out of the "beyond" rule, and the leak replay takes
+  them first. Test lists_hold_only_the_ship. Live (Lnxcsfix, zone 46 mid-voyage): the sea draws beside the hull;
+  offscreen at t 0.5 every voyage zone (1, 3, 46, 47, 58, 59, 60, 220, 221, 223..228) shows sea or land to the
+  horizon at Retail and Unlimited.
+- The white streaks in rows up the cliffs of the mid-route islands (zone 46, t about 0.45) are retail: the user's
+  retail screenshot on our server shows them the same. They are the surf generators `effe/shir/g000`..`g010`
+  (mode 0x14, mesh `usi0`, an MMB ring about 46 across, y -3.5..0.3): emission op 0x09 turns it pi/2 about x and op
+  0x0f / 0x12 scale it to about 8.5 x 11.5, so it stands as a wall about 265 tall at sea level and shows where it
+  passes in front of the slopes.
+- zone-shot diagnostics: FFXI_VOYAGE_FROM=T0 (the voyage effects start at T0's V and V moves to --voyage's T over the
+  ticks), FFXI_SWAY_TICKS (the environment animation that many ticks on), FFXI_FX_DESCRIBE (every live element),
+  FFXI_FX_GEN=name (a zone generator's attach word and op streams), FFXI_FX_MESH=name (a zone effect mesh's bounds),
+  FFXI_FX_OP=code (the zone generators whose stream 0 carries that op).
+
+## The far plane past every Draw Distance (2026-11-14)
+
+- Our projection's far plane was a fixed 2000 (render::FAR). At Draw Distance Unlimited the scenery past 2000 view
+  depth was clipped, and since depth runs along the view direction a landmass just past it showed toward the screen
+  edges (D x cos of the angle off centre) and vanished when looked at (user, the Al Zahbi ferry's far coast; offscreen
+  zone 46 at t 0.56: the coast gone from yaw 105..140, back at 145 at 86% across). Retail's distances never reach it.
+- FAR is 20000 now. Depth precision is set by NEAR (dz about z^2 x eps / NEAR once FAR >> NEAR), so the change costs
+  none: Southern San d'Oria and West Ronfaure render pixel-identical to before; the coast draws at every angle.
