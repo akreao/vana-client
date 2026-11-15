@@ -751,6 +751,8 @@ pub enum NetEvent {
     JobPointList(Vec<(u16, u8, u16)>),
     /// s2c 0x08E: u16 points @4, u8 upgrades[32] @8, u16 costs[32] @0x28.
     AlterEgo(super::aepoints::AeData),
+    /// s2c 0x08F: the celestites owned and the six sets (client/celestite.rs).
+    Celestites(super::celestite::CelData),
     /// 0x063 types 3 / 4: the blocks from @8 (212 / 172 bytes).
     Monstrosity {
         kind: u16,
@@ -2078,6 +2080,11 @@ impl Session<'_> {
                 upgrades: std::array::from_fn(|i| p.u8(8 + i)),
                 costs: std::array::from_fn(|i| p.u16(0x28 + 2 * i)),
             }))?,
+            0x08F => {
+                if let Some(d) = super::celestite::CelData::parse(&p.data) {
+                    self.tx.send(NetEvent::Celestites(d))?
+                }
+            }
             0x08D => {
                 let n = (p.data.len().saturating_sub(4) / 4).min(64);
                 let recs = (0..n)
