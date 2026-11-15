@@ -366,7 +366,9 @@ impl MapSession {
         let fit = |(size, bits): (usize, u32), (s, b): (usize, u32)| {
             (size + s <= MAX_PAYLOAD && sendable(size + s, bits + b)).then_some((size + s, bits + b))
         };
-        let tail = (kept..self.unacked.len()).try_fold((0, 0), |at, i| fit(at, cost(i)));
+        // Only the whole reserved batch has to be sendable: a prefix of it may sit in the size gap.
+        let total = (kept..self.unacked.len()).map(cost).fold((0, 0), |a, c| (a.0 + c.0, a.1 + c.1));
+        let tail = (total.0 <= MAX_PAYLOAD && sendable(total.0, total.1)).then_some(total);
         let (kept, mut at) = match tail {
             Some(at) => (kept, at),
             None => (self.unacked.len(), (0, 0)),
@@ -544,6 +546,21 @@ mod tests {
         s.send(&[build(0x0DD, &gap), build(0x0DD, &[0; 12])]).unwrap();
         assert_eq!(s.unacked.iter().map(|(sync, p)| (*sync, p.len())).collect::<Vec<_>>(), [(1, 16)]);
         assert!(server.recv(&mut buf).unwrap() <= MAX_DATAGRAM);
+    }
+
+    /// The last datagram's reserved batch goes when the whole batch is sendable, even if a prefix of it sits in the size
+    /// gap (the two-slot prefix here is 10496 bits).
+    #[test]
+    fn send_last_batch_past_gap_prefix() {
+        let server = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let mut s = MapSession::connect(server.local_addr().unwrap(), &[7; 20], long_codec()).unwrap();
+        let old: Vec<_> = (0..6).map(|_| build(0x0DD, &[0; 196])).collect();
+        s.send(&old).unwrap();
+        let big = || build(0x0DD, &[vec![0xFFu8; 152], vec![0u8; 44]].concat());
+        let batch = [big(), big(), build(0x0DD, &[0; 12])];
+        s.send_last(&batch).unwrap();
+        let new = &s.unacked[s.unacked.len() - 3..];
+        assert!(new.iter().all(|(sync, _)| *sync != 0), "{:?}", s.unacked.iter().map(|u| u.0).collect::<Vec<_>>());
     }
 
     /// FUN_100dd590's limits: compressed up to a 10488-bit payload, nothing from there to 10519, plain from 10520
