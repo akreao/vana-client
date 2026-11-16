@@ -95,6 +95,7 @@ mod auction;
 mod bazaar;
 mod blklist;
 mod bluset;
+mod celestite;
 mod chatctrl;
 mod cmdhint;
 mod concierge;
@@ -2568,6 +2569,8 @@ fn world_hud(
     world.ui_wh = (sw, sh);
     world.lua.set_view_proj(view_proj);
     // The focused list's scroll bar and the wheel, before the windows see the press.
+    // Game files from 30261102 on hold fe_main (client/celestite.rs).
+    world.fe_menu = gu.layout(celestite::MAIN).is_some();
     let taken = scrollbar::frame(gu, world, input);
     let input = taken.as_ref().unwrap_or(input);
     // A middle click is this frame's only: one made while the HUD is down (downloading, hidden) is dropped.
@@ -3163,6 +3166,12 @@ fn world_hud(
                 _ if world.merits_ui.is_some() => merits::key(world, gu, *key),
                 _ if world.jp_ui.is_some() => jobpoints::key(world, *key, modifiers.ctrl || modifiers.alt),
                 _ if world.ae_ui.is_some() => aepoints::key(world, *key, modifiers.ctrl || modifiers.alt),
+                _ if world.cel_ui.is_some() => {
+                    if celestite::event_key(*key) {
+                        celestite::key(world, *key, modifiers.ctrl || modifiers.alt, modifiers.alt)
+                    }
+                }
+                _ if world.fe_main.is_some() => celestite::main_key(world, gu, *key),
                 _ if world.status.is_some() && modern::status_key(world, *key) => {}
                 _ if world.status.is_some() => status::key(world, gu, *key),
                 _ if modern::journal_key(world, gu, *key, modifiers.ctrl || modifiers.alt) => {}
@@ -3738,6 +3747,7 @@ fn world_hud(
             && world.merits_ui.is_none()
             && world.jp_ui.is_none()
             && world.ae_ui.is_none()
+            && world.fe_main.is_none()
             && world.confirm.is_none()
     });
     if let Some(p) = input.pointer.filter(|_| world.currencies.is_some() && world.confirm.is_none()) {
@@ -3751,6 +3761,8 @@ fn world_hud(
     }
     if let Some(p) = input.pointer.filter(|_| world.ae_ui.is_some() && world.confirm.is_none()) {
         aepoints::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
+    } else if let Some(p) = input.pointer.filter(|_| world.fe_main.is_some() && world.confirm.is_none()) {
+        celestite::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.unity.is_some() && world.confirm.is_none()) {
         unity::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
@@ -4705,6 +4717,7 @@ fn world_hud(
     blockers.extend(pupset::draw(gu, world, sw, sh));
     blockers.extend(maze::draw(gu, world, sw, sh));
     blockers.extend(jobpoints::draw(gu, world, sw, sh));
+    blockers.extend(celestite::draw(gu, world, sw, sh));
     blockers.extend(aepoints::draw(gu, world, sw, sh));
     if !world.modern {
         blockers.extend(missions::draw(gu, world, sw, sh));
@@ -5504,6 +5517,7 @@ fn bar_text(gu: &GameUi, world: &World, items: &[(usize, [f32; 4])]) -> hudtop::
     pupset::bars(gu, world, &mut bars);
     maze::bars(gu, world, &mut bars);
     jobpoints::bars(gu, world, &mut bars);
+    celestite::bars(gu, world, &mut bars);
     aepoints::bars(gu, world, &mut bars);
     missions::bars(gu, world, &mut bars);
     quests::bars(gu, world, &mut bars);
@@ -7756,6 +7770,12 @@ struct World {
     /// Their texts, loaded when first used.
     msg_texts: HashMap<u16, Option<Arc<crate::dat::dialog::Dialog>>>,
     ae_data: Option<aepoints::AeData>,
+    /// The celestite windows (client/celestite.rs): fe_main, a set's lists, s2c 0x08F's block, and whether the game
+    /// files hold fe_main.
+    fe_main: Option<celestite::MainUi>,
+    cel_ui: Option<celestite::CelUi>,
+    cel_data: Option<celestite::CelData>,
+    fe_menu: bool,
     jp_list: HashMap<u16, (u8, u16)>,
     jp_seen: bool,
     jp_jobs: Option<[[u16; 3]; 24]>,
@@ -8348,6 +8368,9 @@ impl World {
         let mut kept: Vec<(&'static str, u16)> = Vec::new();
         if let Some(s) = &self.status {
             kept.push((status::STATCOM, s.sel));
+        }
+        if let Some(m) = &self.fe_main {
+            kept.push((celestite::MAIN, m.sel));
         }
         if let Some(m) = &self.partymenu {
             kept.extend(m.stack.iter().map(|win| (win.name, win.sel)));
@@ -10279,6 +10302,10 @@ impl App {
                             msg_files: self.msg_files,
                             msg_texts: HashMap::new(),
                             ae_data: None,
+                            fe_main: None,
+                            cel_ui: None,
+                            cel_data: None,
+                            fe_menu: false,
                             jp_list: HashMap::new(),
                             jp_seen: false,
                             jp_jobs: None,
@@ -11412,6 +11439,10 @@ impl App {
                     // (FUN_100e8930); the new zone's 0x0C8 lists the party again, without the trusts released.
                     world.party = Default::default();
                     world.party_asked = false;
+                    // The same zeroing takes s2c 0x08F's block (FUN_100e4340): the next open asks again.
+                    world.cel_data = None;
+                    world.fe_main = None;
+                    world.cel_ui = None;
                     // FUN_100550f0: the old zone's path goes; the new one's comes with its scene.
                     world.voyage.path = None;
                     world.play_time = Some((play_time, Instant::now()));
@@ -12262,6 +12293,7 @@ impl App {
                 NetEvent::GmMessage { id, seq, last, text } => faqmain::on_message(world, id, seq, last, &text),
                 NetEvent::JobPointList(recs) => jobpoints::on_list(world, &recs),
                 NetEvent::AlterEgo(d) => aepoints::on_data(world, d),
+                NetEvent::Celestites(d) => celestite::on_data(world, d),
                 NetEvent::Monstrosity { kind, data } => monstrosity::on_data(world, kind, data),
                 NetEvent::SkillBase(s) => world.skill_base = Some(s),
                 NetEvent::Action(a) => {
@@ -14158,6 +14190,10 @@ impl App {
         }
         if self.input.test(0x11, input::mode::PRESS) && world.macroedit.is_some() {
             macroedit::num_plus(world);
+        }
+        // fe_equip's and fe_inven's message 8 (FUN_10117750 / FUN_10118260): the keys to the other list.
+        if self.input.test(0x11, input::mode::PRESS) && world.cel_ui.is_some() && world.confirm.is_none() {
+            celestite::key(world, egui::Key::Plus, false, false);
         }
         // mcrbedit's set mode: Ctrl (0x76) or Alt (0x77) held.
         let held = self.input.test(0x76, input::mode::HELD) || self.input.test(0x77, input::mode::HELD);
