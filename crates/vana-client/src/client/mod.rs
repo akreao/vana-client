@@ -73,6 +73,7 @@ mod modsui;
 mod myroom;
 pub mod net;
 mod notes;
+mod packets;
 mod padcfg;
 pub(crate) mod perf;
 mod portrait;
@@ -351,6 +352,8 @@ fn text_field_open(w: &World) -> bool {
 /// A text field other than the list search's takes the typing.
 fn typing_elsewhere(w: &World) -> bool {
     w.typing
+        // Ours: the Packets window's fields.
+        || w.packets.typing
         || w.ctx_menu_open
         || event::input(w).is_some()
         || w.map.as_ref().is_some_and(|m| m.typing())
@@ -2666,6 +2669,11 @@ fn world_hud(
     if gm_typing {
         keys.clear();
     }
+    // Ours: the Packets window's text fields take the keys while one has the focus.
+    let packets_typing = world.packets.typing && world.packets.open;
+    if packets_typing {
+        keys.clear();
+    }
     // Ours: the Controller window takes the keys while it is open (over the Settings window it is opened from).
     let pad_typing = modern::pad_events(world, &input.events);
     if pad_typing {
@@ -2692,6 +2700,7 @@ fn world_hud(
         || find_typing
         || settings_typing
         || gm_typing
+        || packets_typing
         || pad_typing
         || mods_typing;
     if post_typing {
@@ -2874,6 +2883,11 @@ fn world_hud(
                 // (FUN_101dd4c0) read ids 0..3 instead, bound with no flag: Shift + arrows still step them.
                 egui::Key::ArrowUp | egui::Key::ArrowDown | egui::Key::ArrowLeft | egui::Key::ArrowRight
                     if modifiers.shift && !arrows_take_shift(world) => {}
+                // Ours: Escape closes the Packets window (its fields keep the keys while they have the focus).
+                egui::Key::Escape if world.modern && world.packets.open => {
+                    world.packets.open = false;
+                    world.sounds.push(crate::audio::Ui::Cancel as u32);
+                }
                 // Ours: Escape closes the modern UI Modes editor (/uimodes), drawn over everything.
                 egui::Key::Escape if world.modern && world.uimodes_open => {
                     world.uimodes_open = false;
@@ -7980,6 +7994,8 @@ struct World {
     recent_save: bool,
     /// The modern UI Modes editor is open (/uimodes, modern/modes.rs).
     uimodes_open: bool,
+    /// Ours (a developer tool): the Packets window (/packets with config `dev_tools`, client/packets.rs).
+    packets: packets::Packets,
     /// Favourites (favs.rs keys, the strip's order), whether the strip shows, and whether either changed since the save.
     favourites: Vec<String>,
     fav_strip: bool,
@@ -10520,6 +10536,7 @@ impl App {
                             recent_picks: self.cfg.modern_recent.get(&login.name).cloned().unwrap_or_default(),
                             recent_save: false,
                             uimodes_open: false,
+                            packets: packets::Packets::new(self.cfg.dev_tools),
                             favourites: self.cfg.modern_favourites.get(&login.name).cloned().unwrap_or_default(),
                             fav_strip: self.cfg.modern_fav_strip,
                             fav_save: false,
@@ -11444,7 +11461,8 @@ impl App {
         let Phase::World(world) = &mut self.phase else { return };
         world.net.stats.rate_ms.store(self.cfg.send_interval, std::sync::atomic::Ordering::Relaxed);
         world.net.stats.gm_window.store(self.cfg.gm_window, std::sync::atomic::Ordering::Relaxed);
-        crate::net::capture::set(self.cfg.packet_capture);
+        crate::net::capture::set(self.cfg.packet_capture || world.packets.record);
+        world.packets.tick();
         let mut load = None;
         let mut looks: Vec<(u32, Source)> = Vec::new();
         // Lines that need the message tables wait for them (they load on a thread at world start), in order.
