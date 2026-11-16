@@ -87,7 +87,9 @@ pub struct Flyover {
     data: FlyoverData,
     zone: Option<ZoneRenderer>,
     ui: Option<UiRenderer>,
+    /// The crossfade's outgoing frame, and whether it holds this crossfade's frame yet.
     previous: Option<wgpu::Texture>,
+    captured: bool,
     /// Movie clock in ticks (1/60 s), when the next op runs, and the op cursor.
     tick: f32,
     next_at: f32,
@@ -122,6 +124,7 @@ impl Flyover {
             zone: None,
             ui: None,
             previous: None,
+            captured: false,
             tick: 0.0,
             next_at: 0.0,
             cursor: 0,
@@ -143,6 +146,7 @@ impl Flyover {
     /// Plays the movie again from the start (the nation files' "loop" repeats mov1).
     pub fn restart(&mut self) {
         (self.tick, self.next_at, self.cursor, self.shot, self.cross, self.done) = (0.0, 0.0, 0, None, None, false);
+        self.captured = false;
     }
 
     /// Starts at full brightness: the nation movies have no fade op (the creator's 'ffin' fades them in).
@@ -187,6 +191,7 @@ impl Flyover {
                 Op::Crossfade { wait, ticks } => {
                     if let Some(cam) = self.camera() {
                         self.cross = Some((cam, now, ticks.max(1) as f32));
+                        self.captured = false;
                     }
                     self.next_at = now + wait as f32;
                 }
@@ -294,7 +299,10 @@ impl Flyover {
         let ui = self.ui.get_or_insert_with(|| UiRenderer::new(gpu, format));
         let mut batch = UiBatch::default();
         if let Some((old, start, len)) = cross {
-            // The outgoing shot renders offscreen, then fades out over the new one.
+            // Op 0x10, as the world's crossfade (event.rs Cross): the frame before the cut, drawn once offscreen
+            // from the camera it had, then faded out over the new shot. Its own submit keeps that camera in the
+            // zone's uniforms: drawn in this frame's encoder, both passes would read the new camera's while the old
+            // one picked the runs drawn, and whole runs of scenery would drop out of it.
             let fits = self.previous.as_ref().is_some_and(|t| t.width() == size[0] && t.height() == size[1]);
             if !fits {
                 let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -309,9 +317,15 @@ impl Flyover {
                 });
                 ui.insert_view(gpu, PREVIOUS, &tex.create_view(&Default::default()));
                 self.previous = Some(tex);
+                self.captured = false;
             }
-            let prev_view = self.previous.as_ref().unwrap().create_view(&Default::default());
-            zone.render(gpu, encoder, &prev_view, depth, &old, aspect, &[]);
+            if !self.captured {
+                let prev_view = self.previous.as_ref().unwrap().create_view(&Default::default());
+                let mut enc = gpu.device.create_command_encoder(&Default::default());
+                zone.render(gpu, &mut enc, &prev_view, depth, &old, aspect, &[]);
+                gpu.queue.submit([enc.finish()]);
+                self.captured = true;
+            }
             let a = 1.0 - ((tick - start) / len).clamp(0.0, 1.0);
             batch.push_image(PREVIOUS, 0.0, 0.0, size[0] as f32, size[1] as f32, [1.0, 1.0, 1.0, a]);
         }
