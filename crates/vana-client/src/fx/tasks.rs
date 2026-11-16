@@ -627,6 +627,15 @@ impl Effects {
         }
     }
 
+    /// Vtable +0x298(name, 0, 0) (FUN_100cee40 -> FUN_10056c70): a scheduler on an actor with no second actor, as
+    /// the entity's machine starts `bntg` and `klbt` (FUN_1008b460).
+    pub fn on_scheduler_alone(&mut self, actor: u32, name: u32) {
+        self.on_scheduler(actor, actor, name);
+        if let Some(p) = self.pending.last_mut() {
+            p.a2 = Who::None;
+        }
+    }
+
     /// 0x038: a scheduler by 4cc on an actor (FUN_100cce00 with no action).
     pub fn on_scheduler(&mut self, actor: u32, target: u32, name: u32) {
         self.pending.push(Pending {
@@ -5235,6 +5244,64 @@ mod skillchain_tests {
         fn pc(&self, _: u32) -> Option<(u8, i8)> {
             None
         }
+    }
+
+    /// The entity machine's disengage schedulers (FUN_1008b460, DAT 0): `bntg` holds actor1's reactions for 300 ticks;
+    /// `klbt`, 10 ticks in, kills every `bntg` task (op 0x5f on the resource, whoever it runs on) and the hold goes
+    /// with it; `hwat` shows wep0 / wep1 and hides wep2.
+    #[test]
+    fn klbt_ends_bntg() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let mut fx = Effects::new();
+        let index = std::sync::Arc::new(index);
+        fx.set_index(index.clone());
+        fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        let name = |n: &[u8; 4]| u32::from_le_bytes(*n);
+        fx.on_scheduler_alone(1, name(b"bntg"));
+        fx.tick(&f, &Pair);
+        let holds: Vec<_> = fx.task_holds.iter().map(|h| (h.0, h.1, h.2)).collect();
+        let task = fx.tasks.iter().flatten().find(|t| t.a1 == Who::Actor(1)).unwrap();
+        assert_eq!(holds, [(task.uid, 1, HOLD_REACT)]);
+        assert_eq!(task.a2, Who::None);
+        // Another actor's `klbt` does it: the kill is by resource.
+        fx.on_scheduler_alone(2, name(b"klbt"));
+        for _ in 0..8 {
+            fx.tick(&f, &Pair);
+        }
+        assert!(fx.actor_scheduler_running(1, name(b"bntg")) && fx.held.contains_key(&1));
+        for _ in 0..6 {
+            fx.tick(&f, &Pair);
+        }
+        assert!(!fx.actor_scheduler_running(1, name(b"bntg")));
+        fx.tick(&f, &Pair);
+        assert!(!fx.held.contains_key(&1));
+        fx.weapons.clear();
+        fx.on_scheduler(1, 1, name(b"hwat"));
+        fx.tick(&f, &Pair);
+        let op = |n, hide| crate::fx::WeaponOp { actor: 1, n, byte: 0, hide };
+        assert_eq!(fx.weapons, [op(0, false), op(1, false), op(2, true)]);
+        // An explicit stop (model vtable +0x29c) frees the stopped task's holds too.
+        fx.on_scheduler_alone(1, name(b"bntg"));
+        fx.tick(&f, &Pair);
+        assert!(fx.held.contains_key(&1));
+        fx.stop_actor_scheduler(1, name(b"bntg"));
+        assert!(!fx.actor_scheduler_running(1, name(b"bntg")));
+        fx.tick(&f, &Pair);
+        assert!(!fx.held.contains_key(&1));
     }
 
     /// MODLOG "Skillchains": DAT 0 `proc` (op 0x80) with record 0's proc kind 14 plays Impaction (3268) on the

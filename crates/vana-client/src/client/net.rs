@@ -180,6 +180,39 @@ pub struct SelfPlate {
     pub no_snap: bool,
 }
 
+/// Our own flags at zone-in. s2c 0x00A carries them in 0x00D's layout (Flags0 u32 @0x18, Flags1 @0x20, Flags2 @0x24,
+/// Flags3 @0x28); its handler FUN_100faf90 packs them into the character data (+0x40e5c..+0x40e62, +0x40e90..+0x40e94)
+/// and the zone-in FUN_10094190 puts them on our new entity before any 0x037 arrives: GM level (@0x23 & 7), seeking
+/// (Flags1 bit 11), anonymous (12), the call for help (13), away (14), PlayOnline (16), linkshell (17), link dead (18),
+/// HackMove (27), invisible (29), bazaar (31), GroundFlag (Flags0 bit 15), the linkshell colour (@0x24..0x26),
+/// GmIconFlag (Flags2 bit 28), auto-party (31) and the party-seek master (Flags3 bit 1). The entity is new, so every
+/// flag the zone-in does not write (frozen, charmed, sneak, New Adventurer, mentor, allegiance) starts clear.
+fn zone_in_plate(p: &SubPacket) -> SelfPlate {
+    let (f0, f1, f2, f3) = (p.u32(0x18), p.u32(0x20), p.u32(0x24), p.u32(0x28));
+    let bit = |w: u32, b: u32| w >> b & 1 != 0;
+    SelfPlate {
+        marks: Marks {
+            gm: p.u8(0x23) & 7,
+            lfg: bit(f1, 11),
+            anon: bit(f1, 12),
+            yell: bit(f1, 13),
+            away: bit(f1, 14),
+            pol: bit(f1, 16),
+            ls: bit(f1, 17),
+            link_dead: bit(f1, 18),
+            bazaar: bit(f1, 31),
+            ls_colour: [p.u8(0x24), p.u8(0x25), p.u8(0x26)],
+            gm_icon_off: bit(f2, 28),
+            auto: bit(f2, 31),
+            lfg_master: bit(f3, 1),
+            ..Marks::default()
+        },
+        invisible: bit(f1, 29),
+        no_snap: bit(f0, 15) || bit(f1, 27),
+        ..SelfPlate::default()
+    }
+}
+
 fn self_plate(p: &SubPacket) -> SelfPlate {
     let (f0, f1, f2, f3) = (p.u32(0x28), p.u32(0x2c), p.u32(0x34), p.u32(0x38));
     let bit = |w: u32, b: u32| w >> b & 1 != 0;
@@ -426,6 +459,10 @@ pub enum NetEvent {
         send_count: u16,
         ship: Option<ShipData>,
         monstrosity: bool,
+        /// LoginState 3..5: the login that follows an exit to PlayOnline (`pol_return`).
+        pol_return: bool,
+        /// Our own flags as the zone-in applies them (`zone_in_plate`).
+        plate: SelfPlate,
     },
     /// s2c 0x053 (GP_SERV_COMMAND_SYSTEMMES): para @4, para2 @8, Number @0xc (file 7031).
     SystemMessage {
@@ -714,6 +751,8 @@ pub enum NetEvent {
         icons: [u16; 32],
         team: u8,
         fellow: u16,
+        /// u16 @0x46 (our entity +0x2a2): the actor we are made to follow (forced.rs), 0 none.
+        follow: u16,
         plate: SelfPlate,
         ride: (u8, u8),
         indi: u8,
@@ -1025,6 +1064,13 @@ pub fn scene_of(p: &SubPacket) -> (u16, Option<MyRoom>) {
     }
     let map = p.u16(0x42);
     (if map >= 0x100 { map + 0x1bc } else { map }, None)
+}
+
+/// The s2c 0x00A handler FUN_100fae40's LoginState switch (jump table 0x100fb790): 3 POLEXIT, 4 JOBEXIT and 5
+/// POLEXIT_MYROOM set zone flag 0x200 / 0x2000, which hands the game over to the PlayOnline viewer (FUN_100daf30);
+/// 1 MYROOM and everything else (2 GAME, 0, 6 and up) are a plain zone-in.
+pub fn pol_return(login_state: u32) -> bool {
+    matches!(login_state, 3..=5)
 }
 
 /// FUN_100f7de0: GAME (2), 0 and 6 print the area; MYROOM (1) the area for maps 0x118 / 0x11d, else the Mog
@@ -1990,6 +2036,8 @@ impl Session<'_> {
                     send_count: p.u16(0xac),
                     ship: ship_data(&p),
                     monstrosity: p.u16(0x7E) != 0,
+                    pol_return: pol_return(p.u32(0x80)),
+                    plate: zone_in_plate(&p),
                 })?;
             }
             // FUN_100fb730: 4 cancels a logout (nothing sent); otherwise 0x00D goes out with the old key, and 2
@@ -2033,6 +2081,7 @@ impl Session<'_> {
                     icons,
                     team: (p.u32(0x34) >> 21) as u8,
                     fellow: p.u16(0x48),
+                    follow: p.u16(0x46),
                     plate: self_plate(&p),
                     ride: ((p.u32(0x28) >> 13 & 7) as u8, if p.data.len() > 0x5b { p.u8(0x5b) } else { 0 }),
                     indi: if p.data.len() > 0x58 { p.u8(0x58) & 0x7f } else { 0x10 },
@@ -2852,6 +2901,13 @@ impl Session<'_> {
 mod tests {
     use super::*;
 
+    /// LoginState by the 0x00A handler's jump table (0x100fb790): only 3, 4 and 5 are returns from PlayOnline.
+    #[test]
+    fn pol_return_states() {
+        let got: Vec<u32> = (0..=7).filter(|&s| pol_return(s)).collect();
+        assert_eq!(got, [3, 4, 5]);
+    }
+
     /// The hooked ids each way: only those (a sub-packet's first 9 bits) send a batch through the mods.
     #[test]
     fn hooked_ids() {
@@ -3130,6 +3186,26 @@ mod tests {
             data[*at..*at + b.len()].copy_from_slice(b);
         }
         SubPacket { id, sync: 0, data }
+    }
+
+    /// FUN_100faf90 / FUN_10094190: the zone-in's own flags are 0x00D's words in the 0x00A, and only the ones the
+    /// zone-in writes.
+    #[test]
+    fn zone_in_flags() {
+        // Flags1: anonymous (12), linkshell (17), HackMove (27), invisible (29); GM level 3 in @0x23; Flags0
+        // GroundFlag (15); the linkshell colour; Flags3 bit 23 (New Adventurer) is not a zone-in flag.
+        let f1 = (1u32 << 12 | 1 << 17 | 1 << 29 | 3 << 24).to_le_bytes();
+        let p = sub(0x00A, 0x104, &[(0x20, &f1), (0x24, &[1, 2, 3, 0]), (0x28, &(1u32 << 23).to_le_bytes())]);
+        let z = zone_in_plate(&p);
+        assert!(z.marks.anon && z.marks.ls && z.invisible && !z.no_snap);
+        assert_eq!((z.marks.gm, z.marks.ls_colour), (3, [1, 2, 3]));
+        assert!(!z.marks.new_char && !z.marks.lfg && !z.marks.bazaar && !z.frozen && !z.charmed);
+        let ground = sub(0x00A, 0x104, &[(0x18, &(1u32 << 15).to_le_bytes())]);
+        let hack = sub(0x00A, 0x104, &[(0x20, &(1u32 << 27).to_le_bytes())]);
+        assert!(zone_in_plate(&ground).no_snap && zone_in_plate(&hack).no_snap);
+        // LSB's 0x00A (size and gender in Flags1 bits 8..15, 0x100 in Flags3) sets none of them.
+        let lsb = sub(0x00A, 0x104, &[(0x20, &0x8100u32.to_le_bytes()), (0x28, &0x100u32.to_le_bytes())]);
+        assert_eq!(zone_in_plate(&lsb), SelfPlate::default());
     }
 
     /// A 0x00E trimmed after its name (0x3c bytes) still gives its model; a trimmed lift (kind 3) its lift data.
