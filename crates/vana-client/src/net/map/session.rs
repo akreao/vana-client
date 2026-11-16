@@ -255,10 +255,11 @@ impl MapSession {
         // LoginPacketCheck: byte sum of everything from MyIP (packet offset 8) on.
         body[0] = body[4..].iter().fold(0u8, |a, &b| a.wrapping_add(b));
         let packet = build(0x00A, &body);
-        crate::net::capture::packet(true, &packet);
 
         let mut dgram = self.header();
-        dgram.extend_from_slice(&self.stamp(&[packet]));
+        let stamped = self.stamp(&[packet]);
+        crate::net::capture::packet(true, &stamped);
+        dgram.extend_from_slice(&stamped);
         log::info!("map out (login): header {} [{}]", hex::encode(&dgram[..HEADER]), sub_ids(&dgram[HEADER..]));
         let digest = Md5::digest(&dgram[HEADER..]);
         dgram.extend_from_slice(&digest);
@@ -692,7 +693,11 @@ mod tests {
         assert!(!text.contains(&hex::encode(b"secretacct")), "{text}");
         let recs = capture::load(&file).unwrap();
         let has = |dir: Dir, f: &dyn Fn(&Kind) -> bool| recs.iter().any(|r| r.dir == dir && f(&r.kind));
-        assert!(has(Dir::Out, &|k| matches!(k, Kind::Packet { id: 0x00A, hex } if hex[0x22..0x27] == *b"Livea")));
+        // As sent: the login's sync is its datagram's sequence (1).
+        assert!(has(
+            Dir::Out,
+            &|k| matches!(k, Kind::Packet { id: 0x00A, hex } if hex[0x22..0x27] == *b"Livea" && hex[2..4] == [1, 0])
+        ));
         assert!(has(Dir::Out, &|k| matches!(k, Kind::Datagram { form, .. } if form == "raw")));
         assert!(has(Dir::Out, &|k| matches!(k, Kind::Packet { id: 0x0DD, hex } if hex[4..] == slot[4..])));
         assert!(has(Dir::Out, &|k| matches!(k, Kind::Datagram { form, seq: 2, .. } if form == "plain")));

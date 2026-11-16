@@ -1,5 +1,6 @@
 //! Packet capture (ours, opt-in): the map server's traffic each way, as the wire carries it after the cipher and
-//! the coder, written one JSON object a line to `<data dir>/captures/<unix seconds>.jsonl`.
+//! the coder, written one JSON object a line to `<data dir>/captures/<unix seconds>-<process>.jsonl`, one file a client run
+//! (every zone and character of it), readable by this user only.
 //!
 //! On while config `packet_capture` is set or `VANA_CAPTURE` is in the environment (any value but 0; a value other
 //! than 1 is the folder to write to). Only the map session is recorded: the lobby, PlayOnline and patch connections
@@ -10,8 +11,9 @@
 //! A sub-packet line: `{"t":ms,"dir":"in"|"out","zone":n,"id":n,"hex":"…"}` (the whole sub-packet with its 4-byte
 //! header). A datagram line: `{"t":ms,"dir":…,"zone":n,"dgram":n,"seq":n,"ack":n,"form":"huffman"|"plain"|"raw"}`
 //! (its size in bytes, its header's sequence and ack, and the coder's form: retail's leading byte 1 is Huffman,
-//! anything else the plain copy, and the first 0x00A goes raw). `t` is Unix time in ms. Read one back with
-//! `vana-client capture FILE`.
+//! anything else the plain copy, and the first 0x00A goes raw). `t` is Unix time in ms. Each sub-packet is written
+//! once: as it first goes out, and as it is first accepted (a resend of either shows only as a datagram line). Read
+//! one back with `vana-client capture FILE`.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -97,6 +99,36 @@ fn dir() -> PathBuf {
     }
 }
 
+/// A file only this user can read (a capture holds chat and tells), made new (`fresh`, failing if it exists) or
+/// replacing one.
+fn private_file(path: &Path, fresh: bool) -> std::io::Result<File> {
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true);
+    if fresh {
+        o.create_new(true);
+    } else {
+        o.create(true).truncate(true);
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+    o.open(path)
+}
+
+/// A new capture file in `dir`, `<unix seconds>-<process>.jsonl` (a suffix after it if taken): never one another
+/// client is writing.
+fn new_capture(dir: &Path) -> std::io::Result<(File, PathBuf)> {
+    let stem = format!("{}-{}", ms() / 1000, std::process::id());
+    for n in 0..100 {
+        let path = dir.join(if n == 0 { format!("{stem}.jsonl") } else { format!("{stem}-{n}.jsonl") });
+        match private_file(&path, true) {
+            Ok(f) => return Ok((f, path)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "no free capture name"))
+}
+
 fn ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
@@ -109,14 +141,13 @@ fn write(f: impl FnOnce(u16) -> Record) {
         return;
     }
     if out.is_none() {
-        let path = dir().join(format!("{}.jsonl", ms() / 1000));
-        match std::fs::create_dir_all(dir()).and_then(|_| File::create(&path)) {
-            Ok(file) => {
+        match std::fs::create_dir_all(dir()).and_then(|_| new_capture(&dir())) {
+            Ok((file, path)) => {
                 log::info!("capture: {}", path.display());
                 *out = Some(Recorder { file: LineWriter::new(file), zone: 0 });
             }
             Err(e) => {
-                log::warn!("capture: {} not opened, capture off: {e}", path.display());
+                log::warn!("capture: not opened in {}, capture off: {e}", dir().display());
                 ON.store(false, Relaxed);
                 return;
             }
@@ -268,7 +299,8 @@ pub fn load(path: &Path) -> Result<Vec<Record>> {
 
 /// Writes records as a capture file.
 pub fn save<'a>(path: &Path, records: impl IntoIterator<Item = &'a Record>) -> Result<()> {
-    let mut w = std::io::BufWriter::new(File::create(path).with_context(|| format!("{} not created", path.display()))?);
+    let mut w =
+        std::io::BufWriter::new(private_file(path, false).with_context(|| format!("{} not created", path.display()))?);
     for r in records {
         writeln!(w, "{}", serde_json::to_string(r)?)?;
     }
@@ -285,7 +317,10 @@ pub fn report(records: &[Record], f: &Filter, hex_dump: bool) -> String {
     let d = |d: Dir| if d == Dir::Out { "out" } else { "in" };
     for r in records {
         match &r.kind {
-            Kind::Datagram { form, .. } => *forms.entry((r.dir, form)).or_default() += 1,
+            Kind::Datagram { form, .. } if f.dir.is_none_or(|d| d == r.dir) && f.zone.is_none_or(|z| z == r.zone) => {
+                *forms.entry((r.dir, form)).or_default() += 1
+            }
+            Kind::Datagram { .. } => {}
             Kind::Packet { id, hex } if f.keeps(r) => {
                 *ids.entry((r.dir, *id)).or_default() += 1;
                 let secs = r.t.saturating_sub(start) as f64 / 1000.0;
@@ -337,6 +372,22 @@ mod tests {
         assert!(!r.windows(7).any(|w| w == b"account"));
     }
 
+    /// Two captures started in the same second get their own files, readable by this user only.
+    #[test]
+    fn captures_never_share_a_file() {
+        let dir = std::env::temp_dir().join(format!("vana-capture-new-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (_, a) = new_capture(&dir).unwrap();
+        let (_, b) = new_capture(&dir).unwrap();
+        assert_ne!(a, b);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&a).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Lines round-trip through save and load in the documented shape, and the report filters and counts them.
     #[test]
     fn save_load_report() {
@@ -367,6 +418,7 @@ mod tests {
         assert!(r.contains("0x08f celestite") && !r.contains("0x0c6"), "{r}");
         assert!(r.contains("8f2c01001e09") && r.contains("in  plain    1"), "{r}");
         let f = Filter { dir: Some(Dir::Out), ids: vec![0x0C6], ..Default::default() };
-        assert!(report(&recs, &f, false).contains("out 0x0c6 celestite request  1"));
+        let r = report(&recs, &f, false);
+        assert!(r.contains("out 0x0c6 celestite request  1") && !r.contains("in  plain"), "{r}");
     }
 }
