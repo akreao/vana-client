@@ -1018,6 +1018,40 @@ impl Effects {
                 i += 1;
                 continue;
             }
+            // FUN_10057e10: +0x145 is tested first, and deletes the task (its destructor FUN_100574a0 lets the parent
+            // that waits on it go, FUN_10074a50, and ends its action). The parent sits after it in retail's list
+            // (FUN_10075120 links a scheduler before the task that started it), so it runs in this frame too.
+            if t.dying {
+                let parent = t.parent.filter(|&p| p < i && self.tasks[p].as_ref().is_some_and(|pt| pt.waiting));
+                t.done = true;
+                self.settle(t, i);
+                if let Some(p) = parent {
+                    self.step_slot(p, f, actors);
+                }
+                i += 1;
+                continue;
+            }
+            // The update after the end op: the countdown is 0 and no op is left, FUN_10057c20 finds no loop, +0x145.
+            if t.ended {
+                (t.dying, t.walked) = (true, self.walk_serial);
+                self.tasks[i] = Some(t);
+                i += 1;
+                continue;
+            }
+            self.tasks[i] = Some(t);
+            self.step_slot(i, f, actors);
+            i += 1;
+        }
+    }
+
+    /// One task's update in the frame's walk.
+    fn step_slot(&mut self, i: usize, f: &Frame, actors: &dyn Actors) {
+        let Some(mut t) = self.tasks.get_mut(i).and_then(|t| t.take()) else { return };
+        {
+            if t.paused > 0 {
+                self.tasks[i] = Some(t);
+                return;
+            }
             // FUN_10057c20 a frame after the end op, then FUN_100573e0(res, 0, 0): speed 1.0, the action wrapper and the
             // parent link dropped (the action never prints its rest; a calling parent waits for ever); no op runs.
             if std::mem::take(&mut t.restart) {
@@ -1026,8 +1060,7 @@ impl Effects {
                     self.leaked.push(a);
                 }
                 self.tasks[i] = Some(t);
-                i += 1;
-                continue;
+                return;
             }
             self.stepping.push(i);
             t.walked = self.walk_serial;
@@ -1037,7 +1070,6 @@ impl Effects {
             self.run_ready(i, &mut t, actors);
             self.settle(t, i);
             self.stepping.pop();
-            i += 1;
         }
     }
 
@@ -1202,7 +1234,7 @@ impl Effects {
     /// True when the step ended on a file retry.
     fn run_steps(&mut self, i: usize, t: &mut Task, actors: &dyn Actors) -> bool {
         let mut guard = 0;
-        while !t.done && !t.waiting && t.countdown <= 0.0 && guard < 512 {
+        while !t.done && !t.ended && !t.waiting && t.countdown <= 0.0 && guard < 512 {
             guard += 1;
             if t.ip >= t.ops.len() || t.stop_at == Some(t.ip) {
                 // FUN_10057c20: op 0x73's children and end-stream loops start over (the step after).
@@ -1210,7 +1242,13 @@ impl Effects {
                     t.restart = true;
                     break;
                 }
-                t.done = true;
+                // The end op only clears +0x88: the task lives two more updates (`ended`, then `dying`). A clone
+                // that reaches its block's end is deleted by that op.
+                if t.stop_at.is_some() {
+                    t.done = true;
+                } else {
+                    t.ended = true;
+                }
                 break;
             }
             let op = t.ops[t.ip].clone();
@@ -5332,11 +5370,12 @@ mod tests {
             }
             done
         };
-        // Frames of 2 ticks, the start frame counting: 140 ticks end in frame 70 (99 for the second).
+        // Frames of 2 ticks, the start frame counting: 140 ticks end in frame 70 (99 for the second), the task goes two
+        // frames after its end op.
         let once = run(None);
-        assert_eq!(once, [70]);
+        assert_eq!(once, [72]);
         let twice = run(Some(30));
-        assert_eq!(twice, [99]);
+        assert_eq!(twice, [101]);
     }
 
     /// A Mithra with Nightmare Scythe's file (37131) on her motion list.
@@ -6005,6 +6044,18 @@ mod auto_tests {
     /// Ship file `file`'s `seq` run at 30 fps (2-tick frames), caught up by `skip`: the position and the heading target
     /// after each frame (index = ticks / 2).
     fn sail(file: u32, seq: &[u8; 4], skip: f32, frames: usize, start: Vec3) -> Option<Vec<(Vec3, Vec3)>> {
+        sail_probe(file, seq, skip, frames, start, &mut |_, _| {})
+    }
+
+    /// `sail`, with a look at the effects after each frame.
+    fn sail_probe(
+        file: u32,
+        seq: &[u8; 4],
+        skip: f32,
+        frames: usize,
+        start: Vec3,
+        probe: &mut dyn FnMut(&Effects, usize),
+    ) -> Option<Vec<(Vec3, Vec3)>> {
         let index = std::sync::Arc::new(crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()).ok()?);
         let mut fx = Effects::new();
         fx.set_index(index.clone());
@@ -6035,8 +6086,9 @@ mod auto_tests {
         fx.start_sequence(SHIP, file, u32::from_le_bytes(*seq), skip);
         let mut target = Vec3::ZERO;
         let mut out = Vec::new();
-        for _ in 0..frames {
+        for k in 0..frames {
             fx.tick(&f, &ship);
+            probe(&fx, k);
             if let Some(p) = fx.actor_poses.get(&SHIP).copied() {
                 if let Some(at) = p.pos {
                     ship.pos.set(at);
@@ -6099,6 +6151,47 @@ mod auto_tests {
         assert!((r.y - 0.5498).abs() < 0.002 && (r.z - 0.1880).abs() < 0.002, "t 200 rot {r}");
         assert!(near(run[798].0, [-68.0, 10.45, 117.0]), "t 1598: {}", run[798].0);
         assert!(near(run[800].0, [-68.0, 10.45, 117.0]), "after: {}", run[800].0);
+    }
+
+    /// Port Jeuno's Kazham berth, leaving (file 31010 `seq7`): `ptv2` (backward, 2040 ticks from 900, made in the
+    /// frame the clock reaches 900 with that frame's ticks off) has its last running frame at k 1468 and ends in the
+    /// next, 60 ticks before its sequence. The end's point at u = 1.0 (the path's far end, where `ptv2` began) never
+    /// reaches the model (FUN_100a57f0 takes the position back from +0x34): the ship stays where it stopped.
+    #[test]
+    fn jeuno_leaving_drive_end() {
+        let mut driving = Vec::new();
+        let Some(run) = sail_probe(31010, b"seq7", 0.0, 1520, Vec3::new(-4.0, 10.45, 117.0), &mut |fx, _| {
+            driving.push(fx.driving(SHIP));
+        }) else {
+            return;
+        };
+        assert!(driving[1468] && !driving[1469], "ptv2's last frame");
+        let stop = run[1468].0;
+        assert!(run[450].0.distance(stop) > 100.0, "ptv2 starts far from its end: {} .. {stop}", run[450].0);
+        for k in 1469..1520 {
+            assert_eq!((run[k].0, run[k].1), (stop, run[1468].1), "frame {k}");
+        }
+    }
+
+    /// FUN_10057e10 on file 31011 `seq0` (one backward drive of 2700 ticks, then the end op): the end op runs in the
+    /// frame the clock reaches 2700 (k 1349) and only clears +0x88; the update after sets +0x145 (FUN_10057c20: no
+    /// loop in the end stream); the one after that deletes the task. The drive (its child) has its last running
+    /// frame at k 1349, on the berth end of the path, and ends by itself at k 1350.
+    #[test]
+    fn sequence_dies_two_frames_after_its_end() {
+        let mut seen = Vec::new();
+        let Some(run) = sail_probe(31011, b"seq0", 0.0, 1360, Vec3::ZERO, &mut |fx, _| {
+            let t = fx.tasks.iter().flatten().find(|t| t.seq);
+            seen.push((t.map(|t| (t.ended, t.dying)), fx.driving(SHIP)));
+        }) else {
+            return;
+        };
+        assert_eq!(seen[1348], (Some((false, false)), true));
+        assert_eq!(seen[1349], (Some((true, false)), true));
+        assert_eq!(seen[1350], (Some((true, true)), false));
+        assert_eq!(seen[1351], (None, false));
+        assert!(run[1348].0 != run[1349].0 && run[1349].0 == run[1359].0, "{:?}", &run[1347..1352]);
+        assert!(run[0].0.distance(run[1349].0) > 100.0, "the path's far end: {}", run[0].0);
     }
 
     /// 3.7: the pirate ship's leaving (file 31017 `seq1`) ends offshore, its heading never set. `come` starts in the
