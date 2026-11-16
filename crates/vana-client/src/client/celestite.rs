@@ -368,6 +368,12 @@ fn item_bytes(w: &World) -> impl Fn(u8) -> Option<[u8; 2]> + '_ {
     |n| w.item_info.as_ref()?.item(ITEM + n as u16)?.maze.map(|m| [m[0], m[1]])
 }
 
+/// Whether the egui key event is the lists' to take: Num+ (message 8) comes through key function 0x11 (and the pointer),
+/// so its egui event would transfer the focus a second time.
+pub fn event_key(key: egui::Key) -> bool {
+    key != egui::Key::Plus
+}
+
 /// The lists' keys; `Plus` is Num+ (message 8).
 pub fn key(w: &mut World, key: egui::Key, ctrl: bool, alt: bool) {
     let Some(mut u) = w.cel_ui.clone() else { return };
@@ -575,6 +581,12 @@ fn icon(gu: &mut GameUi, w: &World, id: u16, x: f32, y: f32) {
     }
 }
 
+/// The visible rows' hit rectangles (children 1..=n, their layout's x 3 and 18 high), `first` the first row's top below
+/// the window's top: the lists hide the layout's rows, so the generic handler's hits are these.
+fn row_hits(x: f32, y: f32, fw: f32, first: f32, n: usize) -> Vec<(u16, [f32; 4])> {
+    (0..n).map(|k| (k as u16 + 1, [x + 3.0, y + first + PITCH * k as f32, fw - 6.0, PITCH])).collect()
+}
+
 pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     let mut rects = Vec::new();
     if w.modern {
@@ -595,8 +607,9 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     let list = d.map_or(Vec::new(), |d| d.list());
     let hide: Vec<u16> = (1..=ROWS as u16).collect();
     if let Some(win) = gu.lobby_window_off(INVEN, sw, sh, (0.0, 0.0), None, false, &hide) {
-        super::winhits::record(w, INVEN, &win);
         let [x, y, fw, fh] = win.frame;
+        let shown = list.len().saturating_sub(u.top).min(ROWS);
+        super::winhits::record_rects(w, INVEN, win.frame, row_hits(x, y, fw, 6.0, shown));
         let bytes = item_bytes(w);
         for (k, &n) in list.iter().enumerate().skip(u.top).take(ROWS) {
             let ry = y + 4.0 + PITCH * (k - u.top) as f32;
@@ -620,9 +633,9 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     }
     let hide: Vec<u16> = (1..=SLOTS as u16).collect();
     let Some(win) = gu.lobby_window_off(EQUIP, sw, sh, (0.0, 0.0), None, false, &hide) else { return rects };
-    super::winhits::record(w, EQUIP, &win);
-    let [x, y, _, fh] = win.frame;
+    let [x, y, fw, fh] = win.frame;
     let open = d.map_or(0, |d| d.open(u.set));
+    super::winhits::record_rects(w, EQUIP, win.frame, row_hits(x, y, fw, 24.0, open));
     for k in 0..open {
         let ry = y + 19.0 + PITCH * k as f32;
         let (label, worn) = d.map_or((0, 0), |d| (d.label(u.set, k), d.worn(u.set, k)));
@@ -738,6 +751,20 @@ mod tests {
         assert_eq!(d.change(0, 0, 2), [1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         assert_eq!(d.change(0, 1, 0), [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         assert_eq!(d.change(0, 2, 40), [1, 0, 2, 40, 0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn rows_are_hit() {
+        let r = row_hits(200.0, 48.0, 182.0, 24.0, 3);
+        assert_eq!(r.iter().map(|h| h.0).collect::<Vec<_>>(), [1, 2, 3]);
+        assert_eq!(r[1].1, [203.0, 90.0, 176.0, 18.0]);
+        assert!(row_hits(0.0, 0.0, 100.0, 6.0, 0).is_empty());
+    }
+
+    #[test]
+    fn num_plus_once() {
+        assert!(!event_key(K::Plus));
+        assert!(event_key(K::Enter));
     }
 
     #[test]

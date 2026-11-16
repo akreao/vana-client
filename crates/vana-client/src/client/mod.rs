@@ -3167,7 +3167,9 @@ fn world_hud(
                 _ if world.jp_ui.is_some() => jobpoints::key(world, *key, modifiers.ctrl || modifiers.alt),
                 _ if world.ae_ui.is_some() => aepoints::key(world, *key, modifiers.ctrl || modifiers.alt),
                 _ if world.cel_ui.is_some() => {
-                    celestite::key(world, *key, modifiers.ctrl || modifiers.alt, modifiers.alt)
+                    if celestite::event_key(*key) {
+                        celestite::key(world, *key, modifiers.ctrl || modifiers.alt, modifiers.alt)
+                    }
                 }
                 _ if world.fe_main.is_some() => celestite::main_key(world, gu, *key),
                 _ if world.status.is_some() && modern::status_key(world, *key) => {}
