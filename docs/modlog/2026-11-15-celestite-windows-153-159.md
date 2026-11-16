@@ -93,8 +93,9 @@ keys (+0x49 = 1), Left / Right always page (+0x47 = 1). Layout (200, 48) 182 x 2
 - `status.rs`: child 13's gate takes either key item, and Enter opens fe_main. With game files older than
   30261102 there is no fe_main layout and the row opens fp_cat as before.
 - fe_main, fe_equip, fe_inven and bluehelp are drawn from their layouts with the rules above; the mouse follows
-  the other list windows (hover moves the cursor, a click is Enter, a right click Escape), and the pointer over
-  the other list is message 8 when it moves or clicks.
+  the other list windows (hover moves the cursor, a click is Enter, a right click Escape). The pointer anywhere
+  over the other list is message 8 every frame (FUN_101174b0 / FUN_10117d90, FUN_10127770, FUN_1011a0a0), resting
+  or not, as retail: after Num+ the keys come straight back, and with a pick held the refusal buzzes each frame.
 - The modern layer shows the same state as a panel (docs/modern-ui.md, "Trust Ascension").
 - Tests: the block's layout, 0x0C5's body, the name colours, both pick orders, the refusals, the cursors and set
   switch, and the layouts in the game files (`layouts`, real files only).

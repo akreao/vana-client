@@ -1896,6 +1896,7 @@ impl EffectsGpu {
                     drop(pass);
                     if !squeeze(encoder) {
                         pass = new_pass(encoder);
+                        bound = None;
                         continue;
                     }
                     pass = new_pass(encoder);
@@ -1917,6 +1918,7 @@ impl EffectsGpu {
                     drop(pass);
                     if !squeeze(encoder) {
                         pass = new_pass(encoder);
+                        bound = None;
                         continue;
                     }
                     pass = new_pass(encoder);
@@ -1938,6 +1940,7 @@ impl EffectsGpu {
                     drop(pass);
                     if !squeeze(encoder) {
                         pass = new_pass(encoder);
+                        bound = None;
                         continue;
                     }
                     pass = new_pass(encoder);

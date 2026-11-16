@@ -12786,9 +12786,19 @@ From the research notes:
 - The normal: ours the player's walk normal (Ground::player_normal), else the face under the position each frame (the
   rider's for its animal) *(retail probes a far moving actor only every 121 frames)*. Quadrupeds with info[0] ==
   info[2] == 2 (behemoth, adamantoise, morbol, treant, wyrms ...) then take FUN_100a4d10's pitch-only normal: the
-  front feet points 10 / 11 and rear 8 / 9 (ours from the rest pose through last frame's matrix *(inf)*), their
-  midpoints snapped, N = normalize(d x (d x up)) facing up (tilt::feet_normal: d = (-2, 0.5, 0) gives
-  (-0.2425, -0.9701, 0)).
+  front feet points 10 / 11 and rear 8 / 9 (last drawn frame's CPU pose), their midpoints snapped,
+  N = normalize(d x (d x up)) facing up (tilt::feet_normal: d = (-2, 0.5, 0) gives (-0.2425, -0.9701, 0)).
+  These models follow FUN_100a4ed0's probe gate (tilt::feet_gate): each frame while moving (more than 1e-7) and
+  either at view depth <= 10.0 or bound to the event (+0x120 bit 7; bits 7 / 8 are tested only inside the moving
+  branch), on the first update (+0x5ec), else when the counter +0x5f0 (from rand() % 120, ours dealt by id) passes
+  120, i.e. every 121st frame, moving or not; their normal holds between probes. The probe reads last frame's drawn
+  pose, so the model poses on the CPU on any frame before one that can probe: within view depth 12.0
+  (`tilt::FEET_POSE`, a margin past 10.0 so a model coming into range was posed the frame before), bound, or the
+  frame before a counter probe; the counter's seed is a random 0..0x7fff, as rand(). A riding animal is left
+  out and takes its rider's normal *(inf: vt+0x360 only clears the moving branch; whether the animal class answers
+  vt+0x3fc for the counter branch is not traced)*.
+  *(Not modelled: the probe also runs on attach sync (+0x5e1, FUN_100ca730's copy), on +0x120 bit 8 (took part),
+  and while not grounded (+0x5e0 == 0, the last snap missed) even standing still.)*
   The tilted frame goes to the pose, attach_point and the effects (actor_frame).
 - Op 0xd8 (the plain path, FUN_100843b0): D3DX Scale . RotZ(z) . RotY(yaw) . RotX(x), i.e. glam T Rx(x) Ry(yaw) Rz(z):
   z about the model's Z, x about the world X after the yaw, both positive. Ours had z then x in the model frame with
@@ -24507,3 +24517,20 @@ From a full pass over retail's dispatcher (FUN_100bc280) against event_vm.rs / c
   what the old look's equipment part files started, and what files that left the look started, goes; the race and
   body files' tasks run on *(inferred: retail spells survive gear swaps)*. fx-shot's stand-in actors count as
   ready again, so it can run spells (category 4).
+
+## Title flyover: the movie zone's effects and their sounds (2026-11-16)
+
+- User report: retail's title screen has sound effects (voices, it seemed); ours had none.
+- File 23's schedulers hold no sound op (only 0x00 / 0x01 / 0x04 / 0x0e / 0x0f / 0x10 / 0x3b / 0x3d / 0x3e / 0x73 /
+  0x7b..0x7e / 0xaf). Op 0x7b is FUN_1018b3a0(zone), the scene loader op 0x34 uses too (FUN_10178df0: file
+  zone + 100), so a title movie loads its zone's whole scene: the auto-start generators run, their sound elements
+  play (birds, wind, water, crowds). The world's ambient loop is not one of them: it plays only in the world
+  (world+0x20 is 0 elsewhere).
+- Ours: flyover.rs drew only the geometry. Now FlyoverData loads the zone's effect libraries
+  (select::FxLibs::load_zone) and the Flyover runs them as the select and creator scenes do (select::LobbyFx): ticked
+  on the movie clock (op 0x7d sets the minute), op 0x7c switching the weather's generators, drawn over the scene under
+  the fades and blur, their sounds sent to the sound thread with voice bases TITLE_VOICES / NATION_VOICES (the
+  creator's nation step flyovers, files 24..26, load the same way). Voices pause while their screen is not up and
+  stop when a movie ends or the world starts.
+- Checked: the title run's mov6 (Beaucedine Glacier, zone 111) starts 49 of its 163 generators and plays effect
+  voice 0x3000001 (sound 2088); its level follows the camera's distance, as the world's do.

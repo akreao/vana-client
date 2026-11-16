@@ -40,6 +40,8 @@ fn angle_to(a: f32, b: f32) -> f32 {
 
 /// LSB's event Mode bits (`EVENT_MODE`), as FUN_100aeea0 and the packet handlers read them.
 pub mod mode {
+    /// FUN_100983f0: with it a bound player's c2s 0x015 still goes out, carrying the event body's place.
+    pub const SEND_POSITION: u32 = 0x04;
     pub const NO_PARTICIPANT_ANIM: u32 = 0x20;
     pub const NO_DIALOGUE: u32 = 0x40;
     pub const NO_IDLE_WAIT: u32 = 0x100;
@@ -628,7 +630,8 @@ pub struct State {
     pub event_status: HashMap<u32, u8>,
     /// Op 0x7e's chocobo or mount by actor (ChocoboIndex, the chocobo look, the mount id).
     pub event_rides: HashMap<u32, super::ride::Model>,
-    /// Op 0xab sub 3 (+0x120 bit 2): the event status of these actors is not written (ops 0x7e, 0xac 1).
+    /// Op 0xab sub 3 (+0x120 bit 2): the event status of these actors is not written (op 0x7e and the door ops
+    /// 0x4c / 0x4d / 0x4f / 0x8e / 0x8f; op 0xac sub 1 writes it regardless).
     status_lock: HashSet<u32>,
     /// Op 0xab 0x0f / 0x10 (DAT_10489900): s2c 0x00D positions of player characters that are not bound keep the sent
     /// height; the event's end clears it (FUN_100ae3f0).
@@ -637,6 +640,8 @@ pub struct State {
     snap: HashSet<u32>,
     /// Despawned while bound (0x1009a04d keeps an event participant); removed at the end.
     despawned: HashSet<u32>,
+    /// Actors a slot reset took out of the event: no pose of the VM body is drawn for them any more.
+    detached: HashSet<u32>,
     /// 0x46: true = normal camera (FUN_10082b20).
     camera_flag: bool,
     /// s2c 0x052 mode 0 arrived.
@@ -668,6 +673,11 @@ pub struct Live {
 }
 
 impl Live {
+    /// Bound to this event (+0x120 bit 7).
+    pub fn is_bound(&self, id: u32) -> bool {
+        self.st.bound.contains(&id)
+    }
+
     /// Op 0x33's bit 21 on a bound actor (entity +0x120 bit 21): no ground snap and, through FUN_10084640, no tilt.
     pub fn no_ground(&self, me: u32, id: u32) -> bool {
         self.rt.actors().any(|(a, b)| b.no_ground && (if a == PLAYER { me } else { a }) == id)
@@ -725,6 +735,7 @@ impl State {
             status_lock: HashSet::new(),
             snap: HashSet::new(),
             despawned: HashSet::new(),
+            detached: HashSet::new(),
             camera_flag: false,
             released: false,
             cb0: true,
@@ -1384,8 +1395,16 @@ impl Host for LiveHost<'_> {
                     e.keep_event_pos = true;
                 }
             }
+            // The actor is actor@2 (FUN_100afac0(2)), in the scripts another one than the running actor nearly every
+            // time (census: 1,400 of 1,430, all in zone 280).
             Effect::Op { op: 0xac, sub: Some(s @ (2 | 3)), args, .. } => {
                 if let Some(e) = self.arg_actor(&args, 0).and_then(|id| self.w.entities.get_mut(&id)) {
+                    log::debug!(
+                        "event: {} (index {:#x}) {}",
+                        e.name,
+                        e.index,
+                        if s == 2 { "reserved" } else { "released" }
+                    );
                     e.ev_reserved = s == 2;
                     if s == 3 {
                         let _ = self.w.net.commands.send(NetCommand::CharReq(e.index));
@@ -2361,12 +2380,20 @@ impl Host for LiveHost<'_> {
     fn ground(&self, actor: u32, p: [f32; 3]) -> Option<f32> {
         // The VM names us PLAYER; the flags live under our world id.
         let actor = self.wid(actor);
-        let no_snap = if actor == self.w.my_id {
-            self.w.my_plate.no_snap
+        let (no_snap, status) = if actor == self.w.my_id {
+            (self.w.my_plate.no_snap, self.w.my_motion.status)
         } else {
-            self.w.entities.get(&actor).is_some_and(|e| e.no_snap)
+            self.w.entities.get(&actor).map_or((false, 0), |e| (e.no_snap, e.motion.status))
         };
-        if no_snap {
+        // FUN_1008cd90 holds bit 21 for a carrier status and for an unbound rider (client/carrier.rs).
+        let bound = self.st.bound.contains(&actor);
+        // +0x174 is one field: an event status (op 0xac sub 1) or a door op's state, whichever came last.
+        let status = if bound {
+            self.st.event_status.get(&actor).or_else(|| self.w.doors.event.get(&actor)).copied().unwrap_or(0)
+        } else {
+            self.w.doors.state.get(&actor).copied().unwrap_or(status)
+        };
+        if no_snap || super::carrier::no_ground(status, bound) {
             return None;
         }
         self.w.ground.as_ref().and_then(|g| g.snap(p[0], p[2], p[1]))
@@ -2655,7 +2682,7 @@ fn actors_idle(w: &mut World, wt: &mut Waiting) -> bool {
         .into_iter()
         .filter_map(|id| {
             let (status, hidden) = match w.entities.get(&id) {
-                _ if id == w.my_id => (w.my_motion.status, w.self_flags & 1 != 0),
+                _ if id == w.my_id => (w.my_motion.status, self_hidden(w)),
                 Some(e) => (e.motion.status, e.flags & 2 != 0),
                 None => return None,
             };
@@ -2696,7 +2723,7 @@ fn begin(w: &mut World, mut wt: Box<Waiting>, index: &DatIndex) {
     for b in blocks.iter().filter(|b| bound_block(b, st.start.event)) {
         if let Some((id, _)) = resolve((w.my_id, w.my_index), b.actor) {
             st.bound.insert(id);
-            if w.entities.get(&id).is_some_and(|e| e.flags & 2 != 0) {
+            if w.entities.get(&id).is_some_and(|e| e.flags & 2 != 0) || (id == w.my_id && self_hidden(w)) {
                 st.hidden.insert(id);
             }
             if st.start.mode & 0x200 == 0
@@ -2888,6 +2915,9 @@ fn sync(live: &mut Live, w: &mut World, ticks: f32, dt: f32) {
     let mut steps = Vec::new();
     for (a, b) in live.rt.actors() {
         let id = if a == PLAYER { me } else { a };
+        if live.st.detached.contains(&id) {
+            continue;
+        }
         let p = Vec3::from(b.pos);
         let snap = live.st.snap.remove(&id);
         let pose = live.st.poses.entry(id).or_insert(Pose::new(p, b.dir, b.tilt));
@@ -3289,6 +3319,23 @@ fn drops_action_in(flags: u32, bound: bool, own: bool, category: u8) -> bool {
         || (own && flags & mode::ALLOW_OWN_ACTION == 0 && crate::net::action::category::by_file(category))
 }
 
+/// An update came for `id`: the despawn mark (entity +0x124 bit 12) is off, so the event's end leaves the actor.
+pub fn respawned(w: &mut World, id: u32) {
+    if let Some(l) = &mut w.event {
+        l.st.despawned.remove(&id);
+    }
+}
+
+/// FUN_1008ee30 from a slot reset: the actor leaves the event (+0x120 bits 7 / 8 off).
+pub fn unbind(w: &mut World, id: u32) {
+    if let Some(l) = &mut w.event {
+        l.st.bound.remove(&id);
+        l.st.despawned.remove(&id);
+        l.st.poses.remove(&id);
+        l.st.detached.insert(id);
+    }
+}
+
 /// An event holds this actor (bound, or taking part while it waits): a despawn waits for the end.
 pub fn holds(w: &mut World, id: u32) -> bool {
     if let Some(l) = &mut w.event
@@ -3405,9 +3452,30 @@ pub fn bound(w: &World, id: u32) -> bool {
     w.event.as_ref().is_some_and(|l| l.st.bound.contains(&id))
 }
 
+/// FUN_100983f0: no c2s 0x015 is built while we are bound to the running event (+0x120 bit 7 with DAT_104819a5)
+/// unless (DAT_10481aac | Mode) & SEND_POSITION (0x1009842c). The control lock's test (0x10098530) is the other gate,
+/// `SelfState::locked`. So through a city opening (Mode 0x83) the server hears no position from us at all.
+pub fn no_position(w: &World) -> bool {
+    no_position_in(w.event.as_ref().map(|l| (l.st.bound.contains(&w.my_id), l.st.flags())))
+}
+
+/// `no_position` from the running event's (we are bound, flags).
+fn no_position_in(live: Option<(bool, u32)>) -> bool {
+    live.is_some_and(|(bound, flags)| bound && flags & mode::SEND_POSITION == 0)
+}
+
+/// The actors the running event has bound (+0x120 bit 7).
+pub fn bound_set(w: &World) -> HashSet<u32> {
+    w.event.as_ref().map(|l| l.st.bound.clone()).unwrap_or_default()
+}
+
 /// A bound actor's drawn transform while the event runs: on its way to its last VM step, over the tick after it.
 pub fn pose(w: &World, id: u32) -> Option<Pose> {
-    w.event.as_ref()?.st.poses.get(&id).map(|p| p.drawn(p.since))
+    let l = w.event.as_ref()?;
+    if l.st.detached.contains(&id) {
+        return None;
+    }
+    l.st.poses.get(&id).map(|p| p.drawn(p.since))
 }
 
 /// A bound actor's event status (+0x174, op 0xac sub 1); 0 when none was set.
@@ -3522,6 +3590,18 @@ pub fn hides(w: &World, id: u32) -> bool {
         || moogle_gone(w) == Some(id)
 }
 
+/// s2c 0x037 Flags0 bit 0 (HideFlag, u8 @0x28 bit 0; FUN_1009d0f0 at 0x1009d1d6): our own actor's +0x120 bit 14, the
+/// bit a 0x00E's status sets on an NPC. FUN_1008e4d0 hides us by it while no event has us bound, and the bind
+/// (FUN_100bb300) turns it into the script's hide flag (bit 0x20000), so an event the server starts with us hidden
+/// begins without us until its script shows us (ops 0x22 / 0x4e with 0). The city openings rely on it: Windurst's
+/// never hide the player themselves, they only show it once the flyover is over.
+pub fn self_hidden(w: &World) -> bool {
+    w.self_flags & HIDE_FLAG != 0
+}
+
+/// s2c 0x037 Flags0 bit 0, HideFlag (`World::self_flags`).
+const HIDE_FLAG: u32 = 1;
+
 /// FUN_100a17f0(1): the moogle gone over to the Mog House (own model hidden, +0x120 bit 15).
 fn moogle_gone(w: &World) -> Option<u32> {
     w.moogle_hidden.then(|| super::moogle::moogle_actor(w)).flatten()
@@ -3569,7 +3649,7 @@ impl<'a> HideRule<'a> {
         let me = w.my_id;
         let hide_me = match self.script {
             Some(h) if self.takes_part(me) => h.contains(&me),
-            _ => !self.takes_part(me) && unloads(true, self.flags, false, false, false),
+            _ => self_hidden(w) || (!self.takes_part(me) && unloads(true, self.flags, false, false, false)),
         };
         // FUN_101d4d90: laying out the Mog House or gardening in it the player is not drawn (+0xb2 bit 4).
         hide_me || w.layout.is_some() || super::garden::hides_player(w)
@@ -4321,6 +4401,17 @@ pub fn source_line(w: &mut World, source: u16, id: u16, num: [u32; 5], mode: u8,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FUN_100983f0's bound-actor gate on c2s 0x015 (the lock is `SelfState::locked`).
+    #[test]
+    fn position_packets_stop_in_events() {
+        // A city opening (Mode 0x83) binds us: none.
+        assert!(no_position_in(Some((true, 0x83))));
+        // Mode bit 4 sends the event body's place; an event that does not bind us, or none, sends ours.
+        assert!(!no_position_in(Some((true, 0x87))));
+        assert!(!no_position_in(Some((false, 0))));
+        assert!(!no_position_in(None));
+    }
 
     /// 0x100952e7: only a zone-in event with Mode bit 0x80 starts in cinema mode, at (0, 0).
     #[test]

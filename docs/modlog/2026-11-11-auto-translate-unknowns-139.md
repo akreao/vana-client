@@ -58,9 +58,11 @@ mode 3. The caption bullets below are wrong and ours does not do them):
   and the sent block takes them. Then, with linkshell 1 worn (FUN_100e9870(.., 1)), c2s 0x0E2 with flag 0x40
   (FUN_100eae20), the packet /lsmes set sends. Nothing fills the lines from the server; only the holder's
   constructor clears them.
-- Ours: `seacom::open_ls_message`, `Store` for block 3 / 6 (`World.ls_edit_msg`), `linkshell::set_message`; the
-  linkshell submenus' pointer takes captions; `step` leaves a caption for 0xff.
+- Ours: `Store` for block 3 / 6 (`World.ls_edit_msg`), `linkshell::set_message`; a link of 0xff leaves the
+  cursor where it is (`linkshell::link_to`); link5 has no wheel, scroll bar or cursor focus while the editor is
+  open (`linkshell::has_focus`). Nothing opens mode 3 yet.
 - Not built: FUN_10191710 on the drawn lines; the caption taking the mouse cursor in the other windows of the game
-  (the hit test is generic; ours' other pointers skip parts whose links are 0xff); the modern UI has no way to the
+  (the hit test is generic; our other pointers skip parts whose links are 0xff); the modern UI has no way to the
   linkshell message editor.
-- Tests: `client::seacom::tests::ls_message_text`, `dat::autotrans::tests::second_keys`. Not checked live.
+- Tests: `client::seacom::tests::ls_message_text`, `dat::autotrans::tests::second_keys`,
+  `client::linkshell::tests::caption_links_stay`, `client::linkshell::tests::editor_takes_focus`. Not checked live.

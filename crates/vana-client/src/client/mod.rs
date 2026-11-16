@@ -43,6 +43,7 @@ mod augment;
 mod buffs;
 mod bump;
 mod camera;
+mod carrier;
 mod catalogue;
 mod cfgapply;
 mod clock;
@@ -199,8 +200,6 @@ use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
-
-const RUN_SPEED: f32 = 5.0;
 
 impl Task {
     fn name(&self) -> &'static str {
@@ -685,6 +684,9 @@ struct Entity {
     reset_bases: bool,
     /// +0x138 bit 31 (event op 0xac sub 2 / 3): while its model is hidden its schedulers' sounds stay off.
     ev_reserved: bool,
+    /// Entity +0x145 = 0 after a despawn that came while an event held the actor (0x1009b90f / 0x10099c80): the next
+    /// update must be a full one, or the slot is reset and asked for again.
+    awaiting_full: bool,
     /// +0x13c bit 0 (event op 0xac sub 4; only the entity reset clears it): 0x00E leaves its position alone, and an
     /// event end reseats it though it is reserved (FUN_100ae3f0).
     keep_event_pos: bool,
@@ -873,6 +875,11 @@ const COMBO_ROWS: usize = 8;
 /// The server key of PlayOnline logins (Server Type PlayOnline): they sign in through net/pol.
 pub(crate) fn is_playonline(server: &str) -> bool {
     server.trim().eq_ignore_ascii_case(PLAYONLINE)
+}
+
+/// Whether this player signs in through PlayOnline (the form or a saved login): only then is the Viewer checked.
+fn uses_playonline(cfg: &crate::config::Config) -> bool {
+    is_playonline(&cfg.server) || cfg.logins.iter().any(|l| is_playonline(&l.server))
 }
 
 const PLAYONLINE: &str = "PlayOnline";
@@ -1481,6 +1488,74 @@ fn charreq(w: &mut World, e: &net::EntityUpdate) {
     }
     let slot = if m & 0x20 != 0 { (u32::MAX, 0) } else { (e.id, seen | m) };
     w.index_masks.insert(e.index, slot);
+}
+
+/// The entities an update's slot rules reset before it is read. `slot`: another id filed under the update's index.
+/// `moved`: the update's id is filed under another index. 0x00E (FUN_1009b550) looks for the id's other slots
+/// whenever its own slot held another id or none; 0x00D (FUN_10099ae0) only when its slot held another id, or with
+/// the full mask (`sweeps`). A moved entity left alone stays where it was, and the update is a first one here.
+fn slot_resets(id: u32, slot: Option<u32>, moved: bool, sweeps: bool) -> Vec<u32> {
+    let mut out: Vec<u32> = slot.into_iter().collect();
+    if moved && (sweeps || slot.is_some()) {
+        out.push(id);
+    }
+    out
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum FirstUpdate {
+    Apply,
+    /// Dropped, the actor asked for again (+0x12c bit 15, FUN_1008d280).
+    Ask,
+    /// The slot is reset first (FUN_1008ee30: out of any event), then asked for.
+    ResetAndAsk,
+}
+
+/// 0x1009a0bf: an update for an actor we don't have (`known` None), or one waiting for a full update after a held
+/// despawn (+0x145 = 0, `known` Some(false)), needs the full mask; a reserved actor takes any (0x1009b963).
+fn first_update(known: Option<bool>, reserved: bool, complete: bool) -> FirstUpdate {
+    match known {
+        _ if reserved || complete => FirstUpdate::Apply,
+        Some(true) => FirstUpdate::Apply,
+        Some(false) => FirstUpdate::ResetAndAsk,
+        None => FirstUpdate::Ask,
+    }
+}
+
+/// A slot reset (FUN_1008ee30 / FUN_10092900 / FUN_1008a350(0)) as ours has it: the entity leaves any event and all it
+/// owns goes.
+fn reset_entity(w: &mut World, id: u32) {
+    event::unbind(w, id);
+    drop_entity(w, id);
+}
+
+/// A despawn: the entity and all it owns go, but no event is told. Retail's despawn path (0x1009b7e4..0x1009b945)
+/// never calls FUN_1008ee30; it sets +0x124 bit 12, +0x145 = 0 and the +0x120 bit 14 hide, so an actor the VM drives
+/// that respawns mid-event is posed again.
+fn drop_entity(w: &mut World, id: u32) {
+    w.forget_entity(id);
+    w.actors.remove(&id);
+    w.rests.remove(&id);
+    w.effects.forget_actor(id);
+}
+
+/// FUN_10093430 from the 0x00D / 0x00E handlers: the packet's name, or for an 0x00E without one below index 0x700
+/// the zone list's by UniqueNo (FUN_1008a930), else "NPC" (0x1035cb44), on every update. An actor with a
+/// Monstrosity word (+0x210) keeps its name.
+fn name_update(entry: &mut Entity, e: &net::EntityUpdate, list: &HashMap<u32, String>) {
+    if entry.monstrosity != 0 {
+        return;
+    }
+    if let Some(name) = e.name_for(list).filter(|n| entry.name != *n) {
+        log::debug!(
+            "name of {:#x} (index {:#x}): {:?} -> {name:?} ({})",
+            e.id,
+            e.index,
+            entry.name,
+            if e.listed { "zone list" } else { "packet" }
+        );
+        entry.name = name.into();
+    }
 }
 
 /// How many c2s 0x017 an update asks: the slot's id `old` and masks `seen` so far, this update's id and mask `m`.
@@ -2140,6 +2215,7 @@ fn self_entity(w: &World) -> Entity {
         motion_bases: Vec::new(),
         reset_bases: false,
         ev_reserved: false,
+        awaiting_full: false,
         keep_event_pos: false,
         no_occlusion: false,
         no_near_fade: false,
@@ -3584,8 +3660,10 @@ fn world_hud(
                 helpdesk::open(world);
                 world.sounds.push(crate::audio::Ui::Select as u32);
             }
-            (1, 11) => world.confirm = Some((Confirm::Shutdown, false)),
-            (1, 12) => world.confirm = Some((Confirm::Logout, false)),
+            // FUN_10161f30 / FUN_10161fc0 open the prompt only when FUN_10096270 lets us act.
+            (1, 11) if !prompt_held(world) => world.confirm = Some((Confirm::Shutdown, false)),
+            (1, 12) if !prompt_held(world) => world.confirm = Some((Confirm::Logout, false)),
+            (1, 11 | 12) => {}
             _ => log::info!("main menu item {id} on page {} is not implemented yet", world.menu_page),
         }
         // The prompt leaves the menu open under it (FUN_1014e7b0 items 0xb / 0xc), unfocused.
@@ -5798,6 +5876,7 @@ fn place_mogdoor(w: &mut World) {
             motion_bases: Vec::new(),
             reset_bases: false,
             ev_reserved: false,
+            awaiting_full: false,
             keep_event_pos: false,
             no_occlusion: false,
             no_near_fade: false,
@@ -6146,6 +6225,10 @@ struct Actor {
     /// The ground tilt state (client/tilt.rs) and this frame's tilted rotation (None: the plain Euler one).
     ground_tilt: tilt::GroundTilt,
     tilt_rot: Option<glam::Mat3>,
+    /// The front (points 10 / 11) and rear (8 / 9) feet midpoints of the last drawn pose, in the world (FUN_100a4d10).
+    feet: Option<[Vec3; 2]>,
+    /// FUN_100a4ed0's feet probe gate (tilt::feet_gate).
+    feet_gate: tilt::FeetGate,
     /// Entity +0x130 bits 5..6 (op 0xac): which death scheduler runs (combat::death_scheduler).
     death_pick: u8,
     /// The riding files on `extra`.
@@ -6305,6 +6388,8 @@ impl Actor {
             appear: 0.0,
             mouth_name: "mou4",
             ground_tilt: Default::default(),
+            feet: None,
+            feet_gate: Default::default(),
             tilt_rot: None,
             death_pick: 0,
             mouth: None,
@@ -6395,6 +6480,8 @@ fn npc_names(index: &DatIndex, zone: u16) -> HashMap<u32, String> {
             let name = &r[..r[..0x18].iter().position(|&b| b == 0).unwrap_or(0x18)];
             (id != 0).then(|| (id, String::from_utf8_lossy(name).into_owned()))
         })
+        // FUN_1008a930 takes the first record with the id.
+        .rev()
         .collect()
 }
 
@@ -6788,11 +6875,45 @@ fn effect_held(w: &World) -> bool {
     w.my_plate.frozen || w.buffs.iter().any(|&b| matches!(b, 2 | 7 | 10 | 14 | 28 | 633))
 }
 
-/// Our run speed in units per second (FUN_100a48d0): Speed x0.1, doubled while riding (status 5 / 0x55), at most 30.
+/// FUN_10096270 failing: K.O. (0), sleep (2), petrification (7), stun (10) or terror (28) among our effects. The
+/// log-out and shut-down prompts (FUN_10161fc0 / FUN_10161f30: the main menu's rows, Pause, the pad's slot) do not
+/// open then, with no line.
+fn prompt_held(w: &World) -> bool {
+    use crate::dat::effect;
+    w.dead()
+        || w.buffs.iter().any(|&b| matches!(b, effect::SLEEP | effect::PETRIFICATION | effect::STUN | effect::TERROR))
+}
+
+/// Our run speed in units per second (FUN_100a6240, vt+0x1a0 = actor +0x15c): Speed x0.1, doubled while riding
+/// (status 5 / 0x55), at most 30. Speed 0 is 0: retail has no default, and a server roots us with it (LSB's Bind sets
+/// the base speed 0, so 0x037 carries Speed 0).
 fn own_speed(w: &World) -> f32 {
-    let s = if w.my_motion.speed > 0 { w.my_motion.speed as f32 * 0.1 } else { RUN_SPEED };
-    let riding = matches!(w.my_motion.status, 5 | 0x55);
-    (if riding { s * 2.0 } else { s }).min(30.0)
+    run_speed(w.my_motion.speed, w.my_motion.status)
+}
+
+fn run_speed(speed: u8, status: u8) -> f32 {
+    let s = speed as f32 * 0.1;
+    (if matches!(status, 5 | 0x55) { s * 2.0 } else { s }).min(30.0)
+}
+
+/// Autorun's forced end: in an event, dead, rooted (speed 0: the run's vector is cut to the tick's move, none, and
+/// FUN_100a6240's |vector| <= 0.001 test ends it), resting, seated and the like.
+fn autorun_ends(in_event: bool, dead: bool, speed: f32, status: u8) -> bool {
+    in_event
+        || dead
+        || speed == 0.0
+        || matches!(status, 6 | 7 | 0x21 | 0x26..=0x2c | 0x2f | 0x30 | 0x32..=0x35 | 0x38..=0x53)
+}
+
+/// FUN_100a6240 at speed 0 (Bind): the move vector is the input x the tick's speed, so there is none and the function
+/// goes on as with no input (+0x598 = 0, no step, no strafe: FUN_100a8000 scales the same zero vector). Its tail still
+/// turns a free, unlocked third-person heading to the input by the camera, so the keys turn us in place. The forced
+/// follow (`pulled`) moves by its own step. Returns the step and the heading to turn to.
+fn rooted_step(step: Vec3, speed: f32, pulled: bool, locked: bool) -> (Vec3, Option<Vec3>) {
+    if pulled || step == Vec3::ZERO || speed != 0.0 {
+        return (step, None);
+    }
+    (Vec3::ZERO, (!locked).then(|| step.normalize()))
 }
 
 /// Our movement ratio at full stride (FUN_100c68f0): the run speed over SpeedBase x0.1, x1.6 riding; at most 3.
@@ -7413,6 +7534,8 @@ struct World {
     loading_scene: u16,
     /// Door states by entity (client/doors.rs).
     doors: doors::Doors,
+    /// The carrier statuses' steps (client/carrier.rs).
+    carriers: carrier::Carriers,
     /// In the Mog House (0x00A LoginState 1), its door menu, and a leave request sent.
     myroom: Option<net::MyRoom>,
     /// The party / alliance roster (client/party.rs) and whether its names were asked for (c2s 0x076).
@@ -7634,6 +7757,8 @@ struct World {
     loads: HashMap<u32, (u32, Instant)>,
     /// Running knockbacks (op 0x5e), by actor.
     knocks: HashMap<u32, combat::KnockState>,
+    /// Running self-moves (op 0x6e on an actor that is not a leaving animal), by actor.
+    self_moves: HashMap<u32, ride::SelfMove>,
     /// The action menu (Enter), and when the world started (a seed for random motion picks).
     action_menu: Option<combat::ActionMenu>,
     /// A main menu row was picked this frame (the snapshot's `picked`).
@@ -8866,6 +8991,8 @@ pub struct App {
     /// No game files yet: the download window (not retail).
     first_run: Option<firstrun::FirstRun>,
     update_ui: Option<updater::UpdateUi>,
+    /// The Update window opened by itself for an out-of-date PlayOnline Viewer (once a run).
+    viewer_asked: bool,
     /// The change notes the last update left for this version, shown over the title once (client/notes.rs), and their
     /// window while open.
     whats_new: Option<notes::Saved>,
@@ -9000,7 +9127,7 @@ impl App {
         let drive_checks = drive.login.is_none() || std::env::var_os("FFXI_UPDATE_CHECK").is_some();
         let updates = (drive_checks && cfg.ffxi_dir().join("VTABLE.DAT").is_file()).then(|| {
             updater::tidy();
-            updater::start(cfg.ffxi_dir())
+            updater::start(cfg.ffxi_dir(), uses_playonline(&cfg))
         });
         let whats_new = notes::pending();
         // A test drive asks for the notes only with FFXI_NOTES_CHECK set (or FFXI_UPDATE_CHECK).
@@ -9131,6 +9258,7 @@ impl App {
             updates,
             first_run: None,
             update_ui: None,
+            viewer_asked: false,
             whats_new,
             notes_ui: None,
             notes_fetch,
@@ -9767,10 +9895,16 @@ impl App {
         if self.drive.login.is_none() {
             let _ = self.cfg.save();
         }
+        // PlayOnline picked after start: the Viewer's row, for the update the check below may ask for.
+        if let Some(s) = self.updates.as_ref().filter(|s| s.lock().unwrap().viewer.is_none()) {
+            updater::start_viewer(s);
+        }
         let replies = self.start_entry_run();
         let watch = replies.clone();
         self.spawn(move || {
             let result = (|| {
+                // The Viewer's start-up check comes before its sign-in: no sign-in while it is out of date.
+                crate::net::pol::viewer_check(&crate::config::viewer_dir())?;
                 let creds = crate::net::pol::Credentials {
                     pol_id: cfg.pol_id.clone(),
                     pol_password,
@@ -10046,7 +10180,7 @@ impl App {
             }
             Task::Flyover(Ok(mut data)) => {
                 self.flyover_next = std::mem::take(&mut data.rest);
-                let mut f = flyover::Flyover::new(data);
+                let mut f = flyover::Flyover::new(data, select::TITLE_VOICES);
                 f.clip_x = crate::dat::weather::clipping_factor(self.cfg.game.for_character(None).get(0x3e));
                 self.flyover = Some(f);
                 self.flyover_state = LoadState::Idle;
@@ -10055,7 +10189,11 @@ impl App {
                 if self.nation.loading == Some(n) {
                     self.nation.loading = None;
                     match res {
-                        Ok(data) => self.nation.fly = Some((n, flyover::Flyover::new(data).unfaded())),
+                        Ok(data) => {
+                            let old = self.nation.fly.take().map(|f| f.1);
+                            self.stop_fly(old);
+                            self.nation.fly = Some((n, flyover::Flyover::new(data, select::NATION_VOICES).unfaded()));
+                        }
                         Err(e) => log::warn!("nation flyover {n}: {e:#}"),
                     }
                 }
@@ -10287,6 +10425,7 @@ impl App {
                             face_locks: HashMap::new(),
                             loads: HashMap::new(),
                             knocks: HashMap::new(),
+                            self_moves: HashMap::new(),
                             action_menu: None,
                             menu_picked: false,
                             battle_prev: 0,
@@ -10510,6 +10649,7 @@ impl App {
                             gmtell: Default::default(),
                             leaving_room: false,
                             doors: Default::default(),
+                            carriers: Default::default(),
                             event_voices: false,
                             event_looks: Vec::new(),
                             fx_models: HashMap::new(),
@@ -11251,7 +11391,8 @@ impl App {
                 world.lua.raise("zone_change", vec![zone_id.into(), old_zone.into()]);
                 world.scene = Some(map_no);
                 world.npc_names = world.index.as_ref().map(|i| npc_names(i, zone_id)).unwrap_or_default();
-                for (id, e) in world.entities.iter_mut() {
+                // An NPC that came before the list has the fallback name (retail reads the list before any packet).
+                for (id, e) in world.entities.iter_mut().filter(|(_, e)| e.index < 0x700 && e.name == "NPC") {
                     if let Some(n) = world.npc_names.get(id) {
                         e.name = n.clone();
                     }
@@ -11825,6 +11966,7 @@ impl App {
                     world.noreact.clear();
                     world.loads.clear();
                     world.knocks.clear();
+                    world.self_moves.clear();
                     // A rest machine starts afresh in the new zone (rest.rs).
                     world.rests.clear();
                     let current = world.zone == Some(zone) && world.scene == Some(scene);
@@ -11850,11 +11992,15 @@ impl App {
                 NetEvent::Entity(e) => {
                     charreq(world, &e);
                     // FUN_1009b550 ignores an 0x00E whose mask is 0 (0x1009b55b); the wrapper above still asks for the
-                    // entity it names, which is how a server announces one (the Mog House moogle).
-                    if e.mask == 0 && e.kind == EntityKind::Npc {
+                    // entity it names, which is how a server announces one (the Mog House moogle). Both handlers
+                    // drop an index outside their range (FUN_1009ceb0 / FUN_1009aad0).
+                    if (e.mask == 0 && e.kind == EntityKind::Npc) || !e.in_range() {
                         continue;
                     }
-                    if e.king {
+                    // A reserved actor (+0x138 bit 31) is the event's: 0x00E moves it and names it, no more.
+                    let reserved = e.kind == EntityKind::Npc
+                        && world.entities.get(&e.id).is_some_and(|x| x.ev_reserved && x.index == e.index);
+                    if e.king && !reserved {
                         world.res_rdy.kings.insert(e.id);
                     }
                     if e.id == world.my_id {
@@ -11867,23 +12013,55 @@ impl App {
                         }
                         continue;
                     }
-                    if e.despawn {
-                        // 0x1009a04d: an event participant stays until the event ends.
-                        if !event::holds(world, e.id) {
-                            world.forget_entity(e.id);
-                            world.actors.remove(&e.id);
-                            world.rests.remove(&e.id);
-                            world.effects.forget_actor(e.id);
+                    // The slot is the index's: another UniqueNo in it resets it, and the slot that held this id
+                    // goes too (FUN_10099a40; 0x00D looks for it only with a slot in use or the full mask).
+                    let slot = world.entity_index.get(&e.index).copied().filter(|o| *o != e.id && *o != world.my_id);
+                    let moved = world.entities.get(&e.id).is_some_and(|x| x.index != e.index);
+                    for old in slot_resets(e.id, slot, moved, e.kind == EntityKind::Npc || e.complete()) {
+                        log::info!("index {:#x} takes {:#x}: {old:#x} is reset", e.index, e.id);
+                        reset_entity(world, old);
+                    }
+                    // The name, before the despawn and first-update tests (0x1009b666).
+                    if e.kind == EntityKind::Npc
+                        && let Some(x) = world.entities.get_mut(&e.id).filter(|x| x.index == e.index)
+                    {
+                        name_update(x, &e, &world.npc_names);
+                    }
+                    // Any update lifts the despawn mark (+0x124 bit 12, 0x1009b7db / 0x10099c07).
+                    event::respawned(world, e.id);
+                    if e.despawn && !reserved {
+                        // 0x1009b90f: +0x145 = 0 always; the hide bit (+0x120 bit 14) only for an actor no event
+                        // holds (bit 8), so a participant stays until the event ends, and must be sent whole again.
+                        if event::holds(world, e.id) {
+                            if let Some(x) = world.entities.get_mut(&e.id) {
+                                x.awaiting_full = true;
+                                // 0x00E: +0x124 back to its 0x880, no sub-animation wanted or applied.
+                                if e.kind == EntityKind::Npc {
+                                    (x.sub[0], x.sub[1], x.sub_prev) = (0, 8, 8);
+                                }
+                            }
+                        } else {
+                            drop_entity(world, e.id);
                         }
                         continue;
                     }
-                    // 0x1009a0bf: a first update without the full mask is dropped and the actor asked for again
-                    // (+0x12c bit 15, FUN_1008d280).
-                    if !world.entities.contains_key(&e.id) && !e.complete() {
-                        log::info!("partial first update {:#x} (mask {:#x}): asking again", e.id, e.mask);
-                        let _ = world.net.commands.send(NetCommand::CharReq(e.index));
-                        continue;
+                    let known = world.entities.get(&e.id).filter(|x| x.index == e.index).map(|x| !x.awaiting_full);
+                    match first_update(known, reserved, e.complete()) {
+                        FirstUpdate::Apply => {}
+                        step => {
+                            log::info!("partial first update {:#x} (mask {:#x}): asking again", e.id, e.mask);
+                            if step == FirstUpdate::ResetAndAsk {
+                                reset_entity(world, e.id);
+                            }
+                            let _ = world.net.commands.send(NetCommand::CharReq(e.index));
+                            continue;
+                        }
                     }
+                    if let Some(x) = world.entities.get_mut(&e.id) {
+                        x.awaiting_full = false;
+                    }
+                    let hold = world.entities.get(&e.id).is_some_and(|x| x.keep_event_pos);
+                    let e = if reserved { e.reserved(hold) } else { e };
                     if let Some(tbl) = e.look {
                         let tbl = if e.id != world.my_id && world.game.get(0xa5) != 0 { hide_armour(tbl) } else { tbl };
                         looks.push((e.id, look_source(tbl)));
@@ -11962,6 +12140,7 @@ impl App {
                         motion_bases: Vec::new(),
                         reset_bases: false,
                         ev_reserved: false,
+                        awaiting_full: false,
                         keep_event_pos: false,
                         no_occlusion: false,
                         no_near_fade: false,
@@ -12124,16 +12303,9 @@ impl App {
                         entry.dir = e.dir;
                         entry.dir_seen = e.dir;
                     }
-                    // FUN_10093430 via the 0x00E handler: the packet's name where it carries one (players, index >= 0x700,
-                    // text marked 0x01), else the zone list by server id (FUN_1008a930), else "NPC" (0x1035bb44).
-                    if let Some(n) = e.name {
-                        entry.name = n;
-                    } else if let Some(n) = world.npc_names.get(&e.id) {
-                        if entry.name != *n {
-                            entry.name = n.clone();
-                        }
-                    } else if e.kind == EntityKind::Npc && e.index < 0x700 && entry.name.is_empty() {
-                        entry.name = "NPC".into();
+                    // The name rules (`name_update`): a new actor's, and a player's on every update.
+                    if fresh || e.kind == EntityKind::Player {
+                        name_update(entry, &e, &world.npc_names);
                     }
                     if let Some(h) = e.hpp {
                         entry.hpp = h;
@@ -12191,7 +12363,7 @@ impl App {
                     // The 0x00E look handler (jump table 0x1009ce88) ORs +0x128 bit 3 for doors, elevators and ships
                     // (SubKind 2..4) and for SubKind 0 models in fixed id ranges (asm 0x1009ca3c..0x1009caff): no gauge,
                     // no plate (FUN_101501a0, FUN_100ce4d0). The bit stays.
-                    if e.kind == EntityKind::Npc {
+                    if e.kind == EntityKind::Npc && !reserved {
                         let model_object = |m: u16| matches!(m, 0x32..=0x3b | 0x32e..=0x331 | 0x3c0..=0x3c9 | 0x737..=0x746 | 0x974..=0x97d | 0x9ba..=0x9c3);
                         if e.npc.is_some() {
                             entry.sub_kind = e.look_kind;
@@ -13006,6 +13178,7 @@ impl App {
         event::rebuild_models(world);
         if world.in_scene() {
             doors::update(world);
+            carrier::update(world);
             lifts::update(world);
             let jobs = ships::update(world);
             world.ship_jobs.extend(jobs);
@@ -13482,6 +13655,21 @@ impl App {
         let floor = world.ground.as_ref().filter(|_| world.in_scene() && !in_event);
         let shafts = world.lifts.shafts();
         let mut knock_ends = Vec::new();
+        let mut self_ends = Vec::new();
+        // FUN_1008cd90: an unbound actor in status 0x1c / 0x1f moves by its carrier's step after its own slide, and
+        // its server place (+0x24) and move start (+0x44) follow, so the slide never pulls it back (client/carrier.rs).
+        let ev_bound: HashSet<u32> = event::bound_set(world);
+        if let Some(set) = carrier::rider_set(world.my_motion.status).filter(|_| !ev_bound.contains(&world.my_id)) {
+            world.pos += world.carriers.step(set, world.my_index);
+        }
+        let carriers = &world.carriers;
+        let carry = |eid: &u32, e: &mut Entity| {
+            if let Some(set) = carrier::rider_set(e.motion.status).filter(|_| !ev_bound.contains(eid)) {
+                e.pos += carriers.step(set, e.index);
+                e.slide = e.pos;
+                e.target = e.pos;
+            }
+        };
         for (eid, e) in world.entities.iter_mut() {
             // Moved by someone else since last frame (an event script): take that as the slide and drawn spot.
             if e.pos != e.last_pos {
@@ -13502,6 +13690,37 @@ impl App {
                 e.slide = e.pos;
                 knock_ends.push((*eid, recover, done));
                 bump::active_tick(e, ticks);
+                carry(eid, e);
+                e.last_pos = e.pos;
+                continue;
+            }
+            // FUN_100a57f0 while +0x101 is set (op 0x6e): the actor steps along the facing it had; FUN_100c63d0 takes
+            // that position at once (no chase, no turn), and the walk / run motion follows the way moved.
+            if let Some(m) = world.self_moves.get_mut(eid) {
+                let (d, done) = ride::self_step(m, ticks);
+                e.pos += d;
+                if e.grounded
+                    && let Some(g) = floor
+                    && let Some(y) = g.snap(e.pos.x, e.pos.z, e.pos.y)
+                {
+                    e.pos.y = y;
+                }
+                e.slide = e.pos;
+                if done {
+                    ride::self_settle(m, e.pos, &mut e.target, &mut e.remain);
+                    self_ends.push(*eid);
+                }
+                e.ratio = crate::motion::move_ratio(
+                    e.ratio,
+                    Vec3::new(d.x, 0.0, d.z).length(),
+                    dt,
+                    e.motion.speed,
+                    e.motion.speed_base,
+                    e.motion.status,
+                );
+                bump::active_tick(e, ticks);
+                actmotion::idle_swap(*eid, e, world.actors.get_mut(eid), ticks);
+                carry(eid, e);
                 e.last_pos = e.pos;
                 continue;
             }
@@ -13554,6 +13773,7 @@ impl App {
             // The actor is drawn at the slide (+0x34 = +4).
             let step = e.slide - start;
             e.pos = e.slide;
+            carry(eid, e);
             // Characters in a lift shaft stand at its height (FUN_100a4ed0 runs for every collision actor).
             if e.door == 0
                 && e.lift.is_none()
@@ -13594,6 +13814,29 @@ impl App {
                 .map_or(p, |g| g.walk_player(from, p, ground::STEP_TICKS, Some(&ride)));
             knock_ends.push((world.my_id, recover, done));
         }
+        // Our own self-move comes before the input's move (FUN_100a57f0), through the walking collision; a push
+        // goes first (+0x102 before +0x101).
+        let me = world.my_id;
+        if !world.knocks.contains_key(&me)
+            && let Some(m) = world.self_moves.get_mut(&me)
+        {
+            let from = world.pos;
+            let (d, done) = ride::self_step(m, ticks);
+            let shafts = world.lifts.shafts();
+            let ride = |a: Vec3, b: Vec3| lifts::ride_in(&shafts, a, b);
+            world.pos = world
+                .ground
+                .as_ref()
+                .filter(|g| !g.is_empty())
+                .map_or(from + d, |g| g.walk_player(from, from + d, ground::STEP_TICKS, Some(&ride)));
+            if done {
+                self_ends.push(me);
+            }
+        }
+        for id in self_ends {
+            world.self_moves.remove(&id);
+        }
+        world.self_moves.retain(|id, _| *id == me || world.entities.contains_key(id));
         for (id, recover, done) in knock_ends {
             if recover {
                 combat::knock_recover(world, id);
@@ -13779,11 +14022,7 @@ impl App {
         // Autorun: the first move becomes the vector; X input steers it 2 degrees a tick (ticks x 0.01745 x 2); no
         // input and no vector ends it. Forced off while dead, resting or seated and in events. Locked on, it runs at
         // the target (below).
-        if world.autorun
-            && (in_event
-                || world.dead()
-                || matches!(world.my_motion.status, 6 | 7 | 0x21 | 0x26..=0x2c | 0x2f | 0x30 | 0x32..=0x35 | 0x38..=0x53))
-        {
+        if world.autorun && autorun_ends(in_event, world.dead(), own_speed(world), world.my_motion.status) {
             world.autorun = false;
         }
         // /follow (FUN_100a6070's users): autorun points at the target each tick; the target gone, dead or without a
@@ -14064,6 +14303,10 @@ impl App {
             world.move_tier = if step == Vec3::ZERO { 0.0 } else { 1.0 };
             world.autorun = false;
         }
+        let (rooted, rooted_face) = rooted_step(step, own_speed(world), pull.is_some(), tank);
+        if rooted != step {
+            (step, world.move_tier) = (rooted, 0.0);
+        }
         let stepping = step != Vec3::ZERO;
         let moving = stepping;
         // Whole retail frames of FUN_100a48d0 / FUN_100a3560; a position set elsewhere starts over from it.
@@ -14250,6 +14493,14 @@ impl App {
         }
         if let Ok(mut me) = world.net.me.lock() {
             me.pos = world.pos.to_array();
+            // FUN_100983f0: no 0x015 at all while our status in force is a rider's (0x1c / 0x1f); GroundMode (@0x15
+            // bit 2) = HackMove | +0x120 bit 21 | GroundFlag, the bits FUN_10084640 reads.
+            let bound = event::bound(world, world.my_id);
+            let status = if bound { event::event_status(world, world.my_id) } else { world.my_motion.status };
+            me.silent = carrier::rider_set(status).is_some() || event::no_position(world);
+            me.ground_mode = world.my_plate.no_snap
+                || world.event.as_ref().is_some_and(|l| l.no_ground(world.my_id, world.my_id))
+                || carrier::no_ground(status, bound);
             me.locked = world.control_lock.is_some();
             // Standing still keeps the facing; only the camera turns. Locked, we face the target.
             let to = if let Some((_, Some(y))) = pin {
@@ -14280,7 +14531,7 @@ impl App {
             } else if stepping {
                 Some(step.normalize())
             } else {
-                None
+                rooted_face
             };
             if let Some(f) = to {
                 me.dir = dir_from_forward(f);
@@ -14643,7 +14894,11 @@ impl App {
         // The pad's extra slots 32 / 33 / 35 / 36 (key functions 0xb7..0xba, pad only, unbound by default): the shut
         // down prompt, F8's nearest target, /jump and /map.
         if !event::active(world) && !world.typing && !world_window_open(world) {
-            if self.input.test(0xb7, input::mode::PRESS) && world.confirm.is_none() && world.my_motion.status != 1 {
+            if self.input.test(0xb7, input::mode::PRESS)
+                && world.confirm.is_none()
+                && world.my_motion.status != 1
+                && !prompt_held(world)
+            {
                 world.confirm = Some((Confirm::Shutdown, false));
             } else if self.input.test(0xb8, input::mode::PRESS) && !world.ko_open {
                 target::nearest_kind(world, 0x10, false, false);
@@ -14660,6 +14915,7 @@ impl App {
             && world.my_motion.status != 1
             && world.confirm.is_none()
             && world.ko_offer != 2
+            && !prompt_held(world)
         {
             world.confirm = Some((Confirm::Logout, false));
         }
@@ -15182,7 +15438,7 @@ impl App {
                     if let Err(e) = self.cfg.save() {
                         log::warn!("saving the config: {e:#}");
                     }
-                    self.updates = Some(updater::start(self.cfg.ffxi_dir()));
+                    self.updates = Some(updater::start(self.cfg.ffxi_dir(), uses_playonline(&self.cfg)));
                 }
                 firstrun::Action::Begin(dir) => {
                     self.cfg.game_dir = dir;
@@ -15647,6 +15903,21 @@ impl App {
                                 a.ui(crate::audio::Ui::Select);
                             }
                         }
+                    }
+                    // As the Viewer asks for its update before its sign-in: the window opens by itself, once.
+                    let viewer_behind = self
+                        .updates
+                        .as_ref()
+                        .is_some_and(|s| s.lock().unwrap().viewer.as_ref().is_some_and(updater::Game::offered));
+                    if viewer_behind
+                        && !self.viewer_asked
+                        && self.update_ui.is_none()
+                        && self.login_error.is_none()
+                        && is_playonline(&self.cfg.server)
+                        && let Some(s) = self.updates.clone()
+                    {
+                        self.viewer_asked = true;
+                        self.update_ui = Some(updater::UpdateUi::open(s, self.cfg.ffxi_dir()));
                     }
                     match chosen.filter(|_| self.login_error.is_none()) {
                         Some(LoginChoice::Exit) => self.exit_requested = true,
@@ -16933,13 +17204,17 @@ impl App {
                     for (id, key, value) in changes {
                         if key == lua::SCOPE_CHARACTER || key == lua::SCOPE_JOB {
                             let (folder, on) = (lua::folder_name(&id), value.as_bool() == Some(true));
+                            // This character's and job's state stays as it was (ModRef::set_scope).
+                            let character = uiconf::character(&world.world_name, &world.name);
+                            let job = uiconf::job_of(world).map(str::to_string);
                             let set = |list: &mut Vec<crate::config::ModRef>| {
                                 for r in list.iter_mut().filter(|r| r.name == folder) {
-                                    if key == lua::SCOPE_CHARACTER {
-                                        r.per_character = on;
+                                    let (c, j) = if key == lua::SCOPE_CHARACTER {
+                                        (on, r.per_job)
                                     } else {
-                                        r.per_job = on;
-                                    }
+                                        (r.per_character, on)
+                                    };
+                                    r.set_scope(Some(&character), job.as_deref(), c, j);
                                 }
                             };
                             set(&mut self.cfg.mods);
@@ -17531,6 +17806,15 @@ impl App {
     }
 
     /// The login screen and title menu play the flyover behind the lobby art.
+    /// A title or nation movie going: the stops for the voices its effects still hold.
+    fn stop_fly(&mut self, fly: Option<flyover::Flyover>) {
+        if let (Some(mut f), Some(a)) = (fly, &mut self.audio) {
+            for c in f.stop_sounds() {
+                play_fx_sound(a, c);
+            }
+        }
+    }
+
     fn title_backdrop(&self) -> bool {
         matches!(
             self.phase,
@@ -17549,7 +17833,8 @@ impl App {
                 self.load_flyover();
             }
         } else if matches!(self.phase, Phase::World(_)) {
-            self.flyover = None;
+            let old = self.flyover.take();
+            self.stop_fly(old);
         }
         let in_select =
             matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Select | LobbyScreen::Delete, .. });
@@ -17665,9 +17950,10 @@ impl App {
                     && ns.loading.is_none()
                     && let Ok((index, keys)) = self.game_data()
                 {
+                    let old = self.nation.fly.take().map(|f| f.1);
+                    self.stop_fly(old);
                     let ns = &mut self.nation;
                     ns.loading = Some(want);
-                    ns.fly = None;
                     let tx = self.tasks_tx.clone();
                     std::thread::spawn(move || {
                         let _ = tx.send(Task::Nation(
@@ -17678,11 +17964,14 @@ impl App {
                 }
             }
         } else if self.nation.fly.is_some() || self.nation.fade < 1.0 {
+            let old = self.nation.fly.take().map(|f| f.1);
+            self.stop_fly(old);
             self.nation = NationShow::default();
         }
         // A finished movie makes way for another random one.
         if self.flyover.as_ref().is_some_and(|f| f.done) {
-            self.flyover = None;
+            let old = self.flyover.take();
+            self.stop_fly(old);
         }
     }
 
@@ -18315,6 +18604,16 @@ impl App {
         if !select_ticks && let Some(fx) = self.select.as_mut().and_then(|s| s.effects()) {
             paused.extend(fx.pause_sounds());
         }
+        // The movies' voices too, while their screen is not up.
+        if !self.title_backdrop()
+            && let Some(f) = self.flyover.as_mut()
+        {
+            paused.extend(f.pause_sounds());
+        }
+        let nation_shown = creating && self.creator_step >= 6;
+        if !nation_shown && let Some((_, f)) = self.nation.fly.as_mut() {
+            paused.extend(f.pause_sounds());
+        }
         if let Some(a) = &mut self.audio {
             for c in paused {
                 play_fx_sound(a, c);
@@ -18330,6 +18629,7 @@ impl App {
                     if fly.done {
                         fly.restart();
                     }
+                    let alive = self.audio.as_ref().map(|a| a.alive());
                     fly.render(
                         &gfx.gpu,
                         gfx.config.format,
@@ -18338,7 +18638,12 @@ impl App {
                         &scene_depth,
                         bg,
                         aspect,
+                        alive,
                     );
+                    for c in fly.take_sounds() {
+                        let Some(a) = &mut self.audio else { break };
+                        play_fx_sound(a, c);
+                    }
                 }
                 _ => {
                     let alive = self.audio.as_ref().map(|a| a.alive());
@@ -18368,7 +18673,21 @@ impl App {
             if fly.done {
                 fly.restart();
             }
-            fly.render(&gfx.gpu, gfx.config.format, encoder, (&scene_view, Some(&scene_tex)), &scene_depth, bg, aspect);
+            let alive = self.audio.as_ref().map(|a| a.alive());
+            fly.render(
+                &gfx.gpu,
+                gfx.config.format,
+                encoder,
+                (&scene_view, Some(&scene_tex)),
+                &scene_depth,
+                bg,
+                aspect,
+                alive,
+            );
+            for c in fly.take_sounds() {
+                let Some(a) = &mut self.audio else { break };
+                play_fx_sound(a, c);
+            }
             g.drew_world = true;
         }
         if matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Select | LobbyScreen::Delete, .. })
@@ -18395,6 +18714,7 @@ impl App {
             && let Some(fly) = &mut self.flyover
         {
             fly.advance(dt);
+            let alive = self.audio.as_ref().map(|a| a.alive());
             g.drew_world = fly.render(
                 &gfx.gpu,
                 gfx.config.format,
@@ -18403,7 +18723,12 @@ impl App {
                 &scene_depth,
                 bg,
                 aspect,
+                alive,
             ) || g.drew_world;
+            for c in fly.take_sounds() {
+                let Some(a) = &mut self.audio else { break };
+                play_fx_sound(a, c);
+            }
         }
     }
 
@@ -18682,6 +19007,12 @@ impl App {
         }
         if let Some(fx) = self.creator.as_mut().and_then(|c| c.effects.as_mut()) {
             fx.after_submit(&gfx.gpu);
+        }
+        if let Some(f) = self.flyover.as_mut() {
+            f.after_submit(&gfx.gpu);
+        }
+        if let Some((_, f)) = self.nation.fly.as_mut() {
+            f.after_submit(&gfx.gpu);
         }
         if let Phase::World(w) = &mut self.phase
             && let Some(r) = &mut w.renderer
@@ -19657,11 +19988,26 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
             crate::dat::character::pose_layers(&ch.skeleton, &pl, over, &held)
         };
         let posed_anchor = a.anchors[..2].iter().any(|&k| k != 2);
+        // FUN_100a4d10 reads the feet points of the drawn pose (vt+0x1c4), so these models pose on the CPU when they
+        // probe (FUN_100a4ed0, tilt::feet_gate). A riding animal takes its rider's normal and is left out *(inf: vt+0x360
+        // only clears the moving / near branch; whether the animal class answers vt+0x3fc for the counter branch is not
+        // traced)*.
+        let feet_probe = ch.cib[0] == 2 && ch.cib[2] == 2 && *id & ride::ANIMAL == 0;
+        let (probe_now, feet_pose) = if feet_probe {
+            let depth = -cview.transform_point3(pos).z;
+            let bound = w.event.as_ref().is_some_and(|l| l.is_bound(*id));
+            // rand() & 0x7fff, as the CRT's.
+            let seed = if a.feet_gate.fresh() { getrandom::u32().unwrap_or(0) & 0x7fff } else { 0 };
+            tilt::feet_gate(&mut a.feet_gate, seed, pos, depth, bound)
+        } else {
+            (false, false)
+        };
         if (w.locked && (*id == w.my_id || w.target == Some(*id)))
             || (w.camst.first && *id == w.my_id)
             || fx_posed.contains(id)
             || posed_anchor
             || a.camera_rig
+            || feet_pose
         {
             a.bones = pose_now();
         } else {
@@ -19677,11 +20023,15 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
         let flags_of = rider.unwrap_or(*id);
         let no_snap = w.entities.get(&flags_of).is_some_and(|e| e.no_snap)
             || (flags_of == w.my_id && w.my_plate.no_snap)
-            || w.event.as_ref().is_some_and(|l| l.no_ground(w.my_id, flags_of));
+            || w.event.as_ref().is_some_and(|l| l.no_ground(w.my_id, flags_of))
+            || carrier::no_ground(gate_status, w.event.as_ref().is_some_and(|l| l.is_bound(flags_of)));
         if tilt::eligible(ch.cib[0], gate_status) && !no_snap {
             // Ours: the player's walk normal, else the face under the position each frame (the rider's for an
             // animal at its place) *(retail skips far moving actors, up to 121 frames)*.
-            let n = if rider.unwrap_or(*id) == w.my_id {
+            // A feet model's normal (+0x160) changes only on a probe; the easing below runs every frame.
+            let n = if feet_probe && !probe_now {
+                None
+            } else if rider.unwrap_or(*id) == w.my_id {
                 w.ground.as_ref().map(|g| g.player_normal())
             } else {
                 w.ground.as_ref().and_then(|g| g.floor_normal(pos)).map(|n| -n)
@@ -19690,23 +20040,15 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
                 tilt::set_normal(&mut a.ground_tilt, n);
             }
             // FUN_100a4d10: info[0] == info[2] == 2 (behemoth, adamantoise, morbol ...) pitch with the ground under
-            // the front feet (points 10 / 11) and the rear feet (8 / 9), each snapped *(inf: the rest pose through
-            // last frame's matrix for retail's posed points)*.
-            if ch.cib[0] == 2
-                && ch.cib[2] == 2
+            // the front feet (points 10 / 11) and the rear feet (8 / 9), each snapped. The points come through
+            // vt+0x1c4 (FUN_100d4560 -> FUN_1002a780): the bones FUN_100cbde0 posed on the last drawn frame's
+            // world matrix (+0x998), tilt included; none before the first pose (model +0x30 bit 4).
+            if probe_now
                 && let Some(g) = w.ground.as_ref()
+                && let Some([front, rear]) = a.feet
             {
-                let m = actor_frame(&Place { pos, forward, tilt, status, ratio, size }, a)
-                    * glam::Mat4::from_scale(a.axes.unwrap_or(Vec3::splat(a.scale)));
-                let pt = |k: usize| {
-                    ch.skeleton
-                        .points
-                        .get(k)
-                        .and_then(|(b, off)| a.rest.get(*b as usize).map(|x| m.transform_point3(x.at(*off))))
-                };
                 let snapped = |p: Vec3| g.snap(p.x, p.z, p.y).map(|y| Vec3::new(p.x, y, p.z));
-                if let (Some(p10), Some(p11), Some(p8), Some(p9)) = (pt(10), pt(11), pt(8), pt(9))
-                    && let (Some(fa), Some(fb)) = (snapped((p10 + p11) * 0.5), snapped((p8 + p9) * 0.5))
+                if let (Some(fa), Some(fb)) = (snapped(front), snapped(rear))
                     && let Some(n) = tilt::feet_normal(fa, fb)
                 {
                     tilt::set_normal(&mut a.ground_tilt, n);
@@ -19724,6 +20066,19 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
         }
         let frame = actor_frame(&Place { pos, forward, tilt, status, ratio, size }, a);
         let model = frame * glam::Mat4::from_scale(a.axes.unwrap_or(Vec3::splat(a.scale)));
+        // The feet midpoints of this drawn pose, for next frame's probe (FUN_100a4d10).
+        a.feet = None;
+        if feet_pose && !a.bones.is_empty() {
+            let pt = |k: usize| {
+                ch.skeleton
+                    .points
+                    .get(k)
+                    .and_then(|&(b, off)| a.bones.get(b as usize).map(|x| model.transform_point3(x.at(off))))
+            };
+            if let (Some(p10), Some(p11), Some(p8), Some(p9)) = (pt(10), pt(11), pt(8), pt(9)) {
+                a.feet = Some([(p10 + p11) * 0.5, (p8 + p9) * 0.5]);
+            }
+        }
         // FUN_1002b5e0: an arrow or plate point other than 2 is the posed point (FUN_10029930), in the world.
         for k in 0..2 {
             let bones = if a.bones.is_empty() { &a.rest } else { &a.bones };
@@ -21217,6 +21572,40 @@ pub(crate) fn egui_pass(ctx: &egui::Context, raw: egui::RawInput, ui: impl FnMut
 
 #[cfg(test)]
 mod tests {
+    /// Speed 0 (Bind) is 0, not a default; riding doubles, capped at 30.
+    #[test]
+    fn run_speed_has_no_default() {
+        assert_eq!(super::run_speed(0, 0), 0.0);
+        assert_eq!(super::run_speed(0, 5), 0.0);
+        assert_eq!(super::run_speed(50, 0), 5.0);
+        assert_eq!(super::run_speed(50, 5), 10.0);
+        assert_eq!(super::run_speed(200, 0x55), 30.0);
+    }
+
+    /// FUN_100a6240's zero vector ends autorun at speed 0, as an event, death or a seated status does.
+    #[test]
+    fn autorun_ends_when_rooted() {
+        use super::autorun_ends;
+        assert!(!autorun_ends(false, false, 5.0, 0));
+        assert!(autorun_ends(false, false, 0.0, 0));
+        assert!(autorun_ends(true, false, 5.0, 0));
+        assert!(autorun_ends(false, true, 5.0, 0));
+        assert!(autorun_ends(false, false, 5.0, 0x21));
+        assert!(!autorun_ends(false, false, 5.0, 1));
+    }
+
+    /// Rooted: no step, the keys turn us (not while locked on); the forced follow and a free speed still step.
+    #[test]
+    fn rooted_turns_in_place() {
+        use super::{Vec3, rooted_step};
+        let x = Vec3::new(2.0, 0.0, 0.0);
+        assert_eq!(rooted_step(x, 0.0, false, false), (Vec3::ZERO, Some(Vec3::X)));
+        assert_eq!(rooted_step(x, 0.0, false, true), (Vec3::ZERO, None));
+        assert_eq!(rooted_step(x, 0.0, true, false), (x, None));
+        assert_eq!(rooted_step(x, 5.0, false, false), (x, None));
+        assert_eq!(rooted_step(Vec3::ZERO, 0.0, false, false), (Vec3::ZERO, None));
+    }
+
     #[test]
     fn macro_gate_closes_on_each_retail_test() {
         use super::{GateState, gate_open};
@@ -21503,6 +21892,31 @@ mod tests {
     #[test]
     fn new_install_private() {
         assert!(!is_playonline(&crate::config::Config::default().server));
+    }
+
+    /// The slot rules of FUN_1009b550 / FUN_10099ae0: another id in the slot is reset; the id's old slot goes when
+    /// an 0x00E takes a new one, and for an 0x00D only with a slot in use or the full mask.
+    /// A held despawn leaves the actor waiting (known Some(false)): a partial update resets the slot and asks again,
+    /// a full one keeps it; a reserved actor takes either, and an actor we lack wants the full mask.
+    #[test]
+    fn held_despawn_wants_a_full_update() {
+        use super::{FirstUpdate::*, first_update};
+        assert_eq!(first_update(Some(false), false, false), ResetAndAsk);
+        assert_eq!(first_update(Some(false), false, true), Apply);
+        assert_eq!(first_update(Some(false), true, false), Apply);
+        assert_eq!(first_update(Some(true), false, false), Apply);
+        assert_eq!(first_update(None, false, false), Ask);
+        assert_eq!(first_update(None, false, true), Apply);
+        assert_eq!(first_update(None, true, false), Apply);
+    }
+
+    #[test]
+    fn slot_reset_rules() {
+        assert_eq!(slot_resets(7, None, false, true), Vec::<u32>::new());
+        assert_eq!(slot_resets(7, Some(5), false, false), [5]);
+        assert_eq!(slot_resets(7, None, true, true), [7]);
+        assert_eq!(slot_resets(7, None, true, false), Vec::<u32>::new());
+        assert_eq!(slot_resets(7, Some(5), true, false), [5, 7]);
     }
 
     /// A mask-0 0x00E names an NPC: one ask until a full update; a full first update asks nothing.
