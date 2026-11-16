@@ -1168,6 +1168,9 @@ pub struct SelfState {
     pub move_time: u16,
     /// The current target's ActIndex (0 none): c2s 0x015 @0x16 facetarget, the server's cursor target.
     pub target: u16,
+    /// The control lock (World::control_lock, DAT_10482f18 in 30261006_0): FUN_100983f0 builds no c2s 0x015 while
+    /// it is set (0x10098530), so a talk or an event sends no position until it goes.
+    pub locked: bool,
 }
 
 pub struct NetHandle {
@@ -1940,7 +1943,7 @@ impl Session<'_> {
                 self.map.zoned_in(&p);
                 let pos = [p.f32(12), p.f32(16), p.f32(20)];
                 let (scene, myroom) = scene_of(&p);
-                *self.me.lock().unwrap() = SelfState { pos, dir: p.u8(11), moving: false, move_time: 0, target: 0 };
+                *self.me.lock().unwrap() = SelfState { pos, dir: p.u8(11), ..Default::default() };
                 self.zoned = true;
                 self.my_index = p.u16(8);
                 self.queue.push(build(0x00C, &[0u8; 8]));
@@ -2816,7 +2819,11 @@ impl Session<'_> {
             body[16] = s.dir;
             // FUN_10096c00: @0x16 the current target's ActIndex (FUN_10152f20).
             body[18..20].copy_from_slice(&s.target.to_le_bytes());
-            add_position(&mut self.queue, build(0x015, &body), s.moving);
+            // Retail sends none under the control lock: a server that answers an event's 0x05C with our stored
+            // place (retail does) would otherwise get the pre-event place from the 0x015 that rides with it.
+            if !s.locked {
+                add_position(&mut self.queue, build(0x015, &body), s.moving);
+            }
             // A batch holding an id a mod hooks goes to the main thread and comes back as SendBatch.
             let hooked = self.hooks.load(Ordering::Relaxed) & HOOK_OUT != 0
                 && self.queue.iter().any(|p| self.stats.hooked(true, sub_id(p)));
