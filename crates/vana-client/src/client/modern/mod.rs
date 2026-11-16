@@ -749,6 +749,7 @@ fn default_place(id: &str) -> Place {
         "minimap" => at(-0.001, 0.0353),
         // The command window: every window the command menu opens shows here. The item info rides the log as retail's
         // (mode 0, flag 0x1000).
+        "packets" => at(0.04, 0.12),
         "window" => at(0.0047, 0.0347),
         // Ours: the Controller window over the Settings window it is opened from.
         "controller" => at(0.03, 0.06),

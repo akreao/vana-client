@@ -9,7 +9,8 @@ use crate::net::capture::{self, Dir, Kind};
 use egui::{FontFamily, FontId, RichText, Ui, vec2};
 
 const W: f32 = 1240.0;
-const LIST_W: f32 = 500.0;
+/// The window's height above the rows (title, controls, filters, status) and below them (the resize strip).
+const CHROME: f32 = 170.0;
 const ROW_H: f32 = 18.0;
 
 const FIELDS: [&str; 4] = ["save", "ids", "zone", "find"];
@@ -64,23 +65,29 @@ fn window(p: &mut Panels, pk: &mut super::super::packets::Packets) {
     let m = p.m;
     let small = m.theme.small;
     let mono = FontId::new(small, FontFamily::Monospace);
-    let at = p.ctx.content_rect().center() - vec2(W / 2.0, 300.0);
-    let tall = (p.ctx.content_rect().height() * 0.55).max(240.0);
+    let screen = p.ctx.content_rect();
+    let room = vec2(W.min(screen.width() - 16.0), screen.height() * 0.55 + CHROME);
     let note = format!("{} ({} records)", pk.source, pk.records.len());
     let mut close = false;
     let mut typing = false;
-    p.panel_at(
+    // Movable by its background and resizable by its corner like the chat window; its place and size are saved.
+    p.show(
         "packets",
-        Some(super::Title { icon: None, text: "Packets", note: Some(&note), name: false }),
-        W,
-        at,
-        |ui| {
+        super::Show {
+            title: Some(super::Title { icon: None, text: "Packets", note: Some(&note), name: false }),
+            size: room,
+            resizable: true,
+            ..Default::default()
+        },
+        |ui, room| {
+            let tall = (room.y - CHROME).max(120.0);
+            let list_w = room.x * 0.4;
             let btn = |ui: &mut Ui, label: &str, lit: bool| {
                 let s = Btn { lit, cursor: false, off: false };
                 kit::clicked(&kit::button(ui, m, label, 0.0, s), s)
             };
             // Source and recording.
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 let paused = pk.source == "live" && !pk.live;
                 if btn(
@@ -144,7 +151,7 @@ fn window(p: &mut Panels, pk: &mut super::super::packets::Packets) {
                 }
             });
             // Filters.
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 ui.label("Ids");
                 typing |= ui
@@ -195,7 +202,7 @@ fn window(p: &mut Panels, pk: &mut super::super::packets::Packets) {
                 // The rows.
                 let view = pk.view().to_vec();
                 let start = pk.records.first().map_or(0, |r| r.t);
-                ui.allocate_ui_with_layout(vec2(LIST_W, tall), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.allocate_ui_with_layout(vec2(list_w, tall), egui::Layout::top_down(egui::Align::Min), |ui| {
                     let mut area = egui::ScrollArea::vertical()
                         .id_salt("packets rows")
                         .max_height(tall)
@@ -226,7 +233,7 @@ fn window(p: &mut Panels, pk: &mut super::super::packets::Packets) {
                                 _ if r.dir == Dir::Out => m.theme.color("gold"),
                                 _ => m.theme.color("text"),
                             };
-                            let (rect, resp) = ui.allocate_exact_size(vec2(LIST_W - 14.0, ROW_H), egui::Sense::click());
+                            let (rect, resp) = ui.allocate_exact_size(vec2(list_w - 14.0, ROW_H), egui::Sense::click());
                             if pk.selected == Some(i) {
                                 ui.painter().rect_filled(rect, 2.0, m.theme.color("focus").gamma_multiply(0.45));
                             } else if resp.hovered() {
