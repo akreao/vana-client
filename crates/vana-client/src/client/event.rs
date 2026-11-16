@@ -2468,6 +2468,11 @@ pub fn queue(w: &mut World, s: EventStart) {
     );
     // FUN_100ad2c0 clears the post-event re-request (+0x1f8 / +0x1fa) of every actor.
     w.self_lock = None;
+    // The zone-in set-up locks control when the 0x00A carries an event (FUN_10094190 0x1009533e, FUN_10096640
+    // 0x1009679a, both under EventNum != 0), after the zone-in cleared it. No other event start writes the lock.
+    if s.login {
+        w.control_lock = Some((Instant::now(), s.target));
+    }
     w.event_pending = Some(Box::new(Waiting {
         start: s,
         blocks: None,
@@ -2722,8 +2727,9 @@ fn begin(w: &mut World, mut wt: Box<Waiting>, index: &DatIndex) {
     // FUN_100ad000 (load finished): DAT_104760f8 = 1, DAT_10473068 = DAT_10475cb0.
     st.loaded = true;
     st.cancellable = st.cb0;
-    // FUN_10094190 / FUN_100aed00: control locked, DAT_10488100 = 1 (released at the end).
-    (w.control_lock, w.lock_carry) = (Some((Instant::now(), st.start.target)), false);
+    // FUN_100aed00: DAT_10488100 = 1 (the end may release the lock). It sets no lock itself: a talk's event runs under
+    // the talk request's, a zone-in event under the one `queue` set, and one the server starts on its own under none.
+    w.lock_carry = false;
     w.event = Some(Box::new(Live { rt, st }));
     if cancel && let Some(l) = &mut w.event {
         // The 0x052 mode 2 that came while it waited cancels it once loaded (0x10096a99).

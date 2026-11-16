@@ -11,7 +11,15 @@
   there.
 - Why the server had the old place: we sent c2s 0x015 every datagram through the event, the one carrying the 0x05C
   too, all at the pre-event place (our place waits while bound). Retail sends none: FUN_100983f0 builds the 0x015
-  only while the control lock DAT_10482f18 is clear (0x10098530), and the event start (0x1009533e) and a talk request
-  (0x1007c17b) set it. So the 0x05C is the only position the server has from us during the event.
-- Ours: SelfState::locked mirrors World::control_lock each frame, and the net thread queues no 0x015 while it holds.
-  The first datagram after the lock goes carries the place the event left us at.
+  only while the control lock DAT_10482f18 is clear (0x10098530), and the talk request that started event 39
+  (FUN_1007bf30, 0x1007c17b) set it. So the 0x05C is the only position the server has from us during the event.
+- Who sets the lock (all 25 references in 30261006_0): the talk request; the zone-in set-up when the 0x00A carries an
+  event (FUN_10094190 0x1009533e, FUN_10096640 0x1009679a, both under EventNum != 0); op 0x20 (0x100b34d0); the
+  zone requests (0x1008af02 / 0x1008b15d); menus (0x101d55f8 / 0x101d5627). FUN_100aed00, the set-up every event
+  runs, sets only DAT_10488100, and the 0x032 / 0x034 path only reads the lock (0x100ad59d). Ours set it at every
+  event start: an event the server starts on its own (a trade, an item, a region) has none in retail.
+- Ours: event::begin sets no lock; event::queue sets it for a zone-in event (after the zone-in cleared it), and the net
+  thread's 0x00A handler marks SelfState::locked when EventNum != 0 so nothing goes out before the first frame.
+  SelfState::locked mirrors World::control_lock each frame, and `sends_position` (test `position_gate`) queues no
+  0x015 while it holds. The first datagram after the lock goes carries the place the event left us
+  at.

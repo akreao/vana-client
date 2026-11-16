@@ -1215,7 +1215,7 @@ pub struct SelfState {
     /// The current target's ActIndex (0 none): c2s 0x015 @0x16 facetarget, the server's cursor target.
     pub target: u16,
     /// The control lock (World::control_lock, DAT_10482f18 in 30261006_0): FUN_100983f0 builds no c2s 0x015 while
-    /// it is set (0x10098530), so a talk or an event sends no position until it goes.
+    /// it is set (0x10098530). A talk request, a zone-in event, op 0x20, the zone requests and menus set it.
     pub locked: bool,
 }
 
@@ -1323,6 +1323,12 @@ pub fn charreq_body(index: u16) -> [u8; 4] {
 /// an item where it last heard we were, and stops it on any move after that or when the last two positions were apart
 /// (LSB HasMoved, m_lastMoveDistance). Standing still, the position goes before such an action, twice, so it starts
 /// where we stopped.
+/// FUN_100983f0 builds no c2s 0x015 under the control lock (the test at 0x10098530 in 30261006_0). The retail server answers an event's 0x05C with the place it has stored for us, so a
+/// 0x015 riding with the 0x05C would give it the pre-event place back (Port Jeuno's airship doors).
+fn sends_position(s: &SelfState) -> bool {
+    !s.locked
+}
+
 fn add_position(queue: &mut Vec<Vec<u8>>, pos: Vec<u8>, moving: bool) {
     if !moving && queue.iter().any(|p| stopped_by_moving(p)) {
         queue.splice(0..0, [pos.clone(), pos]);
@@ -1989,7 +1995,12 @@ impl Session<'_> {
                 self.map.zoned_in(&p);
                 let pos = [p.f32(12), p.f32(16), p.f32(20)];
                 let (scene, myroom) = scene_of(&p);
-                *self.me.lock().unwrap() = SelfState { pos, dir: p.u8(11), ..Default::default() };
+                // EventNum @0x62, EventPara @0x64, EventMode @0x66, EventNo @0x40: the client starts
+                // the login event itself, on the player (FUN_10094ea0).
+                let (event_num, event_para) = (p.u16(0x62), p.u16(0x64));
+                // FUN_10094190 locks control here when the 0x00A carries an event: no 0x015 before the first frame.
+                let locked = event_num != 0;
+                *self.me.lock().unwrap() = SelfState { pos, dir: p.u8(11), locked, ..Default::default() };
                 self.zoned = true;
                 self.my_index = p.u16(8);
                 self.queue.push(build(0x00C, &[0u8; 8]));
@@ -1999,9 +2010,6 @@ impl Session<'_> {
                 if self.login.lsb.is_some() && self.stats.gm_window.load(Relaxed) {
                     self.queue.push(build(0x1F0, &super::gm::CATALOG_REQUEST));
                 }
-                // EventNum @0x62, EventPara @0x64, EventMode @0x66, EventNo @0x40: the client starts
-                // the login event itself, on the player (FUN_10094ea0).
-                let (event_num, event_para) = (p.u16(0x62), p.u16(0x64));
                 let event = (event_num != 0).then(|| EventStart {
                     target: p.u32(4),
                     index: p.u16(8),
@@ -2868,9 +2876,7 @@ impl Session<'_> {
             body[16] = s.dir;
             // FUN_10096c00: @0x16 the current target's ActIndex (FUN_10152f20).
             body[18..20].copy_from_slice(&s.target.to_le_bytes());
-            // Retail sends none under the control lock: a server that answers an event's 0x05C with our stored
-            // place (retail does) would otherwise get the pre-event place from the 0x015 that rides with it.
-            if !s.locked {
+            if sends_position(&s) {
                 add_position(&mut self.queue, build(0x015, &body), s.moving);
             }
             // A batch holding an id a mod hooks goes to the main thread and comes back as SendBatch.
@@ -3296,6 +3302,13 @@ mod tests {
         );
         let s = event_start(&p);
         assert_eq!((s.event, s.strings[0].as_str(), s.params[0]), (5, "Bastok", 3));
+    }
+
+    /// c2s 0x015 goes out unless the control lock is on (FUN_100983f0).
+    #[test]
+    fn position_gate() {
+        assert!(sends_position(&SelfState::default()));
+        assert!(!sends_position(&SelfState { locked: true, ..Default::default() }));
     }
 
     /// GP_CLI_COMMAND_EVENTEND: UniqueNo, EndPara, ActIndex, Mode, EventNum, EventPara.
