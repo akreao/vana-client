@@ -1036,6 +1036,7 @@ fn zone_in(cfg: &config::Config, m: &net::lobby::MapLogin, account: &str, stay: 
     use std::time::Instant;
 
     let codec = net::map::compress::Codec::from_ffximain(&std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir()))?)?;
+    net::capture::set(cfg.packet_capture);
     let addr = std::net::SocketAddr::from((m.map.0, m.map.1));
     let mut map = MapSession::connect(addr, &m.key, codec)?.or_key(m.old_key);
     // The zone server learns of us a moment after the lobby replies, so retry like the client does.
