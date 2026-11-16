@@ -16549,7 +16549,7 @@ impl App {
                         mm.s.scope_at = Some(at);
                     }
                     // The mods kept per character or job (#94): those for this one run.
-                    let mut mods = std::mem::take(&mut world.lua);
+                    let mut mods = lua::Host::park(&mut world.lua);
                     mods.follow_scope(world, &self.cfg.mods, &[]);
                     world.lua = mods;
                     save = true;
@@ -16650,7 +16650,7 @@ impl App {
                             world.sounds.push(base + v as u32);
                         }
                     }
-                    let mut mods = std::mem::take(&mut world.lua);
+                    let mut mods = lua::Host::park(&mut world.lua);
                     let mut scoped = Vec::new();
                     for (id, key, value) in changes {
                         if key == lua::SCOPE_CHARACTER || key == lua::SCOPE_JOB {

@@ -386,7 +386,7 @@ pub const FUNCS: &[Func] = &[
     Func {
         ns: "ui.native",
         name: "menu_open",
-        doc: "Whether any game window has the keys (a HUD may hide meanwhile).",
+        doc: "Whether any game window has the keys, a mod window with the keys too (a HUD may hide meanwhile).",
         params: &[],
         ret: "boolean",
     },

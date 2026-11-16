@@ -542,7 +542,7 @@ function ui.native.highlighted() end
 ---@return {window: string, rows: table[], cursor: integer, top: integer}?
 function ui.native.list() end
 
---- Whether any game window has the keys (a HUD may hide meanwhile).
+--- Whether any game window has the keys, a mod window with the keys too (a HUD may hide meanwhile).
 ---@return boolean
 function ui.native.menu_open() end
 
