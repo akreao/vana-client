@@ -49,8 +49,8 @@ the same addresses in 30261006_0.
   - the door status ops (lock honoured) and op 0xac sub 1 (no lock test) already shared the one +0x174 field here;
     the event ground snap of a bound actor reads whichever of the two wrote last.
   - the feet normal uses the posed points of the last drawn frame through that frame's matrix (`Actor.feet`); such
-    models (info[0] == info[2] == 2) now always pose on the CPU. Before: the rest pose through this frame's
-    untilted matrix.
+    models (info[0] == info[2] == 2) pose on the CPU when they probe (the probe gate, FUN_100a4ed0, is in MODLOG
+    "Ground tilt"). Before: the rest pose through this frame's untilted matrix.
 - Not built: TargetMode / RunMode (+0x124 bits 18 / 19, writers not traced) and TimeNow in c2s 0x015; FUN_100ae3f0's
   copy of +0x174 into +0x16c / +0x170 at the event's end for entities with +0x138 bit 31 (op 0xac sub 2).
 - Still open (footage only): the across-slope no-roll of long bodies and the scale overshoot.
