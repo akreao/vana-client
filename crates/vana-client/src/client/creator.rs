@@ -792,7 +792,7 @@ pub fn screen_shot(shot: &ScreenShot, out: &std::path::Path) -> Result<()> {
         let mut enc = gpu.device.create_command_encoder(&Default::default());
         match &mut fly {
             Some(f) => {
-                f.render(&gpu, format, &mut enc, &view, &depth, [w, h], w as f32 / h.max(1) as f32);
+                f.render(&gpu, format, &mut enc, (&view, None), &depth, [w, h], w as f32 / h.max(1) as f32);
             }
             None => cr.render(
                 &gpu,
