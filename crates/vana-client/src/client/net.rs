@@ -2343,11 +2343,12 @@ impl Session<'_> {
                     self.npc_logged += 1;
                     let look = p.data.get(0x30..p.data.len().min(0x44)).unwrap_or_default();
                     log::info!(
-                        "0x00E index {:#05x} id {:08x} mask {:02x} ({:#x} bytes): look {}",
+                        "0x00E index {:#05x} id {:08x} mask {:02x} ({:#x} bytes): pos {:?} look {}",
                         p.u16(8),
                         p.u32(4),
                         p.u8(10),
                         p.data.len(),
+                        [p.f32(12), p.f32(16), p.f32(20)],
                         hex::encode(look)
                     );
                 }

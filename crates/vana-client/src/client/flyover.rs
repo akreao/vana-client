@@ -8,8 +8,6 @@ use crate::render::ui::{UiBatch, UiRenderer};
 use crate::render::{Camera, Gpu, ZoneRenderer};
 use anyhow::{Context, Result};
 
-/// The field movies "loop" picks from at random (op 0x3d).
-const MOVIES: [&str; 8] = ["mov1", "mov2", "mov3", "mov4", "mov5", "mov6", "mov7", "mov8"];
 /// Texture name of the offscreen frame a crossfade fades out.
 const PREVIOUS: &str = "\0flyover previous";
 
@@ -21,17 +19,33 @@ pub struct FlyoverData {
     /// The zone's weather keys, and the title DAT's 0x2f blocks that op 0x7e applies.
     weather: Option<ZoneWeather>,
     envs: Vec<(String, Env)>,
-}
-
-/// A random movie, seeded from the clock.
-pub fn pick_movie() -> &'static str {
-    let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
-    MOVIES[n as usize % MOVIES.len()]
+    /// The rest of this pass of "loop", played next.
+    pub rest: Vec<String>,
+    /// The movie's zone (op 0x7b).
+    zone: u32,
 }
 
 impl FlyoverData {
-    pub fn load(index: &DatIndex, keys: &zone::Keys, movie: &str) -> Result<Self> {
-        Self::load_file(index, keys, TITLE_FILE, movie)
+    /// The next movie of "loop": `queue`'s first, or a new pass's (`enabled`: the content bits op 0xaf tests).
+    pub fn load_next(index: &DatIndex, keys: &zone::Keys, queue: Vec<String>, enabled: u32) -> Result<Self> {
+        let mut q = queue;
+        if q.is_empty() {
+            let title = Title::parse(&index.read(TITLE_FILE)?)?;
+            let mut seed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(1, |d| d.as_nanos() as u64 | 1);
+            q = title.playlist(enabled, |n| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                (seed % n.max(1) as u64) as u32
+            });
+        }
+        anyhow::ensure!(!q.is_empty(), "loop plays no movie");
+        let movie = q.remove(0);
+        let mut d = Self::load_file(index, keys, TITLE_FILE, &movie)?;
+        d.rest = q;
+        Ok(d)
     }
 
     /// A movie of any file laid out like 23 (the creator's nation files 24..26, FUN_1023ad60); the zone comes
@@ -53,7 +67,7 @@ impl FlyoverData {
         let scene = zone::load_scene(keys, &zone_file)?;
         let weather = ZoneWeather::parse(&zone_file).ok();
         log::info!("flyover {file_id} {movie}: zone {zone}, {} ops", ops.len());
-        Ok(Self { title, ops, scene, weather, envs })
+        Ok(Self { title, ops, scene, weather, envs, rest: Vec::new(), zone })
     }
 }
 
@@ -82,6 +96,12 @@ pub struct Flyover {
     minute: f32,
     weather: String,
     env: Option<Env>,
+    /// Op 0x0e's blur (r, g, b, a, zoom: from, to, start tick, length), its restarts, and its pass.
+    blur: ([f32; 5], [f32; 5], f32, f32),
+    blur_starts: u32,
+    screen_fx: Option<crate::render::screenfx::ScreenFx>,
+    /// The Clipping setting's factor (config 0x3e) for the fog, as in the world.
+    pub clip_x: f32,
     pub done: bool,
 }
 
@@ -101,6 +121,10 @@ impl Flyover {
             minute: 12.5 * 60.0,
             weather: "suny".into(),
             env: None,
+            blur: ([0.0; 5], [0.0; 5], 0.0, 0.0),
+            blur_starts: 0,
+            screen_fx: None,
+            clip_x: 1.0,
             done: false,
         }
     }
@@ -138,6 +162,14 @@ impl Flyover {
                     self.fade = (self.fade_colour(), to, now, ticks as f32);
                     self.next_at = now + wait as f32;
                 }
+                // Case 0x0e (as the world's, client/event.rs fx_op): from the blur drawn now.
+                Op::Blur { rgba, zoom, wait, ticks } => {
+                    let f = |v: u8| v as f32 / 255.0;
+                    let to = [f(rgba[0]), f(rgba[1]), f(rgba[2]), f(rgba[3]), zoom];
+                    self.blur = (self.blur_now(), to, now, ticks as f32);
+                    self.blur_starts += 1;
+                    self.next_at = now + wait as f32;
+                }
                 Op::Crossfade { wait, ticks } => {
                     if let Some(cam) = self.camera() {
                         self.cross = Some((cam, now, ticks.max(1) as f32));
@@ -156,6 +188,12 @@ impl Flyover {
                 _ => {}
             }
         }
+    }
+
+    fn blur_now(&self) -> [f32; 5] {
+        let (from, to, start, len) = self.blur;
+        let t = if len <= 0.0 { 1.0 } else { ((self.tick - start) / len).clamp(0.0, 1.0) };
+        std::array::from_fn(|i| from[i] + (to[i] - from[i]) * t)
     }
 
     fn fade_colour(&self) -> [f32; 3] {
@@ -188,7 +226,7 @@ impl Flyover {
         gpu: &Gpu,
         format: wgpu::TextureFormat,
         encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
+        (view, tex): (&wgpu::TextureView, Option<&wgpu::Texture>),
         depth: &wgpu::TextureView,
         size: [u32; 2],
         aspect: f32,
@@ -196,9 +234,15 @@ impl Flyover {
         let Some(cam) = self.camera() else { return false };
         let cross = self.cross.filter(|(_, start, len)| self.tick < start + len);
         let f = self.fade_colour();
+        let b = self.blur_now();
         let tick = self.tick;
         let env = self.env.or_else(|| self.data.weather.as_ref().and_then(|w| w.at(&self.weather, self.minute)));
-        let lighting = env.map(|e| Lighting::from_env(&e, self.minute));
+        // Op 0x7b (FUN_1018b3a0, as the 0x00A zone-in): the zone's fog and draw constants under the Clipping factor.
+        let zone_id = self.data.zone as u16;
+        let lighting = env.map(|e| {
+            let k = crate::dat::weather::clipping(e.draw_dist, self.clip_x, zone_id).1;
+            Lighting::from_env_k(&e, self.minute, k)
+        });
         let zone = self.zone.get_or_insert_with(|| ZoneRenderer::new(gpu, &self.data.scene, format));
         zone.lighting = lighting;
         let ui = self.ui.get_or_insert_with(|| UiRenderer::new(gpu, format));
@@ -226,6 +270,17 @@ impl Flyover {
             batch.push_image(PREVIOUS, 0.0, 0.0, size[0] as f32, size[1] as f32, [1.0, 1.0, 1.0, a]);
         }
         zone.render(gpu, encoder, view, depth, &cam, aspect, &[]);
+        // FUN_100132b0's second block: last frame over the scene while the blur's alpha is not 0.
+        let blur = (b[3] * 255.0 >= 0.5).then(|| crate::render::screenfx::Blur {
+            rgb: [b[0], b[1], b[2]],
+            a: (2.0 * b[3]).min(1.0),
+            zoom: b[4],
+            start: self.blur_starts,
+        });
+        if blur.is_some() || self.screen_fx.is_some() {
+            let fx = self.screen_fx.get_or_insert_with(|| crate::render::screenfx::ScreenFx::new(gpu, format));
+            fx.draw_all(gpu, encoder, view, tex, size, None, None, blur, [1.0; 3]);
+        }
         // Fade: a multiply of the scene colour, drawn as black over it.
         let dim = (1.0 - (f[0] + f[1] + f[2]) / 3.0).clamp(0.0, 1.0);
         if dim > 0.0 {
