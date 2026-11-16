@@ -40,3 +40,18 @@ It prints the kept sub-packets with their time from the start, direction, zone, 
 adds the bytes), then a count of each id each way and of each datagram form each way (datagram counts follow `--dir` and `--zone`). `--find` keeps sub-packets
 that contain the given bytes anywhere. `--save` writes the kept lines to a new file, so you can share only the
 packets that matter.
+
+## The Packets window
+
+With `"dev_tools": true` in `config.json` and the modern UI, `/packets` opens a window over the game:
+
+- **Live** follows the map session as it runs (the window keeps the last 200,000 records); **Go live** returns to it
+  after a file was opened. **Record to file** writes a capture as `packet_capture` does, for as long as it is lit.
+- **Open capture** lists the captures folder, newest first; **Save shown** writes the rows the filters keep to a new
+  file there (a name typed beside it, or a stamped one).
+- Filters: ids (hex, `08f, 0c5`), direction, zone, and bytes (`1e 09`, or `"text"` in quotes). **Datagrams** shows
+  the datagram rows (only while no id or bytes are filtered on); **Follow** keeps the newest row in view.
+- Picking a row shows its header, the fields the client reads from that id (offsets from its own parsers and the
+  decompile notes), and a hex dump with **Copy hex**.
+
+`vana-client modern-shot --packets --out shot.png` draws the window with sample records.

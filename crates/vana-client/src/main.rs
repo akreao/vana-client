@@ -665,6 +665,9 @@ enum Cmd {
         /// Ours: the Mods window (a Look Changer sample on its Commands, a form filled in).
         #[arg(long)]
         mods: bool,
+        /// Ours: the Packets window with sample records.
+        #[arg(long)]
+        packets: bool,
         /// The favourites strip and starred list rows.
         #[arg(long)]
         favs: bool,
@@ -1469,6 +1472,7 @@ fn main() -> Result<()> {
             gm,
             controller,
             mods,
+            packets,
         } => {
             let list = font.is_some();
             client::modern_shot(
@@ -1494,6 +1498,7 @@ fn main() -> Result<()> {
                     gm,
                     controller,
                     mods,
+                    packets,
                 },
             )
         }

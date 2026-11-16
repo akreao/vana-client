@@ -18,11 +18,12 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufRead, LineWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering::Relaxed};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// One line of a capture.
@@ -59,12 +60,13 @@ pub enum Kind {
 }
 
 static ON: AtomicBool = AtomicBool::new(false);
-static OUT: Mutex<Option<Recorder>> = Mutex::new(None);
-
-struct Recorder {
-    file: LineWriter<File>,
-    zone: u16,
-}
+static OUT: Mutex<Option<LineWriter<File>>> = Mutex::new(None);
+/// The zone the last s2c 0x00A named.
+static ZONE: AtomicU16 = AtomicU16::new(0);
+/// The live feed (the Packets window's): records kept in memory while it is on, oldest dropped past `FEED_MAX`.
+static LIVE: AtomicBool = AtomicBool::new(false);
+static FEED: Mutex<VecDeque<Record>> = Mutex::new(VecDeque::new());
+const FEED_MAX: usize = 100_000;
 
 fn env() -> Option<String> {
     std::env::var("VANA_CAPTURE").ok().filter(|v| v != "0")
@@ -78,6 +80,24 @@ pub fn set(on: bool) {
     }
 }
 
+/// Whether a capture file is being written.
+pub fn recording() -> bool {
+    ON.load(Relaxed)
+}
+
+/// The live feed on or off (off empties it).
+pub fn live(on: bool) {
+    LIVE.store(on, Relaxed);
+    if !on {
+        FEED.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+}
+
+/// The records fed since the last call.
+pub fn take_live() -> Vec<Record> {
+    FEED.lock().unwrap_or_else(|e| e.into_inner()).drain(..).collect()
+}
+
 #[cfg(test)]
 static TEST_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
@@ -88,7 +108,8 @@ pub fn test_capture(dir: Option<PathBuf>) {
     *TEST_DIR.lock().unwrap() = dir;
 }
 
-fn dir() -> PathBuf {
+/// Where capture files go.
+pub fn dir() -> PathBuf {
     #[cfg(test)]
     if let Some(d) = TEST_DIR.lock().unwrap().clone() {
         return d;
@@ -133,18 +154,32 @@ fn ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
-/// Writes the record `f` makes from the zone, opening a capture first; closes it while capture is off.
-fn write(f: impl FnOnce(u16) -> Record) {
-    let mut out = OUT.lock().unwrap_or_else(|e| e.into_inner());
+fn wanted() -> bool {
+    ON.load(Relaxed) || LIVE.load(Relaxed)
+}
+
+/// Stamps a record with the time and zone (`packet` keeps it), feeds it live and writes it to the file (opened first; closed while
+/// capture is off).
+fn record(out: bool, kind: Kind) {
+    let side = if out { Dir::Out } else { Dir::In };
+    let rec = Record { t: ms(), dir: side, zone: ZONE.load(Relaxed), kind };
+    if LIVE.load(Relaxed) {
+        let mut feed = FEED.lock().unwrap_or_else(|e| e.into_inner());
+        if feed.len() >= FEED_MAX {
+            feed.pop_front();
+        }
+        feed.push_back(rec.clone());
+    }
+    let mut file = OUT.lock().unwrap_or_else(|e| e.into_inner());
     if !ON.load(Relaxed) {
-        *out = None;
+        *file = None;
         return;
     }
-    if out.is_none() {
+    if file.is_none() {
         match std::fs::create_dir_all(dir()).and_then(|_| new_capture(&dir())) {
-            Ok((file, path)) => {
+            Ok((f, path)) => {
                 log::info!("capture: {}", path.display());
-                *out = Some(Recorder { file: LineWriter::new(file), zone: 0 });
+                *file = Some(LineWriter::new(f));
             }
             Err(e) => {
                 log::warn!("capture: not opened in {}, capture off: {e}", dir().display());
@@ -153,38 +188,34 @@ fn write(f: impl FnOnce(u16) -> Record) {
             }
         }
     }
-    let r = out.as_mut().unwrap();
-    let rec = f(r.zone);
-    if let (Dir::In, Kind::Packet { id: 0x00A, hex }) = (rec.dir, &rec.kind)
-        && hex.len() >= 0x32
-    {
-        r.zone = u16::from_le_bytes([hex[0x30], hex[0x31]]);
-    }
-    let rec = Record { zone: r.zone, ..rec };
-    if let Err(e) = serde_json::to_string(&rec).map_err(std::io::Error::other).and_then(|l| writeln!(r.file, "{l}")) {
+    let w = file.as_mut().unwrap();
+    if let Err(e) = serde_json::to_string(&rec).map_err(std::io::Error::other).and_then(|l| writeln!(w, "{l}")) {
         log::warn!("capture: write failed, capture off: {e}");
         ON.store(false, Relaxed);
-        *out = None;
+        *file = None;
     }
-}
-
-fn dir_of(out: bool) -> Dir {
-    if out { Dir::Out } else { Dir::In }
 }
 
 /// One sub-packet (with its 4-byte header) as sent or received.
 pub fn packet(out: bool, data: &[u8]) {
-    if !ON.load(Relaxed) || data.len() < 4 {
+    if data.len() < 4 {
         return;
     }
     let id = u16::from_le_bytes([data[0], data[1]]) & 0x1ff;
+    // The zone is kept while nothing records, so a capture or the live view started later has it.
+    if !out && id == 0x00A && data.len() >= 0x32 {
+        ZONE.store(u16::from_le_bytes([data[0x30], data[0x31]]), Relaxed);
+    }
+    if !wanted() {
+        return;
+    }
     let hex = if out && id == 0x00A { redact_login(data) } else { data.to_vec() };
-    write(|zone| Record { t: ms(), dir: dir_of(out), zone, kind: Kind::Packet { id, hex } });
+    record(out, Kind::Packet { id, hex });
 }
 
 /// One datagram: its size, header sequence and ack, and the coder's form byte (`None` for the raw first 0x00A).
 pub fn datagram(out: bool, bytes: usize, seq: u16, ack: u16, form: Option<u8>) {
-    if !ON.load(Relaxed) {
+    if !wanted() {
         return;
     }
     let form = match form {
@@ -192,8 +223,7 @@ pub fn datagram(out: bool, bytes: usize, seq: u16, ack: u16, form: Option<u8>) {
         Some(1) => "huffman",
         Some(_) => "plain",
     };
-    let kind = Kind::Datagram { dgram: bytes, seq, ack, form: form.into() };
-    write(|zone| Record { t: ms(), dir: dir_of(out), zone, kind });
+    record(out, Kind::Datagram { dgram: bytes, seq, ack, form: form.into() });
 }
 
 /// c2s 0x00A without what signs in: the account name (packet +0x31, 15 bytes) and the ticket hashed from it and the
@@ -263,6 +293,136 @@ pub fn name(dir: Dir, id: u16) -> &'static str {
     ];
     let t = if dir == Dir::Out { c2s } else { s2c };
     t.iter().find(|(i, _)| *i == id).map_or("", |(_, n)| n)
+}
+
+#[derive(Clone, Copy)]
+enum Ty {
+    U8,
+    U16,
+    U32,
+    F32,
+    /// Shift-JIS text cut at its first zero, this many bytes at most (0: to the end).
+    Str(usize),
+    /// Bytes in hex.
+    Bytes(usize),
+    /// Little-endian dwords in hex.
+    Dwords(usize),
+}
+
+/// The fields this client reads from an id (the offsets of its own parsers, client/net.rs, and the decompile notes
+/// in docs/modlog), for the Packets window. Ids not here show only their bytes.
+fn layout(dir: Dir, id: u16) -> &'static [(&'static str, usize, Ty)] {
+    use Ty::*;
+    match (dir, id) {
+        (Dir::In, 0x009) => &[("MesNo", 0xa, U16), ("Data", 0xd, Str(0))],
+        (Dir::In, 0x00A) => &[
+            ("zone", 0x30, U16),
+            ("clock ms", 0x34, U32),
+            ("clock s", 0x38, U32),
+            ("header word 1", 0x94, U32),
+            ("header word 2", 0x98, U32),
+        ],
+        (Dir::In, 0x00B) => &[("state", 4, U8), ("ip", 8, U32)],
+        (Dir::In, 0x017) => {
+            &[("Kind", 4, U8), ("Attr", 5, U8), ("Data", 6, U16), ("name", 8, Str(15)), ("text", 0x17, Str(0))]
+        }
+        (Dir::In, 0x029) => &[
+            ("actor", 4, U32),
+            ("target", 8, U32),
+            ("data 0", 0xc, U32),
+            ("data 1", 0x10, U32),
+            ("actor index", 0x14, U16),
+            ("target index", 0x16, U16),
+            ("message", 0x18, U16),
+            ("type", 0x1a, U8),
+        ],
+        (Dir::In, 0x02A) => &[
+            ("actor", 4, U32),
+            ("num 0", 8, U32),
+            ("num 1", 0xc, U32),
+            ("num 2", 0x10, U32),
+            ("num 3", 0x14, U32),
+            ("index", 0x18, U16),
+            ("mes", 0x1a, U16),
+            ("kind", 0x1c, U8),
+            ("name", 0x1e, Str(32)),
+        ],
+        (Dir::In, 0x02D) => &[
+            ("actor", 4, U32),
+            ("target", 8, U32),
+            ("actor index", 0xc, U16),
+            ("target index", 0xe, U16),
+            ("data 0", 0x10, U32),
+            ("data 1", 0x14, U32),
+            ("message", 0x18, U16),
+            ("type", 0x1a, U8),
+        ],
+        (Dir::In, 0x036) => &[("actor", 4, U32), ("index", 8, U16), ("mes", 0xa, U16), ("kind", 0xc, U8)],
+        (Dir::In, 0x053) => &[("para", 4, U32), ("para2", 8, U32), ("id", 0xc, U16)],
+        (Dir::In, 0x05B) => {
+            &[("x", 4, F32), ("y", 8, F32), ("z", 0xc, F32), ("id", 0x10, U32), ("mode", 0x16, U8), ("dir", 0x17, U8)]
+        }
+        // FUN_100e5290: 0x2b dwords from +4 (docs/modlog/2026-11-15-celestite-windows-153-159.md).
+        (Dir::In, 0x08F) => &[("block", 4, Dwords(0x2b))],
+        (Dir::Out, 0x00A) => &[("char id", 0xc, U32), ("char name", 0x22, Str(15))],
+        // FUN_100e5200: the record number (set + 1) at +4, ten celestites at +5.
+        (Dir::Out, 0x0C5) => &[("record", 4, U8), ("celestites", 5, Bytes(10))],
+        _ => &[],
+    }
+}
+
+/// A sub-packet's header (id, size, sync) and the fields `layout` knows, as (name, value) pairs.
+pub fn decode(dir: Dir, data: &[u8]) -> Vec<(&'static str, String)> {
+    if data.len() < 4 {
+        return Vec::new();
+    }
+    let word = u16::from_le_bytes([data[0], data[1]]);
+    let id = word & 0x1ff;
+    let mut out = vec![
+        ("id", format!("{id:#05x} {}", name(dir, id))),
+        ("size", format!("{} ({:#x} bytes)", (word >> 9) * 4, (word >> 9) * 4)),
+        ("sync", u16::from_le_bytes([data[2], data[3]]).to_string()),
+    ];
+    let at = |o: usize, n: usize| data.get(o..o + n);
+    for &(field, o, ty) in layout(dir, id) {
+        let v = match ty {
+            Ty::U8 => at(o, 1).map(|b| format!("{0} ({0:#04x})", b[0])),
+            Ty::U16 => at(o, 2).map(|b| format!("{0} ({0:#06x})", u16::from_le_bytes([b[0], b[1]]))),
+            Ty::U32 => at(o, 4).map(|b| format!("{0} ({0:#010x})", u32::from_le_bytes(b.try_into().unwrap()))),
+            Ty::F32 => at(o, 4).map(|b| format!("{:.3}", f32::from_le_bytes(b.try_into().unwrap()))),
+            Ty::Str(n) => data.get(o..).map(|b| {
+                let b = if n == 0 { b } else { &b[..n.min(b.len())] };
+                let b = &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())];
+                format!("{:?}", crate::dat::font::decode_sjis(b))
+            }),
+            Ty::Bytes(n) => at(o, n).map(hex::encode),
+            Ty::Dwords(n) => at(o, n * 4).map(|b| {
+                b.chunks(4)
+                    .map(|d| format!("{:08x}", u32::from_le_bytes(d.try_into().unwrap())))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            }),
+        };
+        out.push((field, v.unwrap_or_else(|| "(past the end)".into())));
+    }
+    out
+}
+
+/// Bytes to look for, typed as hex ("1e 09") or as text in quotes ("\"Celestite\"").
+pub fn parse_find(s: &str) -> Result<Vec<u8>, String> {
+    let s = s.trim();
+    if let Some(t) = s.strip_prefix('"') {
+        return Ok(t.strip_suffix('"').unwrap_or(t).as_bytes().to_vec());
+    }
+    hex::decode(s.replace([' ', ','], "")).map_err(|_| format!("not hex: {s}"))
+}
+
+/// Ids typed as hex, comma or space separated ("08f, 0x0c5").
+pub fn parse_ids(s: &str) -> Result<Vec<u16>, String> {
+    s.split([',', ' '])
+        .filter(|t| !t.is_empty())
+        .map(|t| u16::from_str_radix(t.trim_start_matches("0x"), 16).map_err(|_| format!("not a hex id: {t}")))
+        .collect()
 }
 
 /// Which sub-packets a reader keeps.
@@ -370,6 +530,37 @@ mod tests {
         assert!(r[0x31..0x50].iter().all(|&b| b == 0));
         assert_eq!(&r[0x50..], &p[0x50..]);
         assert!(!r.windows(7).any(|w| w == b"account"));
+    }
+
+    /// Known ids decode by their layout; a field past the packet's end says so.
+    #[test]
+    fn decodes() {
+        let mut d = crate::net::map::session::build(0x0C5, &[0u8; 12]);
+        d[4] = 3;
+        d[5..15].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        let f = decode(Dir::Out, &d);
+        assert_eq!(f[0], ("id", "0x0c5 celestite set".into()));
+        assert!(
+            f.contains(&("record", "3 (0x03)".into())) && f.contains(&("celestites", "0102030405060708090a".into()))
+        );
+        let f = decode(Dir::In, &crate::net::map::session::build(0x053, &[0u8; 4]));
+        assert!(f.contains(&("id", "(past the end)".into())), "{f:?}");
+        assert_eq!(parse_find("1e 09"), Ok(vec![0x1e, 9]));
+        assert_eq!(parse_find("\"Cel\""), Ok(b"Cel".to_vec()));
+        assert_eq!(parse_ids("08f, 0x0C5"), Ok(vec![0x08F, 0x0C5]));
+        assert!(parse_ids("zz").is_err());
+    }
+
+    /// The live feed gets what the hooks record while it is on, and nothing once it is off.
+    #[test]
+    fn live_feed() {
+        live(true);
+        packet(false, &crate::net::map::session::build(0x1FD, &[9; 4]));
+        let got = take_live();
+        assert!(got.iter().any(|r| matches!(&r.kind, Kind::Packet { id: 0x1FD, .. })));
+        live(false);
+        packet(false, &crate::net::map::session::build(0x1FD, &[9; 4]));
+        assert!(!take_live().iter().any(|r| matches!(&r.kind, Kind::Packet { id: 0x1FD, .. })));
     }
 
     /// Two captures started in the same second get their own files, readable by this user only.
