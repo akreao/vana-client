@@ -11,6 +11,8 @@ use egui::{FontFamily, FontId, RichText, Ui, vec2};
 const W: f32 = 1240.0;
 /// The window's height above the rows (title, controls, filters, status) and below them (the resize strip).
 const CHROME: f32 = 170.0;
+/// Frame margins and the resize grip below the lists.
+const GRIP: f32 = 40.0;
 const ROW_H: f32 = 18.0;
 
 const FIELDS: [&str; 4] = ["save", "ids", "zone", "find"];
@@ -80,7 +82,7 @@ fn window(p: &mut Panels, pk: &mut super::super::packets::Packets) {
             ..Default::default()
         },
         |ui, room| {
-            let tall = (room.y - CHROME).max(120.0);
+            let top = ui.cursor().top();
             let list_w = room.x * 0.4;
             let btn = |ui: &mut Ui, label: &str, lit: bool| {
                 let s = Btn { lit, cursor: false, off: false };
@@ -198,6 +200,9 @@ fn window(p: &mut Panels, pk: &mut super::super::packets::Packets) {
                 .join("  ·  ");
             ui.label(RichText::new(line).size(small).color(m.theme.color("muted")));
             ui.add_space(4.0);
+            // The wrapped header's real height, so the lists never push the grip off the window or screen.
+            let head = ui.cursor().top() - top;
+            let tall = (room.y - head - GRIP).min(screen.height() - head - GRIP).max(120.0);
             ui.horizontal_top(|ui| {
                 // The rows.
                 let view = pk.view().to_vec();
@@ -218,14 +223,14 @@ fn window(p: &mut Panels, pk: &mut super::super::packets::Packets) {
                             let text = match &r.kind {
                                 Kind::Packet { id, hex } => {
                                     format!(
-                                        "{secs:>9.3} {d} z{:<4} {id:#05x} {:<18} {:>4}",
+                                        "{id:#05x} {d} {secs:>9.3} z{:<4} {:<18} {:>4}",
                                         r.zone,
                                         capture::name(r.dir, *id),
                                         hex.len()
                                     )
                                 }
                                 Kind::Datagram { dgram, seq, ack, form } => {
-                                    format!("{secs:>9.3} {d} z{:<4} datagram #{seq} ack {ack} {form} {dgram}", r.zone)
+                                    format!("dgram {d} {secs:>9.3} z{:<4} #{seq} ack {ack} {form} {dgram}", r.zone)
                                 }
                             };
                             let colour = match r.kind {
