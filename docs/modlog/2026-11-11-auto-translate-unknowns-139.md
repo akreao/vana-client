@@ -35,7 +35,10 @@ checked in Rizin.
   `second_keys`). The client itself is English only, so the French second words, the per-language compares and the
   Japanese / French candidate lists are not built.
 
-The linkshell message editor (found on the way):
+The linkshell message editor (found on the way; corrected by item 161, "Menu captions do not take the mouse": the
+submenus' caption is in state 0x10 from the window's open, registry flag 0x200000, so it never takes the cursor,
+case 4 never runs and nothing opens the editor's mode 3. The caption bullets below are wrong and ours no longer does
+them):
 - The comment window's mode 3 edits the linkshell message (blocks 3 / 6). menu_comment_fn (FUN_101e7530) opens it
   (+0x16 = 3, +0x17 = 0x73) from case 4 of the holder's and the pearlsack's submenus (link2 / link3,
   menu_link2_fn / menu_link3_fn). MODLOG "Linkshell menu" called that case dead code because child 4 is the caption.

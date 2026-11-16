@@ -59,13 +59,10 @@ pub fn open_bazaar(w: &mut World) {
     w.seacom_edit = Some(Editor { line: 0, mode: 0 });
 }
 
-/// menu_comment_fn (FUN_101e7530, link2 / link3's case 4; mode 3, type 0x73): the linkshell message's lines, block
-/// 3. Nothing fills them from the server: they open as they were last left (the holder's ctor FUN_101de5d0 alone
-/// clears blocks 3 and 6).
-pub fn open_ls_message(w: &mut World) {
-    w.seacom_edit = Some(Editor { line: 0, mode: 3 });
-}
-
+/// Mode 3 (type 0x73) edits the linkshell message's lines, block 3. Nothing opens it: retail's only opener,
+/// menu_comment_fn (FUN_101e7530), is called from case 4 of link2 / link3's handlers, the caption's number, and the
+/// caption is in state 0x10 from the window's open (registry flag 0x200000, `GameUi::caption`), so the cursor is
+/// never on it. The mode's store and close are kept as the window class has them.
 fn store(w: &mut World, mode: u8) -> &mut Store {
     match mode {
         0 => &mut w.bazaar_msg,
