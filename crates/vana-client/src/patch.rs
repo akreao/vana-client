@@ -805,12 +805,11 @@ pub fn plan_viewer(root: &Path, server: ServerVersion) -> Result<Plan> {
 }
 
 /// The start-up check's quick part (one request): the server's version when it is newer than the one applied
-/// last or a code file is not current (installs once patched with data files only keep a 2019 FFXiMain.dll),
-/// else None.
+/// last, else None (retail's version check, states 0x26a .. 0x26e).
 pub fn behind(root: &Path) -> Result<Option<ServerVersion>> {
     let server = ask(applied_version(root))?;
     let current = server.asked.as_deref().is_some_and(|a| up_to_date(&server.version, a));
-    Ok((!current || !code_current(root)).then_some(server))
+    Ok((!current).then_some(server))
 }
 
 /// The slow part: every listed file checked against `server`'s manifest.
@@ -827,21 +826,6 @@ pub fn forget_applied(root: &Path) -> Result<()> {
     }
 }
 
-/// The FFXiMain.dll the client reads matches the stamped manifest's.
-fn code_current(root: &Path) -> bool {
-    let Some(entries) = std::fs::read_to_string(root.join(STAMP_FILE)).ok().and_then(|t| parse_manifest(&t).ok())
-    else {
-        return false;
-    };
-    entries.iter().filter(|e| is_ffximain(&e.path)).all(|e| {
-        source(root, &e.path)
-            .and_then(|p| sig_of_path(&p))
-            .ok()
-            .flatten()
-            .is_some_and(|l| decide(e, Some(l), true).0 == Action::Current)
-    })
-}
-
 /// Asks the server for its version and manifest and checks the listed files under `root` (in parallel). Code files
 /// are left as they are; `code` fetches the FFXiMain.dll the client reads. `full` asks as an install with no
 /// version applied, so every file is read (retail without its patch.ver).
@@ -854,9 +838,7 @@ pub fn plan(root: &Path, code: bool, full: bool) -> Result<Plan> {
 /// staged file when it matches nothing.
 fn check(root: &Path, e: &Entry, applied: Option<&str>) -> Result<((Action, u64), Option<PathBuf>)> {
     let cur = e.versions.last().expect("entries have versions");
-    // FFXiMain.dll is always read: the copy this client keeps may be behind the stamp (see `behind`).
     if let Some(a) = applied
-        && !is_ffximain(&e.path)
         && stamp_num(&cur.stamp) <= stamp_num(a)
     {
         return Ok(((Action::Current, 0), None));
@@ -1361,15 +1343,6 @@ mod tests {
         assert_eq!(crate::dat::ffximain(&a), a.join("FFXiMain.dll"));
         assert!(!old.exists() && !adopt(&old, &b).unwrap());
         let _ = std::fs::remove_dir_all(&base);
-    }
-
-    /// A patched install's FFXiMain.dll (the one the client reads) checks against its stamped manifest.
-    #[test]
-    fn installed_ffximain_current() {
-        let root = crate::config::Config::load().ffxi_dir();
-        if root.join(STAMP_FILE).is_file() {
-            assert!(code_current(&root));
-        }
     }
 
     #[test]
