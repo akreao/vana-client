@@ -1523,7 +1523,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
         super::winhits::ctr(w, gu, name, p, clicked, right, keys);
     } else if s.view.is_some() {
         let (scroll, cursor) = s.list;
-        let (row, on) = child_under(w, SHOP, p, 1..=ROWS as u16);
+        let (row, on) = child_under(w, SHOP, p, 1..=ROWS as u16, super::winhits::parts(gu, SHOP));
         if right && on {
             key(w, egui::Key::Escape);
             return;
