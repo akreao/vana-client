@@ -14176,6 +14176,7 @@ impl App {
         }
         if let Ok(mut me) = world.net.me.lock() {
             me.pos = world.pos.to_array();
+            me.locked = world.control_lock.is_some();
             // Standing still keeps the facing; only the camera turns. Locked, we face the target.
             let to = if let Some((_, Some(y))) = pin {
                 Some(Vec3::new(y.cos(), 0.0, -y.sin()))
