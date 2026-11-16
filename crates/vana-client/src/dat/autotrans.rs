@@ -228,7 +228,7 @@ impl Dictionary {
     /// text (FUN_101bbfa0). In a Japanese or French group (FUN_101bbe00) every entry outside the item kinds 7..0x12
     /// carries a second string after the text: the kana reading in Japanese, the text without its accents in French.
     /// When it holds more than its NUL it is the word's key (FUN_101bddc0), the key completion matches and sorts by;
-    /// else the key is the text. Ours' client is English only: the French extras (a second word keyed by the text
+    /// else the key is the text. This client is English only: the French extras (a second word keyed by the text
     /// itself for each entry with a second string, and a second title word keyed by the title inside its brackets
     /// when FUN_101c9e70 finds it differs from the completion) are not built.
     pub fn parse_lang(data: &[u8], language: u8) -> Result<Self> {

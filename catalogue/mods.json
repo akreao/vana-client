@@ -133,21 +133,21 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "cf8167bd1bc1066e7a999cf7bb007c98d2778cc1497c3d7847275f31ed4a046b",
-          "size": 409,
+          "sha256": "e37d4e5af72f591a5d59212f5fb3e7fdc4c2b344fac22a45f1f320d67cc8c267",
+          "size": 499,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/auto-advance/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "13c9b89346b7e615518ac640063d4a4e1c3143f6a36f6226c0faa1529a59dc60",
-          "size": 471,
+          "sha256": "0f3b6f08a6b168f48ec4791073296f0e0616eebdc9b705d374c9e0e1002e65cb",
+          "size": 508,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/auto-advance/mod.toml"
         }
       ],
       "id": "auto-advance",
       "kind": "lua",
       "name": "Text Auto-Advance",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],

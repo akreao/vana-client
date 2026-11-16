@@ -21,5 +21,5 @@
 - Ours: event::begin sets no lock; event::queue sets it for a zone-in event (after the zone-in cleared it), and the net
   thread's 0x00A handler marks SelfState::locked when EventNum != 0 so nothing goes out before the first frame.
   SelfState::locked mirrors World::control_lock each frame, and `sends_position` (test `position_gate`) queues no
-  0x015 while it holds. The first datagram after the lock goes carries the place the event left us
+  0x015 while it or the rider gate holds. The first datagram after the lock goes carries the place the event left us
   at.

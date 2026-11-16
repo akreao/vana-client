@@ -117,7 +117,13 @@ pub fn request(c: &Cred, cmd: u8, sub: u8, body: &[u8]) -> Result<(u8, Vec<u8>)>
     open[4] = 1;
     s.write_all(&open)?;
     let mut ans = [0u8; 0x18];
-    s.read_exact(&mut ans).context("xi_profile closed the connection (refused the credentials?)")?;
+    // A close here is xi_profile's answer to the open (the credentials), not a dropped link.
+    if let Err(e) = s.read_exact(&mut ans) {
+        if e.kind() == std::io::ErrorKind::UnexpectedEof {
+            bail!("xi_profile closed the connection at the open (refused the credentials?)");
+        }
+        return Err(anyhow::Error::new(e).context("no answer to the open"));
+    }
     if ans[0] != 0x81 || ans[1] != 0 {
         bail!("xi_profile open answer {:#x} error {}", ans[0], ans[1]);
     }
