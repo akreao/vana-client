@@ -97,9 +97,11 @@ mod auction;
 mod bazaar;
 mod blklist;
 mod bluset;
+mod celestite;
 mod chatctrl;
 mod cmdhint;
 mod concierge;
+mod credits;
 mod currencies;
 mod equipsets;
 mod equipwin;
@@ -381,15 +383,48 @@ fn world_window_open(w: &World) -> bool {
     w.action_menu.is_some() || window_over_actions(w)
 }
 
-/// FUN_101a33e0: in the field with the UI up, no event, target prompt (+0x59) or party cursor (+0xc4), alive, and no
-/// window holding the keys but the action menu (playermo / mp_pmode) or a palette.
+/// FUN_101a33e0's tests, in its order.
+#[derive(Clone, Copy, Default)]
+struct GateState {
+    /// Scene state 0x60.
+    field: bool,
+    /// FUN_1015dce0: cinema mode or the UI hidden.
+    hidden: bool,
+    /// The target prompt (+0x59).
+    prompt: bool,
+    /// The party cursor (+0xc4).
+    party_cursor: bool,
+    /// The Mog House mode (myroom +0x1c) is not 0: layout, a mannequin, gardening.
+    myroom: bool,
+    /// FUN_10087070(0): an event, frozen, charmed, fishing / digging.
+    busy: bool,
+    /// +0x170 2 / 3.
+    dead: bool,
+    /// A focused window other than playermo, mp_pmode or a palette (+0x68 not identified).
+    window: bool,
+}
+
+fn gate_open(s: GateState) -> bool {
+    s.field && !s.hidden && !s.prompt && !s.party_cursor && !s.myroom && !s.busy && !s.dead && !s.window
+}
+
+/// FUN_101a33e0: retail's macro gate (the macro keys, the palettes, game.info().macros).
+fn retail_macro_gate(w: &World) -> bool {
+    gate_open(GateState {
+        field: w.in_scene(),
+        hidden: w.ui_hidden || event::cinema(w),
+        prompt: w.prompt.is_some(),
+        party_cursor: w.party_cursor.is_some(),
+        myroom: w.layout.is_some() || w.garden.is_some(),
+        busy: textcmd::busy(w),
+        dead: w.dead(),
+        window: window_over_actions(w) || w.settings.is_some() || w.full_log.is_some(),
+    })
+}
+
+/// The gate, with our macro book loaded.
 fn macro_gate(w: &World) -> bool {
-    let window = window_over_actions(w)
-        || w.settings.is_some()
-        || w.full_log.is_some()
-        || w.prompt.is_some()
-        || w.party_cursor.is_some();
-    w.in_scene() && !w.ui_hidden && !event::active(w) && !w.dead() && !window && w.macros.is_some()
+    retail_macro_gate(w) && w.macros.is_some()
 }
 
 /// The open windows but the action menu (playermo), which stays up while engaged: macros run while it is the only one
@@ -650,12 +685,12 @@ struct Entity {
     reset_bases: bool,
     /// +0x138 bit 31 (event op 0xac sub 2 / 3): while its model is hidden its schedulers' sounds stay off.
     ev_reserved: bool,
-    /// Entity +0x13c bits 0..1 (event op 0xac sub 4, OR'd in; cleared with the slot): bit 0 makes a reserved actor
-    /// keep its position against 0x00E mask 0x01 (0x1009b9f3). Bit 1 has no reader.
-    pos_hold: u8,
     /// Entity +0x145 = 0 after a despawn that came while an event held the actor (0x1009b90f / 0x10099c80): the next
     /// update must be a full one, or the slot is reset and asked for again.
     awaiting_full: bool,
+    /// +0x13c bit 0 (event op 0xac sub 4; only the entity reset clears it): 0x00E leaves its position alone, and an
+    /// event end reseats it though it is reserved (FUN_100ae3f0).
+    keep_event_pos: bool,
     /// +0x12c bit 17 (event op 0x94, FUN_100b7e20): no occlusion test (FUN_100c9da0); never cleared.
     no_occlusion: bool,
     /// +0x12c bit 26 (event op 0xa4): the eye near it does not fade it (FUN_100c63d0 sets model +0x664 to 1); cleared
@@ -2158,8 +2193,8 @@ fn self_entity(w: &World) -> Entity {
         motion_bases: Vec::new(),
         reset_bases: false,
         ev_reserved: false,
-        pos_hold: 0,
         awaiting_full: false,
+        keep_event_pos: false,
         no_occlusion: false,
         no_near_fade: false,
         half_fade: false,
@@ -2613,6 +2648,8 @@ fn world_hud(
     world.ui_wh = (sw, sh);
     world.lua.set_view_proj(view_proj);
     // The focused list's scroll bar and the wheel, before the windows see the press.
+    // Game files from 30261102 on hold fe_main (client/celestite.rs).
+    world.fe_menu = gu.layout(celestite::MAIN).is_some();
     let taken = scrollbar::frame(gu, world, input);
     let input = taken.as_ref().unwrap_or(input);
     // A middle click is this frame's only: one made while the HUD is down (downloading, hidden) is dropped.
@@ -3208,6 +3245,12 @@ fn world_hud(
                 _ if world.merits_ui.is_some() => merits::key(world, gu, *key),
                 _ if world.jp_ui.is_some() => jobpoints::key(world, *key, modifiers.ctrl || modifiers.alt),
                 _ if world.ae_ui.is_some() => aepoints::key(world, *key, modifiers.ctrl || modifiers.alt),
+                _ if world.cel_ui.is_some() => {
+                    if celestite::event_key(*key) {
+                        celestite::key(world, *key, modifiers.ctrl || modifiers.alt, modifiers.alt)
+                    }
+                }
+                _ if world.fe_main.is_some() => celestite::main_key(world, gu, *key),
                 _ if world.status.is_some() && modern::status_key(world, *key) => {}
                 _ if world.status.is_some() => status::key(world, gu, *key),
                 _ if modern::journal_key(world, gu, *key, modifiers.ctrl || modifiers.alt) => {}
@@ -3789,6 +3832,7 @@ fn world_hud(
             && world.merits_ui.is_none()
             && world.jp_ui.is_none()
             && world.ae_ui.is_none()
+            && world.fe_main.is_none()
             && world.confirm.is_none()
     });
     if let Some(p) = input.pointer.filter(|_| world.currencies.is_some() && world.confirm.is_none()) {
@@ -3802,6 +3846,8 @@ fn world_hud(
     }
     if let Some(p) = input.pointer.filter(|_| world.ae_ui.is_some() && world.confirm.is_none()) {
         aepoints::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
+    } else if let Some(p) = input.pointer.filter(|_| world.fe_main.is_some() && world.confirm.is_none()) {
+        celestite::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.unity.is_some() && world.confirm.is_none()) {
         unity::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
@@ -4203,6 +4249,8 @@ fn world_hud(
     if !world.lua.hides("plates") {
         name_plates(gu, world, sw, sh, view_proj);
     }
+    // FUN_101630e0, first in the UI pass: over the plates (the scene's), under every window.
+    credits::draw(gu, world, sw, sh);
     // The Lua mods' HUD elements, over the plates and under every window.
     lua::draw_hud(gu, world);
     if let Some(m) = world.cnq.as_mut() {
@@ -4760,6 +4808,7 @@ fn world_hud(
     blockers.extend(pupset::draw(gu, world, sw, sh));
     blockers.extend(maze::draw(gu, world, sw, sh));
     blockers.extend(jobpoints::draw(gu, world, sw, sh));
+    blockers.extend(celestite::draw(gu, world, sw, sh));
     blockers.extend(aepoints::draw(gu, world, sw, sh));
     if !world.modern {
         blockers.extend(missions::draw(gu, world, sw, sh));
@@ -5314,6 +5363,8 @@ fn world_hud(
         if !world.lua.hides("plates") {
             name_plates(gu, world, sw, sh, view_proj);
         }
+        // The credits roll is drawn before the windows (FUN_1015f6a0), so cinema mode keeps it.
+        credits::draw(gu, world, sw, sh);
         let modern = world.modern;
         if let Some(m) = world.map.as_mut() {
             m.draw(gu, sw, sh, modern);
@@ -5559,6 +5610,7 @@ fn bar_text(gu: &GameUi, world: &World, items: &[(usize, [f32; 4])]) -> hudtop::
     pupset::bars(gu, world, &mut bars);
     maze::bars(gu, world, &mut bars);
     jobpoints::bars(gu, world, &mut bars);
+    celestite::bars(gu, world, &mut bars);
     aepoints::bars(gu, world, &mut bars);
     missions::bars(gu, world, &mut bars);
     quests::bars(gu, world, &mut bars);
@@ -5792,8 +5844,8 @@ fn place_mogdoor(w: &mut World) {
             motion_bases: Vec::new(),
             reset_bases: false,
             ev_reserved: false,
-            pos_hold: 0,
             awaiting_full: false,
+            keep_event_pos: false,
             no_occlusion: false,
             no_near_fade: false,
             half_fade: false,
@@ -6001,6 +6053,8 @@ enum Source {
     Npc(crate::dat::npc::NpcLook),
     /// A self-contained model file (a chocobo or mount, ride.rs).
     File(u32),
+    /// A model folder of an effect file (file, byte range): a CMoSkeletonElem's actor (fx MODEL_IDS).
+    Folder(u32, u32, u32),
 }
 
 struct Actor {
@@ -6042,6 +6096,19 @@ struct Actor {
     /// Scheduler op 0x89 (drawobj +0x840 bit 1): ticks left with no head-look, and the x / z it started at (taken on
     /// the first frame); it ends early on a move of more than 1 in x or z (FUN_1005f540).
     look_hold: Option<(f32, Option<(f32, f32)>)>,
+    /// Drawobj +0x840 bit 23 (scheduler op 0xba): the status motion (idle / walk / run) is not switched.
+    motion_lock: bool,
+    /// Model +0x83e: the drawn override per slot (main, sub; ops 0xa7 / 0xa8 / 0x9b), and 0x9b's ticks left.
+    draw_override: [bool; 2],
+    draw_override_ticks: [f32; 2],
+    /// Actor +0x8ab (scheduler op 0xbc): ticks the footstep gate is held open.
+    step_hold: f32,
+    /// Drawobj +0x840 bit 22 (scheduler op 0xb6): a new status motion shows wep0 / wep1 (client/wepfx.rs).
+    show_weapons: bool,
+    /// +0x8ac bit 1 (scheduler op 0xb9): this skeleton is the camera rig (FUN_100cce60).
+    camera_rig: bool,
+    /// Model +0xa8 (event op 0x59 7 / 8, scheduler op 0xc1): lit by the scenery's lights.
+    bg_lit: bool,
     /// Scheduler op 0xb4's plate lift (+0x8c0, added to the plate anchor's y) and the ticks it has left.
     plate_lift: Option<(f32, f32)>,
     /// The attack scheduler used last (FUN_100d46f0 avoids repeating it).
@@ -6090,7 +6157,7 @@ struct Actor {
     bones: Vec<crate::dat::character::BoneXf>,
     /// Attach points of the target arrow (+0x8a6), the name plate (+0x8a7) and the lock look (+0x8a8, read by
     /// FUN_100d6670), ANCHORS from the model reset; scheduler ops 0x9e / 0x9f / 0xad set them.
-    anchors: [u8; 3],
+    anchors: [u8; 4],
     /// The arrow's and the plate's posed points this frame (world), for anchors other than 2.
     anchor_at: [Option<Vec3>; 2],
     scale: f32,
@@ -6245,6 +6312,13 @@ impl Actor {
             turn_pct: 0,
             look_pct: 0,
             look_hold: None,
+            motion_lock: false,
+            draw_override: [false; 2],
+            draw_override_ticks: [0.0; 2],
+            step_hold: 0.0,
+            show_weapons: false,
+            camera_rig: false,
+            bg_lit: false,
             plate_lift: None,
             last_attack: String::new(),
             off_hand: false,
@@ -6469,7 +6543,7 @@ fn window_icon() -> Option<winit::window::Icon> {
 /// Where the player is drawn: between the physics steps (drawn_between_steps), or where something else just put us.
 /// The model reset's points (2019 all.c 145867..145870): arrow and plate 2, the lock look 0x80 (none: by the model
 /// kind, FUN_100d6670).
-const ANCHORS: [u8; 3] = [2, 2, 0x80];
+const ANCHORS: [u8; 4] = [2, 2, 0x80, 0x80];
 
 fn drawn_pos(w: &World) -> Vec3 {
     // The model's place (vt+0x1bc, what the camera follows): an event's pose while one holds us.
@@ -6704,6 +6778,17 @@ fn turn_rate(a: &Actor, in_event: bool) -> f32 {
 /// An actor's place; a riding animal stands at its rider's (FUN_100c8ed0), a rider on a mount moves by its offset and
 /// yaw (FUN_100c9330; zero on a chocobo).
 fn actor_place(w: &World, id: u32, my_dir: u8) -> Option<Place> {
+    // A CMoSkeletonElem's model at its element (FUN_10047590: +0x34 / +0x5fc the position, +0x61c the rotation).
+    if let Some(&(pos, rot)) = w.fx_models.get(&id) {
+        return Some(Place {
+            pos,
+            forward: Vec3::new(rot.y.cos(), 0.0, -rot.y.sin()),
+            tilt: [rot.x, rot.z],
+            status: 0,
+            ratio: 0.0,
+            size: 0,
+        });
+    }
     // Skinned furniture stands at its piece's place (client/furniture.rs).
     if let Some((pos, yaw)) = w.furniture.place_of(id) {
         let (pos, yaw) = mannequin::place(w, id, pos, yaw);
@@ -6836,6 +6921,41 @@ fn actor_frame(p: &Place, a: &Actor) -> glam::Mat4 {
 
 /// An actor's attach point `k` in the world from its rest pose (vtable +0x1c4); without one its position lifted
 /// by 1.2 x its height (FUN_10086820's fallback).
+/// FUN_1002a900: point `k`'s frame in model space on the drawn pose (rest before the first): the bone, then the point's
+/// translation and rotations z, y, x.
+fn point_frame(a: &Actor, k: u16) -> Option<glam::Mat4> {
+    let ch = a.character.as_ref()?;
+    let (bone, off) = *ch.skeleton.points.get(k as usize)?;
+    let r = ch.skeleton.point_rots.get(k as usize).copied().unwrap_or(Vec3::ZERO);
+    let bones = if a.bones.is_empty() { &a.rest } else { &a.bones };
+    let b = *bones.get(bone as usize)?;
+    let local = glam::Mat4::from_translation(off)
+        * glam::Mat4::from_rotation_z(r.z)
+        * glam::Mat4::from_rotation_y(r.y)
+        * glam::Mat4::from_rotation_x(r.x);
+    let mut f = glam::Mat4::from_scale_rotation_translation(b.s, b.q, b.t) * local;
+    f.w_axis = (f.w_axis.truncate() * a.scale).extend(1.0);
+    Some(f)
+}
+
+/// FUN_100cce60, while an actor's +0x8ac bit 1 is set (op 0xb9): the camera's eye is its point 0x17, the target point
+/// 0x18; point 0x1c's world matrix gives the roll (_13 x 60 degrees) and the focal length (_22 x 200).
+fn rig_camera(w: &World) -> Option<Camera> {
+    let my_dir = w.net.me.lock().map(|m| m.dir).unwrap_or(0);
+    // Only while the rig is posed (FUN_100cce60 runs at the end of its pose, FUN_100cbde0): not while hidden.
+    let hidden = event::hidden(w);
+    let (id, a) = w.actors.iter().find(|(id, a)| a.camera_rig && a.character.is_some() && !hidden.contains(id))?;
+    let p = actor_place(w, *id, my_dir)?;
+    let model = actor_frame(&p, a);
+    let at = |k: u16| point_frame(a, k).map(|f| model * f);
+    let (eye, target, m) = (at(0x17)?.w_axis.truncate(), at(0x18)?.w_axis.truncate(), at(0x1c)?);
+    // Camera +0xa4 -> +0x5c (FUN_10021900), the roll FUN_10020de0 turns the view's up by; the focal through FUN_10015290.
+    let roll = m.x_axis.z * 60f32.to_radians();
+    let focal = m.y_axis.y * 200.0;
+    let up = crate::dat::title::up_of(eye, target, roll);
+    Some(Camera { eye, target, up, fov_y: crate::dat::title::fov_y(focal) })
+}
+
 fn attach_point(w: &World, places: &HashMap<u32, Place>, id: u32, k: u16) -> Option<Vec3> {
     let p = places.get(&id)?;
     let a = w.actors.get(&id)?;
@@ -7039,19 +7159,7 @@ impl crate::fx::Actors for FxActors<'_> {
             let n = |v: glam::Vec4| v.truncate().normalize_or_zero().extend(0.0);
             return Some(glam::Mat4::from_cols(n(m.x_axis), n(m.y_axis), n(m.z_axis), m.w_axis));
         }
-        let a = self.actors.get(&id)?;
-        let ch = a.character.as_ref()?;
-        let (bone, off) = *ch.skeleton.points.get(k as usize)?;
-        let r = ch.skeleton.point_rots.get(k as usize).copied().unwrap_or(Vec3::ZERO);
-        let bones = if a.bones.is_empty() { &a.rest } else { &a.bones };
-        let b = *bones.get(bone as usize)?;
-        let local = glam::Mat4::from_translation(off)
-            * glam::Mat4::from_rotation_z(r.z)
-            * glam::Mat4::from_rotation_y(r.y)
-            * glam::Mat4::from_rotation_x(r.x);
-        let mut f = glam::Mat4::from_scale_rotation_translation(b.s, b.q, b.t) * local;
-        f.w_axis = (f.w_axis.truncate() * a.scale).extend(1.0);
-        Some(f)
+        point_frame(self.actors.get(&id)?, k)
     }
 
     fn status(&self, id: u32) -> u8 {
@@ -7073,6 +7181,28 @@ impl crate::fx::Actors for FxActors<'_> {
 
     fn scale(&self, id: u32) -> f32 {
         self.actors.get(&id).map_or(1.0, |a| a.scale)
+    }
+
+    fn move_quarter(&self, id: u32) -> u8 {
+        if id == self.me { self.me_strafe } else { 1 }
+    }
+
+    fn trust_mark(&self, id: u32) -> bool {
+        self.entities.get(&id).is_some_and(|e| e.marks.trust)
+    }
+
+    fn pet_like(&self, id: u32) -> bool {
+        self.entities
+            .get(&id)
+            .is_some_and(|e| e.model != 0x92c && (e.index > 0x6ff || (id >> 24 != 0 && e.marks.charm)))
+    }
+
+    fn sizes(&self, id: u32) -> [f32; 3] {
+        let Some(a) = self.actors.get(&id) else { return [1.0; 3] };
+        let Some(&[b0, b1, b2, b3, b4, b5]) = a.character.as_ref().and_then(|c| c.skeleton.boxes.first()) else {
+            return [1.0; 3];
+        };
+        [a.scale * (b2 - b3) / 1.7, a.scale * (b1 - b0) / 1.9, a.scale * (b4 - b5) / 1.9]
     }
 
     fn posed(&self, id: u32) -> bool {
@@ -7467,6 +7597,8 @@ struct World {
     event_voices: bool,
     /// Looks set by event op 0xb6 (and the riding animals, ride.rs), for the model loader.
     event_looks: Vec<(u32, Source)>,
+    /// CMoSkeletonElem models (fx MODEL_IDS): each one's place, from its element (position, rotation x / y / z).
+    fx_models: HashMap<u32, (Vec3, Vec3)>,
     /// Other characters' costumes (0x00D @0x30), and the look each actor in costume would have without it.
     costumes: HashMap<u32, costume::Costume>,
     costume_base: HashMap<u32, Source>,
@@ -7888,6 +8020,12 @@ struct World {
     /// Their texts, loaded when first used.
     msg_texts: HashMap<u16, Option<Arc<crate::dat::dialog::Dialog>>>,
     ae_data: Option<aepoints::AeData>,
+    /// The celestite windows (client/celestite.rs): fe_main, a set's lists, s2c 0x08F's block, and whether the game
+    /// files hold fe_main.
+    fe_main: Option<celestite::MainUi>,
+    cel_ui: Option<celestite::CelUi>,
+    cel_data: Option<celestite::CelData>,
+    fe_menu: bool,
     jp_list: HashMap<u16, (u8, u16)>,
     jp_seen: bool,
     jp_jobs: Option<[[u16; 3]; 24]>,
@@ -7921,6 +8059,9 @@ struct World {
     /// The weather objects, oldest first (FUN_1018a7a0 links the previous newest as the child): weather, when it came
     /// and its blend time (0x057 @0x0a Vana minutes x 2.4 s; 0 for the base).
     weather_chain: Vec<(u16, Instant, f32)>,
+    /// Scheduler op 0x7e's env (fx::EnvOp::Static), used where the zone has no env for the weather; a 0x7c or a
+    /// zone change drops it.
+    static_env: Option<crate::dat::weather::Env>,
     zone_weather: Option<crate::dat::weather::ZoneWeather>,
     /// FUN_10187720's eased lights: the zone's, each area's (by sub-area or zone, 4cc), and the time not yet stepped
     /// (once a 2-tick retail frame).
@@ -8326,6 +8467,8 @@ struct World {
     event_timer: Option<(f32, f32)>,
     /// s2c 0x075: the countdown, bars, objective text and border.
     objective: objective::Objective,
+    /// Event op 0x71 0x50..0x55's credits roll.
+    credits: Option<credits::Credits>,
     /// The objective border's parts.
     border: border::Parts,
     /// Chocobo racing: the race store, the toteboard and the race card.
@@ -8491,6 +8634,9 @@ impl World {
         let mut kept: Vec<(&'static str, u16)> = Vec::new();
         if let Some(s) = &self.status {
             kept.push((status::STATCOM, s.sel));
+        }
+        if let Some(m) = &self.fe_main {
+            kept.push((celestite::MAIN, m.sel));
         }
         if let Some(m) = &self.partymenu {
             kept.extend(m.stack.iter().map(|win| (win.name, win.sel)));
@@ -8774,6 +8920,8 @@ pub struct App {
     /// The title screen's 3D backdrop, and its loading state.
     flyover: Option<flyover::Flyover>,
     flyover_state: LoadState,
+    /// The rest of the title's "loop" pass (op 0x3d / 0xaf picks), played in turn.
+    flyover_next: Vec<String>,
     /// The character select scene, its loading state and the character list it was built for.
     select: Option<select::SelectScene>,
     select_state: LoadState,
@@ -9072,6 +9220,7 @@ impl App {
             hud_blockers: Vec::new(),
             flyover: None,
             flyover_state: LoadState::Idle,
+            flyover_next: Vec::new(),
             select: None,
             select_state: LoadState::Idle,
             select_key: String::new(),
@@ -10031,8 +10180,11 @@ impl App {
                 log::warn!("select scene: {e:#}");
                 self.select_state = LoadState::Failed;
             }
-            Task::Flyover(Ok(data)) => {
-                self.flyover = Some(flyover::Flyover::new(data));
+            Task::Flyover(Ok(mut data)) => {
+                self.flyover_next = std::mem::take(&mut data.rest);
+                let mut f = flyover::Flyover::new(data);
+                f.clip_x = crate::dat::weather::clipping_factor(self.cfg.game.for_character(None).get(0x3e));
+                self.flyover = Some(f);
                 self.flyover_state = LoadState::Idle;
             }
             Task::Nation(n, res) => {
@@ -10447,6 +10599,10 @@ impl App {
                             msg_files: self.msg_files,
                             msg_texts: HashMap::new(),
                             ae_data: None,
+                            fe_main: None,
+                            cel_ui: None,
+                            cel_data: None,
+                            fe_menu: false,
                             jp_list: HashMap::new(),
                             jp_seen: false,
                             jp_jobs: None,
@@ -10460,6 +10616,7 @@ impl App {
                             client_version: self.cfg.client_version.clone(),
                             weather: 1,
                             weather_chain: Vec::new(),
+                            static_env: None,
                             zone_weather: None,
                             light_ease: Default::default(),
                             area_ease: HashMap::new(),
@@ -10503,6 +10660,7 @@ impl App {
                             carriers: Default::default(),
                             event_voices: false,
                             event_looks: Vec::new(),
+                            fx_models: HashMap::new(),
                             costumes: HashMap::new(),
                             costume_base: HashMap::new(),
                             held_looks: Vec::new(),
@@ -10748,6 +10906,7 @@ impl App {
                             cast_event: false,
                             event_timer: None,
                             objective: Default::default(),
+                            credits: None,
                             border: Default::default(),
                             map_schedulers: Vec::new(),
                             racing: Default::default(),
@@ -10945,7 +11104,7 @@ impl App {
                         world.area_ease.clear();
                         world.lamps = Default::default();
                         if let Some(l) = fx {
-                            world.effects.load_zone(l);
+                            world.effects.load_area(l);
                             world.effects.set_weather(crate::dat::weather::weather_tag(event::weather(world)), 0.0);
                         }
                         if let Some(gfx) = &self.gfx {
@@ -11346,14 +11505,9 @@ impl App {
         if w.zone != Some(w.pos_zone) || w.loading.is_some() || w.area.loading || w.ground.is_none() {
             return;
         }
-        // Another area an event shows: only the event's requests (op 0x75), against that area's sub-areas.
-        let in_area = w.area.shown.is_some();
-        if in_area && w.sub.asked.is_none() {
-            return;
-        }
         // Our actor's model position (vtable +0x1bc, +0x404): an event that moves us there moves the trigger point too.
         match w.sub.next(event::own_step(w).unwrap_or(w.pos).to_array()) {
-            Some(subarea::Step::Unload) => {
+            Some(subarea::Step::Unload(from_event)) => {
                 log::info!("sub-area {:?} unloads", w.sub.current);
                 if let Some(r) = w.renderer.as_mut() {
                     r.clear_sub();
@@ -11371,7 +11525,7 @@ impl App {
                 }
                 doors::reapply(w);
                 (w.sub.current, w.sub.weather) = (None, None);
-                if !in_area {
+                if !from_event {
                     let _ = w.net.commands.send(NetCommand::SubMap { state: 1, id: 0 });
                 }
             }
@@ -11443,7 +11597,7 @@ impl App {
             (w.light_ease, w.light_acc) = (Default::default(), 0.0);
             w.area_ease.clear();
             if let Some(l) = fx {
-                w.effects.switch_zone(l);
+                w.effects.switch_zone(l, true);
                 w.effects.set_weather(crate::dat::weather::weather_tag(event::weather(w)), 0.0);
             }
             if let Some(r) = &w.renderer {
@@ -11617,6 +11771,10 @@ impl App {
                     // (FUN_100e8930); the new zone's 0x0C8 lists the party again, without the trusts released.
                     world.party = Default::default();
                     world.party_asked = false;
+                    // The same zeroing takes s2c 0x08F's block (FUN_100e4340): the next open asks again.
+                    world.cel_data = None;
+                    world.fe_main = None;
+                    world.cel_ui = None;
                     // FUN_100550f0: the old zone's path goes; the new one's comes with its scene.
                     world.voyage.path = None;
                     world.play_time = Some((play_time, Instant::now()));
@@ -11764,6 +11922,9 @@ impl App {
                     }
                     world.weather = weather;
                     world.weather_chain = vec![(weather, Instant::now(), 0.0)];
+                    world.static_env = None;
+                    // The zone teardown closes the credits roll too.
+                    world.credits = None;
                     let m = crate::dat::weather::vana_minute(game_time, 0.0);
                     log::info!(
                         "vana'diel {:02}:{:02}, weather {} ({weather})",
@@ -11919,7 +12080,7 @@ impl App {
                     if let Some(x) = world.entities.get_mut(&e.id) {
                         x.awaiting_full = false;
                     }
-                    let hold = world.entities.get(&e.id).is_some_and(|x| x.pos_hold & 1 != 0);
+                    let hold = world.entities.get(&e.id).is_some_and(|x| x.keep_event_pos);
                     let e = if reserved { e.reserved(hold) } else { e };
                     if let Some(tbl) = e.look {
                         let tbl = if e.id != world.my_id && world.game.get(0xa5) != 0 { hide_armour(tbl) } else { tbl };
@@ -11999,8 +12160,8 @@ impl App {
                         motion_bases: Vec::new(),
                         reset_bases: false,
                         ev_reserved: false,
-                        pos_hold: 0,
                         awaiting_full: false,
+                        keep_event_pos: false,
                         no_occlusion: false,
                         no_near_fade: false,
                         half_fade: false,
@@ -12118,7 +12279,8 @@ impl App {
                     if let Some((old, new)) = status_change.filter(|_| !quiet) {
                         combat::status_schedulers(&mut world.effects, &world.actors, e.id, old, new, sd);
                     }
-                    if let Some(p) = e.pos {
+                    // 0x00E (0x1009b9f3): mask bit 0's position is skipped while op 0xac 4 holds the entity.
+                    if let Some(p) = e.pos.filter(|_| !entry.keep_event_pos) {
                         let mut p = Vec3::from(p);
                         entry.server_y = p.y;
                         entry.grounded = e.ground;
@@ -12501,6 +12663,7 @@ impl App {
                 NetEvent::GmMessage { id, seq, last, text } => faqmain::on_message(world, id, seq, last, &text),
                 NetEvent::JobPointList(recs) => jobpoints::on_list(world, &recs),
                 NetEvent::AlterEgo(d) => aepoints::on_data(world, d),
+                NetEvent::Celestites(d) => celestite::on_data(world, d),
                 NetEvent::Monstrosity { kind, data } => monstrosity::on_data(world, kind, data),
                 NetEvent::SkillBase(s) => world.skill_base = Some(s),
                 NetEvent::Action(a) => {
@@ -12939,6 +13102,7 @@ impl App {
                         Source::Pc(look) => crate::dat::character::load_character(&index, &look),
                         Source::Npc(look) => crate::dat::npc::load_npc(&index, &look),
                         Source::File(file) => crate::dat::npc::load_file_model(&index, file),
+                        Source::Folder(file, a, b) => crate::dat::npc::load_folder_model(&index, file, a, b),
                     };
                     let _ = tx.send(Task::CharacterLoaded(
                         key,
@@ -13319,6 +13483,68 @@ impl App {
                 a.plate_lift = (ticks > 0.0).then_some((lift, ticks));
             }
         }
+        for a in world.actors.values_mut() {
+            for k in 0..2 {
+                if a.draw_override_ticks[k] > 0.0 {
+                    a.draw_override_ticks[k] -= dt * 60.0;
+                    if a.draw_override_ticks[k] <= 0.0 {
+                        (a.draw_override[k], a.draw_override_ticks[k]) = (false, 0.0);
+                    }
+                }
+            }
+        }
+        for a in world.actors.values_mut() {
+            a.step_hold = (a.step_hold - dt * 60.0).max(0.0);
+        }
+        for (id, on) in std::mem::take(&mut world.effects.camera_rigs) {
+            if let Some(a) = world.actors.get_mut(&id) {
+                a.camera_rig = on;
+            }
+        }
+        for (id, on) in std::mem::take(&mut world.effects.bg_lits) {
+            if let Some(a) = world.actors.get_mut(&id) {
+                a.bg_lit = on;
+            }
+        }
+        for (id, on) in std::mem::take(&mut world.effects.weapon_shows) {
+            if let Some(a) = world.actors.get_mut(&id) {
+                a.show_weapons = on;
+            }
+        }
+        for (id, ticks) in std::mem::take(&mut world.effects.step_holds) {
+            if let Some(a) = world.actors.get_mut(&id) {
+                a.step_hold = a.step_hold.max(ticks);
+            }
+        }
+        for (id, slot, on, ticks) in std::mem::take(&mut world.effects.draw_overrides) {
+            if let Some(a) = world.actors.get_mut(&id) {
+                a.draw_override[slot] = on;
+                a.draw_override_ticks[slot] = ticks;
+            }
+        }
+        // CMoSkeletonElem models: loaded like any look, placed and coloured by their element, gone with it.
+        for (id, file, a, b) in std::mem::take(&mut world.effects.model_spawns) {
+            world.event_looks.push((id, Source::Folder(file, a, b)));
+        }
+        for (id, pos, rot, scale, color) in std::mem::take(&mut world.effects.model_places) {
+            world.fx_models.insert(id, (pos, rot));
+            if let Some(a) = world.actors.get_mut(&id) {
+                a.axes = Some(scale);
+                a.alpha = (color >> 24) as f32;
+                a.rgb = [16, 8, 0].map(|s| ((color >> s) & 0xff) as f32);
+                a.fade = None;
+            }
+        }
+        for id in std::mem::take(&mut world.effects.model_drops) {
+            world.effects.forget_actor(id);
+            world.actors.remove(&id);
+            world.fx_models.remove(&id);
+        }
+        for (id, on) in std::mem::take(&mut world.effects.motion_locks) {
+            if let Some(a) = world.actors.get_mut(&id).filter(|a| a.character.is_some()) {
+                a.motion_lock = on;
+            }
+        }
         for (id, ticks) in std::mem::take(&mut world.effects.look_holds) {
             let at = hold_pos(world, id);
             if let Some(a) = world.actors.get_mut(&id) {
@@ -13349,6 +13575,9 @@ impl App {
         }
         for ticks in std::mem::take(&mut world.effects.event_crosses) {
             world.screen.fx_cross(ticks);
+        }
+        for op in std::mem::take(&mut world.effects.env_ops) {
+            event::env_op(world, op);
         }
         for name in std::mem::take(&mut world.effects.event_path_stops) {
             world.screen.stop_path(String::from_utf8_lossy(&name.to_le_bytes()).trim_end_matches('\0'));
@@ -13597,7 +13826,9 @@ impl App {
             let diff = (want - e.yaw + std::f32::consts::PI).rem_euclid(tau) - std::f32::consts::PI;
             // Scheduler op 0x2f: the drawn facing stays while the effect runs (FUN_100c63d0 skips the ease).
             let rate = world.actors.get(eid).map_or(0.125, |a| turn_rate(a, in_event));
-            if world.face_locks.get(eid).is_none_or(|t| Instant::now() >= *t) {
+            // A camera rig (op 0xb9, vt+0x154) skips that block of FUN_100c63d0 too.
+            let rig = world.actors.get(eid).is_some_and(|a| a.camera_rig);
+            if !rig && world.face_locks.get(eid).is_none_or(|t| Instant::now() >= *t) {
                 e.yaw += diff * (1.0 - (1.0 - rate).powf(ticks));
             }
             e.ratio =
@@ -14574,6 +14805,10 @@ impl App {
         if self.input.test(0x11, input::mode::PRESS) && world.macroedit.is_some() {
             macroedit::num_plus(world);
         }
+        // fe_equip's and fe_inven's message 8 (FUN_10117750 / FUN_10118260): the keys to the other list.
+        if self.input.test(0x11, input::mode::PRESS) && world.cel_ui.is_some() && world.confirm.is_none() {
+            celestite::key(world, egui::Key::Plus, false, false);
+        }
         // mcrbedit's set mode: Ctrl (0x76) or Alt (0x77) held.
         let held = self.input.test(0x76, input::mode::HELD) || self.input.test(0x77, input::mode::HELD);
         macroedit::update(world, dt * 60.0, held);
@@ -15077,7 +15312,7 @@ impl App {
     }
 
     fn camera(world: &World) -> Camera {
-        let mut c = event::camera(world).unwrap_or_else(|| camera::view(world));
+        let mut c = rig_camera(world).or_else(|| event::camera(world)).unwrap_or_else(|| camera::view(world));
         world.camst.shake.apply(&mut c);
         c
     }
@@ -16933,7 +17168,7 @@ impl App {
                         mm.s.scope_at = Some(at);
                     }
                     // The mods kept per character or job (#94): those for this one run.
-                    let mut mods = std::mem::take(&mut world.lua);
+                    let mut mods = lua::Host::park(&mut world.lua);
                     mods.follow_scope(world, &self.cfg.mods, &[]);
                     world.lua = mods;
                     save = true;
@@ -17034,7 +17269,7 @@ impl App {
                             world.sounds.push(base + v as u32);
                         }
                     }
-                    let mut mods = std::mem::take(&mut world.lua);
+                    let mut mods = lua::Host::park(&mut world.lua);
                     let mut scoped = Vec::new();
                     for (id, key, value) in changes {
                         if key == lua::SCOPE_CHARACTER || key == lua::SCOPE_JOB {
@@ -17416,8 +17651,14 @@ impl App {
             return;
         };
         let tx = self.tasks_tx.clone();
+        let queue = std::mem::take(&mut self.flyover_next);
+        // Op 0xaf's content bits: the account's and the installed ones; before login the installed alone (inferred).
+        let enabled = match &self.phase {
+            Phase::Characters { expansions, .. } => *expansions & self.installed,
+            _ => self.installed,
+        };
         std::thread::spawn(move || {
-            let _ = tx.send(Task::Flyover(flyover::FlyoverData::load(&index, &keys, flyover::pick_movie())));
+            let _ = tx.send(Task::Flyover(flyover::FlyoverData::load_next(&index, &keys, queue, enabled)));
         });
     }
 
@@ -18441,7 +18682,15 @@ impl App {
                     if fly.done {
                         fly.restart();
                     }
-                    fly.render(&gfx.gpu, gfx.config.format, encoder, &scene_view, &scene_depth, bg, aspect);
+                    fly.render(
+                        &gfx.gpu,
+                        gfx.config.format,
+                        encoder,
+                        (&scene_view, Some(&scene_tex)),
+                        &scene_depth,
+                        bg,
+                        aspect,
+                    );
                 }
                 _ => {
                     let alive = self.audio.as_ref().map(|a| a.alive());
@@ -18471,7 +18720,7 @@ impl App {
             if fly.done {
                 fly.restart();
             }
-            fly.render(&gfx.gpu, gfx.config.format, encoder, &scene_view, &scene_depth, bg, aspect);
+            fly.render(&gfx.gpu, gfx.config.format, encoder, (&scene_view, Some(&scene_tex)), &scene_depth, bg, aspect);
             g.drew_world = true;
         }
         if matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Select | LobbyScreen::Delete, .. })
@@ -18498,8 +18747,15 @@ impl App {
             && let Some(fly) = &mut self.flyover
         {
             fly.advance(dt);
-            g.drew_world =
-                fly.render(&gfx.gpu, gfx.config.format, encoder, &scene_view, &scene_depth, bg, aspect) || g.drew_world;
+            g.drew_world = fly.render(
+                &gfx.gpu,
+                gfx.config.format,
+                encoder,
+                (&scene_view, Some(&scene_tex)),
+                &scene_depth,
+                bg,
+                aspect,
+            ) || g.drew_world;
         }
     }
 
@@ -18920,6 +19176,9 @@ fn world_frame(cx: &mut WorldDraw, gfx: &mut Gfx, g: &mut FrameGpu, w: &mut Worl
     // The frame's sets and the renderer come out of the world while the steps take them beside it.
     let mut wf = std::mem::take(&mut w.frame);
     wf.clear();
+    if let Some(c) = w.credits.as_mut() {
+        c.tick(dt * 60.0);
+    }
     world_prepare(cx, gfx, g, w, &mut wf, dt);
     if let Some(mut r) = w.renderer.take() {
         world_uploads(gfx, g, w, &mut r, &wf);
@@ -19215,10 +19474,11 @@ fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &Worl
         // Op 0x77 sets the hour and weather while an event runs.
         let ev_weather = w.event.as_ref().and_then(|l| l.st.weather);
         let clock = crate::dat::weather::vana_minute(t, at.elapsed().as_secs_f32());
-        // The zone's `@ini` (scheduler ops 0xc0 / 0xc3): a fixed sky time stands in for the clock in the
-        // light and the weather keys (W+0x1c8 in FUN_10187720 / FUN_10189c60), and the sun's path tilts.
+        // The sun / moon tilt below comes from op 0xc3 (zone_yaw); Effects::sky() reports both for the effects.
         let sky = w.effects.sky();
-        let minute = sky.minute(ev_clock.map_or(clock, |c| c.minute as f32));
+        let minute = ev_clock.map_or(clock, |c| c.minute as f32);
+        // An area's `@ini` op 0xc0 fixes its lighting's time (FUN_10182c40, online).
+        let minute = w.effects.zone_clock.map_or(minute, |v| (v % 5_184_000) as f32 / 3600.0);
         // thunk_FUN_1018ade0: each weather object blends its child chain's output into its env by
         // (total - left) / total; a finished one drops the chain before it. Op 0x77's weather stands alone.
         if let Some(k) = w.weather_chain.iter().rposition(|c| c.2 <= 0.0 || c.1.elapsed().as_secs_f32() >= c.2) {
@@ -19259,17 +19519,25 @@ fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &Worl
         let (x, zone) = (crate::dat::weather::clipping_factor(w.game.get(0x3e)), w.zone.unwrap_or(0));
         let step = |ease: &mut crate::dat::weather::LightEase, e: &crate::dat::weather::Env| {
             for _ in 0..steps {
-                ease.step(e, minute, sky.tilt);
+                ease.step(e, minute, 0);
             }
             crate::dat::weather::Lighting::from_env_eased(
                 e,
                 minute,
-                sky.tilt,
+                0,
                 ease,
                 crate::dat::weather::clipping(e.draw_dist, x, zone).1,
             )
         };
-        r.lighting = mix(&|t| zw.at(t, minute)).map(|e| step(&mut w.light_ease, &e));
+        let static_env = w.static_env;
+        r.lighting = mix(&|t| zw.at(t, minute)).or(static_env).map(|e| step(&mut w.light_ease, &e));
+        // Op 0xc3's yaw turns the sun and moon about x (FUN_10180700: FUN_10026d50 then FUN_100273d0 on both).
+        let yaw = w.effects.zone_yaw;
+        if let Some(l) = r.lighting.as_mut().filter(|l| yaw != 0 && !l.fixed) {
+            let (s, c) = (yaw as f32).to_radians().sin_cos();
+            let turn = |v: Vec3| Vec3::new(v.x, v.y * c - v.z * s, v.y * s + v.z * c);
+            (l.dir, l.actor_dir, l.two[0], l.two[2]) = (turn(l.dir), turn(l.actor_dir), turn(l.two[0]), turn(l.two[2]));
+        }
         // Real character shadows (render/sunshadow.rs): cast by the sun, or by the moon at night (fainter by its
         // colour, softer), faded out around the change at 6:00 and 18:00. Indoors the room light keeps day's edges.
         r.shadow_level = crate::render::sunshadow::twilight(minute);
@@ -19724,8 +19992,11 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
             .filter(|((n, _), p)| *n == p.name)
             .map(|((_, v), p)| (v, p.ticks));
         let riding = |c: u16| pins.is_none_or(|(v, t)| v.iter().all(|&(pc, end)| pc != c || t >= end));
+        // With either override set they decide both hands (FUN_10029320 at 0x1002a177).
+        let ov = a.draw_override;
+        let drawn = |k: usize| if ov[0] || ov[1] { ov[k] } else { a.drawn };
         let held: Vec<(u16, u16)> =
-            if a.drawn { ch.grips.iter().flatten().copied().filter(|&(c, _)| riding(c)).collect() } else { Vec::new() };
+            (0..2).filter(|&k| drawn(k)).filter_map(|k| ch.grips[k]).filter(|&(c, _)| riding(c)).collect();
         let pose_now = || {
             // A chunk that is gone hands its region's opening on to the next one of the region.
             let mut open = false;
@@ -19785,6 +20056,7 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
             || fx_posed.contains(id)
             || posed_anchor
             || feet_pose
+            || a.camera_rig
         {
             a.bones = pose_now();
         } else {
@@ -20007,6 +20279,7 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
         g.lights = w.ground.as_ref().map_or([0; 4], |gr| gr.lights(pos));
         lamps::offer(&w.lamps.list, pos, &mut g.lights);
         g.area = actor_area(w.entities.get(id), w.ground.as_ref().and_then(|gr| gr.area(pos))).unwrap_or(0);
+        g.bg_lit = a.bg_lit;
         // The cloth (stepped on the GPU from the pose, render/cloth.rs; client/cloth.rs the reference): a step
         // on each tick of the 30 Hz clock, on screen simulated (FUN_10023290), off screen carried along
         // (FUN_100231f0). A frame Misc. 2's animation frame rate skips never reaches FUN_10023290, so the
@@ -21375,6 +21648,28 @@ pub(crate) fn egui_pass(ctx: &egui::Context, raw: egui::RawInput, ui: impl FnMut
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn macro_gate_closes_on_each_retail_test() {
+        use super::{GateState, gate_open};
+        let open = GateState { field: true, ..Default::default() };
+        assert!(gate_open(open));
+        assert!(!gate_open(GateState::default()), "out of the field");
+        let closers: [fn(&mut GateState); 7] = [
+            |s| s.hidden = true,
+            |s| s.prompt = true,
+            |s| s.party_cursor = true,
+            |s| s.myroom = true,
+            |s| s.busy = true,
+            |s| s.dead = true,
+            |s| s.window = true,
+        ];
+        for (k, close) in closers.iter().enumerate() {
+            let mut s = open;
+            close(&mut s);
+            assert!(!gate_open(s), "test {k}");
+        }
+    }
+
     #[test]
     fn colon_space() {
         use super::colon_space as cs;

@@ -133,8 +133,8 @@ fn colour(w: &mut World, id: u32) {
 
 /// FUN_100c83c0, a new status motion on an entity's actor: mounted (0x55) hides every weapon, a chair (0x3f..0x53)
 /// nothing; else wep0 / wep1 shown and wep2 hidden (byte 0) for model kind 0 (a PC, or an equipped look with PetFlag
-/// @0x28 bit 6), a monster (+0x120 bit 13: kinds 1 / 2 / 7, Fomors' kind 6), an actor bound by an event, or a trust
-/// (+0x12c bit 22).
+/// @0x28 bit 6), a monster (+0x120 bit 13: kinds 1 / 2 / 7, Fomors' kind 6), an actor bound by an event, a trust
+/// (+0x12c bit 22), or one with drawobj +0x840 bit 22 (scheduler op 0xb6).
 pub fn status_start(w: &mut World, id: u32, status: u8) {
     if status == 0x55 {
         hide_all(w, id);
@@ -147,7 +147,8 @@ pub fn status_start(w: &mut World, id: u32, status: u8) {
     let e = w.entities.get(&id);
     let kind0 = id == w.my_id || id >> 24 == 0 || (pc_look && e.is_some_and(|e| e.marks.npc_pet));
     let (monster, trust) = (e.is_some_and(|e| e.mob), e.is_some_and(|e| e.marks.trust));
-    if kind0 || monster || trust || event::bound(w, id) {
+    let flagged = w.actors.get(&id).is_some_and(|a| a.show_weapons);
+    if kind0 || monster || trust || flagged || event::bound(w, id) {
         show(w, id, 0, 0);
         show(w, id, 1, 0);
         hide(w, id, 2, 0);

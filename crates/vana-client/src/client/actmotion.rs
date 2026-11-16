@@ -166,6 +166,18 @@ pub fn emote(a: &mut Actor, n: u32, param: u16, status: u8, weapon_class: u8) ->
     Ok(())
 }
 
+/// Event op 0x63 (FUN_1008b460 states 9..0xb, FUN_100d1c30): motion set `set` (< 0x40, model +0x8a0) picks the emote
+/// files (FUN_100d1c80: the race's upper file + set, the skirt's) and `emot` plays from them. PC looks only, as `emote`.
+pub fn emote_set(a: &mut Actor, set: u32) {
+    let Some(pc) = a.character.as_ref().and_then(|c| c.pc) else { return };
+    if set >= 0x40 {
+        return;
+    }
+    let (files, _) = crate::dat::motionfile::emote_files(&pc, set << 3);
+    a.pending = Some(Pending { files, name: "emot".into(), kind: Kind::Emote, target: None });
+    a.emote = Some("emot".into());
+}
+
 /// Actor +0x1b8 is nonzero: an emote loads or plays (0x6e / 0x99 wait on it).
 pub fn emoting(a: &Actor) -> bool {
     a.emote.is_some()
@@ -726,7 +738,7 @@ fn start_ready(w: &mut World, id: u32, index: &Arc<DatIndex>, ch: &Character, ba
         log::info!("actor {id:#x}: event motion {} (files {:?})", p.name, p.files);
         fx_too_on(&mut w.effects, id, p.target.unwrap_or(id), &p.name);
     } else {
-        log::info!("actor {id:#x}: event motion {} not in its files {:?}", p.name, p.files);
+        log::info!("actor {id:#x}: event motion {:?} not in its files {:?}", p.name, p.files);
     }
     true
 }
@@ -759,7 +771,9 @@ pub(super) fn update(w: &mut World, dt: f32) {
         let put_away = super::fishrod::put_away(w, id);
         // FUN_100c83c0: a new status motion on an entity's actor (+0x7d8), once it plays (FUN_100cd920 finds it).
         let a = &w.actors[&id];
-        let held = super::combat::no_react(w, id) || super::fishrod::is_rod(id) || put_away;
+        // FUN_100c63d0 (0x100c6693 ..): with +0x840 bit 23 (op 0xba) or as a camera rig (+0x8ac bit 1, vt+0x154) no switch.
+        let held =
+            super::combat::no_react(w, id) || super::fishrod::is_rod(id) || put_away || a.motion_lock || a.camera_rig;
         if !held && a.status_motion != base && !find(&a.extra, &ch, &base).is_empty() {
             if id == w.my_id || w.entities.contains_key(&id) {
                 let st =

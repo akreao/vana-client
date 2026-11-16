@@ -3050,6 +3050,16 @@ mod tests {
 
     #[test]
     fn gpu_update_matches_cpu() {
+        gpu_update_matches(332);
+    }
+
+    /// Uleguerand Range's fog (DAT 105 fog0 and others: ops 0x48, 0x5a scale by depth).
+    #[test]
+    fn gpu_update_matches_cpu_fog() {
+        gpu_update_matches(105);
+    }
+
+    fn gpu_update_matches(zone: u32) {
         let cfg = crate::config::Config::load();
         let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
         let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else { return };
@@ -3057,7 +3067,7 @@ mod tests {
         let mut fx = Effects::new();
         fx.set_keys(Arc::new(crate::dat::zone::Keys::from_ffximain(&dll).unwrap()));
         fx.set_global(crate::fx::lib::Library::load(0, index.read(0).unwrap()).unwrap());
-        fx.load_zone(crate::fx::lib::Library::load(332, index.read(332).unwrap()).unwrap());
+        fx.load_zone(crate::fx::lib::Library::load(zone, index.read(zone).unwrap()).unwrap());
         let mut eg = EffectsGpu::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
         let mut cpu: HashMap<u32, Elem> = HashMap::new();
         for tick in 0..40 {
@@ -3079,6 +3089,13 @@ mod tests {
                 weekday: 0,
             };
             fx.tick(&f, &crate::fx::NoActors);
+            // The sort key is the GPU's (last frame's draw): the CPU takes it before the update.
+            let pre = eg.read_elems(&gpu, fx.elems.len());
+            for (e, c) in cpu.iter_mut() {
+                if let Some(&v) = pre.get(*e as usize * w::WORDS + w::KEY_PREV) {
+                    c.0[w::KEY_PREV] = v;
+                }
+            }
             for wr in &fx.writes {
                 match wr {
                     Write::Full(e, el) => {
