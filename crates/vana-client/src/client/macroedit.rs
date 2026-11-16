@@ -529,6 +529,12 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
             w.mcr_page ^= 1;
             w.sounds.push(Ui::Cursor as u32);
         }
+        // The page arrows (children 21 / 22, where only the mouse puts the cursor): message 5 goes where Left / Right
+        // go (0x101a7e90, cases 0x15 / 0x16: FUN_101a7fc0 / FUN_101a7fa0).
+        K::Enter if matches!(sel, 21 | 22) => {
+            w.mcr_page ^= 1;
+            w.sounds.push(Ui::Select as u32);
+        }
         K::Enter => {
             let o = w.cursor_recall(SELOP);
             w.macroedit.as_mut().and_then(|m| m.book.as_mut()).unwrap().opt = Some(o);
@@ -859,6 +865,11 @@ pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
         return;
     }
     // mcrselec's overrides: "Macro Book (#%d)" (group 10 0x6d) and the book's name.
+    // On a page arrow the window's own strings show.
+    if b.sel > 20 {
+        focus(bars, SELEC, b.sel);
+        return;
+    }
     let book = book_of(w, b.sel);
     bars.help[1] = gu.lobby_msg(0x0a, 0x6d, "Macro Book (#%d)").replacen("%d", &(book + 1).to_string(), 1);
     bars.title[1] = m.book_title(book);
@@ -1274,7 +1285,8 @@ pub fn pointer(w: &mut World, gu: &GameUi, _sw: f32, _sh: f32, p: (f32, f32), mo
                     b.opt = Some(id);
                 }
             }),
-            None => generic(w, gu, SELEC, sel, 1..=20, p, moved, clicked, right, |w, id| {
+            // The rows and the page arrows (21 / 22): the arrows are parts like the rows (mcres20's too, esmenu.rs).
+            None => generic(w, gu, SELEC, sel, 1..=22, p, moved, clicked, right, |w, id| {
                 if let Some(b) = w.macroedit.as_mut().and_then(|m| m.book.as_mut()) {
                     b.sel = id;
                 }
@@ -1320,7 +1332,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, _sw: f32, _sh: f32, p: (f32, f32), mo
                 return;
             }
             let other = 3 - focus;
-            if let (Some(id), _) = child_under(w, &format!("palette{other}"), p, 1..=10)
+            if let (Some(id), _) = child_under(w, &format!("palette{other}"), p, 1..=10, |_| Some((0.0, 0.0)))
                 && (moved || clicked)
             {
                 gu.hover.set(true);
