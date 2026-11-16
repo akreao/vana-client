@@ -616,6 +616,10 @@ pub struct State {
     /// Op 0x5f sub 1 (+0x124 bit 29): s2c 0x038 schedulers naming this actor are dropped (LAB_1009dee0) until sub 0
     /// or the event's end (FUN_100ae3f0 / FUN_100bd3xx clear it).
     pub no_038: HashSet<u32>,
+    /// Ops 0x60 0 / 1 (+0x124 bit 30) and 0x74 (bit 31): s2c 0x039 / 0x03A drop schedulers naming these actors
+    /// (FUN_1009dd20 at 0x1009de81, FUN_1009d9d0 at 0x1009daf7); the event end clears them (0x100ae5ad).
+    pub no_039: HashSet<u32>,
+    pub no_03a: HashSet<u32>,
     /// First person at the event's start (DAT_10351bb8 = DAT_10475578, FUN_100ad2c0): op 0x46 sub 1 leaves it, sub 0
     /// and the end put it back (FUN_100acf70).
     first_saved: bool,
@@ -719,6 +723,8 @@ impl State {
             no_name: HashSet::new(),
             no_turn_steps: HashSet::new(),
             no_038: HashSet::new(),
+            no_039: HashSet::new(),
+            no_03a: HashSet::new(),
             raw_pc_y: false,
             first_saved: false,
             poses: HashMap::new(),
@@ -1148,6 +1154,22 @@ impl Host for LiveHost<'_> {
                     a.q.fade_region(crate::motionq::OVERLAY_TALK, 8.0);
                 }
             }
+            Effect::Op { op: 0x60, sub: Some(s @ (0 | 1)), actor, .. } => {
+                let id = self.wid(actor);
+                if s == 1 {
+                    self.st.no_039.insert(id);
+                } else {
+                    self.st.no_039.remove(&id);
+                }
+            }
+            Effect::Op { op: 0x74, actor, args, .. } => {
+                let id = self.wid(actor);
+                if Self::arg_int(&args, 0).unwrap_or(0) & 1 != 0 {
+                    self.st.no_03a.insert(id);
+                } else {
+                    self.st.no_03a.remove(&id);
+                }
+            }
             // FUN_100b72c0 subs 0 / 1: the thread's actor (+0x124 bit 29 = sub).
             Effect::Op { op: 0x5f, sub: Some(s @ (0 | 1)), actor, .. } => {
                 let id = self.wid(actor);
@@ -1321,6 +1343,18 @@ impl Host for LiveHost<'_> {
                 }
             }
             // FUN_100b6a60 0..3: the actor's turn (+0xdc) / look (+0xe0) percent, read while an event runs.
+            // Subs 7 / 8 (FUN_1008a790 -> vt+0x22c FUN_10082370): model +0xa8 = val (the event actor's val@2, or
+            // actor@2's val@6); not 0, the actor takes the scenery's lights (FUN_1018b9a0 / 9e0 / ba20 by +0xa8 == 0).
+            Effect::Op { op: 0x59, sub: Some(s @ (7 | 8)), actor, args } => {
+                let (id, v) = if s == 7 {
+                    (Some(self.wid(actor)), Self::arg_int(&args, 1))
+                } else {
+                    (self.arg_actor(&args, 1), Self::arg_int(&args, 2))
+                };
+                if let (Some(a), Some(v)) = (id.and_then(|id| self.w.actors.get_mut(&id)), v) {
+                    a.bg_lit = v != 0;
+                }
+            }
             Effect::Op { op: 0x59, sub: Some(s @ 0..=3), actor, args } => {
                 let id = self.wid(actor);
                 if let (Some(a), Some(x)) = (self.w.actors.get_mut(&id), Self::arg_int(&args, 0)) {
@@ -1332,40 +1366,39 @@ impl Host for LiveHost<'_> {
                 }
             }
             // FUN_100bb180 sub 1: the event actor's event status +0x174 = val@2, which a bound actor poses with (5 / 0x55
-            // ride on its ChocoboIndex / mount id, ride.rs).
+            // ride on its ChocoboIndex / mount id, ride.rs). Unlike the door ops, 0xab 3's lock does not stop it.
             Effect::Op { op: 0xac, sub: Some(1), actor, args } => {
                 let id = self.wid(actor);
-                // No +0x120 bit 2 test here (asm 0x100bb1ee..0x100bb215), unlike op 0x7e and the door ops.
                 if let Some(s) = Self::arg_int(&args, 0) {
                     self.st.event_status.insert(id, s as u8);
-                    self.w.doors.event.insert(id, s as u8);
+                    // One field (+0x174) holds door states too.
+                    self.w.doors.event.remove(&id);
                 }
             }
-            // FUN_100bb180 subs 2 / 3: the event actor's entity +0x138 bit 31 (its schedulers mute while its model is
-            // hidden); sub 3 clears it and asks for the entity again (c2s 0x016, FUN_100aec70).
-            // The actor is actor@2 (FUN_100afac0(2)), in the scripts another one than the running actor nearly every
-            // time (census: 1,400 of 1,430, all in zone 280).
+            // FUN_100bb180 subs 2 / 3: actor@2's entity +0x138 bit 31 (its schedulers mute while its model is hidden);
+            // sub 3 clears it and asks for the entity again (c2s 0x016, FUN_100aec70).
+            // FUN_100bb180 sub 0: the event actor's server status +0x16c = val@2 (no lock check); sub 4: actor@2's +0x13c
+            // |= val@6 & 3 (bit 0 keep_event_pos; bit 1 has no reader in this build).
+            Effect::Op { op: 0xac, sub: Some(0), actor, args } => {
+                let id = self.wid(actor);
+                if let (Some(v), Some(e)) = (Self::arg_int(&args, 0), self.w.entities.get_mut(&id)) {
+                    e.motion.status = v as u8;
+                }
+            }
+            Effect::Op { op: 0xac, sub: Some(4), args, .. } => {
+                if let (Some(e), Some(v)) =
+                    (self.arg_actor(&args, 0).and_then(|id| self.w.entities.get_mut(&id)), Self::arg_int(&args, 1))
+                    && v & 1 != 0
+                {
+                    e.keep_event_pos = true;
+                }
+            }
             Effect::Op { op: 0xac, sub: Some(s @ (2 | 3)), args, .. } => {
                 if let Some(e) = self.arg_actor(&args, 0).and_then(|id| self.w.entities.get_mut(&id)) {
-                    log::debug!(
-                        "event: {} (index {:#x}) {}",
-                        e.name,
-                        e.index,
-                        if s == 2 { "reserved" } else { "released" }
-                    );
                     e.ev_reserved = s == 2;
                     if s == 3 {
                         let _ = self.w.net.commands.send(NetCommand::CharReq(e.index));
                     }
-                }
-            }
-            // FUN_100bb180 sub 4: actor@2's entity +0x13c |= val@6 & 3. Bit 0 keeps a reserved actor where it is
-            // against 0x00E positions (0x1009b9f3); the slot's reset clears both. Retail's scripts only pass 0.
-            Effect::Op { op: 0xac, sub: Some(4), args, .. } => {
-                if let (Some(v), Some(e)) =
-                    (Self::arg_int(&args, 1), self.arg_actor(&args, 0).and_then(|id| self.w.entities.get_mut(&id)))
-                {
-                    e.pos_hold |= v as u8 & 3;
                 }
             }
             // FUN_100bac90 sub 3 locks the event actor's event status; sub 4 (after its wait) unlocks it.
@@ -1451,6 +1484,40 @@ impl Host for LiveHost<'_> {
                     && let Some(e) = self.w.entities.get_mut(&id)
                 {
                     e.area_override = if s == 7 { Self::arg_int(&args, 1).unwrap_or(0) as u32 } else { 0 };
+                }
+            }
+            // Op 0x71 0x50..0x55 (FUN_10163130 / 101632a0 / 1019ec00, +0x10..+0x14): the credits roll.
+            Effect::Op { op: 0x71, sub: Some(s @ 0x50..=0x55), args, .. } => {
+                let v = |k: usize| Self::arg_int(&args, k).unwrap_or(0);
+                match s {
+                    0x50 => {
+                        let file = super::credits::TEXT_FILE + v(0) as u32;
+                        let name = self.w.name.clone();
+                        match self.index.read(file) {
+                            Ok(d) => {
+                                log::info!("event credits: file {file} open");
+                                self.w.credits = Some(super::credits::Credits::open(&d, &name));
+                            }
+                            Err(e) => log::warn!("event credits: file {file}: {e:#}"),
+                        }
+                    }
+                    0x51 => self.w.credits = None,
+                    0x52 => {
+                        if let Some(c) = self.w.credits.as_mut() {
+                            c.start(v(0));
+                        }
+                    }
+                    0x54 => {
+                        if let Some(c) = self.w.credits.as_mut() {
+                            c.set_rect([v(0), v(1), v(2), v(3)]);
+                        }
+                    }
+                    0x55 => {
+                        if let Some(c) = self.w.credits.as_mut() {
+                            c.set_colour(v(0) as u32);
+                        }
+                    }
+                    _ => {}
                 }
             }
             // Subs 5 / 6: actor@6's motion clock never runs ahead of actor@2's (model +0x798, FUN_100cb400); 6 ends
@@ -1568,10 +1635,13 @@ impl Host for LiveHost<'_> {
                 let id = self.wid(actor);
                 self.st.hidden.insert(id);
             }
-            // FUN_100b10f0 sub 0: the event actor's name = str@2 (24 bytes, +0x7c) unless it has an alternate name.
+            // FUN_100b10f0 sub 0 -> FUN_10093430: the event actor's name = str@2 (24 bytes, +0x7c) unless it has a
+            // Monstrosity name (+0x210 != 0).
             Effect::Op { op: 0xb5, sub: Some(0), actor, args, .. } => {
                 let id = self.wid(actor);
-                if let (Some(Arg::Name(n)), Some(e)) = (args.first(), self.w.entities.get_mut(&id)) {
+                if let (Some(Arg::Name(n)), Some(e)) =
+                    (args.first(), self.w.entities.get_mut(&id).filter(|e| e.monstrosity == 0))
+                {
                     e.name = n.chars().take(20).collect();
                 }
             }
@@ -1668,12 +1738,11 @@ impl Host for LiveHost<'_> {
                     0x8e => Some(0x2d),
                     _ => Some(0x2e),
                 };
-                // Each skips its write while the actor's +0x120 bit 2 is set (op 0xab sub 3). +0x174 is one field:
-                // a bound character poses with it too.
+                // FUN_100b6950..: no write while 0xab 3's lock (+0x120 bit 2) is on.
                 let id = self.wid(actor);
                 if let Some(v) = v.filter(|_| !self.st.status_lock.contains(&id)) {
                     self.w.doors.event.insert(id, v);
-                    self.st.event_status.insert(id, v);
+                    self.st.event_status.remove(&id);
                 }
             }
             // FUN_10178900(val, 1): the sub-area loads (no 0x0F2); sub 2 tells the server (0x0F2 state 2).
@@ -1785,6 +1854,13 @@ impl Host for LiveHost<'_> {
                 let who = self.arg_actor(&args, 0).unwrap_or(self.wid(actor));
                 if let Some(a) = self.w.actors.get_mut(&who) {
                     a.look.mode = super::actmotion::LookMode::Off;
+                }
+            }
+            // Op 0x63: the event actor's emote by motion set val@1 (+0x1c0, state 9 at +0x1bc).
+            Effect::Op { op: 0x63, actor, args, .. } => {
+                let id = self.wid(actor);
+                if let (Some(a), Some(n)) = (self.w.actors.get_mut(&id), Self::arg_int(&args, 0)) {
+                    super::actmotion::emote_set(a, n as u32);
                 }
             }
             // FUN_100b5db0 -> FUN_1009f200: emote val@5 through table 0x103504a8.
@@ -2030,6 +2106,14 @@ impl Host for LiveHost<'_> {
         if let Busy::Op { op: 0xb4, sub: Some(0x15), .. } = b {
             return self.w.map_open.is_some() || self.w.map.is_some();
         }
+        // Op 0xb2 1: the Delivery Box send UI cannot open yet.
+        if let Busy::Op { op: 0xb2, sub: Some(1), .. } = b {
+            return !super::post::can_open(self.w);
+        }
+        // Op 0x71 0x53: the credits roll is still running.
+        if let Busy::Op { op: 0x71, sub: Some(0x53), .. } = b {
+            return self.w.credits.as_ref().is_some_and(|c| !c.done);
+        }
         match b {
             Busy::Scheduler { file, tag, actor, target } => self
                 .w
@@ -2126,7 +2210,7 @@ impl Host for LiveHost<'_> {
             Busy::Op { op: 0xb6, sub: Some(0x10), .. } => {
                 self.w.actors.get(&self.w.my_id).is_none_or(|a| a.character.is_none())
             }
-            Busy::Op { op: 0x99, actor, .. } | Busy::Op { op: 0x59, sub: Some(6), actor } => {
+            Busy::Op { op: 0x99 | 0x63 | 0x9b, actor, .. } | Busy::Op { op: 0x59, sub: Some(6), actor } => {
                 let id = self.wid(*actor);
                 self.w.actors.get(&id).is_some_and(super::actmotion::emoting)
             }
@@ -2212,6 +2296,10 @@ impl Host for LiveHost<'_> {
 
     fn concierge_pick(&mut self) -> Option<[u32; 3]> {
         self.w.concierge_ui.is_none().then_some(self.w.concierge_pick)
+    }
+
+    fn camera_points(&self) -> ([f32; 3], [f32; 3]) {
+        self.w.last_camera.map_or(([0.0; 3], [0.0; 3]), |c| (c.eye.to_array(), c.target.to_array()))
     }
 
     fn music_state(&self) -> i32 {
@@ -2901,8 +2989,17 @@ fn keep_pose(w: &mut World, p: Pose) {
 
 /// FUN_100ac9c0 / FUN_100bb750 / FUN_1008d710: the bound actors go back to their transforms and status
 /// bits, event motions and looks end, deferred despawns happen.
+/// FUN_100ae3f0 (0x100ae435): the +0x174 a reserved entity keeps at the event's end. Op 0xac 1 and the door ops
+/// (0x4c / 0x4d / 0x4f / 0x8e / 0x8f) share that field; ours keeps the last write in one of the two maps (each write
+/// takes the id out of the other).
+fn reserved_status(event: &HashMap<u32, u8>, doors: &HashMap<u32, u8>, id: u32) -> Option<u8> {
+    doors.get(&id).or_else(|| event.get(&id)).copied()
+}
+
 fn finish(w: &mut World, live: Box<Live>) {
     w.screen.release_black();
+    // FUN_100ae960: the credits roll closes with the event.
+    w.credits = None;
     // FUN_100ae3f0 -> FUN_100ae3a0: the event message queues are cancelled (FUN_10127ea0).
     cancel_queues(w);
     // FUN_100ae3f0 -> FUN_100ba080: op 0x97's gusts back as they were.
@@ -2921,6 +3018,13 @@ fn finish(w: &mut World, live: Box<Live>) {
     // FUN_10182860 (down to 50 below, else up), an NPC's by FUN_101828d0 unless a no-snap bit holds it (+0x128 bit
     // 14, +0x120 bits 20 / 21) or it is a door or lift (+0xee 3 / 4). It comes before & 1's return to +0x24, so
     // with both flags we stay at this place too. Ours does the bound actors: the others' models are where they are.
+    // An entity op 0xac 2 reserved takes its event status as its server one (+0x16c = +0x170 = +0x174), and is
+    // reseated only when op 0xac 4 set its +0x13c bit 0.
+    for (id, e) in w.entities.iter_mut().filter(|(_, e)| e.ev_reserved) {
+        if let Some(s) = reserved_status(&live.st.event_status, &w.doors.event, *id) {
+            e.motion.status = s;
+        }
+    }
     let reseat = live.st.flags() & mode::GROUND_SNAP_ON_END != 0;
     if reseat {
         for id in &live.st.bound {
@@ -2930,7 +3034,7 @@ fn finish(w: &mut World, live: Box<Live>) {
             if *id == w.my_id {
                 p.pos.y = floor(p.pos).unwrap_or(p.pos.y);
                 keep_pose(w, p);
-            } else if let Some(e) = w.entities.get(id) {
+            } else if let Some(e) = w.entities.get(id).filter(|e| !e.ev_reserved || e.keep_event_pos) {
                 if id >> 24 == 0 || (id >> 24 == 1 && reseat_floor(e.no_snap, lifted, e.sub_kind)) {
                     p.pos.y = floor(p.pos).unwrap_or(p.pos.y);
                 }
@@ -3261,12 +3365,61 @@ pub fn weather(w: &World) -> u16 {
     w.event.as_ref().and_then(|l| l.st.weather).unwrap_or(w.weather)
 }
 
+/// Scheduler ops 0x7c / 0x7d (fx::EnvOp) on the clock and weather op 0x77 holds.
+pub fn env_op(w: &mut World, op: crate::fx::EnvOp) {
+    match op {
+        // FUN_1018c210: hour, minute and second of `v`, the day kept. Outside an event ours runs on the server's.
+        crate::fx::EnvOp::Clock(v) => match w.event.as_mut() {
+            Some(l) => {
+                let held = l.st.clock;
+                let minute = (v % 0x4f_1a00) / 3600;
+                l.st.clock =
+                    Some(HeldClock { day: held.and_then(|c| c.day), minute, moon: held.is_some_and(|c| c.moon) });
+            }
+            None => log::debug!("scheduler op 0x7d (time {v}) outside an event: not applied"),
+        },
+        // FUN_101874f0 with keep 0: a new tag kills the old weather's effects at once; the env blends over `blend`
+        // clock units (1500 a second).
+        crate::fx::EnvOp::Weather { tag, blend } => {
+            let name = String::from_utf8_lossy(&tag.to_le_bytes()).trim_end_matches('\0').to_string();
+            let secs = blend.max(0) as f32 / 1500.0;
+            match crate::dat::weather::WEATHER_TAGS.iter().position(|t| *t == name) {
+                Some(n) => {
+                    let n = n as u16;
+                    match w.event.as_mut().filter(|l| l.st.weather.is_some()) {
+                        Some(l) => l.st.weather = Some(n),
+                        None if w.weather_chain.last().is_none_or(|c| c.0 != n) => {
+                            if secs <= 0.0 {
+                                w.weather_chain.clear();
+                            }
+                            w.weather_chain.push((n, Instant::now(), secs));
+                        }
+                        None => {}
+                    }
+                }
+                None => log::debug!("scheduler op 0x7c: weather {name:?} has no number"),
+            }
+            w.effects.set_weather(&name, 0.0);
+            w.static_env = None;
+        }
+        crate::fx::EnvOp::Static(e) => w.static_env = Some(e),
+    }
+}
+
 /// Bound actors whose name op 0x92 turned off while the event runs (FUN_10096000).
 pub fn nameless(w: &World) -> HashSet<u32> {
     w.event.as_ref().map_or_else(HashSet::new, |l| l.st.no_name.intersection(&l.st.bound).copied().collect())
 }
 
 /// Op 0x5f sub 1 holds this actor out of s2c 0x038 schedulers while the event runs.
+pub fn no_039(w: &World, id: u32) -> bool {
+    w.event.as_ref().is_some_and(|l| l.st.no_039.contains(&id))
+}
+
+pub fn no_03a(w: &World, id: u32) -> bool {
+    w.event.as_ref().is_some_and(|l| l.st.no_03a.contains(&id))
+}
+
 pub fn no_038(w: &World, id: u32) -> bool {
     w.event.as_ref().is_some_and(|l| l.st.no_038.contains(&id))
 }
@@ -4261,6 +4414,20 @@ mod tests {
         assert!(State::new(EventStart { mode: 0x80, login: true, ..Default::default() }).place_on);
         assert!(!State::new(EventStart { mode: 0x80, ..Default::default() }).place_on);
         assert!(!State::new(EventStart { mode: 0x03, login: true, ..Default::default() }).place_on);
+    }
+
+    /// FUN_100ae3f0 (0x100ae435): a reserved entity keeps the +0x174 its event left, a door op's included.
+    #[test]
+    fn reserved_status_takes_door_ops() {
+        let (mut event, mut doors) = (HashMap::new(), HashMap::new());
+        assert_eq!(reserved_status(&event, &doors, 7), None);
+        event.insert(7, 5);
+        assert_eq!(reserved_status(&event, &doors, 7), Some(5));
+        // Op 0x4c on the same entity: +0x174 = 8 (the door op moves the id out of the event map).
+        event.remove(&7);
+        doors.insert(7, 8);
+        assert_eq!(reserved_status(&event, &doors, 7), Some(8));
+        assert_eq!(reserved_status(&event, &doors, 9), None);
     }
 
     /// FUN_1008e4d0 / FUN_10095900: the event filter takes non-participants (PCs by 0x02, others by 0x10) except doors,

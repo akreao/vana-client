@@ -3297,9 +3297,9 @@ Summary of what the client does, and where it departs from them:
 - **Inferred / left out**: our random sequence is not retail's MT19937 (only the value mappings are); sun / moon
   (modes 0xe / 0xf) lack the rotation of DAT_105ec978; shading is done in gamma space (textures uploaded as plain
   UNORM) and, since 2026-10-23, blended in gamma space as D3D8 did (the world scene below); batched sprites use
-  normalised UVs (retail draws raw UVs there; differs only for D3a with byte 7 = 0); no ZBIAS 15, no MMB
-  draw-distance cull, no zone-0xed MMB offset; weather density (config 0x3b) is taken as 1.0; the covered (roof)
-  flag is not computed; orientation modes with bit 0 (camera basis) use the plain angles; ops not handled yet are
+  normalised UVs (retail draws raw UVs there; differs only for D3a with byte 7 = 0); the MMB cull, the zone-0xed MMB
+  offset and the orientation bit-0 basis: "Effect audit fixes 7"; weather density (config 0x3b) is taken as 1.0; the
+  covered (roof) flag is not computed; ops not handled yet are
   logged once at debug level (point lists, paths, ground snap, sounds, point lights, distortion, rings, lens flares,
   class-specific ops). Scheduler-started effects (battle, spells) come next ("Effect schedulers").
 - Checks: `zone-shot 232 --effects N --weather fine` (sea layers, entrance shadows, cloud domes, sun, tower and
@@ -3397,9 +3397,8 @@ From the research notes:
 - MMB elements (FUN_1003fde0 -> FUN_1017c840): FUN_1017c520 returns the scene's mesh node by the MMB's 16-byte name,
   so +0x104 holds the node, not a handle; MMB type 2 builds no VB. Per submesh: untextured rgb = sat(2·D·F), a =
   sat(4·Da·Fa); textured rgb = sat(sat(T·F)·D·4), a = sat(sat(2·Ta·Fa)·Da·4); with the alpha flag (mode 0x64 or flag
-  0x10000000) rgb = sat(sat(T·D)·F·4), a = sat(4·Da·Fa). The MMB's blending bits are not read. Culled against the
-  scenery draw distance (FUN_1017b170; the planes inferred). Zone 0xed: MMBs named in the list at 0x1036ac18 ("awan"
-  "brac" "col1" "sh_u" "sim" ...) get a node offset y -0.8, added to the draw matrix's row 4 (view space).
+  0x10000000) rgb = sat(sat(T·D)·F·4), a = sat(4·Da·Fa). The MMB's blending bits are not read. The cull and the zone
+  0xed offset: "Effect audit fixes 7" (a side and near cull, no far plane; the names are awan brac col1 sh-u suim).
 - D3m (FUN_1003f3e0): no texture groups rgb = sat(2·D·F), a = sat(4·Da·Fa) (mode 0x44: sat(2·Da·Fa), Fa = 0xff above
   0x7e); groups rgb = sat(sat(2·D·T)·2·F), a = sat(sat(2·Da·Ta)·4·Fa) (flag 0x10000000: sat(Da·4·Fa)); mode 0x49:
   F's rgb white, DESTCOLOR / SRCALPHA (dst x (1 + a)); the untextured tail as no groups. Layout (FUN_1003f0a0, data
@@ -12006,15 +12005,9 @@ From the research notes:
   its 8 corners (and runs an occlusion query when one is free); not visible: no emission this frame and the stream
   stops, as op 0x0a's distance gate. Used by weapon skill 3400, fireworks 4959 / 4960 `hana/*`, and zone generators
   (torch flames, e.g. 290 `effe/hi/lp14`).
-- Ours (fx/emit.rs generator_stream): off screen = every corner outside one plane of the scene frustum (fovy
-  2 atan(192 / focal), Registry::aspect from the client each frame) *(inf: the exact test of FUN_1004a870's
-  vtable +0x8c call; no occlusion query, no path offset)*. Zone 230 from a fixed camera: 12 fewer live elements
-  (off-screen emitters); 3400's own elements unchanged frame by frame.
-
-From the research notes:
-- The tested shape is the +-1 cube under diag(op[3], op[4], op[5]), then gen +0xa4, then the view DAT_1047bfa8 +0xb50;
-  op[6] >> 1 & 1 picks the corner source (FUN_10047b80). FUN_1004a870 also runs an occlusion query when one is free (not
-  reproduced).
+- Ours (fx/emit.rs generator_stream): retail's corner test since 2026-11-15 ("Effect audit fixes 7", which corrects
+  this section: word 6 bit 1 is a depth test, the path offset is a dead keyframe handle, and the occlusion query
+  never runs for these generators).
 
 ## Emission ops 0x4e (batched) and 0x94 (2026-10-25)
 
@@ -12548,8 +12541,8 @@ From the research notes:
 - Not done: the ground tilt of info[0] 1 / 2 models (FUN_100d54c0), op 0x6e for other actors, the riding `cdam`
   (started from outside FFXiMain, inf), the local player's wait for its stand motion before `coff` (FUN_100d65b0),
   (op 0xab 3 / 4 done since, below).
-- Op 0xab (FUN_100bac90) subs 3 / 4: 3 sets the event actor's +0x120 bit 2, which keeps ops 0x7e and 0xac 1 from
-  writing its event status; 4 stays on the op (the frame ends) while that status is 0 and the riding transition
+- Op 0xab (FUN_100bac90) subs 3 / 4: 3 sets the event actor's +0x120 bit 2, which keeps op 0x7e and the door ops (not
+  0xac 1: corrected 2026-11-15) from writing its event status; 4 stays on the op (the frame ends) while that status is 0 and the riding transition
   (+0x1bc) still runs, then clears the bit. Ours: EventState::status_lock; the wait while a bound actor still has a
   ride (riding or leaving).
 
@@ -13559,11 +13552,11 @@ From the research notes:
 - The warp FUN_10075700 tests +0x144 (the amplitude, asm 0x10075713); the CMoElem ctor FUN_10044890 zeroes +0x140 /
   +0x144 and nothing else stores to +0x140..+0x148.
 - CMoDist pass 1 (RS 0x103530d0) sets ZBIAS 0; pass 2 (RS 0x10353178) does not restore it.
-- DistRing (not done): retail squeezes the viewport into the 256x256 copy (FUN_10042d00) and reads it back, so the
+- DistRing (done 2026-11-10, the squeeze pass render/squeeze.wgsl): retail squeezes the viewport into the 256x256 copy (FUN_10042d00) and reads it back, so the
   band shows the scene blurred over about W / 256 px and shifted about (-0.5 - W / 512, -0.5 + H / 512) px (content
   right and up; at 1920x1080 (-4.25, +1.61)). Copy texel (i, j) samples u = (i W / 256 - 0.5) / W, v = (H - 0.5) / H -
   j / 256 (linear, MIRROR); a ring pixel u = (px + 0.5) / W, v = (H - 0.5 - py) / H (inferred from the D3D8
-  rasterization rules). Our full-size copy shows nothing there.
+  rasterization rules).
 
 ## Self-starting schedulers: end loops, the load-time start, op 0x52 time windows, op 0xa2, update op 0x64 (2026-10-25)
 
@@ -19236,8 +19229,9 @@ From the research notes:
   requests only while the zone's scene showed (update_sub_area returned while an event area was up), so the
   request was never taken and the wait never ended.
 - Now an event area brings its SubArea (its RID regions, collision, light and area keys) and the zone's is kept
-  in AreaSwitch.home_sub until op 0x35 brings the zone back; while an area shows only the event's requests load
-  (no trigger under the player *(inf)*) and an unload sends no 0x0F2 (FUN_10178900 from an event sends none).
+  in AreaSwitch.home_sub until op 0x35 brings the zone back; an unload an event asks for sends no 0x0F2
+  (FUN_10178900 from an event sends none). The trigger under the player runs in an area too (corrected: MODLOG
+  "Ro'Maeve's spring in an event area: the sub-area trigger").
 
 ## A status motion the model lacks: what plays goes on (2026-10-30)
 - User report: in the Altar Room (152) Verena (event 0x2710, model 79) and Hooknox (event 0x2e, model 85) glided

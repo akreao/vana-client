@@ -1771,7 +1771,20 @@ fn main() -> Result<()> {
                             fx.reg.libs[l].find_global(dat::generator::kind::GENERATOR, u32::from_le_bytes(name))
                         && let Some(g) = fx.reg.libs[l].generator(n)
                     {
-                        println!("generator attach {:#010x} mode {:#x} life {}", g.attach, g.attach_mode(), g.life);
+                        let path: Vec<String> = fx.reg.libs[l]
+                            .tree
+                            .path(n)
+                            .iter()
+                            .map(|x| String::from_utf8_lossy(x).into_owned())
+                            .collect();
+                        println!(
+                            "generator {} attach {:#010x} mode {:#x} life {} flags {:#x}",
+                            path.join("/"),
+                            g.attach,
+                            g.attach_mode(),
+                            g.life,
+                            g.flags
+                        );
                         for (k, st) in g.streams.iter().enumerate() {
                             for op in st {
                                 let words: Vec<String> =
@@ -3633,6 +3646,8 @@ struct ShotActors {
     ground: client::ground::Ground,
     /// The victim despawned (fx-shot --despawn).
     gone: std::cell::Cell<bool>,
+    /// CMoSkeletonElem model actors made so far (ready at once here).
+    fx_models: std::cell::RefCell<Vec<u32>>,
 }
 
 impl ShotActors {
@@ -3674,6 +3689,9 @@ impl fx::Actors for ShotActors {
     }
     fn model_files(&self, id: u32) -> Vec<u32> {
         if id == self.at[0].0 { vec![9672, 7072] } else { vec![1300] }
+    }
+    fn ready(&self, id: u32) -> Option<bool> {
+        (self.find(id).is_some() || self.fx_models.borrow().contains(&id)).then_some(true)
     }
     fn hidden(&self, _: u32) -> bool {
         false
@@ -3881,6 +3899,7 @@ fn fx_shot(
         fx_files: Default::default(),
         ground: g,
         gone: Default::default(),
+        fx_models: Default::default(),
     };
     let mut fx = fx::Effects::new();
     fx.set_keys(std::sync::Arc::new(keys));
@@ -3980,6 +3999,22 @@ fn fx_shot(
             }
             fx.tick(&f, &actors);
             sync_fx_files(&mut fx, &actors.fx_files);
+            // CMoSkeletonElem models (the client's actors; not drawn here): their spawns, places and ends.
+            for (id, file, a, b) in std::mem::take(&mut fx.model_spawns) {
+                println!("tick {}: model actor {id:#x} from file {file} bytes {a:#x}..{b:#x}", actors.ticks.get());
+                actors.fx_models.borrow_mut().push(id);
+            }
+            if let Some((id, p, r, s, c)) = fx.model_places.last().copied() {
+                println!(
+                    "tick {}: model {id:#x} at {p:.2} rot {r:.2} scale {s:.2} colour {c:#010x}, scheduler started {:?}",
+                    actors.ticks.get(),
+                    fx.model_states()
+                );
+            }
+            fx.model_places.clear();
+            for id in std::mem::take(&mut fx.model_drops) {
+                println!("tick {}: model {id:#x} gone", actors.ticks.get());
+            }
             actors.ticks.set(actors.ticks.get() + 1.0);
             let mut e = gpu.device.create_command_encoder(&Default::default());
             eg.update(gpu, &mut e, &mut fx, &f);

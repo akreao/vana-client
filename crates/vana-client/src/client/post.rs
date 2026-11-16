@@ -346,12 +346,7 @@ fn gil_line(w: &mut World, slot: usize) {
 /// -> 0x51. True when it may open.
 fn may_open(w: &mut World, recv: bool) -> bool {
     // Ours: the windows of the main class we keep as state count too (the modern UI draws no retail frames).
-    let main = w.main_open
-        || w.win.is_some()
-        || w.map.is_some()
-        || w.config.is_some()
-        || w.mogdoor.is_some()
-        || if recv { send_open(w) } else { recv_open(w) };
+    let main = blocked(w) || if recv { send_open(w) } else { recv_open(w) };
     if main || super::target::sub_up(w) {
         super::textcmd::refuse(w, 0x45);
         return false;
@@ -364,6 +359,20 @@ fn may_open(w: &mut World, recv: bool) -> bool {
         return false;
     }
     true
+}
+
+fn blocked(w: &World) -> bool {
+    w.main_open
+        || super::target::sub_up(w)
+        || w.win.is_some()
+        || w.map.is_some()
+        || w.config.is_some()
+        || w.mogdoor.is_some()
+}
+
+/// FUN_1012f100(0) without its messages (event op 0xb2 1 waits on it): the send UI idle, no blocking window, not healing.
+pub fn can_open(w: &World) -> bool {
+    !active(w) && !blocked(w) && !matches!(w.my_motion.status, 0x21 | 7)
 }
 
 // --- The receive UI ---

@@ -1865,7 +1865,11 @@ pub(super) fn on_magic_scheduler(w: &mut World, ids: (u32, u32), indices: (u16, 
             if id == w.my_id { w.my_index == index } else { w.entities.get(&id).is_some_and(|e| e.index == index) };
         known && w.actors.get(&id).is_some_and(|a| a.character.is_some())
     };
-    if !(ok(ids.0, indices.0) && ok(ids.1, indices.1)) || super::event::drops_scheduler(w, ids.0, ids.1) {
+    if !(ok(ids.0, indices.0) && ok(ids.1, indices.1))
+        || super::event::drops_scheduler(w, ids.0, ids.1)
+        || super::event::no_03a(w, ids.0)
+        || super::event::no_03a(w, ids.1)
+    {
         return;
     }
     log::debug!("0x03A type {kind} file {file} on {:#x} -> {:#x}", ids.0, ids.1);
@@ -1877,7 +1881,11 @@ pub(super) fn on_magic_scheduler(w: &mut World, ids: (u32, u32), indices: (u16, 
 /// index and id with their models in. Held until the zone's effects are loaded (retail handles packets after the load).
 pub(super) fn on_map_scheduler(w: &mut World, ids: (u32, u32), indices: (u16, u16), name: [u8; 4]) {
     // The event's flags as they are when the packet comes in (FUN_1009dd20), not when the held ones run.
-    if ids != (0, 0) && super::event::drops_scheduler(w, ids.0, ids.1) {
+    if ids != (0, 0)
+        && (super::event::drops_scheduler(w, ids.0, ids.1)
+            || super::event::no_039(w, ids.0)
+            || super::event::no_039(w, ids.1))
+    {
         return;
     }
     w.map_schedulers.push((ids, indices, name));
