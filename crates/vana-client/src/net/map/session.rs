@@ -468,7 +468,9 @@ impl MapSession {
         // FUN_100f76b0: a datagram not newer than the last one handled is dropped (counted), and so is a sub-packet
         // whose sync is not newer; only an accepted datagram moves the stored sequence and ack.
         let seq = u16::from_le_bytes([dgram[0], dgram[1]]);
-        crate::net::capture::datagram(false, n, seq, u16::from_le_bytes([dgram[2], dgram[3]]), Some(dgram[HEADER]));
+        // Captured after its sub-packets, so a zone-in's datagram is counted in the zone it enters.
+        let ack = u16::from_le_bytes([dgram[2], dgram[3]]);
+        let capture = || crate::net::capture::datagram(false, n, seq, ack, Some(dgram[HEADER]));
         if self.logged.0 < LOG_DATAGRAMS {
             self.logged.0 += 1;
             log::info!("map in: header {} [{}]", hex::encode(&dgram[..HEADER]), sub_ids(&plain));
@@ -477,6 +479,7 @@ impl MapSession {
         if !newer(seq) {
             // LSB resends its last datagram when our ack lags (map_networking.cpp parse).
             log::debug!("dropped resent datagram {seq}");
+            capture();
             return Ok(Some(Vec::new()));
         }
 
@@ -503,6 +506,7 @@ impl MapSession {
             let at = |o: usize| u32::from_le_bytes(dgram[o..o + 4].try_into().unwrap());
             self.clock = Some((at(8), at(4), std::time::Instant::now()));
         }
+        capture();
         Ok(Some(out))
     }
 }
@@ -703,6 +707,11 @@ mod tests {
         assert!(has(Dir::Out, &|k| matches!(k, Kind::Datagram { form, seq: 2, .. } if form == "plain")));
         assert!(has(Dir::In, &|k| matches!(k, Kind::Packet { id: 0x0DD, hex } if hex.len() == 504)));
         assert!(has(Dir::In, &|k| matches!(k, Kind::Datagram { form, seq: 1, .. } if form == "plain")));
+        // The datagram line follows the sub-packets it carried.
+        let at = |f: &dyn Fn(&capture::Record) -> bool| recs.iter().position(f).unwrap();
+        let sub = at(&|r| r.dir == Dir::In && matches!(r.kind, Kind::Packet { id: 0x0DD, .. }));
+        let dg = at(&|r| r.dir == Dir::In && matches!(r.kind, Kind::Datagram { seq: 1, .. }));
+        assert!(sub < dg);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

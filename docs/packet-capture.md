@@ -23,7 +23,8 @@ One JSON object a line:
 
 `t` is Unix time in milliseconds; `zone` is the one the last s2c 0x00A named. Each sub-packet is written once: when
 it first goes out, and when it is first accepted coming in. A resend (ours of an unacknowledged sub-packet, or the
-server's of a datagram) appears only as a datagram line.
+server's of a datagram) appears only as a datagram line. An incoming datagram's line comes after the sub-packets it carried,
+so a zone-in's datagram is counted in the zone it enters.
 
 Only the map session is recorded. The lobby, PlayOnline sign-in and patch connections never are, since they carry
 the password and account keys. The map login (c2s 0x00A) is written with its account name and ticket zeroed. Chat
