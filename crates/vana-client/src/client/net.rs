@@ -1166,6 +1166,10 @@ pub struct SelfState {
     pub move_time: u16,
     /// The current target's ActIndex (0 none): c2s 0x015 @0x16 facetarget, the server's cursor target.
     pub target: u16,
+    /// c2s 0x015 @0x15 bit 2, GroundMode (FUN_100983f0): HackMove, GroundFlag or entity +0x120 bit 21.
+    pub ground_mode: bool,
+    /// Our status in force is 0x1c / 0x1f: FUN_100983f0 builds no 0x015 (the datagram still goes).
+    pub silent: bool,
 }
 
 pub struct NetHandle {
@@ -1938,7 +1942,7 @@ impl Session<'_> {
                 self.map.zoned_in(&p);
                 let pos = [p.f32(12), p.f32(16), p.f32(20)];
                 let (scene, myroom) = scene_of(&p);
-                *self.me.lock().unwrap() = SelfState { pos, dir: p.u8(11), moving: false, move_time: 0, target: 0 };
+                *self.me.lock().unwrap() = SelfState { pos, dir: p.u8(11), ..Default::default() };
                 self.zoned = true;
                 self.my_index = p.u16(8);
                 self.queue.push(build(0x00C, &[0u8; 8]));
@@ -2807,9 +2811,12 @@ impl Session<'_> {
             }
             body[14..16].copy_from_slice(&s.move_time.to_le_bytes());
             body[16] = s.dir;
+            body[17] = (s.ground_mode as u8) << 2;
             // FUN_10096c00: @0x16 the current target's ActIndex (FUN_10152f20).
             body[18..20].copy_from_slice(&s.target.to_le_bytes());
-            add_position(&mut self.queue, build(0x015, &body), s.moving);
+            if !s.silent {
+                add_position(&mut self.queue, build(0x015, &body), s.moving);
+            }
             // A batch holding an id a mod hooks goes to the main thread and comes back as SendBatch.
             let hooked = self.hooks.load(Ordering::Relaxed) & HOOK_OUT != 0
                 && self.queue.iter().any(|p| self.stats.hooked(true, sub_id(p)));

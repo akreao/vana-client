@@ -628,7 +628,8 @@ pub struct State {
     pub event_status: HashMap<u32, u8>,
     /// Op 0x7e's chocobo or mount by actor (ChocoboIndex, the chocobo look, the mount id).
     pub event_rides: HashMap<u32, super::ride::Model>,
-    /// Op 0xab sub 3 (+0x120 bit 2): the event status of these actors is not written (ops 0x7e, 0xac 1).
+    /// Op 0xab sub 3 (+0x120 bit 2): the event status of these actors is not written (op 0x7e and the door ops
+    /// 0x4c / 0x4d / 0x4f / 0x8e / 0x8f; op 0xac sub 1 writes it regardless).
     status_lock: HashSet<u32>,
     /// Op 0xab 0x0f / 0x10 (DAT_10489900): s2c 0x00D positions of player characters that are not bound keep the sent
     /// height; the event's end clears it (FUN_100ae3f0).
@@ -668,6 +669,11 @@ pub struct Live {
 }
 
 impl Live {
+    /// Bound to this event (+0x120 bit 7).
+    pub fn is_bound(&self, id: u32) -> bool {
+        self.st.bound.contains(&id)
+    }
+
     /// Op 0x33's bit 21 on a bound actor (entity +0x120 bit 21): no ground snap and, through FUN_10084640, no tilt.
     pub fn no_ground(&self, me: u32, id: u32) -> bool {
         self.rt.actors().any(|(a, b)| b.no_ground && (if a == PLAYER { me } else { a }) == id)
@@ -2361,12 +2367,20 @@ impl Host for LiveHost<'_> {
     fn ground(&self, actor: u32, p: [f32; 3]) -> Option<f32> {
         // The VM names us PLAYER; the flags live under our world id.
         let actor = self.wid(actor);
-        let no_snap = if actor == self.w.my_id {
-            self.w.my_plate.no_snap
+        let (no_snap, status) = if actor == self.w.my_id {
+            (self.w.my_plate.no_snap, self.w.my_motion.status)
         } else {
-            self.w.entities.get(&actor).is_some_and(|e| e.no_snap)
+            self.w.entities.get(&actor).map_or((false, 0), |e| (e.no_snap, e.motion.status))
         };
-        if no_snap {
+        // FUN_1008cd90 holds bit 21 for a carrier status and for an unbound rider (client/carrier.rs).
+        let bound = self.st.bound.contains(&actor);
+        // +0x174 is one field: an event status (op 0xac sub 1) or a door op's state, whichever came last.
+        let status = if bound {
+            self.st.event_status.get(&actor).or_else(|| self.w.doors.event.get(&actor)).copied().unwrap_or(0)
+        } else {
+            self.w.doors.state.get(&actor).copied().unwrap_or(status)
+        };
+        if no_snap || super::carrier::no_ground(status, bound) {
             return None;
         }
         self.w.ground.as_ref().and_then(|g| g.snap(p[0], p[2], p[1]))
@@ -3397,6 +3411,11 @@ pub fn raw_pc_y(w: &World, id: u32) -> bool {
 /// The running event binds this actor (+0x120 bit 7).
 pub fn bound(w: &World, id: u32) -> bool {
     w.event.as_ref().is_some_and(|l| l.st.bound.contains(&id))
+}
+
+/// The actors the running event has bound (+0x120 bit 7).
+pub fn bound_set(w: &World) -> HashSet<u32> {
+    w.event.as_ref().map(|l| l.st.bound.clone()).unwrap_or_default()
 }
 
 /// A bound actor's drawn transform while the event runs: on its way to its last VM step, over the tick after it.

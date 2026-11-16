@@ -2715,6 +2715,12 @@ impl ZoneRenderer {
         gpu.queue.put(&self.parts_gpu, at, bytemuck::bytes_of(&*p));
     }
 
+    /// Door part `slot`'s translation now (the door actor's +0x624 for its part 0).
+    pub fn part_pos(&self, slot: u32) -> Option<[f32; 3]> {
+        let p = self.parts.get(slot as usize)?;
+        Some(PartGpu::at(p.pos_from, p.pos_to, p.pos_time, self.now))
+    }
+
     /// Door `door`'s parts in the world as drawn now (FUN_100acef0: base * T(t) * Rx * Ry * Rz, as vs_main).
     pub fn door_frames(&self, door: u32) -> Option<Vec<Mat4>> {
         let (slots, bases) = (self.door_parts.get(&door)?, self.door_bases.get(&door)?);
