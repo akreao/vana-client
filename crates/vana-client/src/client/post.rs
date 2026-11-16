@@ -367,6 +367,8 @@ fn blocked(w: &World) -> bool {
         || w.map.is_some()
         || w.config.is_some()
         || w.mogdoor.is_some()
+        || w.magic.is_some()
+        || w.ability.is_some()
         || super::target::sub_up(w)
 }
 
