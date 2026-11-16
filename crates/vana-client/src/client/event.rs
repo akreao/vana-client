@@ -1369,10 +1369,11 @@ impl Host for LiveHost<'_> {
             // ride on its ChocoboIndex / mount id, ride.rs). Unlike the door ops, 0xab 3's lock does not stop it.
             Effect::Op { op: 0xac, sub: Some(1), actor, args } => {
                 let id = self.wid(actor);
+                // No +0x120 bit 2 test here (asm 0x100bb1ee..0x100bb215), unlike op 0x7e and the door ops.
                 if let Some(s) = Self::arg_int(&args, 0) {
+                    // One field (+0x174) holds door states too: the door code reads this value.
                     self.st.event_status.insert(id, s as u8);
-                    // One field (+0x174) holds door states too.
-                    self.w.doors.event.remove(&id);
+                    self.w.doors.event.insert(id, s as u8);
                 }
             }
             // FUN_100bb180 subs 2 / 3: actor@2's entity +0x138 bit 31 (its schedulers mute while its model is hidden);
@@ -1746,11 +1747,12 @@ impl Host for LiveHost<'_> {
                     0x8e => Some(0x2d),
                     _ => Some(0x2e),
                 };
-                // FUN_100b6950..: no write while 0xab 3's lock (+0x120 bit 2) is on.
+                // FUN_100b6950..: no write while 0xab 3's lock (+0x120 bit 2) is on. +0x174 is one field: a bound
+                // character poses with it too.
                 let id = self.wid(actor);
                 if let Some(v) = v.filter(|_| !self.st.status_lock.contains(&id)) {
                     self.w.doors.event.insert(id, v);
-                    self.st.event_status.remove(&id);
+                    self.st.event_status.insert(id, v);
                 }
             }
             // FUN_10178900(val, 1): the sub-area loads (no 0x0F2); sub 2 tells the server (0x0F2 state 2).
@@ -4431,8 +4433,8 @@ mod tests {
         assert_eq!(reserved_status(&event, &doors, 7), None);
         event.insert(7, 5);
         assert_eq!(reserved_status(&event, &doors, 7), Some(5));
-        // Op 0x4c on the same entity: +0x174 = 8 (the door op moves the id out of the event map).
-        event.remove(&7);
+        // Op 0x4c on the same entity: +0x174 = 8 (the door op writes both maps, one field in retail).
+        event.insert(7, 8);
         doors.insert(7, 8);
         assert_eq!(reserved_status(&event, &doors, 7), Some(8));
         assert_eq!(reserved_status(&event, &doors, 9), None);

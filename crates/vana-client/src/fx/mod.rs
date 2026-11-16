@@ -1195,10 +1195,9 @@ pub struct Effects {
     pub model_spawns: Vec<(u32, u32, u32, u32)>,
     pub model_places: Vec<(u32, Vec3, Vec3, Vec3, u32)>,
     pub model_drops: Vec<u32>,
-    /// Scheduler ops 0xc0 / 0xc3 (an area's `@ini`): the zone's clock override (+0x1c8, FUN_10182c40: the lighting's
-    /// time while online) and its sun / moon yaw in degrees (+0x1cc, FUN_10180700); reset with each zone.
-    pub zone_clock: Option<u32>,
-    pub zone_yaw: i16,
+    /// The zone object's fixed sky time and sun tilt (W+0x1c8 / +0x1cc): cleared at every scene load and area swap,
+    /// set by scheduler ops 0xc0 / 0xc3 (the zone's or an event area's `@ini`).
+    sky: crate::dat::weather::Sky,
     /// Scheduler op 0xb4: (actor, the plate's lift in y, ticks) for client/mod.rs.
     pub plate_lifts: Vec<(u32, f32, f32)>,
     /// Op 0xab: actor1's entity +0x130 bit 4 (its motion bases reset at each model creation).
@@ -1378,8 +1377,7 @@ impl Effects {
             model_spawns: Vec::new(),
             model_places: Vec::new(),
             model_drops: Vec::new(),
-            zone_clock: None,
-            zone_yaw: 0,
+            sky: Default::default(),
             plate_lifts: Vec::new(),
             base_resets: Vec::new(),
             death_picks: Vec::new(),
@@ -1479,7 +1477,7 @@ impl Effects {
             self.wading.clear();
             self.foot_folder.clear();
             self.sub_lib = None;
-            (self.zone_clock, self.zone_yaw) = (None, 0);
+            self.sky = Default::default();
             self.zone_lib = Some(l);
             self.reg.zone = Some(l);
             self.start_zone(l);
@@ -1514,7 +1512,7 @@ impl Effects {
         self.hidden_actors.clear();
         self.zone_lib = Some(l);
         self.reg.zone = Some(l);
-        (self.zone_clock, self.zone_yaw) = (None, 0);
+        self.sky = Default::default();
         // FUN_100361d0: the zone reset forgets the stream.
         self.stream_fade = None;
         for s in self.sounds.iter_mut() {
@@ -1559,6 +1557,7 @@ impl Effects {
         // FUN_10056c70), stepped at once inside the load, so its ops stand before the first light frame. Five files
         // have one: Escha - Zi'Tah, Escha - Ru'Aun and Reisenjima Sanctorium fix the time (op 0xc0), Reisenjima
         // and Reisenjima Henge tilt the sun (op 0xc3).
+        self.sky = Default::default();
         if let Some(n) = self.reg.libs[l].find_global(kind::SCHEDULER, u32::from_le_bytes(*b"@ini")) {
             let t = self.spawn_task((l, n), sched::Who::None, sched::Who::None, None, 1.0, None);
             _ = self.run_new(t, &NoActors);
@@ -1567,7 +1566,7 @@ impl Effects {
 
     /// The zone's fixed sky time and sun tilt (scheduler ops 0xc0 / 0xc3), for the light and the weather keys.
     pub fn sky(&self) -> crate::dat::weather::Sky {
-        crate::dat::weather::Sky { time: self.zone_clock.map(|v| v % 5_184_000), tilt: self.zone_yaw }
+        self.sky
     }
 
     /// A sub-area DAT (an interior) loaded beside the zone: the old one's generators go and its auto-start world
@@ -2157,7 +2156,7 @@ impl Effects {
         self.step_quakes(f);
         self.step_models(f, actors);
         self.step_decals(actors);
-        let (voyage, sky) = (self.voyage, self.sky());
+        let (voyage, sky) = (self.voyage, self.sky);
         for i in 0..self.insts.len() {
             let Some(inst) = self.insts[i].as_mut().filter(|x| !x.held) else { continue };
             attach(inst, f, voyage, sky);
@@ -2231,10 +2230,8 @@ impl Effects {
         };
         let (life, back) = (c.life, c.back);
         let Some(owner) = self.insts.get(c.inst).and_then(|x| x.as_ref()) else { return Vec::new() };
-        let src = owner.src;
-        // Scale A: the element's parent frame's (FUN_100473f0: its snapshot or the generator's) x the element's.
-        let pf = self.parent_frame(c);
-        let (frame, frame_scale) = (pf.as_ref().and_then(|p| p.matrix), pf.as_ref().map_or(Vec3::ONE, |p| p.scale_a));
+        let (src, owner_scale) = (owner.src, owner.scale_a);
+        let frame = self.parent_frame(c).and_then(|p| p.matrix);
         let Some(g) = self.reg.libs[src.0].generator(src.1) else { return Vec::new() };
         let ops: Vec<u8> = g.streams[2].iter().map(|o| o.code).filter(|c| matches!(c, 0x25 | 0x33 | 0x46)).collect();
         let clone_life = self.insts[i].as_ref().map_or(0.0, |x| x.life);
@@ -2247,7 +2244,7 @@ impl Effects {
             // Placement needs the element's read-back position, rotation and scale.
             let Some(b) = back else { continue };
             let m = clone_follow(code == 0x46, b.rot, b.world, frame, f.view);
-            runs.push((Some((m, frame_scale * b.scale)), life != 0.0 || clone_life != 0.0));
+            runs.push((Some((m, owner_scale * b.scale)), life != 0.0 || clone_life != 0.0));
         }
         runs
     }

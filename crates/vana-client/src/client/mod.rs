@@ -19474,11 +19474,10 @@ fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &Worl
         // Op 0x77 sets the hour and weather while an event runs.
         let ev_weather = w.event.as_ref().and_then(|l| l.st.weather);
         let clock = crate::dat::weather::vana_minute(t, at.elapsed().as_secs_f32());
-        // The sun / moon tilt below comes from op 0xc3 (zone_yaw); Effects::sky() reports both for the effects.
+        // The zone's `@ini` (scheduler ops 0xc0 / 0xc3): a fixed sky time stands in for the clock in the
+        // light and the weather keys (W+0x1c8 in FUN_10187720 / FUN_10189c60), and the sun's path tilts.
         let sky = w.effects.sky();
-        let minute = ev_clock.map_or(clock, |c| c.minute as f32);
-        // An area's `@ini` op 0xc0 fixes its lighting's time (FUN_10182c40, online).
-        let minute = w.effects.zone_clock.map_or(minute, |v| (v % 5_184_000) as f32 / 3600.0);
+        let minute = sky.minute(ev_clock.map_or(clock, |c| c.minute as f32));
         // thunk_FUN_1018ade0: each weather object blends its child chain's output into its env by
         // (total - left) / total; a finished one drops the chain before it. Op 0x77's weather stands alone.
         if let Some(k) = w.weather_chain.iter().rposition(|c| c.2 <= 0.0 || c.1.elapsed().as_secs_f32() >= c.2) {
@@ -19519,25 +19518,18 @@ fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &Worl
         let (x, zone) = (crate::dat::weather::clipping_factor(w.game.get(0x3e)), w.zone.unwrap_or(0));
         let step = |ease: &mut crate::dat::weather::LightEase, e: &crate::dat::weather::Env| {
             for _ in 0..steps {
-                ease.step(e, minute, 0);
+                ease.step(e, minute, sky.tilt);
             }
             crate::dat::weather::Lighting::from_env_eased(
                 e,
                 minute,
-                0,
+                sky.tilt,
                 ease,
                 crate::dat::weather::clipping(e.draw_dist, x, zone).1,
             )
         };
         let static_env = w.static_env;
         r.lighting = mix(&|t| zw.at(t, minute)).or(static_env).map(|e| step(&mut w.light_ease, &e));
-        // Op 0xc3's yaw turns the sun and moon about x (FUN_10180700: FUN_10026d50 then FUN_100273d0 on both).
-        let yaw = w.effects.zone_yaw;
-        if let Some(l) = r.lighting.as_mut().filter(|l| yaw != 0 && !l.fixed) {
-            let (s, c) = (yaw as f32).to_radians().sin_cos();
-            let turn = |v: Vec3| Vec3::new(v.x, v.y * c - v.z * s, v.y * s + v.z * c);
-            (l.dir, l.actor_dir, l.two[0], l.two[2]) = (turn(l.dir), turn(l.actor_dir), turn(l.two[0]), turn(l.two[2]));
-        }
         // Real character shadows (render/sunshadow.rs): cast by the sun, or by the moon at night (fainter by its
         // colour, softer), faded out around the change at 6:00 and 18:00. Indoors the room light keeps day's edges.
         r.shadow_level = crate::render::sunshadow::twilight(minute);

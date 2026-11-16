@@ -2249,13 +2249,19 @@ impl Effects {
                 }
                 Flow::Next
             }
-            // FUN_1018bc40 on the weather manager's +0x1c8 (wrapped to 360 days) / +0x1cc = i16 @8.
+            // Case 0xc0 (0x10058079): the zone object's fixed sky time W+0x1c8 = u32 @8 (FUN_1018bc40, a signed
+            // compare: above 360 days it wraps, negative means none), which the light (FUN_10187720) and the weather
+            // keys (FUN_10189c60) read instead of the clock while it is not negative. Op 0x52's windows and the
+            // element curves keep the clock.
             0xc0 => {
-                self.zone_clock = Some(op.u32_at(8) % 0x6f3c_9000);
+                self.sky.set_time(op.u32_at(8));
                 Flow::Next
             }
+            // Case 0xc3 (0x1005809b): the sun's tilt W+0x1cc = i16 @8 (degrees). The case has no break and runs on
+            // into case 0x1b (0x100580ab), which looks for an actor named by the same bytes (FUN_100841a0); the two
+            // in the data (36 = "$") name none, so nothing follows.
             0xc3 => {
-                self.zone_yaw = op.u16_at(8) as i16;
+                self.sky.tilt = op.u16_at(8) as i16;
                 Flow::Next
             }
             0xc1 => {

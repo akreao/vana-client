@@ -312,7 +312,8 @@ impl Sky {
 
     /// The minute of the day FUN_10187720 and FUN_10189c60 work with: the fixed time, else the clock's.
     pub fn minute(&self, clock: f32) -> f32 {
-        self.time.map_or(clock, |t| t as f32 / 3600.0)
+        // 216000 units an hour; the light takes the time of day (5,184,000 a day).
+        self.time.map_or(clock, |t| (t % 5_184_000) as f32 / 3600.0)
     }
 
     /// What the load's `@ini` step leaves for zone file `file`, for the tools that light a zone without running its
