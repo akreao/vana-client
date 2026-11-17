@@ -15,8 +15,13 @@
   +0x44. So under +0xfb the heading follows the step with the drawn ease: from a stand a sideways push sidesteps for
   about 5 ticks and a backward one backpedals for about 10, then the run takes over facing the stick. Riding
   (FUN_10084350 / 70), the drawn rotation eases toward the heading instead, so a chocobo does hold its facing.
-- Ours: update_movement's face_cam facing eases toward the step at 0.125 a tick (powf, as World::my_draw_yaw does) and
-  is the drawn yaw as well; World::my_strafe under it is the quarter against the facing before this frame's ease
-  (lock_dir). The camera hold is unchanged.
-- Not retail: the drawn-step target is our logical step, not a separate eased draw position; retail's dot test (a
-  draw step against this frame's displacement +0x16d pointing the other way faces the displacement) is not modelled.
+- The aim, exactly: this frame's displacement (+0x16d, FUN_100a57f0's end) when the drawn step points against it (both
+  made flat unit vectors, dot < 0); else the drawn step when it went 0.01 or more (across the ground when it rises,
+  in 3D when it falls) with |x| or |z| over 0.01; else the heading, so no turn. The drawn step keeps going for a while
+  after a stop, as +0x5fc settles, and the turn with it. A place set from outside snaps +0x5fc (FUN_100ab830,
+  FUN_1008cd90).
+- Ours: World::turn_draw is +0x5fc for this turn alone (0.125 a tick toward our place, snapped when the place is set
+  elsewhere); update_movement's face_cam facing eases toward the aim above at 0.125 a tick (powf, as World::my_draw_yaw
+  does) and is the drawn yaw as well. World::my_strafe under it is the quarter against the facing before this frame's
+  ease (lock_dir). The camera hold is unchanged.
+- Not traced: the aim's `param_1[0x1c] && FUN_10097a40()` exception (0x100c6b5f) is left out.
