@@ -19559,12 +19559,10 @@ fn world_uploads(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRender
 /// areas' lights.
 fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &WorldFrame) {
     let (dt, ev_clock) = (wf.dt, wf.ev_clock);
-    // Zone lighting for the Vana'diel time and weather the server gave us. FUN_101880c0: a scene with no weather data
-    // (an event's area, e.g. 516 in the Zilart cutscene) is lit by the default env, not left unlit.
-    static DEFAULT: std::sync::LazyLock<crate::dat::weather::ZoneWeather> =
-        std::sync::LazyLock::new(crate::dat::weather::ZoneWeather::retail_default);
-    let zw = w.zone_weather.as_ref().or_else(|| w.zone.is_some().then(|| &*DEFAULT));
-    if let (Some(zw), Some((t, at))) = (zw, w.clock) {
+    // Zone lighting for the Vana'diel time and weather the server gave us. A scene whose weather data gives no env (none
+    // at all, e.g. 516 in the Zilart cutscene) is not left unlit: Env::scene (FUN_10188a70 -> FUN_10189690).
+    let zw = w.zone_weather.as_ref();
+    if let (true, Some((t, at))) = (zw.is_some() || w.zone.is_some(), w.clock) {
         // Op 0x77 sets the hour and weather while an event runs.
         let ev_weather = w.event.as_ref().and_then(|l| l.st.weather);
         let clock = crate::dat::weather::vana_minute(t, at.elapsed().as_secs_f32());
@@ -19621,7 +19619,8 @@ fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &Worl
             )
         };
         let static_env = w.static_env;
-        r.lighting = mix(&|t| zw.at(t, minute)).or(static_env).map(|e| step(&mut w.light_ease, &e));
+        let env = crate::dat::weather::Env::scene(zw.and_then(|zw| mix(&|t| zw.at(t, minute))), static_env);
+        r.lighting = Some(step(&mut w.light_ease, &env));
         // Op 0xc3's yaw turns the sun and moon about x (FUN_10180700: FUN_10026d50 then FUN_100273d0 on both).
         let yaw = w.effects.zone_yaw;
         if let Some(l) = r.lighting.as_mut().filter(|l| yaw != 0 && !l.fixed) {
@@ -19649,8 +19648,8 @@ fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &Worl
         }
         let sub_areas = w.sub.weather.iter().flat_map(|s| s.areas.iter());
         w.area_lights = zw
-            .areas
-            .iter()
+            .into_iter()
+            .flat_map(|zw| zw.areas.iter())
             .chain(sub_areas)
             .filter_map(|(&id, a)| Some((id, mix(&|t| a.at(t, minute))?.area_light())))
             .collect();
@@ -19660,7 +19659,7 @@ fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &Worl
         let mut lights = Vec::with_capacity(keys.len());
         for k in keys {
             let sub = w.sub.weather.as_ref().and_then(|s| s.areas.get(&k));
-            let e = sub.or_else(|| zw.areas.get(&k)).and_then(|a| mix(&|t| a.at(t, minute)));
+            let e = sub.or_else(|| zw.and_then(|zw| zw.areas.get(&k))).and_then(|a| mix(&|t| a.at(t, minute)));
             lights.push(e.map(|e| step(w.area_ease.entry((sub.is_some(), k)).or_default(), &e)));
         }
         r.set_area_lights(lights);
