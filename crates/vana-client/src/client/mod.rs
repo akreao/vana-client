@@ -3608,6 +3608,7 @@ fn world_hud(
                     world.sounds.push(crate::audio::Ui::Select as u32);
                     m.return_menu = world.menu;
                     world.map = Some(m);
+                    battlefield::map_set_up(world);
                     world.menu = None;
                 }
                 // FUN_101f86b0: "There is no map for this area."
@@ -4291,7 +4292,9 @@ fn world_hud(
     }
     region::draw(gu, world, sw, sh);
     let modern = world.modern;
+    world.title_up = gu.was_up("menu    titlewin");
     if let Some(m) = world.map.as_mut() {
+        (m.battlefield, m.title_up) = (world.battlefield.overlay.clone(), world.title_up);
         m.draw(gu, sw, sh, modern);
         world.sounds.append(&mut m.sounds);
         let (zone, key) = (m.zone(), m.asked_key());
@@ -4549,6 +4552,7 @@ fn world_hud(
     world.hud_top = top;
     let party = st.party_window.clone();
     let mut blockers: Vec<[f32; 4]> = [party.as_str()].iter().filter_map(|n| gu.window_rect(n, sw, sh)).collect();
+    let mut sidebar_eases = None;
     winhits::clear(world);
     for (k, n) in ["menu    raid1", "menu    raid2"].iter().enumerate() {
         if st.alliance[k].is_some() {
@@ -4873,6 +4877,8 @@ fn world_hud(
         }
         magic::draw_event_timer(gu, world, sw, sh);
         objective::draw_countdown(gu, world, sw, sh);
+        // The compass draw (FUN_102219c0): FUN_10220a20 first, then the bars (FUN_102212f0).
+        sidebar_eases = battlefield::draw_sidebar(gu, world);
         objective::draw_bars(gu, world);
     }
     racing::draw(gu, world, sw, sh);
@@ -5400,6 +5406,7 @@ fn world_hud(
         credits::draw(gu, world, sw, sh);
         let modern = world.modern;
         if let Some(m) = world.map.as_mut() {
+            (m.battlefield, m.title_up) = (world.battlefield.overlay.clone(), gu.was_up("menu    titlewin"));
             m.draw(gu, sw, sh, modern);
         }
         // cnqframe has flag 0x40 too; its info windows don't.
@@ -5410,6 +5417,10 @@ fn world_hud(
         return Vec::new();
     }
 
+    // FUN_10220f60's gauges ease after its draw.
+    if let Some(t) = sidebar_eases {
+        world.battlefield.ease(t);
+    }
     blockers
 }
 
@@ -7970,6 +7981,8 @@ struct World {
     battlefield: battlefield::Battlefield,
     /// prty5's handler +0x2c: the party languages, loaded from config 0x98 at each zone-in (partymenu::zone_in).
     party_langs: u32,
+    /// titlewin open as the last window walk left it (DAT_10579638 +8), for FUN_101fc0c0 at a map's setup.
+    title_up: bool,
     /// FUN_1015fa00's walk suspends the main menu (mcrmenu over its group): the modern command menu hides too.
     main_off: bool,
     /// The target window is open but suspended by the window walk this frame (world_hud's `target_off`).
@@ -10602,6 +10615,7 @@ impl App {
                             conquest: region::Data::new(self.cnq_tables.clone()),
                             battlefield: Default::default(),
                             party_langs: 0,
+                            title_up: false,
                             region_menu: None,
                             confirm_text: String::new(),
                             confirm_click: None,
