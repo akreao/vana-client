@@ -14483,6 +14483,8 @@ impl App {
             log::info!("zone line {}", line.name);
             let _ = world.net.commands.send(NetCommand::ZoneLine { tag: line.tag(), pos: world.pos.to_array() });
         }
+        // The strafe lock's eased turn this frame: the drawn rotation it already is (below).
+        let mut eased_turn = None;
         if let Ok(mut me) = world.net.me.lock() {
             me.pos = world.pos.to_array();
             // FUN_100983f0: no 0x015 at all while our status in force is a rider's (0x1c / 0x1f); GroundMode (@0x15
@@ -14515,9 +14517,26 @@ impl App {
             } else if let Some(f) = tank_face {
                 Some(f)
             } else if face_cam {
-                // 0x9c held (B / Shift, control type 2): a strafe lock. Retail's FUN_100a6240 returns before the turn
-                // to the move direction while actor +0xfb is set, so the heading stays and the stick strafes.
-                None
+                // 0x9c held (B / Shift, control type 2, actor +0xfb): FUN_100a6240 returns before its turn to the move,
+                // but the turn still comes, eased. The actor update (FUN_100c5d60, 0x100c6b57..0x100c6c29: our own
+                // actor, free, not riding) eases the drawn rotation +0x61c 0.125 a tick toward the drawn step's
+                // direction and copies it to the model's +0x44, which FUN_100a57f0 takes as the heading next frame.
+                // So the body turns toward the stick within a few ticks (the step's quarter, motion and speed taken
+                // against the heading as it was, lock_dir above), and only the camera stays held. Riding, the drawn
+                // rotation eases toward the heading instead: no turn.
+                (stepping && !riding).then(|| {
+                    let s = step.normalize();
+                    let cur = world.my_draw_yaw.unwrap_or_else(|| {
+                        let dir = me.dir;
+                        let f = world.my_face.filter(|f| f.0 == dir).map_or_else(|| forward_from_dir(dir), |f| f.1);
+                        (-f.z).atan2(f.x)
+                    });
+                    let d = ((-s.z).atan2(s.x) - cur + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+                        - std::f32::consts::PI;
+                    let y = cur + d * (1.0 - 0.875f32.powf(dt * 60.0));
+                    eased_turn = Some(y);
+                    Vec3::new(y.cos(), 0.0, -y.sin())
+                })
             } else if lock_target.is_some() || world.mouse_look || (turn != 0.0 && !stepping) {
                 Some(face)
             } else if stepping {
@@ -14535,8 +14554,9 @@ impl App {
             let facing_held = (face_cam || world.mouse_look) && pin.is_none() && lock_target.is_none() && !tank;
             world.my_strafe = if lock_target.is_some() && pin.is_none() {
                 lock_dir
-            } else if facing_held && stepping && world.mouse_look && !face_cam {
-                // The right drag's quarter, held at the edge as the step was (lock_dir above).
+            } else if facing_held && stepping && (world.mouse_look || face_cam) {
+                // The right drag's quarter, held at the edge as the step was; 0x9c's against the heading before this
+                // frame's eased turn (FUN_100a6240 writes +0x598 before the actor update turns it): lock_dir above.
                 lock_dir
             } else if facing_held && stepping {
                 let f = world.my_face.filter(|f| f.0 == me.dir).map_or_else(|| forward_from_dir(me.dir), |f| f.1);
@@ -14573,6 +14593,7 @@ impl App {
             .filter(|f| f.0 == dir)
             .map_or(dir as f32 / 256.0 * std::f32::consts::TAU, |f| (-f.1.z).atan2(f.1.x));
         world.my_draw_yaw = match world.my_draw_yaw {
+            _ if eased_turn.is_some() => eased_turn,
             Some(cur) if !in_event && !world.unsettled && pin.is_none() => {
                 let d = (target - cur + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
                 Some(cur + d * (1.0 - 0.875f32.powf(dt * 60.0)))
