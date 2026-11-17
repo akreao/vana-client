@@ -21,8 +21,10 @@
   after a stop, as +0x5fc settles, and the turn with it. A place set from outside snaps +0x5fc (FUN_100ab830,
   FUN_1008cd90).
 - Ours: World::turn_draw is +0x5fc for this turn alone (0.125 a tick toward our place, snapped when the place is set
-  elsewhere); update_movement's face_cam facing eases toward the aim above at 0.125 a tick (powf, as World::my_draw_yaw
-  does) and is the drawn yaw as well. World::my_strafe under it is the quarter against the facing before this frame's
+  elsewhere). strafe_lock_turn steps it, the aim (strafe_lock_aim) and the facing's 0.125 a tick ease once per retail
+  frame of the move (ground::STEP_TICKS, update_movement's step loop): the 0.01 thresholds are per frame, so at our
+  frame rates (300 by default) a per-drawn-frame step never passed them backing up. The eased facing is the drawn
+  yaw as well. World::my_strafe under it is the quarter against the facing before this frame's
   ease (lock_dir). The camera hold is unchanged.
 - The aim's exception at 0x100c6b5f (`param_1[0x1c] && FUN_10097a40()`: the entity's +0x2a2 names an actor, the
   forced follow of s2c 0x037 @0x46) needs nothing here: our forced follow sets the facing before the strafe lock does.
