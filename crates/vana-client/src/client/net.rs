@@ -2963,7 +2963,10 @@ impl Session<'_> {
         // once, as s2c 0x005 does.
         let wanted = wanted_interval(self.stats, self.login.lsb.is_some(), self.server_base);
         if wanted != self.wanted {
-            (self.wanted, self.base, self.interval) = (wanted, wanted, wanted);
+            // Before the zone-in the login's retry keeps the connect pace: a fast Send Rate here resent 0x00A every
+            // 50 ms, and LSB's session stalled on a retry that beat its first answer.
+            let interval = if self.zoned { wanted } else { connect_interval(wanted) };
+            (self.wanted, self.base, self.interval) = (wanted, wanted, interval);
         }
         if self.zoned && self.last_send.elapsed() >= Duration::from_millis(self.interval as u64) {
             let stepped = step_interval(self.interval, self.base, self.map.lag());

@@ -3347,6 +3347,21 @@ impl Effects {
         out
     }
 
+    /// The status holds on `id` (for the log): each holding task's name, file and ticks left.
+    pub fn held_by(&self, id: u32) -> Vec<String> {
+        self.task_holds
+            .iter()
+            .filter(|h| h.1 == id && h.2 & HOLD_STATUS != 0)
+            .map(|(uid, _, _, left)| {
+                let name = self.tasks.iter().flatten().find(|t| t.uid == *uid).map_or("?".to_string(), |t| {
+                    let lib = &self.reg.libs[t.res.0];
+                    format!("{} ({})", String::from_utf8_lossy(&lib.tree.nodes[t.res.1].name), lib.file_id)
+                });
+                format!("{name} {left:.0} ticks")
+            })
+            .collect()
+    }
+
     pub fn live_count(&self) -> usize {
         self.elems.iter().filter(|e| e.is_some()).count()
     }

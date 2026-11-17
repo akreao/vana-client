@@ -729,7 +729,8 @@ fn update(@builtin(global_invocation_id) gid: vec3<u32>) {
             } else {
                 degenerate = true;
             }
-        } else if (dot(dv, dv) > 1e-12) {
+        } else if (dot(dv, dv) > 0.0) {
+            // Retail takes any motion, however small: a Stoneskin spike's 1e-6 drift only gives it its outward heading.
             let yaw = -atan2(dv.z, dv.x);
             var o = rot_y(yaw);
             if (omode != 2u) { o = rot_y(yaw) * rot_z(atan2(dv.y, length(dv.xz))); }
@@ -1066,22 +1067,14 @@ fn out_mat(o: u32) -> mat4x4<f32> {
 }
 
 // View position to clip space with the projection depth bias (near and far pulled by f) and sky meshes past the
-// far plane kept at it.
+// far plane kept at it. ZBIAS 15 is the pipelines' depth bias (render/effects.rs ZBIAS).
 fn to_clip(vp: vec3<f32>, f: f32) -> vec4<f32> {
-    return to_clip_z(vp, f, true);
-}
-
-// The CMoDist / VuDist fan (variant 9) draws after pass 1 set ZBIAS 0 (RS 0x103530d0), which pass 2 keeps.
-fn to_clip_z(vp: vec3<f32>, f: f32, zbias: bool) -> vec4<f32> {
     var c = d.proj * vec4<f32>(vp, 1.0);
     if (f != 0.0) {
         let n = d.clip.x - f;
         let fr = d.clip.y - f;
         c.z = vp.z * fr / (n - fr) + n * fr / (n - fr);
     }
-    // D3DRS_ZBIAS 15 for the effect draw (FUN_10045950), as Wine's d3d8 maps it: -15 x 5e-6 in NDC depth
-    // (inferred; D3D8 left the scale to the driver).
-    if (zbias) { c.z = c.z - 7.5e-5 * c.w; }
     c.z = min(c.z, c.w * 0.999999);
     return c;
 }
@@ -1089,7 +1082,7 @@ fn to_clip_z(vp: vec3<f32>, f: f32, zbias: bool) -> vec4<f32> {
 fn vout(e: u32, vp: vec3<f32>, color: vec4<f32>, uv: vec2<f32>, variant: u32) -> VOut {
     let o = e * OUT_WORDS;
     var out: VOut;
-    out.clip = to_clip_z(vp, douts[o + 24u], variant != 9u);
+    out.clip = to_clip(vp, douts[o + 24u]);
     out.color = color;
     out.uv = uv + vec2<f32>(douts[o + 20u], douts[o + 21u]);
     out.tf = vec4<f32>(douts[o + 16u], douts[o + 17u], douts[o + 18u], douts[o + 19u]);

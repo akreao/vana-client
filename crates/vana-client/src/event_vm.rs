@@ -2684,7 +2684,8 @@ impl Runtime {
                     let at = e.choice.unwrap_or(e.lines.len());
                     question =
                         e.lines[..at.min(e.lines.len())].iter().map(|l| decode_sjis(l)).collect::<Vec<_>>().join("\n");
-                    let (default, mut mask) = (self.val(v, 3 + off) as u32, self.val(v, 5 + off) as u32);
+                    // FUN_100b0960 shifts the hide mask as a signed int: past row 32 its sign bit decides.
+                    let (default, mut mask) = (self.val(v, 3 + off) as u32, self.val(v, 5 + off) as i32);
                     for (i, l) in e.lines.iter().skip(at).enumerate() {
                         if mask & 1 == 0 {
                             if i as u32 == default {

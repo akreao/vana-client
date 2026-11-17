@@ -807,11 +807,33 @@ pub fn plan_viewer(root: &Path, server: ServerVersion) -> Result<Plan> {
 }
 
 /// The start-up check's quick part (one request): the server's version when it is newer than the one applied
-/// last, else None (retail's version check, states 0x26a .. 0x26e).
+/// last (retail's version check, states 0x26a .. 0x26e) or the client's FFXiMain.dll lags (`code_lags`), else None.
 pub fn behind(root: &Path) -> Result<Option<ServerVersion>> {
     let server = ask(applied_version(root))?;
     let current = server.asked.as_deref().is_some_and(|a| up_to_date(&server.version, a));
-    Ok((!current).then_some(server))
+    Ok((!current || code_lags(root)).then_some(server))
+}
+
+/// Not retail (retail keeps no copy of its own): the FFXiMain.dll the client reads lags the version applied. After
+/// a Viewer patch past our stamp, our copy must match the game folder's; else the read copy must match the stamp.
+fn code_lags(root: &Path) -> bool {
+    let Some(entries) = std::fs::read_to_string(root.join(STAMP_FILE)).ok().and_then(|t| parse_manifest(&t).ok())
+    else {
+        return false;
+    };
+    let stamped = entries.iter().flat_map(|e| e.versions.iter()).filter_map(|v| version_key(&v.stamp)).max();
+    if installed_version(root, GAME).and_then(|v| version_key(&v)) > stamped {
+        let own = crate::dat::own_ffximain(root);
+        let sig = |p: &Path| sig_of_path(p).ok().flatten();
+        return own.is_file() && sig(&own) != sig(&root.join("FFXiMain.dll"));
+    }
+    !entries.iter().filter(|e| is_ffximain(&e.path)).all(|e| {
+        source(root, &e.path)
+            .and_then(|p| sig_of_path(&p))
+            .ok()
+            .flatten()
+            .is_some_and(|l| decide(e, Some(l), true).0 == Action::Current)
+    })
 }
 
 /// The slow part: every listed file checked against `server`'s manifest.
@@ -837,10 +859,11 @@ pub fn plan(root: &Path, code: bool, full: bool) -> Result<Plan> {
 
 /// What one manifest file needs, in retail's order (states 0x385 .. 0x44c): with a version applied, a file with
 /// no newer line is taken as current unread; else the staged `.tmp2` is tried, then the file itself. Also the
-/// staged file when it matches nothing.
-fn check(root: &Path, e: &Entry, applied: Option<&str>) -> Result<((Action, u64), Option<PathBuf>)> {
+/// staged file when it matches nothing. `lags`: FFXiMain.dll is read anyway (`code_lags`, not retail).
+fn check(root: &Path, e: &Entry, applied: Option<&str>, lags: bool) -> Result<((Action, u64), Option<PathBuf>)> {
     let cur = e.versions.last().expect("entries have versions");
     if let Some(a) = applied
+        && !(lags && is_ffximain(&e.path))
         && stamp_num(&cur.stamp) <= stamp_num(a)
     {
         return Ok(((Action::Current, 0), None));
@@ -868,6 +891,7 @@ fn plan_for(service: Service, root: &Path, code: bool, server: ServerVersion) ->
     let applied = server.asked.as_deref();
     let manifest = Session::open(service, server.host.as_deref(), applied)?.manifest()?;
     let entries = parse_manifest(&String::from_utf8_lossy(&manifest))?;
+    let lags = !service.code && code && code_lags(root);
     let next = std::sync::atomic::AtomicUsize::new(0);
     let found: std::sync::Mutex<Vec<(usize, Action, u64)>> = Default::default();
     let stale: std::sync::Mutex<Vec<PathBuf>> = Default::default();
@@ -879,7 +903,7 @@ fn plan_for(service: Service, root: &Path, code: bool, server: ServerVersion) ->
                     loop {
                         let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         let Some(e) = entries.get(i) else { return Ok(()) };
-                        let (d, old) = check(root, e, applied)?;
+                        let (d, old) = check(root, e, applied, lags)?;
                         found.lock().unwrap().push((i, d.0, d.1));
                         stale.lock().unwrap().extend(old);
                     }
@@ -1275,20 +1299,20 @@ mod tests {
         let (file, tmp2) = (root.join("ROM/1/2.DAT"), root.join("ROM/1/2.DAT.tmp2"));
         std::fs::write(&file, &v1).unwrap();
         // The optional file is not there: left out. The other one by its lines.
-        assert_eq!(check(&root, &m[1], None).unwrap().0, (Action::Current, 0));
-        assert_eq!(check(&root, &m[0], Some("30261006_0")).unwrap().0, (Action::Deltas(1), 7));
-        assert_eq!(check(&root, &m[0], None).unwrap().0, (Action::Direct, 90));
+        assert_eq!(check(&root, &m[1], None, false).unwrap().0, (Action::Current, 0));
+        assert_eq!(check(&root, &m[0], Some("30261006_0"), false).unwrap().0, (Action::Deltas(1), 7));
+        assert_eq!(check(&root, &m[0], None, false).unwrap().0, (Action::Direct, 90));
         // Nothing newer than the applied version: not read at all (the file is not the current one).
-        assert_eq!(check(&root, &m[0], Some("30261102_0")).unwrap().0, (Action::Current, 0));
+        assert_eq!(check(&root, &m[0], Some("30261102_0"), false).unwrap().0, (Action::Current, 0));
         // A staged older version is the base; one that matches nothing is given back to be deleted.
         std::fs::write(&tmp2, &v1).unwrap();
         std::fs::write(&file, b"something else").unwrap();
-        assert_eq!(check(&root, &m[0], Some("30261006_0")).unwrap(), ((Action::StagedDeltas(1), 7), None));
+        assert_eq!(check(&root, &m[0], Some("30261006_0"), false).unwrap(), ((Action::StagedDeltas(1), 7), None));
         std::fs::write(&tmp2, b"half a download").unwrap();
-        assert_eq!(check(&root, &m[0], Some("30261006_0")).unwrap(), ((Action::Direct, 90), Some(tmp2.clone())));
+        assert_eq!(check(&root, &m[0], Some("30261006_0"), false).unwrap(), ((Action::Direct, 90), Some(tmp2.clone())));
         // The staged current version only moves into place, with no server.
         std::fs::write(&tmp2, &v2).unwrap();
-        let found = check(&root, &m[0], Some("30261006_0")).unwrap();
+        let found = check(&root, &m[0], Some("30261006_0"), false).unwrap();
         assert_eq!(found, ((Action::Staged, 0), None));
         let stale = root.join("ROM/1/3.DAT.tmp2");
         std::fs::write(&stale, b"x").unwrap();
@@ -1345,6 +1369,47 @@ mod tests {
         assert_eq!(crate::dat::ffximain(&a), a.join("FFXiMain.dll"));
         assert!(!old.exists() && !adopt(&old, &b).unwrap());
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Our FFXiMain.dll copy lags when it misses the stamp, or when the Viewer patched past the stamp and our copy
+    /// differs from the game folder's.
+    #[test]
+    fn own_ffximain_lags() {
+        let root = std::env::temp_dir().join(format!("vana-patch-lags-{}", std::process::id()));
+        let (old, new) = (b"MZ 30261006".to_vec(), b"MZ 30261102".to_vec());
+        let s = Sig::of(&old);
+        std::fs::create_dir_all(root.join("vana-client")).unwrap();
+        // No stamp: nothing to compare with.
+        assert!(!code_lags(&root));
+        let stamp = format!(
+            "file FFXiMain.dll {{\n30261006_0 {} {} {} 30261006_0/Direct/FFXiMain.dll.slc 9\n}}\nend\n",
+            s.len, s.sum, s.md5
+        );
+        std::fs::write(root.join(STAMP_FILE), &stamp).unwrap();
+        // The folder's 2019 copy behind the stamp (a data-only run), then our copy at the stamp.
+        std::fs::write(root.join("FFXiMain.dll"), b"MZ 2019").unwrap();
+        assert!(code_lags(&root));
+        std::fs::write(crate::dat::own_ffximain(&root), &old).unwrap();
+        assert!(!code_lags(&root));
+        // The Viewer patched the folder past the stamp: our copy lags until it matches the folder's.
+        std::fs::write(root.join("FFXiMain.dll"), &new).unwrap();
+        std::fs::write(root.join(PATCH_VER), crate::net::pol::patchver::write("30261102_0", GAME.title)).unwrap();
+        assert!(code_lags(&root));
+        // The server's manifest has the Viewer's version: a lagging copy is read past the version skip.
+        let n = Sig::of(&new);
+        let server = stamp.replace(
+            "}",
+            &format!("30261102_0 {} {} {} 30261102_0/Direct/FFXiMain.dll.slc 9\n}}", n.len, n.sum, n.md5),
+        );
+        let e = &parse_manifest(&server).unwrap()[0];
+        assert_eq!(check(&root, e, Some("30261102_0"), false).unwrap().0, (Action::Current, 0));
+        assert_ne!(check(&root, e, Some("30261102_0"), true).unwrap().0, (Action::Current, 0));
+        std::fs::write(crate::dat::own_ffximain(&root), &new).unwrap();
+        assert!(!code_lags(&root));
+        // With no copy of ours, the client reads the Viewer's.
+        std::fs::remove_file(crate::dat::own_ffximain(&root)).unwrap();
+        assert!(!code_lags(&root));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -1433,7 +1498,7 @@ mod tests {
         for (path, stale) in [("ROM/1.DAT", true), ("ROM2/1.DAT", false)] {
             let m = parse_manifest(&text(path)).unwrap();
             std::fs::write(root.join(format!("{path}.tmp2")), b"matches nothing").unwrap();
-            let (_, old) = check(&root, &m[0], None).unwrap();
+            let (_, old) = check(&root, &m[0], None, false).unwrap();
             assert_eq!(old.is_some(), stale, "{path}");
         }
         std::fs::remove_dir_all(&base).unwrap();
