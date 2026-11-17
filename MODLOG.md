@@ -17740,7 +17740,7 @@ From the research notes:
   - 0x87 / 0x88 / 0x8a: language slots 0x1c (race names) by num[n], 0x22 (trust lines) and 0x1b (augments) by work[n]
     (expander +0x788 / +0x858 / +0x8c0, FUN_100bd820).
   - 0x89: group 12 0x1a2 + num[n] (0 past 0xb; a Unity leader) as "{%s} ", nothing for 0.
-  - 0x81 / 0x83 (FUN_1022f330 / FUN_1022ec10 names) are in no dialogue file; not kept.
+  - 0x81 / 0x83: quest / mission names (see "Grammar 0x81 / 0x83 and the choice mask's sign", 2026-11-17).
 - Op 0xc3 (FUN_100bc000, len 7): slot val@1 (0..7) of DAT_10488210 (0x14 each) = the 16 bytes of str@3 and the word
   val@5. A slot outside 0..7 never advances in retail; ours waits there a frame at a time. The table outlives events
   (event_vm Memory.names).
@@ -24534,3 +24534,127 @@ From a full pass over retail's dispatcher (FUN_100bc280) against event_vm.rs / c
   stop when a movie ends or the world starts.
 - Checked: the title run's mov6 (Beaucedine Glacier, zone 111) starts 49 of its 163 generators and plays effect
   voice 0x3000001 (sound 2088); its level follows the camera's distance, as the world's do.
+## Two-frame motion chunks: retail's 30 fps step (2026-11-14)
+
+- FUN_1001a8e0 (a queue entry's frame step): a chunk of 2 frames whose speed x 0.5 is 0.5 steps a whole frame per
+  call (frame += 1.0), every other chunk ticks x speed x 0.5 x rate. Retail calls it once a drawn frame at its 30 fps,
+  so such a loop swaps its two keys every 2 ticks: the wings of bees and hornets (model 272 / 273, skeleton k_be,
+  `idl1`: 2 frames, speed 1, 12 tracks; `idl0` the body, 12 frames at 0.3) beat at 15 Hz.
+- Ours called it once a rendered frame: at 144 fps the keys swapped every frame and read as two still, ghosted
+  wings (user: Temple Bees and Davoi Hornets "don't flap"), and the beat changed with the frame rate. Now the whole
+  step comes every 2 ticks of elapsed time (motionq Entry::flip) *(inf: retail's frame is 2 ticks at 30 fps)*. Test
+  two_frame_chunk_steps_every_two_ticks.
+## Our engage is never held (2026-11-14)
+
+- Retail copies the server status (+0x16c) into the applied one (+0x170) only when the entity's busy counter (+0x11c)
+  is 0 (FUN_1008e9a0 -> FUN_1008b460, asm 0x1008b4a6: ECX = entity +0xa0, the actor; FUN_10083320 reads its
+  entity's +0x11c), unless actor +0x100 (Conflict teams only, FUN_1008e290: +0x1ff in 2..99). Every hold a monster
+  puts on its target raises that counter: op 0x56 / 0x20 through FUN_100601f0 -> FUN_10083300 -> FUN_100a4140. An
+  Orcish Farkiller's shot (category 11, effect 3916) holds its target 160 ticks (op 0x56), its swings 48 (op 0x20),
+  so being shot at kept our engage parked for seconds, and our first rounds landed before the draw (user, Davoi: "the
+  weapons haven't been drawn yet").
+- Ours: the 0x037 handler applies our own idle -> engaged change at once whatever holds us; every other change (the
+  disengage, death) still waits for the holds *(ours, on the user's word against the decompile's parking)*. The log
+  prints "status N parked (was M): <holds>" when ours is held (combat::held_why, Effects::held_by). Live (Lnxcsfix,
+  Davoi, an Orcish Farkiller's shot holding her until about 43.05 s): /attack at 42.08, engaged and drawing at 42.42,
+  the first round at 45.19 with its swing.
+## Event scenes: data/weat, the first-folder fallback, the default env (2026-11-15)
+
+- Some event-only scenes keep their envs one folder deeper, under `<zone>/data/weat/<tag>` (516 and 517, the Rise of
+  the Zilart ending, event 7 of zone 163; ordinary zones have `<zone>/weat/<tag>`). Our parser read that `data` folder
+  as a scenery area named "data", so the scene had no env of its own and drew unlit: 516's hills black against a
+  plain blue clear colour. Now `data` is the scene's own.
+- FUN_1018a7a0 picks the weather folder: the asked weather, else `suny`, else (FUN_10072290 on `weat`) the env keys
+  of the whole `weat` folder, nearest at or before the time; with every key at 0000 that is the first folder. 516
+  has only `rain` / `thdr` (and the event asks for weather 2 then), so it takes rain: dark, fog to about 290.
+  ZoneWeather::first.
+- A scene with no `weat` folder at all is lit by DAT_1065ca58 as FUN_1018b170 fills it (FUN_101880c0's payload
+  without a weather object): grey 0x80 light and fog, fog 80..100, a black clear colour, draw distance 100, no dome
+  (Env::retail_default, ZoneWeather::retail_default); ours drew such a scene unlit. zone-shot takes it too.
+- Test event_scene_weather. Live (Lnxcsfix, event 7 replayed in zone 163): 516's storm plain textured and lit, 517
+  clean.
+## Zone schedulers run through the event runner (2026-11-15)
+
+- Event op 0x2d (zone_sched) / 0x51 (its stop) start and stop a scheduler of the zone's (or event area's) effect file
+  by 4cc, the same CMoSchedularTask as op 0x45 (sched_file). Ours started only its effects side, so its camera paths
+  (op 0x04), fades (0x0f / 0x51) and crossfades (0x10), which the event runner plays for 0x45's, never ran: in the
+  Rise of the Zilart ending (zone 163 event 7) the event-area scenes 516 (`kon0`, `lat0`), 517 (`mel0`) and 519
+  (`sha0`) kept the last shot's camera, pointing at nothing (the "floating knights" were the cave scene's actors
+  seen from that stale camera). Now 0x2d / 0x51 go through the same Scheduler / SchedulerStop path as 0x45 / 0x52.
+- Live (Lnxcsfix, event 7 replayed; compared with the user's retail recording): the Ark and the Zilart crowd, the
+  band of light over the purple plain, the Ark breaking, the 519 forest ruins all show as retail.
+- Not done: scheduler op 0x7c (FUN_101874f0: the zone env's weather to the 4cc @8 over u16 @6) and op 0x7d
+  (FUN_1018c210: the clock), which `kon0` uses: retail's first 516 shot has a lighter purple sky.
+## Effect ZBIAS as Wine's polygon offset (2026-11-15)
+
+- D3DRS_ZBIAS 15 for the effect draw (FUN_10045950; FUN_1017c840 for MMB elements via FUN_101705e0(DAT_10616f78))
+  was ours as a fixed -7.5e-5 in NDC depth (to_clip, "as Wine maps it", 2026-10-22). With near 0.1 that is no small
+  bias far away: depth 1 - 0.1 / z moves a surface at 600 to look like 414. Wine's d3d8 sets
+  WINED3D_LEGACY_DEPTH_BIAS and draws ZBIAS as glPolygonOffset(-bias, -bias): a slope term plus units of the depth
+  buffer's resolution. Ours is now the pipelines' depth bias (render/effects.rs ZBIAS: constant -15, slope -15),
+  same semantics in Vulkan, on every effect pipeline but the CMoDist fan (vs_dist, which draws after ZBIAS 0).
+- Seen in the Zilart ending (zone 163 event 7, area 519, scheduler `sha0`): the cloud domes cld1 / cld2 (MMB
+  `suny`, 0x2440004 camera-relative, scale (8, 5, 8) / (7, 5, 7)) were pulled in front of the tree rows (420..780
+  away; the dome's cap is about 150 high there), so the trees showed through the clouds. The user's retail
+  recording has the trees solid in front of the clouds and the explosion glow; ours does too now (offscreen and
+  live). The same dome is every zone's weather cloud layer (e.g. Konschtat `weat/suny/cld1`, (9, 7, 9)).
+- The case the old bias was for (zone 101's gate tunnel at night, the `gin1` lamplight MMB over the walls) does not
+  z-fight with the polygon offset; the far lamp glows (MMB `ltla`, 40..60 away) now sit partly behind their lamp
+  housings, which the old bias pulled them in front of *(not compared with retail)*.
+## Event crossfade: the captured frame has the effects (2026-11-15)
+
+- Op 0x10's crossfade (FUN_1005f020) fades from the last frame as drawn. Ours redraws that frame offscreen from its
+  camera (client/mod.rs cross_capture) and drew only the scenery and actors, so whatever was an effect blinked out
+  at each crossfade cut: in the Zilart ending's Qufim shot (area 126, camera paths cp02 -> cp03) the whole sea,
+  which is effect meshes. The capture now draws the effects too (their GPU state is still last frame's).
+## Face-the-motion elements: any motion counts (2026-11-14)
+
+- FUN_10044350 orientation modes 1 / 2 (flags >> 6 & 7) turn the element by the atan2s of its position less its last
+  one, with no minimum length. Stoneskin's spikes (effect 2854, `g000` / `g001`: template flags 0x1242, mode 1) sit
+  on a ring (op 0x1f, 6 by count) with a 0.611 rad tilt (op 0x09) and a 1e-6 outward drift (op 0x08) that only gives
+  each its heading, so the tilt points out from the centre. Ours skipped the turn below 1e-12 squared, so every
+  spike tilted the same way (user: "supposed to all be tilted out from the center"). Now any motion turns it; none
+  leaves it as retail's atan2(0, 0) does.
+## Zone-in: no steps before the settle, and the settle snaps as FUN_1017a400 (2026-11-15)
+
+- Reported: walking through the door from Ve'Lugannon Palace (177) into Ru'Aun Gardens (130) left the user floating
+  under the island. LSB placed us at (145.6, -25.66, 404.5); the road there is at -24.0. The key was still held, and
+  the steps ran on the new zone during the half second before it settled (falls were held, input steps were not),
+  taking us to -23.0; the settle then looked only from 0.5 above the feet down (a step's floor ray), missed the road
+  1.0 above and took the next face down, 3.08: the island's underside, 26 below.
+- Now no input step runs while the zone-in is unsettled, and Ground::settle is FUN_1017a400's snap (from 2 above the
+  feet down 50, else from 2 below up 15; nearest to the start), the ray retail puts entities on the floor with, then
+  the nearest face. Test ruaun_zone_in_settles_on_the_road (-25.66, -24.5 and -23.0 all land on -24.0). The select
+  screen ring (select.rs, settle from -1) renders the same.
+
+## Grammar 0x81 / 0x83 and the choice mask's sign (2026-11-17)
+
+Addresses are 30261006_0's.
+- 0x81 / 0x83 (FUN_100bdc50 cases 0 / 2): a table byte by FUN_100bdb80 (0x40 | k: slot k's byte; low 6 bits 1:
+  (b1 & 0x7f) ^ (b2 << 7) as a byte; else 0xff), then entry num[n] by FUN_100bdbe0. Nothing is appended when the
+  lookup gives no string.
+  - 0x83 FUN_1022ec10: mission log table (objects at 0x10667a90 + t * 0x94, t < 0xf, else none) entry n, its leading
+    '_'s skipped. The 15 tables are language slots 0x49..0x4c, 0x4d..0x51, 0x55..0x57, 0x52..0x54 (FUN_1022d7a0):
+    dat/journal.rs MISSION_FILES in that order.
+  - 0x81 FUN_1022f330: quest area table (0x10668380 + t * 0x94; slots 0x40..0x48, 0x58, 0x59, FUN_1022f3d0) entry n,
+    one leading '+' skipped (no bound on t). dat/journal.rs QUEST_FILES.
+  - Both index the file's entries in order (FUN_1022edf0: none past the count).
+- First seen in Beaucedine Glacier [S]'s Regal Pawprints (event 0x17, message 8608 "Attempt which objective?"): row
+  1 mission log 7 num[0], row 2 log 8 (WotG) num[1], rows 3..8 quest area 7 (Crystal War) num[2..7]; the script
+  hides each row whose param is 0. LSB's params [0, 22] show "None." and "Dungeons and Dancers.". Ours printed the
+  rows as "." before.
+- FUN_100b0960 shifts the choice's hide mask as a signed int (`(int)mask >> 1`), so past row 32 its sign bit hides
+  (or shows) every further row. Ours shifted a u32: rows 33 and on always showed (the battlefield menus' trailing
+  "." rows, e.g. Horlais Peak 7611).
+
+## InvisFlag cleared under a held actor (2026-11-17)
+
+- FUN_100973f0 gates only two writes on the hold count (+0x84 == 0): the InvisFlag colour (0x27808080 / 0x00808080
+  with +0x128 bit 7 set) and the last step (a colour with alpha left back to 0x80808080). With InvisFlag clear, the
+  bit 7 check (cleared, colour 0x80808080) runs before the hold test, so the flag's colour is undone even while a
+  task holds the actor.
+- Ours returned for all of it while held. A weapon aura's loop (Excalibur, file 65916: `!in1` -> `auon` -> `lop0`,
+  never ending) starts again the moment InvisFlag clears and holds the actor, so `!hide` off left Nine translucent
+  for good (user, 2026-11-17). wepfx::colour now follows the order above.
+- Seen live: Lnxcsfix as RDM 99 with Excalibur 119 III: `!hide` translucent (after a bot's Cure tasks on her ended),
+  `!hide` again solid with the aura, `!hide status` 0.

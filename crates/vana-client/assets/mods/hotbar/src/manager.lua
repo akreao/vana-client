@@ -334,6 +334,10 @@ local function refresh_choice()
   end
   ui.update(WIN, "target", { label = E.kind == "equip" and "Equipment slot" or "Target", items = labels, at = at })
   ui.update(WIN, "extra", { label = E.kind and "Lines after it (| between lines, optional)" or "Lines (| between lines)" })
+  -- A macro is its typed lines alone: no search, list, group, Target or built line.
+  for _, id in ipairs({ "q", "found", "fcount", "grp", "target", "line" }) do
+    ui.update(WIN, id, { hidden = not E.kind })
+  end
   refresh_line()
 end
 

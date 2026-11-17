@@ -61,6 +61,9 @@ struct DrawU {
 /// The ground projections' images: 256x256 (FUN_10044270's DAT_1047bb88).
 const GP_SIZE: u32 = 256;
 
+/// D3DRS_ZBIAS 15 for the effect draw (FUN_10045950), as Wine's d3d8 maps it: glPolygonOffset(-15, -15).
+const ZBIAS: wgpu::DepthBiasState = wgpu::DepthBiasState { constant: -15, slope_scale: -15.0, clamp: 0.0 };
+
 /// FUN_10120730 for sprites 0..10 of "menu    dmgnum": the cell's UV rect over its texture and its size,
 /// (corner x1 - x0 - 1, corner y2 - y0 - 1) (FUN_1011fa80).
 pub fn dmgnum_glyphs(lib: &crate::dat::ui::SpriteLib, tw: f32, th: f32) -> [[f32; 4]; 22] {
@@ -564,8 +567,8 @@ impl EffectsGpu {
                     depth_write_enabled: Some(zwrite),
                     depth_compare: Some(compare),
                     stencil: Default::default(),
-                    // ZBIAS is applied in to_clip (effects.wgsl).
-                    bias: Default::default(),
+                    // The CMoDist / VuDist fan draws after pass 1 set ZBIAS 0 (RS 0x103530d0), which pass 2 keeps.
+                    bias: if vs_entry == "vs_dist" { Default::default() } else { ZBIAS },
                 }),
                 multisample: Default::default(),
                 fragment: Some(wgpu::FragmentState {
@@ -724,7 +727,7 @@ impl EffectsGpu {
                     depth_write_enabled: Some(zwrite),
                     depth_compare: Some(wgpu::CompareFunction::LessEqual),
                     stencil: Default::default(),
-                    bias: Default::default(),
+                    bias: ZBIAS,
                 }),
                 multisample: Default::default(),
                 fragment: Some(wgpu::FragmentState {
@@ -764,7 +767,7 @@ impl EffectsGpu {
                     depth_write_enabled: Some(zwrite),
                     depth_compare: Some(wgpu::CompareFunction::LessEqual),
                     stencil: Default::default(),
-                    bias: Default::default(),
+                    bias: ZBIAS,
                 }),
                 multisample: Default::default(),
                 fragment: Some(wgpu::FragmentState {

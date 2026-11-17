@@ -12860,9 +12860,19 @@ impl App {
                         world.ko_deadline = end.saturating_sub(360);
                     }
                     world.my_pet = pet;
-                    // Held mid-swing: applied when the hold ends (the disengage waits for the swing).
+                    // Held mid-swing: applied when the hold ends (the disengage waits for the swing). Ours: our
+                    // engage is never held, so the draw comes before our first hits while a monster acts on us.
                     let rising = chair::rise(world, world.my_id, status);
-                    if rising || combat::held(world, world.my_id) || fishrod::walking_hold(world, world.my_id, status) {
+                    let engage = status == 1 && world.my_motion.status == 0;
+                    let held = combat::held(world, world.my_id) && !engage;
+                    if rising || held || fishrod::walking_hold(world, world.my_id, status) {
+                        if world.my_motion.status != status {
+                            log::info!(
+                                "status {status} parked (was {}): {}",
+                                world.my_motion.status,
+                                combat::held_why(world, world.my_id)
+                            );
+                        }
                         world.held_status.insert(world.my_id, status);
                     } else {
                         world.held_status.remove(&world.my_id);
@@ -14373,7 +14383,9 @@ impl App {
         if rooted != step {
             (step, world.move_tier) = (rooted, 0.0);
         }
-        let stepping = step != Vec3::ZERO;
+        // A zone line walked through with the key held: no steps on the new zone until the zone-in has settled (they
+        // ran on its unsettled height and walked us under the floor).
+        let stepping = step != Vec3::ZERO && !world.unsettled;
         let moving = stepping;
         // Whole retail frames of FUN_100a48d0 / FUN_100a3560; a position set elsewhere starts over from it.
         if world.pos != world.step_to {
@@ -18728,6 +18740,7 @@ impl App {
                         fly.restart();
                     }
                     let alive = self.audio.as_ref().map(|a| a.alive());
+                    fly.draw_distance = self.cfg.draw_distance;
                     fly.render(
                         &gfx.gpu,
                         gfx.config.format,
@@ -18772,6 +18785,7 @@ impl App {
                 fly.restart();
             }
             let alive = self.audio.as_ref().map(|a| a.alive());
+            fly.draw_distance = self.cfg.draw_distance;
             fly.render(
                 &gfx.gpu,
                 gfx.config.format,
@@ -18813,6 +18827,7 @@ impl App {
         {
             fly.advance(dt);
             let alive = self.audio.as_ref().map(|a| a.alive());
+            fly.draw_distance = self.cfg.draw_distance;
             g.drew_world = fly.render(
                 &gfx.gpu,
                 gfx.config.format,
@@ -19544,8 +19559,12 @@ fn world_uploads(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRender
 /// areas' lights.
 fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &WorldFrame) {
     let (dt, ev_clock) = (wf.dt, wf.ev_clock);
-    // Zone lighting for the Vana'diel time and weather the server gave us.
-    if let (Some(zw), Some((t, at))) = (&w.zone_weather, w.clock) {
+    // Zone lighting for the Vana'diel time and weather the server gave us. FUN_101880c0: a scene with no weather data
+    // (an event's area, e.g. 516 in the Zilart cutscene) is lit by the default env, not left unlit.
+    static DEFAULT: std::sync::LazyLock<crate::dat::weather::ZoneWeather> =
+        std::sync::LazyLock::new(crate::dat::weather::ZoneWeather::retail_default);
+    let zw = w.zone_weather.as_ref().or_else(|| w.zone.is_some().then(|| &*DEFAULT));
+    if let (Some(zw), Some((t, at))) = (zw, w.clock) {
         // Op 0x77 sets the hour and weather while an event runs.
         let ev_weather = w.event.as_ref().and_then(|l| l.st.weather);
         let clock = crate::dat::weather::vana_minute(t, at.elapsed().as_secs_f32());
@@ -19670,6 +19689,24 @@ fn cross_capture(cx: &mut WorldDraw, gfx: &Gfx, fg: &FrameGpu, w: &mut World, r:
             // A snapshot alone: its faded actors drawn at once.
             r.defer_faded = false;
             r.render(&gfx.gpu, &mut enc, target, &scene_depth, &cam, aspect, &actors);
+            // Retail fades from the whole last frame, effects too (an effect sea, e.g. Qufim's, would blink out).
+            if let Some(eg) = cx.effects_gpu.as_mut() {
+                let (fog_color, fog) = r
+                    .lighting
+                    .as_ref()
+                    .map_or(([0.0; 3], [150.0, 600.0]), |l| (l.fog.to_array(), [l.fog_start, l.fog_end]));
+                eg.draw(
+                    &gfx.gpu,
+                    &mut enc,
+                    (target, &scene_depth, bg),
+                    None,
+                    &w.effects,
+                    (cam.proj(aspect), cam.view(), cam.eye),
+                    [crate::render::NEAR, crate::render::FAR],
+                    fog_color,
+                    fog,
+                );
+            }
             gfx.gpu.queue.submit([enc.finish()]);
         }
         if let Some(c) = &mut w.screen.cross {

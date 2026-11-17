@@ -1650,9 +1650,12 @@ fn main() -> Result<()> {
             }
             let lighting = match hour {
                 Some(h) => {
-                    let w = dat::weather::ZoneWeather::parse(&file)?;
-                    let env =
-                        w.at(&weather, h * 60.0).ok_or_else(|| anyhow::anyhow!("zone {zone} has no weat keys"))?;
+                    // A scene with no weather data takes retail's default env (as the client).
+                    let w = dat::weather::ZoneWeather::parse(&file)
+                        .ok()
+                        .filter(|w| w.at(&weather, h * 60.0).is_some())
+                        .unwrap_or_else(dat::weather::ZoneWeather::retail_default);
+                    let env = w.at(&weather, h * 60.0).ok_or_else(|| anyhow::anyhow!("zone {zone} has no env"))?;
                     println!("weather {weather} at {h:.2} h: {env:?}");
                     Some(dat::weather::Lighting::from_env(&env, h * 60.0))
                 }
