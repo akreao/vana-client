@@ -29,7 +29,8 @@
   +0x3c400 == 0x11e, and FUN_101cdac0's object with +0x1d0 bit 10 set and +0x1ff 8..9), the overlay's (FUN_101f88c0..8930) only from
   FUN_101fc150 (win_mapframe_v10 -> FUN_101fc130, a map of zone 0x11e). Zone 0x11e has no area name in this client
   (file 55466 entry 0x11e empty) and the captures hold no s2c 0x072. Ours: client/battlefield.rs keeps the callbacks,
-  the gates and both blocks as retail does; the two zone 0x11e readers and the kind 2 send are not built.
+  the gates and both blocks as retail does; the two zone 0x11e readers and the kind 2 send followed (the entry
+  "Zone 0x11e: the battlefield sidebar and map overlay").
 - cnqframe win_cnqframe_v30: _DAT_10664744 = 0, then FUN_101e9600 (FUN_101e8030 in 30261006_0): the 120 s gate always
   passes, and FUN_10098010 sends c2s 0x05A unless DAT_10489044 is set, which the zone load cleared. s2c 0x05E
   (FUN_100998a0) only runs that callback (FUN_101e96c0), so the zone-in's reply now fills the conquest data; a 0x05E
