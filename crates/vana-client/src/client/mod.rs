@@ -7655,6 +7655,9 @@ struct World {
     yaw: f32,
     /// Our model's drawn facing (dir angle, radians; actor +0x61c), eased toward the heading (FUN_100c4390).
     my_draw_yaw: Option<f32>,
+    /// Retail's drawn position of our actor (vt+0x1bc, +0x5fc), eased 0.125 a tick toward the moved place (+0x5c4)
+    /// by the actor update (FUN_100c5d60): ours only for the turn it aims under the strafe lock. None: snapped.
+    turn_draw: Option<Vec3>,
     /// Our step against the heading while it is held (actor +0x598, FUN_100a80d0): 0 none, 1 forward, 2 right, 3 back,
     /// 4 left; picks the strafe motions (motion::strafe).
     my_strafe: u8,
@@ -10360,6 +10363,7 @@ impl App {
                             pos: Vec3::ZERO,
                             yaw: 0.0,
                             my_draw_yaw: None,
+                            turn_draw: None,
                             my_strafe: 0,
                             lock_flip: 0.0,
                             entities: HashMap::new(),
@@ -11915,7 +11919,7 @@ impl App {
                     world.unsettled = true;
                     // The drawn facing starts at the new heading (a zone-in into the zone already loaded settles in
                     // the same frame, before the easing would snap it); the old float facing is the last zone's.
-                    (world.my_draw_yaw, world.my_face) = (None, None);
+                    (world.my_draw_yaw, world.my_face, world.turn_draw) = (None, None, None);
                     swkbd::zone_out(world);
                     log::info!("zone-in: zone {zone} at {:?} dir {dir}", pos);
                     // MsgShift's check of this zone's dialogue file (a read and a hash) off the UI thread, before the
@@ -14304,7 +14308,10 @@ impl App {
         // Whole retail frames of FUN_100a48d0 / FUN_100a3560; a position set elsewhere starts over from it.
         if world.pos != world.step_to {
             (world.step_hist, world.step_to, world.step_ticks) = ([world.pos; 4], world.pos, 0.0);
+            // A place set from outside snaps the drawn position too (FUN_100ab830, FUN_1008cd90).
+            world.turn_draw = None;
         }
+        let frame_from = world.pos;
         world.step_ticks += dt * 60.0;
         let speed = own_speed(world);
         // FUN_100a8000, under the strafe lock or locked on (ours: the right drag's facing too): backing up goes at a third
@@ -14410,6 +14417,11 @@ impl App {
             }
         }
         world.step_to = world.pos;
+        // The actor update's drawn step (0x100c6591): +0x5fc eased toward the moved place, and how far it went.
+        let turn_from = world.turn_draw.unwrap_or(world.pos);
+        let turn_draw = turn_from + (world.pos - turn_from) * (1.0 - 0.875f32.powf(dt * 60.0));
+        world.turn_draw = Some(turn_draw);
+        let (draw_step, displaced) = (turn_draw - turn_from, world.pos - frame_from);
         world.draw_pos = drawn_between_steps(&world.step_hist, world.step_ticks / ground::STEP_TICKS);
         // On a lift the feet are drawn at its height now (the model is too), and the camera eye rides along
         // (FUN_1001ee60: eye.y += the player's y change, the hold set) by the drawn height, every frame as the lift
@@ -14518,20 +14530,33 @@ impl App {
                 Some(f)
             } else if face_cam {
                 // 0x9c held (B / Shift, control type 2, actor +0xfb): FUN_100a6240 returns before its turn to the move,
-                // but the turn still comes, eased. The actor update (FUN_100c5d60, 0x100c6b57..0x100c6c29: our own
-                // actor, free, not riding) eases the drawn rotation +0x61c 0.125 a tick toward the drawn step's
-                // direction and copies it to the model's +0x44, which FUN_100a57f0 takes as the heading next frame.
-                // So the body turns toward the stick within a few ticks (the step's quarter, motion and speed taken
-                // against the heading as it was, lock_dir above), and only the camera stays held. Riding, the drawn
+                // but the turn still comes, eased. The actor update (FUN_100c5d60, 0x100c6821..0x100c6c29: our own
+                // actor, free, not riding) eases the drawn rotation +0x61c 0.125 a tick toward an aim and copies it to
+                // the model's +0x44, which FUN_100a57f0 takes as the heading next frame. The aim: this frame's
+                // displacement (+0x16d) when the drawn step points against it (flat unit vectors, dot < 0); else the
+                // drawn step when it went 0.01 or more (across the ground when it rises, else in 3D) with |x| or |z|
+                // over 0.01; else the heading (no turn). So the body turns toward the stick within a few ticks (the
+                // step's quarter, motion and speed taken against the heading as it was, lock_dir above), goes on
+                // turning while the drawn position settles, and only the camera stays held. Riding, the drawn
                 // rotation eases toward the heading instead: no turn.
-                (stepping && !riding).then(|| {
-                    let s = step.normalize();
+                let flat = |v: Vec3| {
+                    let n = v.normalize_or_zero();
+                    Vec3::new(n.x, 0.0, n.z)
+                };
+                let (d, s) = (flat(displaced), flat(draw_step));
+                let reach = if draw_step.y >= 0.0 { draw_step.x.hypot(draw_step.z) } else { draw_step.length() };
+                let aim = if d.dot(s) < 0.0 {
+                    Some(d)
+                } else {
+                    (reach >= 0.01 && (draw_step.z.abs() > 0.01 || draw_step.x.abs() > 0.01)).then_some(draw_step)
+                };
+                aim.filter(|_| !riding).map(|a| {
                     let cur = world.my_draw_yaw.unwrap_or_else(|| {
                         let dir = me.dir;
                         let f = world.my_face.filter(|f| f.0 == dir).map_or_else(|| forward_from_dir(dir), |f| f.1);
                         (-f.z).atan2(f.x)
                     });
-                    let d = ((-s.z).atan2(s.x) - cur + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+                    let d = ((-a.z).atan2(a.x) - cur + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
                         - std::f32::consts::PI;
                     let y = cur + d * (1.0 - 0.875f32.powf(dt * 60.0));
                     eased_turn = Some(y);
