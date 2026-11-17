@@ -24,4 +24,5 @@
   elsewhere); update_movement's face_cam facing eases toward the aim above at 0.125 a tick (powf, as World::my_draw_yaw
   does) and is the drawn yaw as well. World::my_strafe under it is the quarter against the facing before this frame's
   ease (lock_dir). The camera hold is unchanged.
-- Not traced: the aim's `param_1[0x1c] && FUN_10097a40()` exception (0x100c6b5f) is left out.
+- The aim's exception at 0x100c6b5f (`param_1[0x1c] && FUN_10097a40()`: the entity's +0x2a2 names an actor, the
+  forced follow of s2c 0x037 @0x46) needs nothing here: our forced follow sets the facing before the strafe lock does.
