@@ -40,6 +40,7 @@ pub use hudtop::topbar_shot;
 pub use lua::stubs as lua_stubs;
 pub use modern::shot::{Opts as ModernShotOpts, shot as modern_shot};
 mod augment;
+mod battlefield;
 mod buffs;
 mod bump;
 mod camera;
@@ -7965,6 +7966,10 @@ struct World {
     /// Region Info: the conquest data and marker tables, the region menu, the map (cnqframe), a /regionmap to open.
     conquest: region::Data,
     region_menu: Option<region::Menu>,
+    /// c2s 0x112 / s2c 0x072: the battlefield info requests and blocks (client/battlefield.rs).
+    battlefield: battlefield::Battlefield,
+    /// prty5's handler +0x2c: the party languages, loaded from config 0x98 at each zone-in (partymenu::zone_in).
+    party_langs: u32,
     /// FUN_1015fa00's walk suspends the main menu (mcrmenu over its group): the modern command menu hides too.
     main_off: bool,
     /// The target window is open but suspended by the window walk this frame (world_hud's `target_off`).
@@ -10595,6 +10600,8 @@ impl App {
                             seacom: Default::default(),
                             seacom_edit: None,
                             conquest: region::Data::new(self.cnq_tables.clone()),
+                            battlefield: Default::default(),
+                            party_langs: 0,
                             region_menu: None,
                             confirm_text: String::new(),
                             confirm_click: None,
@@ -11820,6 +11827,9 @@ impl App {
                     world.index_masks.clear();
                     border::remove(world);
                     (world.region_menu, world.cnq) = (None, None);
+                    // FUN_10093720: the one-shot reply callbacks of c2s 0x05A (not the colonization one) and 0x112.
+                    world.conquest.zone_load();
+                    world.battlefield.zone_load();
                     world.names_hidden = None;
                     world.res_rdy = ResRdy { send_count, since: Some(Instant::now()), ..ResRdy::default() };
                     world.myroom = myroom;
@@ -11841,7 +11851,6 @@ impl App {
                     {
                         world.equipsets = Some(equipsets::EquipSets::new(dir));
                     }
-                    equipsets::field_entry(world);
                     if !world.synth.loaded
                         && let Some(dir) = world.macros.as_ref().map(|m| m.dir().to_path_buf())
                     {
@@ -11893,6 +11902,10 @@ impl App {
                     // FUN_1015ef60 (game mode 0x70 / 0xe0, leaving the field): FUN_10127ea0.
                     event::cancel_queues(world);
                     world.hud_top.enter();
+                    // The zone-in's sends in retail's order (captures, 30261102_0): FUN_10093db0's c2s 0x061 (after its
+                    // 0x00C, which the net thread sends), FUN_10095650's 0x118 / 0x11B, the lockstyle's 0x053, then
+                    // netstat's 0x0E0 / 0x00F and the handler walk (seacom::zone_in, zone_walk below).
+                    let _ = world.net.commands.send(NetCommand::StatusRequest(0));
                     // FUN_10095650 at the world start: the Unity chat setting (config 0xb2) and the job master display
                     // (config 0x99 bit 8 clear) go to the server again.
                     let _ = world
@@ -11903,6 +11916,7 @@ impl App {
                         id: 0x11B,
                         body: vec![(world.game.get(0x99) & 0x100 == 0) as u8, 0, 0, 0],
                     });
+                    equipsets::field_entry(world);
                     world.map = None;
                     world.scan = Default::default();
                     // LSB re-sends every container after c2s 0x00C and empties the temporary items and the recycle
@@ -11918,7 +11932,6 @@ impl App {
                         world.screen.hold_black();
                         event::queue(world, ev);
                     }
-                    let _ = world.net.commands.send(NetCommand::StatusRequest(0));
                     world.music.zone_in(music);
                     // FUN_10094190: solo and party battle music 0x46 in Monstrosity.
                     if monstrosity::active(world) {
@@ -11990,6 +12003,7 @@ impl App {
                     world.my_id = char_id;
                     world.name = name;
                     seacom::zone_in(world);
+                    zone_walk(world);
                     world.entities.clear();
                     world.entity_index.clear();
                     world.new_challenge = false;
@@ -12718,6 +12732,7 @@ impl App {
                 NetEvent::KnownZones(z) => world.known_zones = Some(z),
                 NetEvent::Conquest(p) => region::on_conquest(world, &p),
                 NetEvent::Influence(p) => region::on_influence(world, &p),
+                NetEvent::BattlefieldInfo(p) => world.battlefield.on_reply(&p),
                 // G+0x9808 / +0x980f by linkshell number: its item's slot and bag.
                 NetEvent::LinkshellEquip { num, index, bag } => {
                     if let Some(l) = world.linkshells.get_mut(num as usize) {
@@ -21633,6 +21648,34 @@ fn app_egui_context() -> egui::Context {
     ctx
 }
 
+/// FUN_10160530 -> FUN_101604c0: entering game mode 0x60 once the zone is loaded (DAT_1047e5a0, set by FUN_10093db0
+/// with the zone-in's c2s 0x00C and 0x061) runs every registered handler's slot 0x30 in registry order (0x10373320).
+/// Three send: prty5 (entry 94: c2s 0x0DB kind 1), mapframe (204: c2s 0x112 kind 0), cnqframe (210: c2s 0x05A). They
+/// go in the frame of the zone-in's other sends, after netstat's c2s 0x0E0 / 0x00F (its open slot), as here.
+fn zone_walk(world: &mut World) {
+    let (langs, sends) = walk_sends(world.game.get(0x98), &world.conf_sys, &mut world.conquest, &mut world.battlefield);
+    world.party_langs = langs;
+    for (id, body) in sends {
+        let _ = world.net.commands.send(NetCommand::Packet { id, body });
+    }
+}
+
+/// The walk's sends in order, and the party languages prty5 keeps.
+fn walk_sends(
+    config_98: u32,
+    conf: &[u8; 12],
+    conquest: &mut region::Data,
+    bf: &mut battlefield::Battlefield,
+) -> (u32, Vec<(u16, Vec<u8>)>) {
+    let langs = partymenu::zone_langs(config_98);
+    let mut out = vec![(0x0DB, partymenu::body_0db(conf, 1, langs))];
+    out.extend(bf.request(battlefield::Kind::Both).map(|b| (0x112, b)));
+    if conquest.zone_in() {
+        out.push((0x05A, Vec::new()));
+    }
+    (langs, out)
+}
+
 /// A test's egui pass, its texture deltas cleared (epaint debug-asserts on a dropped unapplied one).
 #[cfg(test)]
 pub(crate) fn egui_pass(ctx: &egui::Context, raw: egui::RawInput, ui: impl FnMut(&mut egui::Ui)) {
@@ -21641,6 +21684,28 @@ pub(crate) fn egui_pass(ctx: &egui::Context, raw: egui::RawInput, ui: impl FnMut
 
 #[cfg(test)]
 mod tests {
+    /// The zone-in walk's sends as a retail capture has them after c2s 0x00F: 0x0DB kind 1, 0x112 kind 0, 0x05A; again
+    /// at the next zone-in, within the conquest gate's 120 s and with no reply to either request.
+    #[test]
+    fn zone_walk_sends_in_retail_order() {
+        let mut conquest = super::region::Data::new(None);
+        let mut bf = super::battlefield::Battlefield::default();
+        let conf = [0x18, 0, 0, 4, 0, 0, 0, 0, 0, 0x18, 0, 0];
+        let (langs, sends) = super::walk_sends(0, &conf, &mut conquest, &mut bf);
+        assert_eq!(langs, 2);
+        let ids: Vec<u16> = sends.iter().map(|s| s.0).collect();
+        assert_eq!(ids, [0x0DB, 0x112, 0x05A]);
+        assert_eq!(sends[0].1[2], 1);
+        assert_eq!(&sends[0].1[0x20..], &[2, 0, 0, 0]);
+        assert_eq!(sends[1].1, [0, 0, 0, 0]);
+        assert!(sends[2].1.is_empty());
+        conquest.zone_load();
+        bf.zone_load();
+        let (_, sends) = super::walk_sends(0b10010, &conf, &mut conquest, &mut bf);
+        assert_eq!(sends.iter().map(|s| s.0).collect::<Vec<_>>(), [0x0DB, 0x112, 0x05A]);
+        assert_eq!(&sends[0].1[0x20..], &[0b10010, 0, 0, 0]);
+    }
+
     /// Speed 0 (Bind) is 0, not a default; riding doubles, capped at 30.
     #[test]
     fn run_speed_has_no_default() {
