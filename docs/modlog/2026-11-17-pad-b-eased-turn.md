@@ -7,7 +7,7 @@
 - What 0x9c does is unchanged from "Gamepad: B / Shift held is a strafe lock" (2026-11-04): FUN_100a6240 sets actor
   +0xfb (vt+0x344(1)), saves the camera offset (FUN_1025f6a0) and returns before its turn to the move direction; the
   step's quarter +0x598 (FUN_100a80d0) and FUN_100a8000's speed are taken against the heading +0x39 / +0xe8.
-- What that note missed is the turn after it. The actor update (FUN_100c5d60, 0x100c6821 .. 0x100c6c29) for our own
+- What that note missed is the turn after it. The actor update (FUN_100c63d0, 0x100c6821 .. 0x100c6c29) for our own
   actor (vt+0x304: handle 0x1047e7b0 is this), free (vt+0x330) and not riding takes the same path with or without
   +0xfb: the drawn rotation +0x61c eases 0.125 a tick (a scheduler's rate when one is set) toward the drawn step's
   direction (vt+0x1bc = +0x5fc easing 1/8 a tick toward the moved place +0x5c4) when it moved 0.01 or more, else the
