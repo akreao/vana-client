@@ -3060,6 +3060,8 @@ fn finish(w: &mut World, live: Box<Live>) {
                 if let Some(e) = w.entities.get_mut(id) {
                     // +0x24 too: the slide's target, or the next frame takes the actor back.
                     (e.pos, e.slide, e.last_pos, e.target, e.remain) = (p.pos, p.pos, p.pos, p.pos, 0.0);
+                    // The drawn place (+0x5fc) snaps with it, as for any place set from outside (FUN_100929a0).
+                    e.drawn = None;
                     // The slide stands a grounded actor by the server's height: that is this place's now.
                     (e.server_y, e.raw_y) = (p.pos.y, p.pos.y);
                 }
