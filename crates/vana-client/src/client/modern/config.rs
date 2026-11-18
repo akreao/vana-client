@@ -221,6 +221,8 @@ const PAGES: [(&str, &str, &[Item]); 13] = [
             Retail("conf6win", 9),
             Retail("conf6win", 10),
             Retail("conf13wi", 1),
+            Head("Movement"),
+            Ours("Movement Rate"),
         ],
     ),
     ("Input", "Controller", &[Head("Controller"), Ours("Gamepad"), Ours("Stick Dead Zone")]),
