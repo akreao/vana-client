@@ -595,6 +595,9 @@ struct Entity {
     /// Smoothed movement ratio (FUN_100c68f0) and the position drawn last frame.
     ratio: f32,
     last_pos: Vec3,
+    /// FUN_100c63d0's drawn place (+0x5fc): eased 0.125 a tick toward `pos` (the collision place, +0x5c4); None while
+    /// it is snapped to `pos`.
+    drawn: Option<Vec3>,
     /// Who claimed it (0 = nobody), and whether it is a monster.
     claim: u32,
     mob: bool,
@@ -2167,6 +2170,7 @@ fn self_entity(w: &World) -> Entity {
         motion: w.my_motion,
         ratio: 0.0,
         last_pos: w.pos,
+        drawn: None,
         claim: 0,
         mob: false,
         index: w.my_index,
@@ -5838,6 +5842,7 @@ fn place_mogdoor(w: &mut World) {
             motion: Default::default(),
             ratio: 0.0,
             last_pos: pos,
+            drawn: None,
             claim: 0,
             mob: false,
             index: myroom::DOOR_INDEX,
@@ -6962,8 +6967,9 @@ fn base_place(w: &World, id: u32, my_dir: u8) -> Option<Place> {
         });
     }
     let e = w.entities.get(&id)?;
+    // The model is posed at the drawn place (+0x5fc via +0x678, FUN_100d4560), not the collision place.
     Some(Place {
-        pos: e.pos,
+        pos: e.drawn.unwrap_or(e.pos),
         forward: Vec3::new(e.yaw.cos(), 0.0, -e.yaw.sin()),
         tilt: [0.0; 2],
         status: e.motion.status,
@@ -9134,12 +9140,24 @@ fn strafe_lock_aim(draw_step: Vec3, displaced: Vec3) -> Option<Vec3> {
         Vec3::new(n.x, 0.0, n.z)
     };
     let (d, s) = (flat(displaced), flat(draw_step));
-    let reach = if draw_step.y >= 0.0 { draw_step.x.hypot(draw_step.z) } else { draw_step.length() };
-    if d.dot(s) < 0.0 {
-        Some(d)
-    } else {
-        (reach >= 0.01 && (draw_step.z.abs() > 0.01 || draw_step.x.abs() > 0.01)).then_some(draw_step)
-    }
+    if d.dot(s) < 0.0 { Some(d) } else { drawn_aim(draw_step, 0.01) }
+}
+
+/// FUN_100c63d0 (0x100c6591) for an actor not ours over `ticks`: the drawn place `drawn` (+0x5fc, None = at `from`,
+/// last frame's collision place)
+/// eases 0.125 a tick toward the collision place `pos` (+0x5c4), or is set to it (`snap`). Returns the drawn step.
+fn ease_drawn(drawn: &mut Option<Vec3>, from: Vec3, pos: Vec3, ticks: f32, snap: bool) -> Vec3 {
+    let was = drawn.unwrap_or(from);
+    let now = if snap { pos } else { was + (pos - was) * (1.0 - 0.875f32.powf(ticks)) };
+    *drawn = (!snap && now.distance_squared(pos) > 1e-10).then_some(now);
+    now - was
+}
+
+/// FUN_100c63d0's aim from the drawn step (+0x5fc moved this retail frame): it reaches `min` (flat, or 3D while
+/// falling) and moves over `min` in x or z. Actors not ours aim only at this (no displacement test).
+fn drawn_aim(step: Vec3, min: f32) -> Option<Vec3> {
+    let reach = if step.y >= 0.0 { step.x.hypot(step.z) } else { step.length() };
+    (reach >= min && (step.z.abs() > min || step.x.abs() > min)).then_some(step)
 }
 
 /// One retail frame (ground::STEP_TICKS) of the actor update for our drawn place (FUN_100c63d0): the drawn position
@@ -12181,6 +12199,7 @@ impl App {
                         motion: e.motion,
                         ratio: 0.0,
                         last_pos: Vec3::ZERO,
+                        drawn: None,
                         claim: 0,
                         mob: false,
                         index: e.index,
@@ -12387,6 +12406,7 @@ impl App {
                             entry.pos = p;
                             entry.last_pos = p;
                             entry.slide = p;
+                            entry.drawn = None;
                             entry.raw_y = entry.server_y;
                             entry.remain = 0.0;
                         }
@@ -13772,10 +13792,12 @@ impl App {
             }
         };
         for (eid, e) in world.entities.iter_mut() {
-            // Moved by someone else since last frame (an event script): take that as the slide and drawn spot.
+            // Moved by someone else since last frame (an event script): take that as the slide and drawn spot (the
+            // place setters FUN_100ab830 / FUN_100c3ff0 go through FUN_100929a0, which snaps +0x5fc).
             if e.pos != e.last_pos {
                 e.slide = e.pos;
                 e.remain = 0.0;
+                e.drawn = None;
             }
             // FUN_100c63d0 while +0x102 is set: the push moves the drawn position directly (no walk / turn motion
             // choice); the slide goes on from there afterwards (FUN_1008b680 starts from the actor's position).
@@ -13789,6 +13811,7 @@ impl App {
                     e.pos.y = y;
                 }
                 e.slide = e.pos;
+                e.drawn = None;
                 knock_ends.push((*eid, recover, done));
                 bump::active_tick(e, ticks);
                 carry(eid, e);
@@ -13807,6 +13830,7 @@ impl App {
                     e.pos.y = y;
                 }
                 e.slide = e.pos;
+                e.drawn = None;
                 if done {
                     ride::self_settle(m, e.pos, &mut e.target, &mut e.remain);
                     self_ends.push(*eid);
@@ -13830,6 +13854,7 @@ impl App {
             if let Some(&(p, yaw)) = world.effects.pinned.get(eid) {
                 e.pos = p;
                 e.slide = p;
+                e.drawn = None;
                 if let Some(y) = yaw {
                     e.yaw = y;
                 }
@@ -13876,17 +13901,35 @@ impl App {
             e.pos = e.slide;
             carry(eid, e);
             // Characters in a lift shaft stand at its height (FUN_100a4ed0 runs for every collision actor).
+            let mut lifted = false;
             if e.door == 0
                 && e.lift.is_none()
                 && !matches!(e.sub_kind, 2..=4)
                 && let Some((h, _)) = lifts::ride_in(&shafts, e.last_pos, e.pos)
             {
                 e.pos.y = h;
+                lifted = true;
             }
-            // A step under 0.01 a tick counts as standing (motion and facing).
+            // FUN_100c63d0 (0x100c6591): the drawn place (+0x5fc) eases 0.125 a tick toward the collision place
+            // (+0x5c4), so an actor glides to a stop. It is snapped on a lift (+0x5e2), after a jump over 12
+            // (FUN_100929a0), and for a status 0x1c rider (FUN_1008cd90 calls FUN_10092c20 every frame).
+            // Riding keeps the snap until the rider path (+0x768) is ported. Doors, lifts and ship models are not
+            // skeleton actors (no FUN_100c63d0) and stay where they are put.
+            let snap = jumped
+                || lifted
+                || e.motion.status == 0x1c
+                || matches!(e.motion.status, 5 | 0x55)
+                || e.door != 0
+                || e.lift.is_some()
+                || matches!(e.sub_kind, 2..=4);
+            let dstep = ease_drawn(&mut e.drawn, start, e.pos, ticks, snap);
+            // A step under 0.01 a tick counts as standing (motion).
             let flat = Vec3::new(step.x, 0.0, step.z);
             let moved = if flat.length() < 0.01 * ticks { 0.0 } else { flat.length() };
-            let want = if moved > 0.0 { (-flat.z).atan2(flat.x) } else { event::rad_of(e.dir) };
+            // FUN_100c63d0's turn for an actor not ours: toward the drawn step when it reaches 0.01 a retail frame
+            // (flat, or 3D while falling) and moves 0.01 in x or z; else toward the heading (+0x39).
+            let want = drawn_aim(dstep, 0.01 * ticks / ground::STEP_TICKS)
+                .map_or_else(|| event::rad_of(e.dir), |a| (-a.z).atan2(a.x));
             let tau = std::f32::consts::TAU;
             let diff = (want - e.yaw + std::f32::consts::PI).rem_euclid(tau) - std::f32::consts::PI;
             // Scheduler op 0x2f: the drawn facing stays while the effect runs (FUN_100c63d0 skips the ease).
@@ -22554,5 +22597,68 @@ mod strafe_lock_turn_tests {
             (wrap_angle(mid) - std::f32::consts::PI).abs() < 1e-3
                 || (wrap_angle(mid) + std::f32::consts::PI).abs() < 1e-3
         );
+    }
+}
+
+#[cfg(test)]
+mod remote_drawn_tests {
+    use super::*;
+
+    /// A walking NPC stops: its drawn place trails the collision place while it walks, then glides the rest of the
+    /// way over the next frames and settles on it (snapped once within reach).
+    #[test]
+    fn glides_to_a_stop() {
+        let (mut drawn, mut pos) = (None, Vec3::ZERO);
+        let step = Vec3::new(0.08, 0.0, 0.0);
+        for _ in 0..60 {
+            pos += step;
+            ease_drawn(&mut drawn, pos - step, pos, 1.0, false);
+        }
+        // Steady walking: the lag is step * 0.875 / 0.125 = 7 steps.
+        let lag = pos.x - drawn.expect("trails while walking").x;
+        assert!((lag - 0.56).abs() < 0.01, "{lag}");
+        let mut last = 0.0;
+        let mut frames = 0;
+        while drawn.is_some() {
+            let d = ease_drawn(&mut drawn, pos, pos, 1.0, false);
+            assert!(d.x > 0.0 && (frames == 0 || d.x <= last + 1e-6), "slows every tick");
+            last = d.x;
+            frames += 1;
+            assert!(frames < 400);
+        }
+        assert!(frames > 30, "{frames}");
+    }
+
+    /// The ease is per tick: two frames of one tick land where one frame of two does.
+    #[test]
+    fn frame_rate_free() {
+        let to = Vec3::new(4.0, 1.0, -2.0);
+        let (mut a, mut b) = (Some(Vec3::ZERO), Some(Vec3::ZERO));
+        ease_drawn(&mut a, Vec3::ZERO, to, 1.0, false);
+        ease_drawn(&mut a, Vec3::ZERO, to, 1.0, false);
+        ease_drawn(&mut b, Vec3::ZERO, to, 2.0, false);
+        assert!((a.unwrap() - b.unwrap()).length() < 1e-5);
+    }
+
+    /// A jump (FUN_100929a0), a lift or a 0x1c rider snaps the drawn place to the collision place.
+    #[test]
+    fn snap_lands_at_once() {
+        let mut drawn = Some(Vec3::ZERO);
+        let to = Vec3::new(20.0, 0.0, 0.0);
+        assert_eq!(ease_drawn(&mut drawn, Vec3::ZERO, to, 1.0, true), to);
+        assert_eq!(drawn, None);
+    }
+
+    /// The turn aims at the drawn step while it moves over 0.01 a retail frame (3D only while falling), else none
+    /// (the heading); a gliding stop keeps the facing until the glide gets that slow.
+    #[test]
+    fn aims_at_the_drawn_step() {
+        assert!(drawn_aim(Vec3::new(0.0, 0.0, -0.02), 0.01).is_some());
+        assert_eq!(drawn_aim(Vec3::new(0.005, 0.0, 0.005), 0.01), None);
+        // Rising: only the flat reach counts.
+        assert_eq!(drawn_aim(Vec3::new(0.008, 0.5, 0.0), 0.01), None);
+        // Falling: the 3D reach counts, but x or z must still move over the minimum.
+        assert_eq!(drawn_aim(Vec3::new(0.008, -0.5, 0.0), 0.01), None);
+        assert!(drawn_aim(Vec3::new(0.011, -0.5, 0.0), 0.01).is_some());
     }
 }

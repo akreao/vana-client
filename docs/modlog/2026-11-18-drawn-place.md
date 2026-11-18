@@ -28,8 +28,18 @@
   or without B) is the actor update's per retail frame, drawn between the last two frames the same way;
   strafe_lock_quarter is the quarter. Locked on, first person, under the right drag's facing, the forced follow,
   events and a pin keep the ease toward the heading as before.
+- Remote actors: all three skeleton actor vtables (0x1032e710, 0x10331f40, 0x103323e8) have FUN_100c63d0 at slot
+  0x20 and vt+0x1bc = FUN_100a4740 (+0x5fc), so NPCs and other players ease the same way. Their collision position
+  comes from the entity slide (+4 -> +0x34, FUN_1008f740; +0x34 -> +0xc4, FUN_10086e90; +0xc4 -> +0xd4, FUN_100a57c0;
+  ground snap -> +0x5c4, FUN_100a4ed0). The drawn place is set to it (FUN_10092c20 / FUN_100929d0 / FUN_10092f90 write
+  +0x34, +0x5fc, +0x5c4, +0xd4, +0xc4) by FUN_100929a0, which FUN_1008cd90 calls for a slide jump over 12
+  (_DAT_1032e6b8 = 144 squared) and the place setters (FUN_100ab830 / 100ab880 / 100c3ff0 / 100c4050) and zone-in
+  (FUN_100ae3f0) call; every frame for a status 0x1c rider; and by the push (+0x102) and self-move (+0x101). Not
+  ours, the turn aims only at the drawn step (no displacement test). Ours: Entity::drawn (ease_drawn), snapped for the
+  cases above, a lift, a fresh spawn and a place set from outside; base_place poses at it; the facing aims through
+  drawn_aim at 0.01 a retail frame. Doors, lifts and ship models are not skeleton actors and are not eased.
 - Flagged for lenonk: (1) drawn_between_steps (three steps averaged, "retail draws each frame's collision position")
-  stays only for riding: retail's rider path (0x100c655c, +0x768, FUN_100c8280) is not ported. (2) "Remote actors keep
-  their level" (2026-10-28) removed a 0.125 position ease for remote actors; the same 0x100c6591 ease runs for every
-  actor that passes the tests above, so remote actors may need it back (with the level snap kept). (3) Drawing between
-  retail frames (position and rotation) is ours: retail draws once per frame of its own.
+  stays only for riding: retail's rider path (0x100c655c, +0x768, FUN_100c8280) is not ported; remote riders snap.
+  (2) Retail's FUN_1008cd90 skips the over-12 jump for an actor on a lift (vt+0x19c); ours still jumps there. (3)
+  Drawing between retail frames (position and rotation) is ours: retail draws once per frame of its own; remote
+  actors ease continuously per tick (0.875^ticks) rather than once per whole tick.
