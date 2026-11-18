@@ -52,3 +52,15 @@
   jumps there. (2) The rider's step-0 case (no mount actor at +0x768 yet) is not ported: ours always has the mount. (3)
   Drawing between retail frames (position and rotation) is ours: retail draws once per frame of its own; remote actors
   ease continuously per tick (0.875^ticks) rather than once per whole tick.
+- Checked against retail after testing (twitch on turning round with B held, the body turning sideways at a wall):
+  - A wall: retail's per-face push (FUN_101708f0, called from FUN_1016ff00 via FUN_101706b0's 0.15 march) moves the
+    sphere out by sqrt(0.25 - d^2) along the face normal, not to the surface; running head-on into a wall lands 0.17
+    back off it every other frame, ours too. The turn's displacement test then aims at the move (into the wall), so
+    head-on the body keeps facing the wall. Off square, the drawn step slides along the wall and the body turns toward
+    it (3 degrees off turns it about 10, 30 off faces along the wall), the same rule as above. No difference from the
+    DLL was found in the collision, the drawn place or the turn.
+  - Turning round with B held: per retail frame the first frame of a reversal aims at the move (dot < 0), so the body
+    turns 42 degrees, then about 32, 25, ... one way only; the quarter (FUN_100a80d0: heading plus +0x5fc less +0xd4,
+    DAT_1035cbdc = (1, 0, 0)) goes 3, 4 (or 2) for about five frames, then 1, so the motion goes mvb, mvl / mvr, run.
+  - Ours, for testing in game: FFXI_DRAW_30HZ draws our model at the last retail frame (no drawing between frames);
+    FFXI_TRACE_MOVE logs each retail frame's view and stick angles, quarter, positions, drawn step, aim and rotation.

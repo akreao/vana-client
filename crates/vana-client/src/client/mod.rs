@@ -6763,6 +6763,13 @@ fn trace_move() -> bool {
     *TRACE.get_or_init(|| std::env::var_os("FFXI_TRACE_MOVE").is_some())
 }
 
+/// Debug switch (FFXI_DRAW_30HZ set): draw our model at the last retail frame's place and rotation, as retail does,
+/// instead of between the last two frames. Off by default; for comparing the two in game.
+fn draw_30hz() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("FFXI_DRAW_30HZ").is_some())
+}
+
 /// One frame of a remote actor's move: FUN_1008b680 slides from the drawn spot `pos` linearly to the goal over the
 /// remaining ticks, a goal more than 12 units from it taken at once (FUN_100911f0); then FUN_1008dfb0 stands a
 /// grounded actor on the floor under the slide and gives the goal that height (+8 and +0x28), so a goal sent on
@@ -14599,6 +14606,31 @@ impl App {
             world.draw_from = world.turn_draw.unwrap_or(from);
             let lift = ride(world.pos, world.pos).is_some();
             let aimed = strafe_lock_turn(&mut world.turn_draw, from, world.pos, next - from, lift, turn_yaw);
+            if trace_move() && (stepping || aimed.is_some()) {
+                let drawn = world.turn_draw.unwrap_or(world.pos);
+                let ds = drawn - world.draw_from;
+                let kind = match aimed {
+                    None => "none",
+                    Some(_) if strafe_lock_aim(ds, next - from) == drawn_aim(ds, 0.01) => "drawn",
+                    Some(_) => "moved",
+                };
+                log::info!(
+                    "step t {:.4} view {:.1} stick {:.1} quarter {lock_dir} from ({:.3}, {:.3}) pos ({:.3}, {:.3}) drawn ({:.3}, {:.3}) drawn_step ({:.4}, {:.4}) aim {kind} yaw {:.1} -> {:.1} b {face_cam} turns {actor_turns}",
+                    world.started.elapsed().as_secs_f32(),
+                    world.yaw.to_degrees(),
+                    (-step.z).atan2(step.x).to_degrees(),
+                    from.x,
+                    from.z,
+                    world.pos.x,
+                    world.pos.z,
+                    drawn.x,
+                    drawn.z,
+                    ds.x,
+                    ds.z,
+                    turn_yaw.to_degrees(),
+                    aimed.unwrap_or(turn_yaw).to_degrees()
+                );
+            }
             if actor_turns {
                 let was = turn_yaw;
                 turn_yaw = match aimed {
@@ -14635,7 +14667,7 @@ impl App {
         world.step_to = world.pos;
         // Drawn between the last two retail frames (ours: we draw more often than retail steps): the model at +0x5fc,
         // riding too (0x100c655c: with the mount actor at +0x768 the rider eases the same way).
-        let frac = world.step_ticks / ground::STEP_TICKS;
+        let frac = if draw_30hz() { 1.0 } else { world.step_ticks / ground::STEP_TICKS };
         let to = world.turn_draw.unwrap_or(world.pos);
         world.draw_pos = world.draw_from + (to - world.draw_from) * frac;
         // On a lift the feet are drawn at its height now (the model is too), and the camera eye rides along
@@ -22549,6 +22581,25 @@ mod strafe_lock_turn_tests {
             let changes = quarters.windows(2).filter(|w| w[0] != w[1]).count();
             assert!(changes <= 2, "{quarters:?}");
             assert_eq!(*quarters.last().unwrap(), 1);
+        }
+    }
+
+    /// B held, running and the stick reversed: the body turns round one way only (no frame back toward where it
+    /// came from), and the step's quarter goes back, sideways, forward without returning to an earlier one.
+    #[test]
+    fn held_reversal_turns_one_way() {
+        for flip in [40usize, 12] {
+            let frames =
+                run(80, true, std::f32::consts::FRAC_PI_2, |i| if (i / flip) % 2 == 0 { Vec3::NEG_Z } else { Vec3::Z });
+            for w in frames.windows(3) {
+                let (a, b) = (wrap_angle(w[1].1 - w[0].1), wrap_angle(w[2].1 - w[1].1));
+                assert!(a * b >= -1e-6 || a.abs() < 1e-4 || b.abs() < 1e-4 || w[2].0 == 3, "turned back: {a} then {b}");
+            }
+            for seg in frames.chunks(flip).skip(1) {
+                let q: Vec<u8> = seg.iter().map(|f| f.0).collect();
+                let changes = q.windows(2).filter(|w| w[0] != w[1]).count();
+                assert!(changes <= 2, "{q:?}");
+            }
         }
     }
 
