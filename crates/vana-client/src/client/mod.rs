@@ -7914,7 +7914,7 @@ struct World {
     /// Ours (docs/lua-mods.md 4.8): a mod's run to a point (x, z, stop within): autorun steers at it as /follow does.
     run_to: Option<(f32, f32, f32)>,
     move_tier: f32,
-    /// Player physics runs in retail frames (ground::STEP_TICKS): ticks not yet stepped, the position after the
+    /// Player physics runs in retail frames (ground::frame_ticks): ticks not yet stepped, the position after the
     /// last step, and where the player is drawn (drawn_pos).
     step_ticks: f32,
     step_to: Vec3,
@@ -9164,24 +9164,35 @@ fn drawn_aim(step: Vec3, min: f32) -> Option<Vec3> {
     (reach >= min && (step.z.abs() > min || step.x.abs() > min)).then_some(step)
 }
 
-/// One retail frame (ground::STEP_TICKS) of the actor update for our drawn place (FUN_100c63d0): the drawn position
+/// One retail frame (`ticks` long, ground::frame_ticks) of the actor update for our drawn place (FUN_100c63d0): the drawn position
 /// +0x5fc (`draw`, None snaps it to `from`) eases 0.125 a tick toward the collision position `to` (0x100c6591), or
 /// is set to it on a lift (`snap`: vt+0x19c, +0x5e2); the drawn rotation `yaw` (+0x61c, dir angle) eases 0.125 a tick
 /// toward strafe_lock_aim, if any (0x100c6821..0x100c6c29), against `moved` (+0x16d: FUN_100a57f0 takes it as the
 /// input's place +0xd4 less the last collided one, so the move before the walls). None: no aim this frame.
-fn strafe_lock_turn(draw: &mut Option<Vec3>, from: Vec3, to: Vec3, moved: Vec3, snap: bool, yaw: f32) -> Option<f32> {
+fn strafe_lock_turn(
+    draw: &mut Option<Vec3>,
+    from: Vec3,
+    to: Vec3,
+    moved: Vec3,
+    snap: bool,
+    yaw: f32,
+    ticks: f32,
+) -> Option<f32> {
     let was = draw.unwrap_or(from);
-    let now = if snap { to } else { was + (to - was) * DRAW_EASE };
+    let now = if snap { to } else { was + (to - was) * draw_ease(ticks) };
     *draw = Some(now);
-    strafe_lock_aim(now - was, moved).map(|a| ease_yaw(yaw, (-a.z).atan2(a.x)))
+    strafe_lock_aim(now - was, moved).map(|a| ease_yaw(yaw, (-a.z).atan2(a.x), ticks))
 }
 
-/// The actor update's 0.125 a tick over one retail frame (its loop runs once per whole tick, FUN_10014cf0).
-const DRAW_EASE: f32 = 1.0 - 0.875 * 0.875;
+/// The actor update's 0.125 a tick over one retail frame of `ticks` (its loop runs once per whole tick,
+/// FUN_10014cf0): 1 - 0.875^2 at the game's 30 frames a second.
+fn draw_ease(ticks: f32) -> f32 {
+    1.0 - 0.875f32.powf(ticks)
+}
 
-/// A dir angle eased one retail frame toward `to` the short way round (+0x61c's ease, wrapped at +-pi).
-fn ease_yaw(yaw: f32, to: f32) -> f32 {
-    yaw + wrap_angle(to - yaw) * DRAW_EASE
+/// A dir angle eased one retail frame of `ticks` toward `to` the short way round (+0x61c's ease, wrapped at +-pi).
+fn ease_yaw(yaw: f32, to: f32, ticks: f32) -> f32 {
+    yaw + wrap_angle(to - yaw) * draw_ease(ticks)
 }
 
 fn wrap_angle(a: f32) -> f32 {
@@ -9208,6 +9219,7 @@ impl App {
             cfg.username = user.clone();
         }
         let frame_limit = cfg.frame_limit();
+        ground::set_move_rate(cfg.move_rate);
         crate::render::ANISOTROPY.store(cfg.anisotropy.clamp(1, 16), std::sync::atomic::Ordering::Relaxed);
         crate::render::MIPMAPS.store(cfg.tool("0000") != 0, std::sync::atomic::Ordering::Relaxed);
         crate::render::set_uncompressed(cfg.tool("0018") >= 2);
@@ -9381,6 +9393,7 @@ impl App {
     /// The background resolution is read every frame.
     fn apply_settings(&mut self) {
         self.frame_limit = self.cfg.frame_limit();
+        ground::set_move_rate(self.cfg.move_rate);
         self.present_dirty = true;
         crate::render::ANISOTROPY.store(self.cfg.anisotropy.clamp(1, 16), std::sync::atomic::Ordering::Relaxed);
         crate::render::MIPMAPS.store(self.cfg.tool("0000") != 0, std::sync::atomic::Ordering::Relaxed);
@@ -13932,7 +13945,7 @@ impl App {
             let moved = if flat.length() < 0.01 * ticks { 0.0 } else { flat.length() };
             // FUN_100c63d0's turn for an actor not ours: toward the drawn step when it reaches 0.01 a retail frame
             // (flat, or 3D while falling) and moves 0.01 in x or z; else toward the heading (+0x39).
-            let want = drawn_aim(dstep, 0.01 * ticks / ground::STEP_TICKS)
+            let want = drawn_aim(dstep, 0.01 * ticks / ground::frame_ticks())
                 .map_or_else(|| event::rad_of(e.dir), |a| (-a.z).atan2(a.x));
             let tau = std::f32::consts::TAU;
             let diff = (want - e.yaw + std::f32::consts::PI).rem_euclid(tau) - std::f32::consts::PI;
@@ -13959,7 +13972,7 @@ impl App {
                 .ground
                 .as_ref()
                 .filter(|g| !g.is_empty())
-                .map_or(p, |g| g.walk_player(from, p, ground::STEP_TICKS, Some(&ride)));
+                .map_or(p, |g| g.walk_player(from, p, ground::frame_ticks(), Some(&ride)));
             knock_ends.push((world.my_id, recover, done));
         }
         // Our own self-move comes before the input's move (FUN_100a57f0), through the walking collision; a push
@@ -13976,7 +13989,7 @@ impl App {
                 .ground
                 .as_ref()
                 .filter(|g| !g.is_empty())
-                .map_or(from + d, |g| g.walk_player(from, from + d, ground::STEP_TICKS, Some(&ride)));
+                .map_or(from + d, |g| g.walk_player(from, from + d, ground::frame_ticks(), Some(&ride)));
             if done {
                 self_ends.push(me);
             }
@@ -14540,11 +14553,13 @@ impl App {
         let shafts = world.lifts.shafts();
         let ride = |a: Vec3, b: Vec3| lifts::ride_in(&shafts, a, b);
         let mut steps = 0;
-        while world.step_ticks >= ground::STEP_TICKS {
-            world.step_ticks -= ground::STEP_TICKS;
+        // Ticks in one retail frame: 2 at the game's 30 frames a second, 1 at 60 (Movement Rate).
+        let frame = ground::frame_ticks();
+        while world.step_ticks >= frame {
+            world.step_ticks -= frame;
             steps += 1;
-            // After a hitch, drop the backlog.
-            if steps > 8 {
+            // After a hitch, drop the backlog (the same time at either rate).
+            if steps as f32 > 16.0 / frame {
                 world.step_ticks = 0.0;
                 break;
             }
@@ -14560,9 +14575,9 @@ impl App {
             } else if stepping {
                 let s = step.normalize();
                 let d = match lock_dir {
-                    3 => speed / 3.0 * ground::STEP_TICKS / 60.0,
-                    2 | 4 => (if riding { 0.125 } else { 0.0625 }) * ground::STEP_TICKS,
-                    _ => speed * tier * ground::STEP_TICKS / 60.0,
+                    3 => speed / 3.0 * frame / 60.0,
+                    2 | 4 => (if riding { 0.125 } else { 0.0625 }) * frame,
+                    _ => speed * tier * frame / 60.0,
                 };
                 // Locked autorun (FUN_100a7b80): a gap to the target under this step's move goes at 0.3 of it, and a
                 // gap under 0 not at all.
@@ -14587,15 +14602,15 @@ impl App {
             }
             // FUN_100a8770 at the end of the move input (also with no input): a character in the way holds the step
             // (the run motion and facing stay).
-            if !in_event && pull.is_none() && bump::blocks(world, from, next - from, ground::STEP_TICKS) {
+            if !in_event && pull.is_none() && bump::blocks(world, from, next - from, frame) {
                 next = from;
             }
             let g = world.ground.as_ref().filter(|g| !g.is_empty());
             if next != from {
-                world.pos = g.map_or(next, |g| g.walk_player(from, next, ground::STEP_TICKS, Some(&ride)));
+                world.pos = g.map_or(next, |g| g.walk_player(from, next, frame, Some(&ride)));
             } else if falls && let Some(g) = g {
                 // A fall goes on without input.
-                world.pos = g.walk_player(from, from, ground::STEP_TICKS, Some(&ride));
+                world.pos = g.walk_player(from, from, frame, Some(&ride));
             } else if let Some((h, _)) = ride(from, from) {
                 // FUN_100a4ed0 runs in events and standing still too.
                 world.pos.y = h;
@@ -14605,7 +14620,7 @@ impl App {
             // rotation's ease toward it, else toward the heading.
             world.draw_from = world.turn_draw.unwrap_or(from);
             let lift = ride(world.pos, world.pos).is_some();
-            let aimed = strafe_lock_turn(&mut world.turn_draw, from, world.pos, next - from, lift, turn_yaw);
+            let aimed = strafe_lock_turn(&mut world.turn_draw, from, world.pos, next - from, lift, turn_yaw, frame);
             if trace_move() && (stepping || aimed.is_some()) {
                 let drawn = world.turn_draw.unwrap_or(world.pos);
                 let ds = drawn - world.draw_from;
@@ -14638,7 +14653,7 @@ impl App {
                         eased_turn = Some(y);
                         y
                     }
-                    None => heading_aim.map_or(turn_yaw, |h| ease_yaw(turn_yaw, h)),
+                    None => heading_aim.map_or(turn_yaw, |h| ease_yaw(turn_yaw, h, frame)),
                 };
                 world.turn_rot = Some([was, turn_yaw]);
             }
@@ -14667,7 +14682,7 @@ impl App {
         world.step_to = world.pos;
         // Drawn between the last two retail frames (ours: we draw more often than retail steps): the model at +0x5fc,
         // riding too (0x100c655c: with the mount actor at +0x768 the rider eases the same way).
-        let frac = if draw_30hz() { 1.0 } else { world.step_ticks / ground::STEP_TICKS };
+        let frac = if draw_30hz() { 1.0 } else { world.step_ticks / ground::frame_ticks() };
         let to = world.turn_draw.unwrap_or(world.pos);
         world.draw_pos = world.draw_from + (to - world.draw_from) * frac;
         // On a lift the feet are drawn at its height now (the model is too), and the camera eye rides along
@@ -22499,7 +22514,8 @@ mod strafe_lock_turn_tests {
         let (mut draw, mut pos, mut yaw) = (None, Vec3::ZERO, 0.0f32);
         let mut frames = 0;
         while yaw.abs() < std::f32::consts::FRAC_PI_4 * 3.0 {
-            let y = strafe_lock_turn(&mut draw, pos, pos + step, step, false, yaw).expect("an aim every frame");
+            let y = strafe_lock_turn(&mut draw, pos, pos + step, step, false, yaw, ground::STEP_TICKS)
+                .expect("an aim every frame");
             assert!(y.abs() > yaw.abs());
             (pos, yaw, frames) = (pos + step, y, frames + 1);
             assert!(frames < 20);
@@ -22511,7 +22527,10 @@ mod strafe_lock_turn_tests {
     #[test]
     fn still_keeps_facing() {
         let mut draw = Some(Vec3::new(0.005, 0.0, 0.0));
-        assert_eq!(strafe_lock_turn(&mut draw, Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, false, 1.0), None);
+        assert_eq!(
+            strafe_lock_turn(&mut draw, Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, false, 1.0, ground::STEP_TICKS),
+            None
+        );
     }
 
     const RUN: f32 = 5.0 * ground::STEP_TICKS / 60.0;
@@ -22519,21 +22538,33 @@ mod strafe_lock_turn_tests {
     /// Retail frames of a free run: the stick `dir(frame)` (a unit step), the strafe lock held or not. Returns each
     /// frame's (quarter, drawn rotation, drawn position, position), the actor update as update_movement steps it.
     fn run(frames: usize, held: bool, yaw0: f32, dir: impl Fn(usize) -> Vec3) -> Vec<(u8, f32, Vec3, Vec3)> {
+        run_at(ground::STEP_TICKS, frames, held, yaw0, dir)
+    }
+
+    /// `run` with retail frames `ticks` long (1: Movement Rate 60).
+    fn run_at(
+        ticks: f32,
+        frames: usize,
+        held: bool,
+        yaw0: f32,
+        dir: impl Fn(usize) -> Vec3,
+    ) -> Vec<(u8, f32, Vec3, Vec3)> {
+        let run = RUN / ground::STEP_TICKS * ticks;
         let (mut draw, mut pos, mut yaw) = (None, Vec3::ZERO, yaw0);
         (0..frames)
             .map(|i| {
                 let step = dir(i);
                 let q = if held { strafe_lock_quarter(yaw, draw.unwrap_or(pos), pos, step) } else { 1 };
                 let d = match q {
-                    3 => RUN / 3.0,
-                    2 | 4 => 0.0625 * ground::STEP_TICKS,
-                    _ => RUN,
+                    3 => run / 3.0,
+                    2 | 4 => 0.0625 * ticks,
+                    _ => run,
                 };
                 let from = pos;
                 pos += step * d;
                 let heading = (-step.z).atan2(step.x);
-                yaw = strafe_lock_turn(&mut draw, from, pos, pos - from, false, yaw)
-                    .unwrap_or_else(|| if held { yaw } else { ease_yaw(yaw, heading) });
+                yaw = strafe_lock_turn(&mut draw, from, pos, pos - from, false, yaw, ticks)
+                    .unwrap_or_else(|| if held { yaw } else { ease_yaw(yaw, heading, ticks) });
                 (q, yaw, draw.unwrap(), pos)
             })
             .collect()
@@ -22546,12 +22577,12 @@ mod strafe_lock_turn_tests {
         let east = Vec3::X;
         let frames = run(60, false, 0.0, |_| east);
         let (_, _, drawn, pos) = frames[59];
-        let gap = 0.875f32.powi(2) / DRAW_EASE * RUN;
+        let gap = 0.875f32.powi(2) / draw_ease(ground::STEP_TICKS) * RUN;
         assert!(((pos - drawn).x - gap).abs() < 1e-3, "{} vs {gap}", (pos - drawn).x);
         let mut draw = Some(drawn);
         let mut last = drawn.x;
         for _ in 0..60 {
-            strafe_lock_turn(&mut draw, pos, pos, Vec3::ZERO, false, 0.0);
+            strafe_lock_turn(&mut draw, pos, pos, Vec3::ZERO, false, 0.0, ground::STEP_TICKS);
             let x = draw.unwrap().x;
             assert!(x >= last && x <= pos.x);
             last = x;
@@ -22559,7 +22590,7 @@ mod strafe_lock_turn_tests {
         assert!(pos.x - last < 1e-3);
         // On a lift the drawn place is the position.
         let mut draw = Some(Vec3::ZERO);
-        strafe_lock_turn(&mut draw, Vec3::X, Vec3::X * 2.0, Vec3::X, true, 0.0);
+        strafe_lock_turn(&mut draw, Vec3::X, Vec3::X * 2.0, Vec3::X, true, 0.0, ground::STEP_TICKS);
         assert_eq!(draw, Some(Vec3::X * 2.0));
     }
 
@@ -22601,6 +22632,31 @@ mod strafe_lock_turn_tests {
                 assert!(changes <= 2, "{q:?}");
             }
         }
+    }
+
+    /// Movement Rate 60 (one tick a frame, retail with an fps add-on): B held and the stick reversed, the turn comes in
+    /// steps about half as big as at 30 (retail's own trace at 60: 16 to 21 degrees a frame), still one way only, and
+    /// a second of running covers the same ground at either rate.
+    #[test]
+    fn sixty_turns_in_smaller_steps() {
+        let biggest = |frames: &[(u8, f32, Vec3, Vec3)]| {
+            frames.windows(2).map(|w| wrap_angle(w[1].1 - w[0].1).abs()).fold(0.0f32, f32::max).to_degrees()
+        };
+        let reverse = |flip: usize| move |i: usize| if i < flip { Vec3::NEG_Z } else { Vec3::Z };
+        let half = std::f32::consts::FRAC_PI_2;
+        let (thirty, sixty) = (run_at(2.0, 60, true, half, reverse(30)), run_at(1.0, 120, true, half, reverse(60)));
+        let (b30, b60) = (biggest(&thirty), biggest(&sixty));
+        assert!(b60 < b30 * 0.7 && b60 < 25.0, "{b60} vs {b30}");
+        for w in sixty.windows(3) {
+            let (a, b) = (wrap_angle(w[1].1 - w[0].1), wrap_angle(w[2].1 - w[1].1));
+            assert!(a * b >= -1e-6 || a.abs() < 1e-4 || b.abs() < 1e-4 || w[2].0 == 3, "turned back: {a} then {b}");
+        }
+        let (r30, r60) = (run_at(2.0, 30, false, 0.0, |_| Vec3::X), run_at(1.0, 60, false, 0.0, |_| Vec3::X));
+        assert!((r30[29].3 - r60[59].3).length() < 1e-4);
+        // Sideways under B: 0.0625 a tick, so 0.0625 a frame at 60 as retail's trace shows.
+        let side = run_at(1.0, 2, true, 0.0, |_| Vec3::NEG_Z);
+        assert_eq!(side[0].0, 2);
+        assert!(((side[0].3).length() - 0.0625).abs() < 1e-6);
     }
 
     /// Free (no B), the stick swung a quarter turn: the heading takes it at once, the drawn body follows the drawn

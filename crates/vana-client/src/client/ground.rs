@@ -20,6 +20,22 @@ const FALL_MAX: f32 = 1.0;
 /// The player's physics step: one retail frame (2 ticks at its 30 fps, FUN_100889d0). The drawn position is
 /// interpolated between steps.
 pub const STEP_TICKS: f32 = 2.0;
+
+/// Ticks in one retail frame of our own actor's update as played (frame_ticks): STEP_TICKS, or 1 when Movement Rate
+/// is 60 (retail run at 60 frames a second, as players do with an fps add-on: FUN_10014cf0 then runs the actor
+/// update once per tick).
+static FRAME_TICKS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(STEP_TICKS as u32);
+
+/// Ticks in one retail frame of our own movement (2, or 1 at Movement Rate 60).
+pub fn frame_ticks() -> f32 {
+    FRAME_TICKS.load(std::sync::atomic::Ordering::Relaxed) as f32
+}
+
+/// Movement Rate (config move_rate): 60 runs one tick a frame, anything else the game's 30 (two ticks).
+pub fn set_move_rate(rate: u32) {
+    let ticks = if rate == 60 { 1 } else { STEP_TICKS as u32 };
+    FRAME_TICKS.store(ticks, std::sync::atomic::Ordering::Relaxed);
+}
 /// walk() simulates steps at run speed 5.0.
 const RUN_TICK: f32 = 5.0 / 60.0;
 const RUN_STEP: f32 = RUN_TICK * STEP_TICKS;
@@ -1272,7 +1288,7 @@ mod tests {
         for _ in 0..40 {
             let from = pos;
             pos = g.walk_player(from, from + s, STEP_TICKS, None);
-            yaw = crate::client::strafe_lock_turn(&mut draw, from, pos, s, false, yaw).unwrap_or(yaw);
+            yaw = crate::client::strafe_lock_turn(&mut draw, from, pos, s, false, yaw, STEP_TICKS).unwrap_or(yaw);
             assert!((yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-4, "{}", yaw.to_degrees());
             assert!(pos.x.abs() < 1e-5);
             zs.push(pos.z);

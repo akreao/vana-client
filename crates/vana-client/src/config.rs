@@ -226,6 +226,10 @@ pub struct Config {
     /// Milliseconds between the datagrams sent to a private server's zone server (50..400; 400 is the game's, which a
     /// PlayOnline sign-in always keeps). The server answers each one, so its updates come sooner. Not a retail option.
     pub send_interval: u32,
+    /// Movement Rate: the retail frames a second our own character moves in, 30 (the game's, two ticks a frame) or 60
+    /// (one tick a frame, as retail plays with an fps add-on): the drawn place and turn ease once per frame either way.
+    /// Not a retail option.
+    pub move_rate: u32,
     /// Party and alliance rows show TP (retail config 0xae bit 0, default off; ours on, as the add-ons do).
     pub party_tp: bool,
     /// Per-window opacity the player set (no row for it yet), by window: a modern panel's id, a mod's window
@@ -584,6 +588,7 @@ impl Default for Config {
             grading: 0,
             draw_distance: 0,
             send_interval: 400,
+            move_rate: 30,
             party_tp: true,
             window_opacity: Default::default(),
             gm_window: false,

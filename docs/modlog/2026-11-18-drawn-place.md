@@ -64,3 +64,9 @@
     DAT_1035cbdc = (1, 0, 0)) goes 3, 4 (or 2) for about five frames, then 1, so the motion goes mvb, mvl / mvr, run.
   - Ours, for testing in game: FFXI_DRAW_30HZ draws our model at the last retail frame (no drawing between frames);
     FFXI_TRACE_MOVE logs each retail frame's view and stick angles, quarter, positions, drawn step, aim and rotation.
+- Movement Rate (Settings, not retail; config `move_rate`, 30 by default): 60 runs our own actor update once per tick
+  instead of once per two, as retail does when played at 60 frames a second with an fps add-on (FUN_10014cf0 runs the
+  update once per whole tick it is given). A trace of retail at 60 showed the B-held reversal turning 16 to 21 degrees
+  a frame and sideways steps of 0.0625 a frame; at 30 the same logic turns up to 42 degrees a frame. The step's speeds,
+  the walls and falls, and the drawn place and rotation's 0.125-a-tick ease all take the frame's ticks; remote actors
+  already ran per tick.
