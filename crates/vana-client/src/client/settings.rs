@@ -536,13 +536,6 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
             &[(400, "Retail"), (200, "2x"), (100, "4x"), (50, "8x")],
             Now,
         ),
-        row(
-            "Movement Rate",
-            "How many times a second your character moves and turns: 30 as the game runs, or 60 as it does with a frame rate add-on (not retail).",
-            MoveRate,
-            &[(30, "30"), (60, "60")],
-            Now,
-        ),
     ];
     const CLIENT: &[SRow] = &[
         row(
@@ -643,6 +636,13 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
             "How fast the camera turns when you hold a mouse button and move the mouse. Lower it if the camera spins too fast. Controllers are not affected (not retail).",
             MouseCamSpeed,
             &[(25, "25%"), (50, "50%"), (75, "75%"), (100, "100%"), (150, "150%"), (200, "200%")],
+            Now,
+        ),
+        row(
+            "Movement Rate",
+            "How many times a second your character moves and turns: 30 as the game runs, or 60 as it does with a frame rate add-on (not retail).",
+            MoveRate,
+            &[(30, "30"), (60, "60")],
             Now,
         ),
     ];
