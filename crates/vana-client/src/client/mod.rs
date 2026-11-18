@@ -9160,12 +9160,13 @@ fn drawn_aim(step: Vec3, min: f32) -> Option<Vec3> {
 /// One retail frame (ground::STEP_TICKS) of the actor update for our drawn place (FUN_100c63d0): the drawn position
 /// +0x5fc (`draw`, None snaps it to `from`) eases 0.125 a tick toward the collision position `to` (0x100c6591), or
 /// is set to it on a lift (`snap`: vt+0x19c, +0x5e2); the drawn rotation `yaw` (+0x61c, dir angle) eases 0.125 a tick
-/// toward strafe_lock_aim, if any (0x100c6821..0x100c6c29). None: no aim this frame.
-fn strafe_lock_turn(draw: &mut Option<Vec3>, from: Vec3, to: Vec3, snap: bool, yaw: f32) -> Option<f32> {
+/// toward strafe_lock_aim, if any (0x100c6821..0x100c6c29), against `moved` (+0x16d: FUN_100a57f0 takes it as the
+/// input's place +0xd4 less the last collided one, so the move before the walls). None: no aim this frame.
+fn strafe_lock_turn(draw: &mut Option<Vec3>, from: Vec3, to: Vec3, moved: Vec3, snap: bool, yaw: f32) -> Option<f32> {
     let was = draw.unwrap_or(from);
     let now = if snap { to } else { was + (to - was) * DRAW_EASE };
     *draw = Some(now);
-    strafe_lock_aim(now - was, to - from).map(|a| ease_yaw(yaw, (-a.z).atan2(a.x)))
+    strafe_lock_aim(now - was, moved).map(|a| ease_yaw(yaw, (-a.z).atan2(a.x)))
 }
 
 /// The actor update's 0.125 a tick over one retail frame (its loop runs once per whole tick, FUN_10014cf0).
@@ -14597,7 +14598,7 @@ impl App {
             // rotation's ease toward it, else toward the heading.
             world.draw_from = world.turn_draw.unwrap_or(from);
             let lift = ride(world.pos, world.pos).is_some();
-            let aimed = strafe_lock_turn(&mut world.turn_draw, from, world.pos, lift, turn_yaw);
+            let aimed = strafe_lock_turn(&mut world.turn_draw, from, world.pos, next - from, lift, turn_yaw);
             if actor_turns {
                 let was = turn_yaw;
                 turn_yaw = match aimed {
@@ -22466,7 +22467,7 @@ mod strafe_lock_turn_tests {
         let (mut draw, mut pos, mut yaw) = (None, Vec3::ZERO, 0.0f32);
         let mut frames = 0;
         while yaw.abs() < std::f32::consts::FRAC_PI_4 * 3.0 {
-            let y = strafe_lock_turn(&mut draw, pos, pos + step, false, yaw).expect("an aim every frame");
+            let y = strafe_lock_turn(&mut draw, pos, pos + step, step, false, yaw).expect("an aim every frame");
             assert!(y.abs() > yaw.abs());
             (pos, yaw, frames) = (pos + step, y, frames + 1);
             assert!(frames < 20);
@@ -22478,7 +22479,7 @@ mod strafe_lock_turn_tests {
     #[test]
     fn still_keeps_facing() {
         let mut draw = Some(Vec3::new(0.005, 0.0, 0.0));
-        assert_eq!(strafe_lock_turn(&mut draw, Vec3::ZERO, Vec3::ZERO, false, 1.0), None);
+        assert_eq!(strafe_lock_turn(&mut draw, Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, false, 1.0), None);
     }
 
     const RUN: f32 = 5.0 * ground::STEP_TICKS / 60.0;
@@ -22499,7 +22500,7 @@ mod strafe_lock_turn_tests {
                 let from = pos;
                 pos += step * d;
                 let heading = (-step.z).atan2(step.x);
-                yaw = strafe_lock_turn(&mut draw, from, pos, false, yaw)
+                yaw = strafe_lock_turn(&mut draw, from, pos, pos - from, false, yaw)
                     .unwrap_or_else(|| if held { yaw } else { ease_yaw(yaw, heading) });
                 (q, yaw, draw.unwrap(), pos)
             })
@@ -22518,7 +22519,7 @@ mod strafe_lock_turn_tests {
         let mut draw = Some(drawn);
         let mut last = drawn.x;
         for _ in 0..60 {
-            strafe_lock_turn(&mut draw, pos, pos, false, 0.0);
+            strafe_lock_turn(&mut draw, pos, pos, Vec3::ZERO, false, 0.0);
             let x = draw.unwrap().x;
             assert!(x >= last && x <= pos.x);
             last = x;
@@ -22526,7 +22527,7 @@ mod strafe_lock_turn_tests {
         assert!(pos.x - last < 1e-3);
         // On a lift the drawn place is the position.
         let mut draw = Some(Vec3::ZERO);
-        strafe_lock_turn(&mut draw, Vec3::X, Vec3::X * 2.0, true, 0.0);
+        strafe_lock_turn(&mut draw, Vec3::X, Vec3::X * 2.0, Vec3::X, true, 0.0);
         assert_eq!(draw, Some(Vec3::X * 2.0));
     }
 
