@@ -6581,7 +6581,6 @@ fn window_icon() -> Option<winit::window::Icon> {
     winit::window::Icon::from_rgba(buf, info.width, info.height).ok()
 }
 
-/// Where the player is drawn: between the physics steps (drawn_between_steps), or where something else just put us.
 /// The model reset's points (2019 all.c 145867..145870): arrow and plate 2, the lock look 0x80 (none: by the model
 /// kind, FUN_100d6670).
 const ANCHORS: [u8; 4] = [2, 2, 0x80, 0x80];
@@ -6594,15 +6593,14 @@ fn drawn_pos(w: &World) -> Vec3 {
     if w.pos == w.step_to { w.draw_pos } else { w.pos }
 }
 
-/// Not retail (it draws each frame's collision position): the drawn player runs through the averages of three
-/// physics steps, `t` of the way from the older one. Exact on a steady slope, one step late; it cancels the
-/// 3-step bob of running downhill (the ground move stays level, gravity catches up) and spreads step-ups.
-fn drawn_between_steps(h: &[Vec3; 4], t: f32) -> Vec3 {
-    // As offsets from the middle step, so a player standing still is drawn exactly where they stand (a plain sum / 3
-    // wobbles in the last bit, and the camera and the name plate's pixel rounding with it).
-    let a = h[1] + (h[0] - h[1] + (h[2] - h[1])) / 3.0;
-    let b = h[2] + (h[1] - h[2] + (h[3] - h[2])) / 3.0;
-    a + (b - a) * t
+/// FUN_100c8280 (own actor, riding, status 5 / 0x55): the segment from 1.1 to 0.8 ahead of the drawn place `d`
+/// (+0x5fc), 1 up (y -1), turned by the drawn rotation `yaw` (+0x620), is tested against the zone (FUN_10182b60); on a
+/// hit the drawn place moves by the hit less the segment's start in x and z.
+fn rider_nose(d: Vec3, yaw: f32, hit: impl Fn(Vec3, Vec3) -> Option<Vec3>) -> Vec3 {
+    let f = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
+    let up = Vec3::new(0.0, -1.0, 0.0);
+    let (a, b) = (d + f * 1.1 + up, d + f * 0.8 + up);
+    hit(a, b).map_or(d, |h| Vec3::new(d.x + h.x - a.x, d.y, d.z + h.z - a.z))
 }
 
 /// The event input window (FUN_10206640) over the msgline rect: kinds 1..5 a group 0xb title, the text after it;
@@ -7909,10 +7907,9 @@ struct World {
     /// Ours (docs/lua-mods.md 4.8): a mod's run to a point (x, z, stop within): autorun steers at it as /follow does.
     run_to: Option<(f32, f32, f32)>,
     move_tier: f32,
-    /// Player physics runs in retail frames (ground::STEP_TICKS): ticks not yet stepped, the last four step
-    /// results (oldest first), the position after the last step, and where the player is drawn (drawn_pos).
+    /// Player physics runs in retail frames (ground::STEP_TICKS): ticks not yet stepped, the position after the
+    /// last step, and where the player is drawn (drawn_pos).
     step_ticks: f32,
-    step_hist: [Vec3; 4],
     step_to: Vec3,
     draw_pos: Vec3,
     /// Screen fade: 0 clear, 1 black. Zoning fades out, loads, then fades back in.
@@ -10601,7 +10598,6 @@ impl App {
                             run_to: None,
                             move_tier: 0.0,
                             step_ticks: 0.0,
-                            step_hist: [Vec3::ZERO; 4],
                             step_to: Vec3::ZERO,
                             draw_pos: Vec3::ZERO,
                             fade: 1.0,
@@ -13913,12 +13909,12 @@ impl App {
             // FUN_100c63d0 (0x100c6591): the drawn place (+0x5fc) eases 0.125 a tick toward the collision place
             // (+0x5c4), so an actor glides to a stop. It is snapped on a lift (+0x5e2), after a jump over 12
             // (FUN_100929a0), and for a status 0x1c rider (FUN_1008cd90 calls FUN_10092c20 every frame).
-            // Riding keeps the snap until the rider path (+0x768) is ported. Doors, lifts and ship models are not
-            // skeleton actors (no FUN_100c63d0) and stay where they are put.
+            // A 0x1f rider is snapped the same way (FUN_1008cd90). Riders (status 5 / 0x55) ease like walkers: their
+            // mount actor is at +0x768 (0x100c655c). Doors, lifts and ship models are not skeleton actors (no
+            // FUN_100c63d0) and stay where they are put.
             let snap = jumped
                 || lifted
-                || e.motion.status == 0x1c
-                || matches!(e.motion.status, 5 | 0x55)
+                || matches!(e.motion.status, 0x1c | 0x1f)
                 || e.door != 0
                 || e.lift.is_some()
                 || matches!(e.sub_kind, 2..=4);
@@ -14457,7 +14453,7 @@ impl App {
         let moving = stepping;
         // Whole retail frames of FUN_100a48d0 / FUN_100a3560; a position set elsewhere starts over from it.
         if world.pos != world.step_to {
-            (world.step_hist, world.step_to, world.step_ticks) = ([world.pos; 4], world.pos, 0.0);
+            (world.step_to, world.step_ticks) = (world.pos, 0.0);
             // A place set from outside snaps the drawn position too (FUN_100ab830, FUN_1008cd90).
             world.turn_draw = None;
         }
@@ -14466,12 +14462,13 @@ impl App {
         }
         let riding = matches!(world.my_motion.status, 5 | 0x55);
         let pin = world.effects.pinned.get(&world.my_id).copied();
-        // The actor update turns our model toward its drawn step (FUN_100c63d0 0x100c6821: free, vt+0x330; not riding,
-        // FUN_10084350 / 70), with or without the strafe lock; locked on it eases toward the heading (below). Ours also
+        // The actor update turns our model toward its drawn step (FUN_100c63d0 0x100c6821: free, vt+0x330), with or
+        // without the strafe lock, riding too; only riding (FUN_10084350 / 70) under the strafe lock (vt+0x340, +0xfb)
+        // eases it toward the heading instead (0x100c6b0x). Locked on it eases toward the heading (below). Ours also
         // leaves it to the ease below in first person (tank controls), under the right drag's facing, the forced follow,
         // events and a scheduler's pin.
         let actor_turns = !world.camst.first
-            && !riding
+            && !(riding && face_cam)
             && !in_event
             && !world.unsettled
             && pin.is_none()
@@ -14595,7 +14592,6 @@ impl App {
                 // FUN_100a4ed0 runs in events and standing still too.
                 world.pos.y = h;
             }
-            world.step_hist = [world.step_hist[1], world.step_hist[2], world.step_hist[3], world.pos];
             // The actor update (0x100c6591): the drawn position +0x5fc eased 0.125 a tick toward the moved place (set to
             // it on a lift), and how far it went this frame; the aim (0x100c6821..0x100c6c1f) and the drawn
             // rotation's ease toward it, else toward the heading.
@@ -14613,6 +14609,13 @@ impl App {
                 };
                 world.turn_rot = Some([was, turn_yaw]);
             }
+            // FUN_100c8280 at the end of our update while riding: the mount's nose may not go into a wall.
+            if riding
+                && let Some(g) = world.ground.as_ref().filter(|g| !g.is_empty())
+                && let Some(d) = world.turn_draw.as_mut()
+            {
+                *d = rider_nose(*d, turn_yaw, |a, b| g.raycast(a, b).map(|t| a + (b - a).normalize_or_zero() * t));
+            }
         }
         if !actor_turns {
             world.turn_rot = None;
@@ -14622,23 +14625,18 @@ impl App {
         // Scheduler op 0x7a on us (FUN_100c63d0): at actor2's point, no collision or ease, facing actor2 + pi; that
         // place goes out in 0x015.
         if let Some((p, yaw)) = pin {
-            (world.pos, world.step_hist, world.step_ticks) = (p, [p; 4], 0.0);
+            (world.pos, world.step_ticks) = (p, 0.0);
             (world.turn_draw, world.draw_from) = (None, p);
             if let Some(y) = yaw {
                 world.yaw = player_yaw(y);
             }
         }
         world.step_to = world.pos;
-        // Drawn between the last two retail frames (ours: we draw more often than retail steps): the model at +0x5fc.
-        // Riding keeps ours: three steps averaged (see drawn_between_steps); retail's rider (0x100c655c, FUN_100c8280)
-        // is not ported.
+        // Drawn between the last two retail frames (ours: we draw more often than retail steps): the model at +0x5fc,
+        // riding too (0x100c655c: with the mount actor at +0x768 the rider eases the same way).
         let frac = world.step_ticks / ground::STEP_TICKS;
-        world.draw_pos = if riding {
-            drawn_between_steps(&world.step_hist, frac)
-        } else {
-            let to = world.turn_draw.unwrap_or(world.pos);
-            world.draw_from + (to - world.draw_from) * frac
-        };
+        let to = world.turn_draw.unwrap_or(world.pos);
+        world.draw_pos = world.draw_from + (to - world.draw_from) * frac;
         // On a lift the feet are drawn at its height now (the model is too), and the camera eye rides along
         // (FUN_1001ee60: eye.y += the player's y change, the hold set) by the drawn height, every frame as the lift
         // and the look point move: the stepped y would jolt the eye at 30 Hz against them.
@@ -22340,25 +22338,6 @@ mod tests {
         assert_eq!(chat_line(0, 0, 0, "Rabbit", "x", "", true), Some(("Rabbit : x".into(), 9)));
     }
 
-    /// A steady slope is drawn exactly (one step late); the downhill bob (drops 0.046, 0.083, 0.046 ...) is not.
-    #[test]
-    fn drawn_steps_smooth_the_bob() {
-        let ramp: Vec<Vec3> = (0..6).map(|k| Vec3::new(k as f32 * 0.17, k as f32 * 0.06, 0.0)).collect();
-        let h = [ramp[2], ramp[3], ramp[4], ramp[5]];
-        assert!((drawn_between_steps(&h, 0.5) - ramp[3].lerp(ramp[4], 0.5)).length() < 1e-5);
-        let drops = [0.046f32, 0.083, 0.046, 0.046, 0.083, 0.046, 0.046, 0.083];
-        let mut y = vec![0f32];
-        for d in drops {
-            y.push(y.last().unwrap() + d);
-        }
-        let p: Vec<Vec3> = y.iter().map(|&y| Vec3::new(0.0, y, 0.0)).collect();
-        let drawn: Vec<f32> =
-            (0..5).map(|k| drawn_between_steps(&[p[k], p[k + 1], p[k + 2], p[k + 3]], 0.0).y).collect();
-        for w in drawn.windows(2) {
-            assert!((w[1] - w[0] - 0.175 / 3.0).abs() < 1e-4, "{drawn:?}");
-        }
-    }
-
     #[test]
     fn channel_swap() {
         assert_eq!(strip_channel("/party hello there"), "hello there");
@@ -22660,5 +22639,24 @@ mod remote_drawn_tests {
         // Falling: the 3D reach counts, but x or z must still move over the minimum.
         assert_eq!(drawn_aim(Vec3::new(0.008, -0.5, 0.0), 0.01), None);
         assert!(drawn_aim(Vec3::new(0.011, -0.5, 0.0), 0.01).is_some());
+    }
+
+    /// FUN_100c8280: facing +x (yaw 0) with a wall at x = 1.0, the probe runs from x 1.1 to 0.8 one up and hits at
+    /// 1.0, so the drawn place goes back 0.1; facing away, or with nothing hit, it stays.
+    #[test]
+    fn rider_nose_stops_at_a_wall() {
+        let wall = |a: Vec3, b: Vec3| {
+            assert!((a.y - b.y).abs() < 1e-6, "level");
+            ((a.x - 1.0) * (b.x - 1.0) <= 0.0).then(|| a + (b - a) * ((1.0 - a.x) / (b.x - a.x)))
+        };
+        let d = rider_nose(Vec3::ZERO, 0.0, wall);
+        assert!((d - Vec3::new(-0.1, 0.0, 0.0)).length() < 1e-5, "{d}");
+        assert_eq!(rider_nose(Vec3::ZERO, std::f32::consts::PI, wall), Vec3::ZERO);
+        assert_eq!(rider_nose(Vec3::new(-2.0, 0.5, 0.0), 0.0, wall), Vec3::new(-2.0, 0.5, 0.0));
+        // Facing -z (yaw pi/2, forward (0, 0, -1)): the probe runs along -z.
+        let d = rider_nose(Vec3::ZERO, std::f32::consts::FRAC_PI_2, |a: Vec3, _| {
+            (a.z < -1.0).then_some(Vec3::new(a.x, a.y, -1.0))
+        });
+        assert!((d.z - 0.1).abs() < 1e-5 && d.x.abs() < 1e-5, "{d}");
     }
 }

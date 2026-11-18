@@ -3000,7 +3000,7 @@ fn motion_files(op: u8, file: i32, id: u32, a: &super::Actor) -> Vec<u32> {
 /// FUN_10089a60, each frame on our character: its place (+4, facing +0x14) follows its model. Bound in an event it
 /// waits unless (DAT_1046df04 | Mode) & 4, so the model the event moved is where we stand once it ends.
 fn keep_pose(w: &mut World, p: Pose) {
-    (w.pos, w.step_hist, w.step_ticks, w.step_to, w.draw_pos) = (p.pos, [p.pos; 4], 0.0, p.pos, p.pos);
+    (w.pos, w.step_ticks, w.step_to, w.draw_pos) = (p.pos, 0.0, p.pos, p.pos);
     // A place set from outside snaps the drawn position (+0x5fc) too.
     (w.turn_draw, w.draw_from, w.turn_rot) = (None, p.pos, None);
     w.yaw = super::player_yaw(p.yaw);
