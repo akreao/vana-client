@@ -3556,11 +3556,12 @@ pub fn shot_name(w: &World) -> Option<String> {
 }
 
 /// FUN_1008e4d0's unload mark (+0x120 bit 23) on an actor that neither is bound to the running event nor takes part,
-/// as FUN_10095900 acts on it: /hidetrust's, then the event's filter of non-participants by (DAT_104808fc | Mode) & 0x02
-/// for player characters and & 0x10 for the rest, which an event-reserved actor (+0x138 bit 31, op 0xac sub 2) skips.
-/// Doors, elevators and ships (+0xee 3..5, FUN_10096200) are never unloaded.
-fn unloads(pc: bool, flags: u32, structure: bool, reserved: bool, trust: bool) -> bool {
-    let filtered = !reserved && flags & if pc { 0x02 } else { 0x10 } != 0;
+/// as FUN_10095900 acts on it: /hidetrust's, then the server's SleepFlag (+0x120 bit 18, tested with the hide bit as
+/// 0x44000 at 0x1008e686) and the event's filter of non-participants by (DAT_10481aac | Mode) & 0x02 for player
+/// characters and & 0x10 for the rest, both of which an event-reserved actor (+0x138 bit 31, op 0xac sub 2) skips.
+/// Doors, elevators and ships (+0xee 3..5, FUN_10096200) are never unloaded. Addresses are 30261102_0.
+fn unloads(pc: bool, flags: u32, structure: bool, reserved: bool, trust: bool, asleep: bool) -> bool {
+    let filtered = !reserved && (asleep || flags & if pc { 0x02 } else { 0x10 } != 0);
     !structure && (trust || filtered)
 }
 
@@ -3599,12 +3600,19 @@ pub fn hides(w: &World, id: u32) -> bool {
 /// (FUN_100bb300) turns it into the script's hide flag (bit 0x20000), so an event the server starts with us hidden
 /// begins without us until its script shows us (ops 0x22 / 0x4e with 0). The city openings rely on it: Windurst's
 /// never hide the player themselves, they only show it once the flyover is over.
+///
+/// The zone-in writes the bit first, from the 0x00A (FUN_10094190 at 0x10094a7f; `net::SelfPlate::hide`).
 pub fn self_hidden(w: &World) -> bool {
-    w.self_flags & HIDE_FLAG != 0
+    w.my_plate.hide
 }
 
-/// s2c 0x037 Flags0 bit 0, HideFlag (`World::self_flags`).
-const HIDE_FLAG: u32 = 1;
+/// s2c 0x037 Flags0 bit 1 (SleepFlag; FUN_1009d0f0 at 0x1009d1b2) or the 0x00A's at the zone-in (0x10094aab): our
+/// own actor's +0x120 bit 18, the bit 0x00D / 0x00E @0x20 bit 2 sets on others (`Entity::flags` bit 2). FUN_1008e4d0
+/// marks the actor for unloading by it (`unloads`), so its model goes while no event has it bound; the bind does not
+/// copy it into the script's hide flag (FUN_100bd1a0 takes bits 14 / 15 only), so a bound actor is drawn again.
+pub fn self_asleep(w: &World) -> bool {
+    w.my_plate.asleep
+}
 
 /// FUN_100a17f0(1): the moogle gone over to the Mog House (own model hidden, +0x120 bit 15).
 fn moogle_gone(w: &World) -> Option<u32> {
@@ -3641,7 +3649,14 @@ impl<'a> HideRule<'a> {
             _ => {
                 e.flags & 2 != 0
                     || (!self.takes_part(id)
-                        && unloads(id >> 24 == 0, self.flags, matches!(e.sub_kind, 2..=4), e.ev_reserved, trust))
+                        && unloads(
+                            id >> 24 == 0,
+                            self.flags,
+                            matches!(e.sub_kind, 2..=4),
+                            e.ev_reserved,
+                            trust,
+                            e.flags & 4 != 0,
+                        ))
             }
         };
         // FUN_100cd040: a listed-only NPC the s2c 0x077 list lacks is not drawn (+0xb2 bit 7), events included; nor
@@ -3653,7 +3668,10 @@ impl<'a> HideRule<'a> {
         let me = w.my_id;
         let hide_me = match self.script {
             Some(h) if self.takes_part(me) => h.contains(&me),
-            _ => self_hidden(w) || (!self.takes_part(me) && unloads(true, self.flags, false, false, false)),
+            _ => {
+                self_hidden(w)
+                    || (!self.takes_part(me) && unloads(true, self.flags, false, false, false, self_asleep(w)))
+            }
         };
         // FUN_101d4d90: laying out the Mog House or gardening in it the player is not drawn (+0xb2 bit 4).
         hide_me || w.layout.is_some() || super::garden::hides_player(w)
@@ -4457,11 +4475,23 @@ mod tests {
     /// elevators, ships and event-reserved actors; /hidetrust spares structures only.
     #[test]
     fn unload_exemptions() {
-        assert!(unloads(true, 0x02, false, false, false) && !unloads(true, 0x10, false, false, false));
-        assert!(unloads(false, 0x10, false, false, false) && !unloads(false, 0x02, false, false, false));
-        assert!(!unloads(false, 0x10, true, false, false), "a door keeps its model");
-        assert!(!unloads(false, 0x10, false, true, false), "op 0xac sub 2 holds it");
-        assert!(unloads(false, 0, false, true, true) && !unloads(false, 0, true, false, true));
+        assert!(unloads(true, 0x02, false, false, false, false) && !unloads(true, 0x10, false, false, false, false));
+        assert!(unloads(false, 0x10, false, false, false, false) && !unloads(false, 0x02, false, false, false, false));
+        assert!(!unloads(false, 0x10, true, false, false, false), "a door keeps its model");
+        assert!(!unloads(false, 0x10, false, true, false, false), "op 0xac sub 2 holds it");
+        assert!(unloads(false, 0, false, true, true, false) && !unloads(false, 0, true, false, true, false));
+    }
+
+    /// FUN_1008e4d0 (0x1008e686): the SleepFlag (+0x120 bit 18) marks an actor like the event's filter does, whatever
+    /// the event's mode and with no event at all; a reserved actor and a structure keep their model.
+    #[test]
+    fn sleep_flag_unloads() {
+        for pc in [true, false] {
+            assert!(unloads(pc, 0, false, false, false, true));
+            assert!(!unloads(pc, 0, false, true, false, true), "op 0xac sub 2 holds it");
+            assert!(!unloads(pc, 0, true, false, false, true), "a door keeps its model");
+            assert!(!unloads(pc, 0, false, false, false, false));
+        }
     }
 
     /// Op 0xa9 day val x 7 at 00:30: moon phase val % 12, weekday (val x 7) & 7; 0x77 alone leaves both to the server.
