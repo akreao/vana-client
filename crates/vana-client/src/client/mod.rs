@@ -15376,10 +15376,18 @@ impl App {
         }
     }
 
+    /// The stacked-window pointer follow (World::ptr_dy), only with the drawn (software) cursor.
+    fn ptr_shift(&self) -> f32 {
+        match &self.phase {
+            Phase::World(w) if self.cfg.tool("0021") == 0 => w.ptr_dy,
+            _ => 0.0,
+        }
+    }
+
     /// The mouse at window pixel `at` (the window's motion or a script's): FUN_100016c0 -> FUN_10125ad0, more than 2
     /// pixels from a warped game pointer moves it back to the mouse.
     fn pointer_moved(&mut self, at: (f64, f64)) {
-        let (k, dy) = (self.ui_k, if let Phase::World(w) = &self.phase { w.ptr_dy } else { 0.0 });
+        let (k, dy) = (self.ui_k, self.ptr_shift());
         if self.ptr_warp.is_some_and(|pw| pw.shifted(dy).left_by((at.0 as f32 * k.0, at.1 as f32 * k.1 + dy))) {
             self.ptr_warp = None;
         }
@@ -15691,11 +15699,7 @@ impl App {
         if let Some(m) = &self.modern {
             m.set_opacity(self.cfg.modern_opacity);
         }
-        // The stacked-window pointer follow, only with the drawn (software) cursor.
-        let ptr_dy = match &self.phase {
-            Phase::World(w) if self.cfg.tool("0021") == 0 => w.ptr_dy,
-            _ => 0.0,
-        };
+        let ptr_dy = self.ptr_shift();
         let swallow = ctx.input(|i| i.pointer.primary_released()) && std::mem::take(&mut self.swallow_click);
         let notches = self.list_wheel.trunc();
         self.list_wheel -= notches;
@@ -19124,12 +19128,12 @@ impl App {
             Phase::World(w) => w.game.get(0xa4),
             _ => self.cfg.game.global.get(0xa4),
         } != 0;
+        let dy = self.ptr_shift();
         if self.ui_drawn
             && let Some(lu) = &mut self.game_ui
         {
             lu.open_ticks = if no_zoom { 0.0 } else { 25.0 };
             lu.end_frame(dt);
-            let dy = if let Phase::World(w) = &self.phase { w.ptr_dy } else { 0.0 };
             if let Some(at) = lu.take_focus_warp()
                 && !(3..=6).contains(&self.mouse.kind)
             {
