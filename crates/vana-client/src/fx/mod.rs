@@ -3552,7 +3552,6 @@ mod tests {
         assert!(m.transform_vector3(Vec3::X).abs_diff_eq(math::euler(rot).transform_vector3(Vec3::X), 1e-5));
     }
 
-
     /// The ordering table (FUN_100553c0): farther first, equal clamped keys as inserted (after-images, then the
     /// elements newest first), keys below 0 last and the last inserted first, keys that are no number left out.
     #[test]
