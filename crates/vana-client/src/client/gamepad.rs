@@ -425,10 +425,17 @@ pub struct Pad {
     pub di: Option<[f32; 10]>,
 }
 
+/// A gilrs pad as XInput reads one: the sticks unfiltered (gilrs's default filters are off: its dead zone rescales
+/// radially, retail takes the raw value, v x 127 >> 15), and a trigger held at any value above 0 (FUN_10005a40 tests
+/// the trigger byte against 0; gilrs's own press threshold is 0.75).
 fn gilrs_pad(pad: &gilrs::Gamepad) -> Pad {
     let trigger = |b: Button| pad.button_data(b).map_or(0.0, |d| d.value());
+    let held = |b: Button| match b {
+        Button::LeftTrigger2 | Button::RightTrigger2 => trigger(b) > 0.0,
+        _ => pad.is_pressed(b),
+    };
     Pad {
-        buttons: VIRTUAL.iter().filter(|(b, _)| pad.is_pressed(*b)).map(|(_, n)| *n).collect(),
+        buttons: VIRTUAL.iter().filter(|(b, _)| held(*b)).map(|(_, n)| *n).collect(),
         axes: [
             pad.value(Axis::LeftStickX),
             pad.value(Axis::LeftStickY),
@@ -741,7 +748,8 @@ impl Gamepad {
         let now = Instant::now();
         if self.gilrs.is_none() && self.next_try.is_none_or(|t| now >= t) {
             self.next_try = Some(now + RETRY);
-            match Gilrs::new() {
+            // No default filters (dead zone, jitter): read_pad keeps the d-pad one itself.
+            match gilrs::GilrsBuilder::new().with_default_filters(false).set_update_state(false).build() {
                 Ok(g) => {
                     for (id, pad) in g.gamepads() {
                         log::info!("gamepad {id}: {}", pad.name());
@@ -793,28 +801,22 @@ impl Gamepad {
             s.update();
         }
         if let Some(g) = &mut self.gilrs {
+            use gilrs::ev::filter::{Filter as _, axis_dpad_to_button};
             while let Some(ev) = g.next_event() {
-                match ev.event {
-                    gilrs::EventType::Connected => {
-                        log::info!("gamepad {} connected: {}", ev.id, g.gamepad(ev.id).name());
-                        self.active.get_or_insert(ev.id);
-                    }
-                    gilrs::EventType::Disconnected => {
-                        if self.active == Some(ev.id) {
-                            self.active = g.gamepads().map(|(id, _)| id).find(|&id| id != ev.id);
-                        }
-                    }
-                    gilrs::EventType::ButtonPressed(..) => self.active = Some(ev.id),
-                    _ => {}
+                // A hat reported as axes is still the d-pad's buttons (gilrs's d-pad filter, the one kept).
+                let Some(ev) = Some(ev).filter_ev(&axis_dpad_to_button, g).filter(|e| !e.is_dropped()) else {
+                    continue;
+                };
+                g.update(&ev);
+                if let gilrs::EventType::Connected = ev.event {
+                    log::info!("gamepad {} connected: {}", ev.id, g.gamepad(ev.id).name());
                 }
             }
+            // FUN_100057d0's choice on gilrs's list: padguid's pad, else the first one (not the last one touched).
             // *(Not retail: padguid000 names a DirectInput instance, which gilrs has not; here it holds gilrs's pad
-            // UUID as the Controller window saved it.)*
-            if let Some(id) =
-                g.gamepads().find(|(_, p)| !set.padguid.is_empty() && uuid_text(p.uuid()) == set.padguid).map(|p| p.0)
-            {
-                self.active = Some(id);
-            }
+            // UUID as the Controller window saved it, and "first" is gilrs's order, not DirectInput's.)*
+            let named = g.gamepads().find(|(_, p)| !set.padguid.is_empty() && uuid_text(p.uuid()) == set.padguid);
+            self.active = named.or_else(|| g.gamepads().next()).map(|p| p.0);
             if let Some(p) = self.active.and_then(|id| g.connected_gamepad(id)).map(|p| gilrs_pad(&p)) {
                 #[cfg(windows)]
                 self.xinput_off();

@@ -26,8 +26,9 @@ const VIRTUAL: &[(Button, u8)] = &[
     (Button::Back, 15),
 ];
 
-/// A trigger past this (0 ..= 1) is its button held, as gilrs's default press threshold.
-const TRIGGER_PRESS: f32 = 0.75;
+/// A trigger past this (0 ..= 1) is its button held: any value, as FUN_10005a40's XInput branch tests the trigger byte
+/// against 0.
+const TRIGGER_PRESS: f32 = 0.0;
 
 pub struct Sdl {
     _sdl: sdl2::Sdl,
