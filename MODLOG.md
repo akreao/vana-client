@@ -12790,11 +12790,15 @@ From the research notes:
   info[2] == 2 (behemoth, adamantoise, morbol, treant, wyrms ...) then take FUN_100a4d10's pitch-only normal: the
   front feet points 10 / 11 and rear 8 / 9 (last drawn frame's CPU pose), their midpoints snapped,
   N = normalize(d x (d x up)) facing up (tilt::feet_normal: d = (-2, 0.5, 0) gives (-0.2425, -0.9701, 0)).
-  These models follow FUN_100a4ed0's probe gate: each frame while moving at view depth <= 10.0 or bound to the
-  event (+0x120 bit 7), on the first update (+0x5ec), else when the counter +0x5f0 (from rand() % 120, ours dealt by
-  id) passes 120, i.e. every 121st frame; their normal holds between probes, and a far one poses on the CPU only on
-  the frame before its probe. A riding animal never probes (vt+0x360). Ours: a probe that finds no posed feet (last
-  frame was far) keeps the old normal and probes again next frame, posed (2026-11-11).
+  These models follow FUN_100a4ed0's probe gate (tilt::feet_gate): each frame while moving (more than 1e-7) and
+  either at view depth <= 10.0 or bound to the event (+0x120 bit 7; bits 7 / 8 are tested only inside the moving
+  branch), on the first update (+0x5ec), else when the counter +0x5f0 (from rand() % 120, ours dealt by id) passes
+  120, i.e. every 121st frame, moving or not; their normal holds between probes. The probe reads last frame's drawn
+  pose, so the model poses on the CPU on any frame before one that can probe: within view depth 12.0
+  (`tilt::FEET_POSE`, a margin past 10.0 so a model coming into range was posed the frame before), bound, or the
+  frame before a counter probe; the counter's seed is a random 0..0x7fff, as rand(). A riding animal is left
+  out and takes its rider's normal *(inf: vt+0x360 only clears the moving branch; whether the animal class answers
+  vt+0x3fc for the counter branch is not traced)*.
   *(Not modelled: the probe also runs on attach sync (+0x5e1, FUN_100ca730's copy), on +0x120 bit 8 (took part),
   and while not grounded (+0x5e0 == 0, the last snap missed) even standing still.)*
   The tilted frame goes to the pose, attach_point and the effects (actor_frame).
@@ -17753,7 +17757,7 @@ From the research notes:
   - 0x87 / 0x88 / 0x8a: language slots 0x1c (race names) by num[n], 0x22 (trust lines) and 0x1b (augments) by work[n]
     (expander +0x788 / +0x858 / +0x8c0, FUN_100bd820).
   - 0x89: group 12 0x1a2 + num[n] (0 past 0xb; a Unity leader) as "{%s} ", nothing for 0.
-  - 0x81 / 0x83 (FUN_1022f330 / FUN_1022ec10 names) are in no dialogue file; not kept.
+  - 0x81 / 0x83: quest / mission names (see "Grammar 0x81 / 0x83 and the choice mask's sign", 2026-11-17).
 - Op 0xc3 (FUN_100bc000, len 7): slot val@1 (0..7) of DAT_10488210 (0x14 each) = the 16 bytes of str@3 and the word
   val@5. A slot outside 0..7 never advances in retail; ours waits there a frame at a time. The table outlives events
   (event_vm Memory.names).

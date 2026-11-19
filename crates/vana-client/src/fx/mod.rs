@@ -293,6 +293,9 @@ pub struct ElemCpu {
     pub serial: u32,
     /// The tick it was made in (`Effects::ticks`): elements run newest first (`run_order`).
     pub born: u32,
+    /// Made inside an element's update (an end-stream burst, an element's clone): the factory puts it at the front
+    /// of task bucket 0xb, behind the walk, so its first update is the next frame.
+    pub late: bool,
     pub life: f32,
     pub max_life: f32,
     pub flags: u32,
@@ -1229,6 +1232,12 @@ pub struct Effects {
     pub rumble: i32,
     /// Ticks run, for `ElemCpu::born`.
     ticks: u32,
+    /// An element's update is running (the lives, an element's clone): elements made now are `ElemCpu::late`.
+    in_elem: bool,
+    /// This tick's lives have run: elements made now by a generator's task get their first update after the
+    /// generators (`first_run`), as the walk reaches bucket 0xb after them.
+    lives_done: bool,
+    first_run: Vec<(u32, u32)>,
     /// Bumped whenever a ground projection's faces change (the renderer re-uploads them).
     pub decal_version: u64,
     /// Footstep dust to start next tick: generator and actor; actors that left a footprint.
@@ -1394,6 +1403,9 @@ impl Effects {
             quakes: Vec::new(),
             rumble: 0,
             ticks: 0,
+            in_elem: false,
+            lives_done: false,
+            first_run: Vec::new(),
             decal_version: 0,
             dust: Vec::new(),
             prints: Vec::new(),
@@ -2142,18 +2154,13 @@ impl Effects {
         self.knocks.extend(due.into_iter().map(|k| k.1));
         self.last_frame = Some(*f);
         self.start_dust(f, actors);
+        self.lives_done = false;
+        self.first_run.clear();
         // Lives first, as each element's Exec does before its update stream.
         for e in 0..self.elems.len() {
-            let Some(c) = self.elems[e].as_mut() else { continue };
-            if c.max_life == 0.0 {
-                continue;
-            }
-            c.life -= dt;
-            if c.life < 1.0 {
-                self.expire(e as u32, f, actors);
-            }
+            self.step_life(e as u32, f, actors);
         }
-        self.step_quakes(f);
+        self.lives_done = true;
         self.step_models(f, actors);
         self.step_decals(actors);
         let (voyage, sky) = (self.voyage, self.sky);
@@ -2175,6 +2182,9 @@ impl Effects {
             self.ground_frame(i, actors);
             let runs = self.drive(i, f);
             let Some(inst) = self.insts[i].as_ref() else { continue };
+            // An element's clone runs inside that element's update (ops 0x25 / 0x33 / 0x46: FUN_1004a980 0x1004b5d0,
+            // 0x1004b604 -> FUN_100496f0); a generator's own task runs before the elements (buckets 8 / 9).
+            let in_elem = inst.driven.is_some();
             let (m, a, b, wgt, ss, ms) =
                 (inst.matrix, inst.scale_a, inst.scale_b, inst.weather, inst.size_scaled, inst.mslot);
             self.put_slot(ms, m, a, b, wgt, ss);
@@ -2188,10 +2198,21 @@ impl Effects {
                     self.put_slot(ms, Some(m), a, b, wgt, ss);
                 }
                 if run {
+                    let was = std::mem::replace(&mut self.in_elem, in_elem);
                     self.update_instance(i, f, actors);
+                    self.in_elem = was;
                 }
             }
         }
+        // The walk reaches bucket 0xb after the generators' tasks: what they made this frame runs its first update
+        // now (FUN_10045a40 -> FUN_10044ae0: the life, then the update stream), the kicks of op 0x5f included.
+        for (e, serial) in std::mem::take(&mut self.first_run) {
+            if self.elems[e as usize].as_ref().is_some_and(|c| c.serial == serial) {
+                self.step_life(e, f, actors);
+            }
+        }
+        self.lives_done = false;
+        self.step_quakes(f);
         self.step_sounds(f);
         // Finished or stopped instances go once their elements have; a clone whose last element went this frame goes
         // unless its generator has emitted again since *(inf: retail's order of generators and elements in a frame)*.
@@ -2422,18 +2443,37 @@ impl Effects {
         self.fx_models = keep;
     }
 
-    /// Element update op 0x5f each frame, after the lives: |sort key| > far skips; k from the distance to the eye
-    /// (1 within near, 0 at far); v = trunc(key(t) x S2 x k x 255) >= 0 to the rumble, v x factor a camera kick.
-    /// Skipped with "Screen shaking" off (config 0x92 bit 17) unless the player is busy (FUN_100adf70). The kicks
-    /// come in retail's element order (`run_order`): FUN_10021ba0's speed rule depends on it.
+    /// FUN_10044ae0's life: an element with one counts it down by the frame's ticks and ends under 1 (its end stream
+    /// runs inside its update). One made inside an element's update this frame waits for the next (`ElemCpu::late`).
+    fn step_life(&mut self, e: u32, f: &Frame, actors: &dyn Actors) {
+        let ticks = self.ticks;
+        let Some(c) = self.elems[e as usize].as_mut() else { return };
+        if c.max_life == 0.0 || c.late && c.born == ticks {
+            return;
+        }
+        c.life -= f.dt;
+        if c.life < 1.0 {
+            let was = std::mem::replace(&mut self.in_elem, true);
+            self.expire(e, f, actors);
+            self.in_elem = was;
+        }
+    }
+
+    /// Element update op 0x5f each frame, after the generators' tasks and the first update of what they made (the walk
+    /// runs bucket 0xb after them), not for elements whose first update is the next frame: |sort key| > far skips; k
+    /// from the distance to the eye (1 within near, 0 at far); v = trunc(key(t) x S2 x k x 255) >= 0 to the rumble, v x
+    /// factor a camera kick. Skipped with "Screen shaking" off (config 0x92 bit 17) unless the player is busy
+    /// (FUN_100adf70). The kicks come in retail's element order (`run_order`): FUN_10021ba0's speed rule depends on it.
     fn step_quakes(&mut self, f: &Frame) {
         self.quakes.clear();
         self.rumble = 0;
         if !self.busy && self.filter.0 & (1 << 17) != 0 {
             return;
         }
-        let mut order: Vec<usize> =
-            (0..self.elems.len()).filter(|&e| self.elems[e].as_ref().is_some_and(|c| c.quake.is_some())).collect();
+        let ticks = self.ticks;
+        let mut order: Vec<usize> = (0..self.elems.len())
+            .filter(|&e| self.elems[e].as_ref().is_some_and(|c| c.quake.is_some() && !(c.late && c.born == ticks)))
+            .collect();
         order.sort_by_key(|&e| std::cmp::Reverse(self.elems[e].as_ref().map(|c| self.run_order(c))));
         for e in order {
             let Some(c) = self.elems[e].as_ref() else { continue };
@@ -2509,6 +2549,11 @@ impl Effects {
         cpu.inst = inst;
         cpu.serial = self.serial;
         cpu.born = self.ticks;
+        cpu.late = self.in_elem;
+        let first_run = !self.in_elem && self.lives_done;
+        if first_run {
+            self.first_run.push((e, self.serial));
+        }
         // CMoSkeletonElem: its CXiSkeletonActor is the client's, made from the model folder (FUN_1004e8d0 kind 1).
         if let (Some(r), Some(x)) = (s.model, self.insts.get(inst).and_then(|x| x.as_ref())) {
             self.model_seq = self.model_seq.wrapping_add(1);
@@ -2597,10 +2642,14 @@ impl Effects {
         if let Some(x) = self.insts[inst].as_mut() {
             x.live.push_back(e);
         }
-        // The CPU's lives ran before this spawn: the GPU skips its first decrement too, or it would run a frame's dt
-        // ahead and sample t >= 1 on the last frame (keys ending in a spike at 1.0 flash white). That frame's t = 0
-        // sample is not drawn (ctl::BORN).
-        elem.0[w::CTRL] |= ctl::LIFE_SET | ctl::BORN;
+        // One made by a generator's task after the lives gets its whole first update this frame (`first_run`): its
+        // life counted down on both sides, then drawn (FUN_10045a40). Else the CPU's lives ran before this spawn (or
+        // its first update is the next frame: `late`): the GPU skips its first decrement too, or it would run a
+        // frame's dt ahead and sample t >= 1 on the last frame (keys ending in a spike at 1.0 flash white). That
+        // frame's t = 0 sample is not drawn (ctl::BORN).
+        if !first_run {
+            elem.0[w::CTRL] |= ctl::LIFE_SET | ctl::BORN;
+        }
         self.writes.push(Write::Full(e, Box::new(elem)));
         for ch in s.children {
             match ch {
@@ -3374,6 +3423,21 @@ impl Effects {
         out
     }
 
+    /// The status holds on `id` (for the log): each holding task's name, file and ticks left.
+    pub fn held_by(&self, id: u32) -> Vec<String> {
+        self.task_holds
+            .iter()
+            .filter(|h| h.1 == id && h.2 & HOLD_STATUS != 0)
+            .map(|(uid, _, _, left)| {
+                let name = self.tasks.iter().flatten().find(|t| t.uid == *uid).map_or("?".to_string(), |t| {
+                    let lib = &self.reg.libs[t.res.0];
+                    format!("{} ({})", String::from_utf8_lossy(&lib.tree.nodes[t.res.1].name), lib.file_id)
+                });
+                format!("{name} {left:.0} ticks")
+            })
+            .collect()
+    }
+
     pub fn live_count(&self) -> usize {
         self.elems.iter().filter(|e| e.is_some()).count()
     }
@@ -3420,7 +3484,8 @@ fn roofed(g: &crate::dat::generator::Generator) -> bool {
 /// FUN_10052eb0 / FUN_1003afd0 for the modes the zone uses; actor modes come with the battle triggers.
 fn attach(inst: &mut Instance, f: &Frame, voyage: Mat4, sky: crate::dat::weather::Sky) {
     match inst.mode {
-        0 => inst.matrix = None,
+        // FUN_10052eb0 returns at once for mode 0: the matrix stays (an element sub-clone's, set at its spawn).
+        0 => {}
         // Sun / moon: the zone object's +0xb4 / +0xd4 (FUN_1003be10 0xe / 0xf through FUN_10186e90 /
         // FUN_10186eb0), which FUN_10187720 sets each frame from the light's own directions: the fixed sky time
         // when the zone has one, and the zone's tilt. FUN_1003be10 turns the point by the voyage matrix's
@@ -3486,6 +3551,7 @@ mod tests {
         let m = clone_follow(false, rot, Vec3::ONE, None, Mat4::IDENTITY);
         assert!(m.transform_vector3(Vec3::X).abs_diff_eq(math::euler(rot).transform_vector3(Vec3::X), 1e-5));
     }
+
 
     /// The ordering table (FUN_100553c0): farther first, equal clamped keys as inserted (after-images, then the
     /// elements newest first), keys below 0 last and the last inserted first, keys that are no number left out.
@@ -3560,5 +3626,38 @@ mod tests {
                 .collect();
             assert_eq!(order, want, "DAT {file}");
         }
+    }
+
+    /// File 3445 gob_/vib1: a generator's task (bucket 8 / 9) makes its element before the walk reaches bucket 0xb,
+    /// so the element's first update (FUN_10045a40 -> FUN_10044ae0: the life, then the update stream with op 0x5f)
+    /// runs in the frame it is made: its first kick lands in that frame, at the life counted down once.
+    #[test]
+    fn first_kick_in_the_frame_made() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(bytes) = index.read(3445) else { return };
+        let mut fx = Effects::new();
+        let lib = lib::Library::load(3445, bytes).unwrap();
+        let node = lib.gens.iter().find(|g| &g.name == b"vib1").unwrap().node;
+        let l = fx.reg.add(lib);
+        let eye = Vec3::new(0.0, -2.0, -10.0);
+        let f = Frame {
+            dt: 2.0,
+            seconds: 1.0 / 30.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye,
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        fx.start((l, node), Owner::Zone).unwrap();
+        fx.tick(&f, &NoActors);
+        let c = fx.elems.iter().flatten().find(|c| c.quake.is_some()).expect("vib1's element");
+        assert!(c.max_life > f.dt + 1.0 && c.life == c.max_life - f.dt, "{} of {}", c.life, c.max_life);
+        assert!(!fx.quakes.is_empty() && fx.rumble > 0, "no kick in the frame it was made");
     }
 }

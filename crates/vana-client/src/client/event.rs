@@ -40,6 +40,8 @@ fn angle_to(a: f32, b: f32) -> f32 {
 
 /// LSB's event Mode bits (`EVENT_MODE`), as FUN_100aeea0 and the packet handlers read them.
 pub mod mode {
+    /// FUN_100983f0: with it a bound player's c2s 0x015 still goes out, carrying the event body's place.
+    pub const SEND_POSITION: u32 = 0x04;
     pub const NO_PARTICIPANT_ANIM: u32 = 0x20;
     pub const NO_DIALOGUE: u32 = 0x40;
     pub const NO_IDLE_WAIT: u32 = 0x100;
@@ -671,12 +673,12 @@ pub struct Live {
 }
 
 impl Live {
-    /// Op 0x33's bit 21 on a bound actor (entity +0x120 bit 21): no ground snap and, through FUN_10084640, no tilt.
     /// Bound to this event (+0x120 bit 7).
     pub fn is_bound(&self, id: u32) -> bool {
         self.st.bound.contains(&id)
     }
 
+    /// Op 0x33's bit 21 on a bound actor (entity +0x120 bit 21): no ground snap and, through FUN_10084640, no tilt.
     pub fn no_ground(&self, me: u32, id: u32) -> bool {
         self.rt.actors().any(|(a, b)| b.no_ground && (if a == PLAYER { me } else { a }) == id)
     }
@@ -1798,20 +1800,20 @@ impl Host for LiveHost<'_> {
                 }
             }
             Effect::Op { op: 0xb6, sub: Some(sub), actor, args } => self.event_look(sub, actor, &args),
-            // Zone actions (XiZone, DAT_106175ac vtable +0x18 / +0x1c): schedulers of the zone's effects by 4cc.
+            // Zone actions (XiZone, DAT_106175ac vtable +0x18 / +0x1c): schedulers of the zone's effects by 4cc, run
+            // as 0x45's are, so their camera paths, fades and crossfades play (an event area's scene: 516's kon0).
             Effect::Op { op: op @ (0x2d | 0x51), args, .. } => {
-                let who = |a: Option<&Arg>| match a {
-                    Some(Arg::Actor(0)) | None => crate::fx::sched::Who::None,
-                    Some(Arg::Actor(a)) => crate::fx::sched::Who::Actor(self.wid(*a)),
-                    _ => crate::fx::sched::Who::None,
+                let raw = |a: Option<&Arg>| match a {
+                    Some(Arg::Actor(a)) => *a,
+                    _ => 0,
                 };
-                let (a, b) = (who(args.first()), who(args.get(1)));
+                let (actor, target) = (raw(args.first()), raw(args.get(1)));
                 if let (Some(Arg::Name(n)), Some(file)) = (args.get(2), self.w.effects.zone_file()) {
-                    let name = u32::from_le_bytes(crate::dat::generator::fourcc(n));
+                    let tag = n.clone();
                     if op == 0x2d {
-                        self.w.effects.on_event_scheduler(file, name, a, b)
+                        self.effect(Effect::Scheduler { file, tag, actor, target, param: 0 })
                     } else {
-                        self.w.effects.stop_event_scheduler(file, name, a, b)
+                        self.effect(Effect::SchedulerStop { file, tag, actor, target })
                     }
                 }
             }
@@ -2392,8 +2394,9 @@ impl Host for LiveHost<'_> {
         };
         // FUN_1008cd90 holds bit 21 for a carrier status and for an unbound rider (client/carrier.rs).
         let bound = self.st.bound.contains(&actor);
+        // +0x174 is one field: an event status (op 0xac sub 1) or a door op's state, whichever came last.
         let status = if bound {
-            self.st.event_status.get(&actor).copied().unwrap_or(0)
+            self.st.event_status.get(&actor).or_else(|| self.w.doors.event.get(&actor)).copied().unwrap_or(0)
         } else {
             self.w.doors.state.get(&actor).copied().unwrap_or(status)
         };
@@ -2499,6 +2502,11 @@ pub fn queue(w: &mut World, s: EventStart) {
     );
     // FUN_100ad2c0 clears the post-event re-request (+0x1f8 / +0x1fa) of every actor.
     w.self_lock = None;
+    // The zone-in set-up locks control when the 0x00A carries an event (FUN_10094190 0x1009533e, FUN_10096640
+    // 0x1009679a, both under EventNum != 0), after the zone-in cleared it. No other event start writes the lock.
+    if s.login {
+        w.control_lock = Some((Instant::now(), s.target));
+    }
     w.event_pending = Some(Box::new(Waiting {
         start: s,
         blocks: None,
@@ -2753,8 +2761,9 @@ fn begin(w: &mut World, mut wt: Box<Waiting>, index: &DatIndex) {
     // FUN_100ad000 (load finished): DAT_104760f8 = 1, DAT_10473068 = DAT_10475cb0.
     st.loaded = true;
     st.cancellable = st.cb0;
-    // FUN_10094190 / FUN_100aed00: control locked, DAT_10488100 = 1 (released at the end).
-    (w.control_lock, w.lock_carry) = (Some((Instant::now(), st.start.target)), false);
+    // FUN_100aed00: DAT_10488100 = 1 (the end may release the lock). It sets no lock itself: a talk's event runs under
+    // the talk request's, a zone-in event under the one `queue` set, and one the server starts on its own under none.
+    w.lock_carry = false;
     w.event = Some(Box::new(Live { rt, st }));
     if cancel && let Some(l) = &mut w.event {
         // The 0x052 mode 2 that came while it waited cancels it once loaded (0x10096a99).
@@ -3459,25 +3468,16 @@ pub fn bound(w: &World, id: u32) -> bool {
     w.event.as_ref().is_some_and(|l| l.st.bound.contains(&id))
 }
 
-/// FUN_100983f0: no c2s 0x015 is built while the control lock is on (DAT_104840c8: set by FUN_10094190 at the zone-in
-/// when the 0x00A carries an event and kept until that event ends, or by a talk request until its answer), nor while
-/// we are bound to the running event (+0x120 bit 7 with DAT_104819a5) unless (DAT_10481aac | Mode) & 4. So through a
-/// city opening (Mode 0x83) the server hears no position from us at all; the first one goes out after the end.
+/// FUN_100983f0: no c2s 0x015 is built while we are bound to the running event (+0x120 bit 7 with DAT_104819a5)
+/// unless (DAT_10481aac | Mode) & SEND_POSITION (0x1009842c). The control lock's test (0x10098530) is the other gate,
+/// `SelfState::locked`. So through a city opening (Mode 0x83) the server hears no position from us at all.
 pub fn no_position(w: &World) -> bool {
-    no_position_in(
-        w.event.as_ref().map(|l| (l.st.start.login, l.st.bound.contains(&w.my_id), l.st.flags())),
-        w.event_pending.as_ref().is_some_and(|p| p.start.login),
-        w.control_lock.is_some(),
-    )
+    no_position_in(w.event.as_ref().map(|l| (l.st.bound.contains(&w.my_id), l.st.flags())))
 }
 
-/// `no_position` from its parts: the running event's (zone-in event, we are bound, flags), a zone-in event still
-/// waiting for its actors, and the control lock.
-fn no_position_in(live: Option<(bool, bool, u32)>, login_pending: bool, lock: bool) -> bool {
-    match live {
-        Some((login, bound, flags)) => login || (bound && flags & 4 == 0),
-        None => login_pending || lock,
-    }
+/// `no_position` from the running event's (we are bound, flags).
+fn no_position_in(live: Option<(bool, u32)>) -> bool {
+    live.is_some_and(|(bound, flags)| bound && flags & mode::SEND_POSITION == 0)
 }
 
 /// The actors the running event has bound (+0x120 bit 7).
@@ -3612,8 +3612,11 @@ pub fn hides(w: &World, id: u32) -> bool {
 /// begins without us until its script shows us (ops 0x22 / 0x4e with 0). The city openings rely on it: Windurst's
 /// never hide the player themselves, they only show it once the flyover is over.
 pub fn self_hidden(w: &World) -> bool {
-    w.self_flags & 1 != 0
+    w.self_flags & HIDE_FLAG != 0
 }
+
+/// s2c 0x037 Flags0 bit 0, HideFlag (`World::self_flags`).
+const HIDE_FLAG: u32 = 1;
 
 /// FUN_100a17f0(1): the moogle gone over to the Mog House (own model hidden, +0x120 bit 15).
 fn moogle_gone(w: &World) -> Option<u32> {
@@ -4132,6 +4135,8 @@ struct EventTexts {
     mon: std::sync::OnceLock<Option<crate::dat::names::DMsg>>,
     /// Files 55473 / 55474 (grammar 0x82 / 0x86).
     words: [std::sync::OnceLock<Option<crate::dat::names::DMsg>>; 2],
+    /// The quest and mission name files (grammar 0x81 / 0x83).
+    logs: std::sync::OnceLock<Arc<crate::dat::journal::Logs>>,
 }
 
 impl dialog::Texts for EventTexts {
@@ -4185,6 +4190,13 @@ impl dialog::Texts for EventTexts {
             _ => bt?.grammar_line(kind, id),
         }
     }
+
+    fn journal(&self, quest: bool, table: u8, entry: usize) -> Option<Vec<u8>> {
+        let index = self.index.as_ref()?;
+        let logs = self.logs.get_or_init(|| Arc::new(crate::dat::journal::Logs::load(index)));
+        let file = if quest { logs.quests.get(table as usize)? } else { logs.missions.get(table as usize)? };
+        Some(crate::dat::font::encode_sjis(&file.entries.get(entry)?.name))
+    }
 }
 
 /// What message codes take from the client (FUN_100c1650): the date strings, the roster, the other name tables.
@@ -4202,6 +4214,7 @@ pub fn text_ctx(w: &World) -> dialog::Ctx {
         ae: w.ae_tables.clone().map(Some).map(std::sync::OnceLock::from).unwrap_or_default(),
         mon: Default::default(),
         words: Default::default(),
+        logs: w.logs.clone().map(std::sync::OnceLock::from).unwrap_or_default(),
     };
     dialog::Ctx {
         dates,
@@ -4415,21 +4428,15 @@ pub fn source_line(w: &mut World, source: u16, id: u16, num: [u32; 5], mode: u8,
 mod tests {
     use super::*;
 
-    /// FUN_100983f0's gates on c2s 0x015.
+    /// FUN_100983f0's bound-actor gate on c2s 0x015 (the lock is `SelfState::locked`).
     #[test]
     fn position_packets_stop_in_events() {
-        // A city opening: from the zone-in (the event still waits for its actors) to its end.
-        assert!(no_position_in(None, true, false));
-        assert!(no_position_in(Some((true, true, 0x83)), false, true));
-        // A zone-in event keeps the lock even with bit 4.
-        assert!(no_position_in(Some((true, true, 0x87)), false, true));
-        // A talk: the request's lock, then the event we are bound to.
-        assert!(no_position_in(None, false, true));
-        assert!(no_position_in(Some((false, true, 0)), false, true));
-        // Mode bit 4 (or op 0x38's) sends the event's place; an event that does not bind us sends ours.
-        assert!(!no_position_in(Some((false, true, 4)), false, true));
-        assert!(!no_position_in(Some((false, false, 0)), false, false));
-        assert!(!no_position_in(None, false, false));
+        // A city opening (Mode 0x83) binds us: none.
+        assert!(no_position_in(Some((true, 0x83))));
+        // Mode bit 4 sends the event body's place; an event that does not bind us, or none, sends ours.
+        assert!(!no_position_in(Some((true, 0x87))));
+        assert!(!no_position_in(Some((false, 0))));
+        assert!(!no_position_in(None));
     }
 
     /// 0x100952e7: only a zone-in event with Mode bit 0x80 starts in cinema mode, at (0, 0).
@@ -4536,6 +4543,36 @@ mod tests {
         assert!(coded_chat("hello").is_none());
     }
 
+    /// Beaucedine Glacier [S]'s Regal Pawprints menu (8608): row n is grammar 0x83 / 0x81, a mission or quest name.
+    #[test]
+    fn objective_menu_names() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let index = Arc::new(index);
+        let d = Dialog::parse(&index.read(crate::dat::dialog::file_id(136)).unwrap()).unwrap();
+        let raw = d.raw(8608).unwrap();
+        let texts = EventTexts {
+            bt: None,
+            index: Some(index),
+            files: [None; 6],
+            merits: Default::default(),
+            jp: Default::default(),
+            ae: Default::default(),
+            mon: Default::default(),
+            words: Default::default(),
+            logs: Default::default(),
+        };
+        let ctx = dialog::Ctx { num: [0, 22, 0, 0, 0, 0, 0, 0], texts: Some(Arc::new(texts)), ..Default::default() };
+        let e = dialog::expand(&raw, &ctx);
+        let text: Vec<String> = e.lines.iter().map(|l| decode_sjis(l)).collect();
+        let rows = &text[e.choice.unwrap()..];
+        // Row 2: mission log 8 (Wings of the Goddess) entry num[1]; rows 3..8: quest area 7 (Crystal War) entry 0.
+        assert_eq!(
+            (rows[0].as_str(), rows[2].as_str(), rows[3].as_str()),
+            ("None.", "Dungeons and Dancers.", "Lost in Translocation.")
+        );
+    }
+
     /// Source 10's 0x1bd with that line's num[] reads as retail printed it.
     #[test]
     fn coded_unity_text() {
@@ -4556,6 +4593,7 @@ mod tests {
             ae: Default::default(),
             mon: Default::default(),
             words: Default::default(),
+            logs: Default::default(),
         };
         let ctx = dialog::Ctx {
             num: [9, 0x2d, 0x123, 2, 2, 0, 0, 0],

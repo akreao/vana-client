@@ -976,6 +976,7 @@ fn emit_ops(
         inst: usize::MAX,
         serial: 0,
         born: 0,
+        late: false,
         life,
         max_life,
         flags,

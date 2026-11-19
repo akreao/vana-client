@@ -587,7 +587,8 @@ fn alter_ego(p: &mut Panels, w: &mut World) {
 }
 
 /// fe_main as a column; beside it a set's slots (fe_equip) and the celestites owned (fe_inven), the cursor's
-/// description under them. The pointer over the list without the keys hands them over, as retail's does.
+/// description under them. The pointer anywhere over the list without the keys sends Num+ every frame, moving or
+/// not, as retail's does (celestite::pointer).
 fn celestites(p: &mut Panels, w: &mut World) {
     const SLOTS_W: f32 = 320.0;
     let Some(gu) = p.gu else { return };
@@ -596,10 +597,10 @@ fn celestites(p: &mut Panels, w: &mut World) {
     let free = w.confirm.is_none();
     let width = COL_W + if v.lists.is_some() { SLOTS_W + SIDE_W + 32.0 } else { 0.0 } + 44.0;
     let (mut menu, mut slot, mut row, mut over) = (None, None, None, false);
-    let title = gu.title_msg(201).unwrap_or_else(|| "Celestites".into());
+    let title = gu.title_msg(201).unwrap_or_default();
     if let Some(l) = v.lists.as_mut() {
         for (k, r) in l.slots.rows.iter_mut().enumerate() {
-            r.name = m.caption(gu, "menu    keytops3", l.labels[k]).unwrap_or_else(|| (k + 1).to_string());
+            r.name = m.caption(gu, "menu    keytops3", l.labels[k]).unwrap_or_default();
         }
     }
     p.panel("window", Some(Title { icon: Some("icons/status"), text: &title, note: None, name: false }), width, |ui| {
@@ -620,7 +621,7 @@ fn celestites(p: &mut Panels, w: &mut World) {
                     let slots = ui.vertical(|ui| {
                         ui.set_width(SLOTS_W);
                         let set = m.caption(gu, "menu    framesus", 211 + l.set);
-                        heading(ui, m, &set.unwrap_or_else(|| format!("Set {}", l.set + 1)));
+                        heading(ui, m, &set.unwrap_or_default());
                         slot = rows(ui, m, gu, "celestite slots", &l.slots, SLOTS_W, false);
                     });
                     ui.add_space(16.0);
@@ -630,11 +631,7 @@ fn celestites(p: &mut Panels, w: &mut World) {
                         row = rows(ui, m, gu, "celestites owned", &l.owned, SIDE_W, false);
                     });
                     let other = if l.slots.focused { owned.response.rect } else { slots.response.rect };
-                    over = l.free
-                        && ui.input(|i| {
-                            i.pointer.hover_pos().is_some_and(|at| other.contains(at))
-                                && (i.pointer.delta() != egui::Vec2::ZERO || i.pointer.any_click())
-                        });
+                    over = l.free && ui.input(|i| i.pointer.hover_pos().is_some_and(|at| other.contains(at)));
                 });
                 help(ui, m, &l.owned.help);
             });
@@ -643,7 +640,7 @@ fn celestites(p: &mut Panels, w: &mut World) {
     if !free {
         return;
     }
-    if over {
+    if over && !super::super::textcmd::busy(w) {
         celestite::key(w, egui::Key::Plus, false, false);
         return;
     }

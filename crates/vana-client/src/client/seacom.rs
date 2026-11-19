@@ -61,8 +61,8 @@ pub fn open_bazaar(w: &mut World) {
 
 /// Mode 3 (type 0x73) edits the linkshell message's lines, block 3. Nothing opens it: retail's only opener,
 /// menu_comment_fn (FUN_101e7530), is called from case 4 of link2 / link3's handlers, the caption's number, and the
-/// caption is in state 0x10 from the window's open (registry flag 0x200000, `GameUi::caption`), so the cursor is
-/// never on it. The mode's store and close are kept as the window class has them.
+/// submenus carry registry flag 0x200000, so their caption never takes the cursor. The mode's store and close are kept
+/// as the window class has them.
 fn store(w: &mut World, mode: u8) -> &mut Store {
     match mode {
         0 => &mut w.bazaar_msg,

@@ -53,9 +53,8 @@ the actor, c2s 0x016) or by the slot's reset; an event's end leaves it. FUN_1009
   no reader, the slot's reset clears both (FUN_1008a350). Census (`dat::event::status_census::reserve_census`):
   1,434 uses, all in zone 280 (Mog Garden): sub 2 1,377 times (29 on the running actor), sub 3 53 times (1), sub
   4 four times, each with value 0.
-- Ours reserved the actor running the op, so in the garden the wrong actor kept its model through the event
-  filter and had its sounds muted. Now actor@2, with the update rules above (`EntityUpdate::reserved`,
-  `Entity::pos_hold`).
+- Ours already took actor@2 for subs 2 / 3 and kept bit 0 of sub 4 (`Entity::keep_event_pos`); the update rules
+  above are new (`EntityUpdate::reserved`).
 
 **A despawn while an event holds the actor.** 0x1009b8f6..0x1009b93a (0x00D: 0x10099c6a..0x10099cab): every
 despawn sets the mark +0x124 bit 12 and +0x145 = 0 (0x00E also puts +0x124's sub-animation fields back to 0x880); the hide
@@ -65,9 +64,12 @@ and not ours. Any later update for the slot clears the mark first (0x1009b7db / 
 stays through its event, and:
 - a full update before the end keeps it for good. Ours removed it at the end all the same.
 - a partial one finds +0x145 = 0: the slot is reset at once, which unbinds it from the event, and the actor is
-  asked for again (+0x12c bit 15). Ours applied the partial update.
+  asked for again (+0x12c bit 15). Ours applied the partial update. *(inf: after the unbind ours keeps the actor out
+  of the VM's poses until the event ends, `detached`.)*
+- a plain despawn (no event holds the actor) never calls FUN_1008ee30, so it does not unbind: an actor the VM
+  drives that respawns mid-event is posed again (ours: `drop_entity`; only the slot resets use `reset_entity`).
 - with no update it goes at the event's end, as before.
-`Entity::awaiting_full`, `event::respawned`, `event::unbind`.
+`Entity::awaiting_full`, `event::respawned`, `event::unbind` (from `reset_entity`).
 
 **SubKind 7.** FUN_1009b3f0 writes all nine words @0x32..@0x42 into the look slots (+0xfc..+0x10c); ours zeroed
 the main, sub and ranged words @0x3E..@0x42.

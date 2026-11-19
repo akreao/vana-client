@@ -25,6 +25,34 @@ pub const HOST: &str = "pc001.pol.com";
 pub const PORT: u16 = 53001;
 /// Platform and title tags every client frame carries: Windows, title 1.
 const TAGS: [u8; 8] = *b"W20\x000001";
+
+/// A patch service: its server, the platform and title tags every client frame carries, the title (patch.ver's key),
+/// and whether its code files are written (the Viewer's: kept, never run) or left (the game's: Windows runs them).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Service {
+    pub host: &'static str,
+    pub port: u16,
+    tags: [u8; 8],
+    pub title: u32,
+    code: bool,
+}
+
+/// FFXI's game files, title 1.
+pub const GAME: Service =
+    Service { host: HOST, port: PORT, tags: TAGS, title: crate::net::pol::patchver::GAME, code: false };
+/// The PlayOnline Viewer, title 1000 on port 53000 + 1000 (app.dll FUN_1001795d; the host is env.dat's
+/// PATCH_SERVER_DOMAIN); its version check runs before any sign-in.
+pub const VIEWER: Service = Service {
+    host: "pt008.pol.com",
+    port: 54000,
+    tags: *b"W20\x001000",
+    title: crate::net::pol::patchver::VIEWER,
+    code: true,
+};
+/// The platform tag a manifest path may name (`__W20__`).
+const PLATFORM: &str = "W20";
+/// The version file a title's folder keeps (net::pol::patchver).
+pub const PATCH_VER: &str = "patch.ver";
 const MAGIC: &[u8; 4] = b"POLP";
 const HEADER: usize = 16;
 const CHUNK: u32 = 0x10000;
@@ -65,11 +93,11 @@ fn open(frame: &[u8]) -> Result<(u32, &[u8])> {
     Ok((u32::from_le_bytes(frame[12..16].try_into().unwrap()), &frame[HEADER..]))
 }
 
-fn file_request(path: &str, offset: u32, len: u32) -> Vec<u8> {
+fn file_request(tags: &[u8; 8], path: &str, offset: u32, len: u32) -> Vec<u8> {
     let mut b = Vec::with_capacity(21 + path.len());
     b.extend_from_slice(&offset.to_le_bytes());
     b.extend_from_slice(&len.to_le_bytes());
-    b.extend_from_slice(&TAGS);
+    b.extend_from_slice(tags);
     b.extend_from_slice(&(path.len() as u32 + 1).to_le_bytes());
     b.extend_from_slice(path.as_bytes());
     b.push(0);
@@ -136,17 +164,18 @@ fn version_reply(b: &[u8]) -> Result<ServerVersion> {
 }
 
 /// A version frame: tags, then the 0x40-byte block (the version applied here; blank when none).
-fn version_request(applied: Option<&str>) -> Vec<u8> {
-    let mut b = TAGS.to_vec();
+fn version_request(tags: &[u8; 8], applied: Option<&str>) -> Vec<u8> {
+    let mut b = tags.to_vec();
     let v = applied.unwrap_or_default().as_bytes();
     let n = v.len().min(VERSION_BLOCK - 1);
     b.extend_from_slice(&v[..n]);
-    b.resize(TAGS.len() + VERSION_BLOCK, 0);
+    b.resize(tags.len() + VERSION_BLOCK, 0);
     seal(kind::VERSION, &b)
 }
 
 pub struct Session {
     s: TcpStream,
+    tags: [u8; 8],
     /// When the last file request went out (retail's +0x7778ec, set at the connect and at every request).
     asked: Instant,
     /// The version frame a keep-alive sends.
@@ -164,14 +193,42 @@ impl Session {
     /// A connection to `host` (the one a version reply named; the name the client knows when None or when it
     /// does not resolve, as retail keeps its address then). `applied` goes into the keep-alive frames.
     pub fn connect_to(host: Option<&str>, applied: Option<&str>) -> Result<Self> {
-        let named = host.and_then(|h| TcpStream::connect((h, PORT)).ok());
+        Self::open(GAME, host, applied)
+    }
+
+    /// [`Session::connect_to`] for any service.
+    pub fn open(service: Service, host: Option<&str>, applied: Option<&str>) -> Result<Self> {
+        let port = service.port;
+        let named = host.and_then(|h| TcpStream::connect((h, port)).ok());
         let s = match named {
             Some(s) => s,
-            None => TcpStream::connect((HOST, PORT)).with_context(|| format!("connecting to {HOST}:{PORT}"))?,
+            None => TcpStream::connect((service.host, port))
+                .with_context(|| format!("connecting to {}:{port}", service.host))?,
         };
         s.set_read_timeout(Some(Duration::from_secs(120)))?;
         s.set_write_timeout(Some(Duration::from_secs(120)))?;
-        Ok(Self { s, asked: Instant::now(), alive: version_request(applied) })
+        Ok(Self { s, tags: service.tags, asked: Instant::now(), alive: version_request(&service.tags, applied) })
+    }
+
+    /// A connection for one quick exchange (a log-in's Viewer check): 15 s to connect, 30 s to answer, as the
+    /// profile service's transactions wait (net::pol::polpro::transact).
+    pub fn quick(service: Service) -> Result<Self> {
+        use std::net::ToSocketAddrs;
+        let (host, port) = (service.host, service.port);
+        let mut last = None;
+        for addr in (host, port).to_socket_addrs().with_context(|| format!("looking up {host}"))? {
+            match TcpStream::connect_timeout(&addr, Duration::from_secs(15)) {
+                Ok(s) => {
+                    s.set_read_timeout(Some(Duration::from_secs(30)))?;
+                    s.set_write_timeout(Some(Duration::from_secs(30)))?;
+                    let alive = version_request(&service.tags, None);
+                    return Ok(Self { s, tags: service.tags, asked: Instant::now(), alive });
+                }
+                Err(e) => last = Some(e),
+            }
+        }
+        Err(last.map_or_else(|| anyhow!("{host} has no address"), anyhow::Error::from))
+            .with_context(|| format!("connecting to {host}:{port}"))
     }
 
     fn exchange(&mut self, req: &[u8], want: u32) -> Result<Vec<u8>> {
@@ -196,7 +253,7 @@ impl Session {
     /// The server's version, asked with the version applied here (retail sends patch.ver's; blank without one,
     /// which the server labels "empty").
     pub fn version(&mut self, applied: Option<&str>) -> Result<ServerVersion> {
-        let f = self.exchange(&version_request(applied), kind::VERSION_REPLY)?;
+        let f = self.exchange(&version_request(&self.tags, applied), kind::VERSION_REPLY)?;
         version_reply(&f[HEADER..])
     }
 
@@ -212,7 +269,7 @@ impl Session {
 
     /// The manifest text: status byte 2, then `.slc`.
     pub fn manifest(&mut self) -> Result<Vec<u8>> {
-        let f = self.exchange(&seal(kind::HELLO, &TAGS), kind::MANIFEST)?;
+        let f = self.exchange(&seal(kind::HELLO, &self.tags), kind::MANIFEST)?;
         match f.get(HEADER) {
             Some(2) => slc(&f[HEADER + 1..]),
             s => bail!("manifest refused (status {s:?})"),
@@ -227,7 +284,7 @@ impl Session {
             let offset = out.len() as u32;
             let want = ((len - out.len() as u64) as u32).min(CHUNK);
             self.asked = Instant::now();
-            let f = self.exchange(&file_request(path, offset, want), kind::FILE_CHUNK)?;
+            let f = self.exchange(&file_request(&self.tags, path, offset, want), kind::FILE_CHUNK)?;
             let b = &f[HEADER..];
             let u = |i: usize| b.get(i..i + 4).map(|s| u32::from_le_bytes(s.try_into().unwrap()));
             let (Some(got), Some(n), Some(extra)) = (u(0), u(4), u(8)) else { bail!("{path}: short chunk") };
@@ -450,7 +507,9 @@ fn writable(root: &Path, p: &str) -> Result<PathBuf> {
     Ok(out)
 }
 
-/// `file <path> {`, version lines `stamp len sum md5 <direct>.slc len [<delta>.olc len]`, `}`, until `end`.
+/// `file <path> {`, version lines `stamp len sum md5 <direct>.slc len [<delta>.olc len]`, `}`, until `end`. A path
+/// with a platform marker (`__W20__`) is kept only for this platform, the marker taken out (FUN_10021a5c /
+/// FUN_10021af3).
 pub fn parse_manifest(text: &str) -> Result<Vec<Entry>> {
     // Paths may hold spaces: a path token ends at its suffix followed by a space.
     fn path_len<'a>(s: &'a str, suffix: &str) -> Option<(&'a str, u64, &'a str)> {
@@ -503,12 +562,16 @@ pub fn parse_manifest(text: &str) -> Result<Vec<Entry>> {
                     .map(|s| s.trim_end_matches(['{', ' ', '\t']))
                     .filter(|_| l.trim_end().ends_with('{'))
                     .ok_or_else(|| anyhow!("manifest line {}: {l:?}", i + 1))?;
-                check_path(p).with_context(|| format!("manifest line {}", i + 1))?;
-                open = Some(Entry { path: p.into(), versions: Vec::new(), attr });
+                // Another platform's file is read through and dropped (an empty path).
+                let p = platform_path(p).unwrap_or_default();
+                if !p.is_empty() {
+                    check_path(&p).with_context(|| format!("manifest line {}", i + 1))?;
+                }
+                open = Some(Entry { path: p, versions: Vec::new(), attr });
             }
             Some(_) if l == "}" => {
                 let e = open.take().unwrap();
-                if !e.versions.is_empty() {
+                if !e.versions.is_empty() && !e.path.is_empty() {
                     out.push(e);
                 }
             }
@@ -519,6 +582,16 @@ pub fn parse_manifest(text: &str) -> Result<Vec<Entry>> {
         bail!("manifest ends inside a file block");
     }
     Ok(out)
+}
+
+/// A manifest path for this platform: unchanged with no marker, the marker taken out when it is `__W20__`, None for
+/// another platform's.
+fn platform_path(p: &str) -> Option<String> {
+    let Some(at) = p.find("__") else { return Some(p.to_string()) };
+    if p.get(at + 5..at + 7) != Some("__") {
+        return Some(p.to_string());
+    }
+    (p.get(at + 2..at + 5)? == PLATFORM).then(|| format!("{}{}", &p[..at], &p[at + 7..]))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -625,6 +698,7 @@ fn adopt(old: &Path, root: &Path) -> Result<bool> {
 
 #[derive(Default)]
 pub struct Plan {
+    pub service: Service,
     pub server: ServerVersion,
     pub manifest: Vec<u8>,
     pub entries: Vec<Entry>,
@@ -644,24 +718,40 @@ fn sig_of_path(p: &Path) -> Result<Option<Sig>> {
     Ok(Some(Sig::of(&std::fs::read(p).with_context(|| p.display().to_string())?)))
 }
 
-/// The version of the manifest last applied here (our stamp file).
+/// The game's version here: the newest stamp of the manifest last applied (our stamp file), or the folder's patch.ver
+/// (a Viewer patched it) when that is newer.
 pub fn applied_version(root: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(root.join(STAMP_FILE)).ok()?;
-    parse_manifest(&text)
-        .ok()?
-        .iter()
-        .flat_map(|e| e.versions.iter().map(|v| v.stamp.clone()))
-        .max_by_key(|s| version_key(s))
+    let stamped = std::fs::read_to_string(root.join(STAMP_FILE)).ok().and_then(|text| {
+        parse_manifest(&text)
+            .ok()?
+            .iter()
+            .flat_map(|e| e.versions.iter().map(|v| v.stamp.clone()))
+            .max_by_key(|s| version_key(s))
+    });
+    [stamped, installed_version(root, GAME)].into_iter().flatten().max_by_key(|s| version_key(s))
 }
 
-type Seen = (PathBuf, Option<std::time::SystemTime>, u64, Option<String>);
+/// A title's version as its patch.ver holds it: under the no-registry key (ours), else the installer's "0" (a folder
+/// the Viewer patched).
+pub fn installed_version(root: &Path, service: Service) -> Option<String> {
+    let coded = std::fs::read(root.join(PATCH_VER)).ok()?;
+    [None, Some("0")].into_iter().find_map(|r| crate::net::pol::patchver::read(&coded, service.title, r))
+}
+
+type Stamp = Option<(Option<std::time::SystemTime>, u64)>;
+type Seen = (PathBuf, Stamp, Stamp, Option<String>);
 static SEEN: std::sync::Mutex<Option<Seen>> = std::sync::Mutex::new(None);
 
-/// [`applied_version`], read again only when the stamp file changes (every Config::load asks for it).
+/// [`applied_version`], read again only when the stamp file or patch.ver changes (every Config::load asks for it).
 pub fn applied_version_cached(root: &Path) -> Option<String> {
     let path = root.join(STAMP_FILE);
-    let meta = std::fs::metadata(&path).ok()?;
-    let key = (path, meta.modified().ok(), meta.len());
+    let (stamp, ver) = (std::fs::metadata(&path).ok(), std::fs::metadata(root.join(PATCH_VER)).ok());
+    if stamp.is_none() && ver.is_none() {
+        return None;
+    }
+    // Each file's own time and length: a change to either one reads the version again.
+    let mark = |m: Option<std::fs::Metadata>| m.map(|m| (m.modified().ok(), m.len()));
+    let key = (path, mark(stamp), mark(ver));
     let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((p, m, n, v)) = seen.as_ref()
         && (p, m, n) == (&key.0, &key.1, &key.2)
@@ -683,27 +773,72 @@ pub fn version_key(v: &str) -> Option<(u64, u64)> {
 /// version is asked again with a blank block, which makes the run a full check (retail fails there with -0x48f
 /// and deletes patch.ver, so its next run is the blank one).
 fn ask(applied: Option<String>) -> Result<ServerVersion> {
-    let mut server = Session::connect()?.version(applied.as_deref())?;
+    ask_service(GAME, applied)
+}
+
+fn ask_service(service: Service, applied: Option<String>) -> Result<ServerVersion> {
+    let mut server = Session::open(service, None, None)?.version(applied.as_deref())?;
     server.asked = applied;
     if server.label == UNKNOWN && server.asked.is_some() {
         log::warn!("updater: the patch server does not know version {:?}; checking every file", server.asked);
-        server = Session::connect()?.version(None)?;
+        server = Session::open(service, None, None)?.version(None)?;
     }
     Ok(server)
 }
 
+/// The PlayOnline Viewer's current version, asked as its reconnect check does (a blank block: nothing about this
+/// install is sent), on a quick connection.
+pub fn viewer_version() -> Result<ServerVersion> {
+    Session::quick(VIEWER)?.version(None)
+}
+
+/// The Viewer kept here (root: config::viewer_dir) against the patch server's, asked as the Viewer's start-up check
+/// (FUN_10018bca state 0x26a: with the local version): the server's version when it is out of date or missing, else
+/// None.
+pub fn viewer_behind(root: &Path) -> Result<Option<ServerVersion>> {
+    let server = ask_service(VIEWER, installed_version(root, VIEWER))?;
+    let current = server.asked.as_deref().is_some_and(|a| up_to_date(&server.version, a));
+    Ok((!current).then_some(server))
+}
+
+/// The files of the Viewer kept under `root` against `server`'s manifest: every file, code too (never run).
+pub fn plan_viewer(root: &Path, server: ServerVersion) -> Result<Plan> {
+    plan_for(VIEWER, root, true, server)
+}
+
 /// The start-up check's quick part (one request): the server's version when it is newer than the one applied
-/// last or a code file is not current (installs once patched with data files only keep a 2019 FFXiMain.dll),
-/// else None.
+/// last (retail's version check, states 0x26a .. 0x26e) or the client's FFXiMain.dll lags (`code_lags`), else None.
 pub fn behind(root: &Path) -> Result<Option<ServerVersion>> {
     let server = ask(applied_version(root))?;
     let current = server.asked.as_deref().is_some_and(|a| up_to_date(&server.version, a));
-    Ok((!current || !code_current(root)).then_some(server))
+    Ok((!current || code_lags(root)).then_some(server))
+}
+
+/// Not retail (retail keeps no copy of its own): the FFXiMain.dll the client reads lags the version applied. After
+/// a Viewer patch past our stamp, our copy must match the game folder's; else the read copy must match the stamp.
+fn code_lags(root: &Path) -> bool {
+    let Some(entries) = std::fs::read_to_string(root.join(STAMP_FILE)).ok().and_then(|t| parse_manifest(&t).ok())
+    else {
+        return false;
+    };
+    let stamped = entries.iter().flat_map(|e| e.versions.iter()).filter_map(|v| version_key(&v.stamp)).max();
+    if installed_version(root, GAME).and_then(|v| version_key(&v)) > stamped {
+        let own = crate::dat::own_ffximain(root);
+        let sig = |p: &Path| sig_of_path(p).ok().flatten();
+        return own.is_file() && sig(&own) != sig(&root.join("FFXiMain.dll"));
+    }
+    !entries.iter().filter(|e| is_ffximain(&e.path)).all(|e| {
+        source(root, &e.path)
+            .and_then(|p| sig_of_path(&p))
+            .ok()
+            .flatten()
+            .is_some_and(|l| decide(e, Some(l), true).0 == Action::Current)
+    })
 }
 
 /// The slow part: every listed file checked against `server`'s manifest.
 pub fn plan_against(root: &Path, server: ServerVersion) -> Result<Plan> {
-    plan_for(root, true, server)
+    plan_for(GAME, root, true, server)
 }
 
 /// Drops the applied manifest: the folder's files are about to be replaced by older ones, so the stamp would
@@ -715,36 +850,20 @@ pub fn forget_applied(root: &Path) -> Result<()> {
     }
 }
 
-/// The FFXiMain.dll the client reads matches the stamped manifest's.
-fn code_current(root: &Path) -> bool {
-    let Some(entries) = std::fs::read_to_string(root.join(STAMP_FILE)).ok().and_then(|t| parse_manifest(&t).ok())
-    else {
-        return false;
-    };
-    entries.iter().filter(|e| is_ffximain(&e.path)).all(|e| {
-        source(root, &e.path)
-            .and_then(|p| sig_of_path(&p))
-            .ok()
-            .flatten()
-            .is_some_and(|l| decide(e, Some(l), true).0 == Action::Current)
-    })
-}
-
 /// Asks the server for its version and manifest and checks the listed files under `root` (in parallel). Code files
 /// are left as they are; `code` fetches the FFXiMain.dll the client reads. `full` asks as an install with no
 /// version applied, so every file is read (retail without its patch.ver).
 pub fn plan(root: &Path, code: bool, full: bool) -> Result<Plan> {
-    plan_for(root, code, ask(if full { None } else { applied_version(root) })?)
+    plan_for(GAME, root, code, ask(if full { None } else { applied_version(root) })?)
 }
 
 /// What one manifest file needs, in retail's order (states 0x385 .. 0x44c): with a version applied, a file with
 /// no newer line is taken as current unread; else the staged `.tmp2` is tried, then the file itself. Also the
-/// staged file when it matches nothing.
-fn check(root: &Path, e: &Entry, applied: Option<&str>) -> Result<((Action, u64), Option<PathBuf>)> {
+/// staged file when it matches nothing. `lags`: FFXiMain.dll is read anyway (`code_lags`, not retail).
+fn check(root: &Path, e: &Entry, applied: Option<&str>, lags: bool) -> Result<((Action, u64), Option<PathBuf>)> {
     let cur = e.versions.last().expect("entries have versions");
-    // FFXiMain.dll is always read: the copy this client keeps may be behind the stamp (see `behind`).
     if let Some(a) = applied
-        && !is_ffximain(&e.path)
+        && !(lags && is_ffximain(&e.path))
         && stamp_num(&cur.stamp) <= stamp_num(a)
     {
         return Ok(((Action::Current, 0), None));
@@ -768,10 +887,11 @@ fn check(root: &Path, e: &Entry, applied: Option<&str>) -> Result<((Action, u64)
     Ok((decide(e, have, applied.is_some()), stale))
 }
 
-fn plan_for(root: &Path, code: bool, server: ServerVersion) -> Result<Plan> {
+fn plan_for(service: Service, root: &Path, code: bool, server: ServerVersion) -> Result<Plan> {
     let applied = server.asked.as_deref();
-    let manifest = Session::connect_to(server.host.as_deref(), applied)?.manifest()?;
+    let manifest = Session::open(service, server.host.as_deref(), applied)?.manifest()?;
     let entries = parse_manifest(&String::from_utf8_lossy(&manifest))?;
+    let lags = !service.code && code && code_lags(root);
     let next = std::sync::atomic::AtomicUsize::new(0);
     let found: std::sync::Mutex<Vec<(usize, Action, u64)>> = Default::default();
     let stale: std::sync::Mutex<Vec<PathBuf>> = Default::default();
@@ -783,7 +903,7 @@ fn plan_for(root: &Path, code: bool, server: ServerVersion) -> Result<Plan> {
                     loop {
                         let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         let Some(e) = entries.get(i) else { return Ok(()) };
-                        let (d, old) = check(root, e, applied)?;
+                        let (d, old) = check(root, e, applied, lags)?;
                         found.lock().unwrap().push((i, d.0, d.1));
                         stale.lock().unwrap().extend(old);
                     }
@@ -795,12 +915,12 @@ fn plan_for(root: &Path, code: bool, server: ServerVersion) -> Result<Plan> {
     let mut all = found.into_inner().unwrap();
     all.sort_by_key(|x| x.0);
     let current = all.iter().filter(|x| x.1 == Action::Current).count();
-    let wanted = |p: &str| !is_code(p) || (code && is_ffximain(p));
+    let wanted = |p: &str| service.code || !is_code(p) || (code && is_ffximain(p));
     let skipped_code = all.iter().filter(|x| x.1 != Action::Current && !wanted(&entries[x.0].path)).count();
     let todo = all.into_iter().filter(|x| x.1 != Action::Current && wanted(&entries[x.0].path)).collect();
     let mut stale = stale.into_inner().unwrap();
     stale.sort();
-    Ok(Plan { server, manifest, entries, todo, current, skipped_code, stale })
+    Ok(Plan { service, server, manifest, entries, todo, current, skipped_code, stale })
 }
 
 /// New content for `path`, staged beside it as `.tmp2` (through `.tmp`, as retail writes its download first).
@@ -892,7 +1012,7 @@ pub fn apply(root: &Path, plan: &Plan, connections: usize, progress: &(dyn Fn(us
                         _ => (|| {
                             if sess.is_none() {
                                 let (host, asked) = (plan.server.host.as_deref(), plan.server.asked.as_deref());
-                                sess = Some(Session::connect_to(host, asked)?);
+                                sess = Some(Session::open(plan.service, host, asked)?);
                             }
                             let d = produce(sess.as_mut().unwrap(), root, e, a)?;
                             stage(&target(root, &e.path)?, &d)
@@ -926,6 +1046,12 @@ pub fn apply(root: &Path, plan: &Plan, connections: usize, progress: &(dyn Fn(us
         log::info!("updater: {reset} reset and {reset2} reset2 files replaced");
     }
     write_atomic(&root.join(STAMP_FILE), &plan.manifest)?;
+    // Last, as the Viewer's install does (state 0x6a6): only for a service whose code was written too. The game's
+    // patch.ver stays the Viewer's, since its code files were left behind.
+    if plan.service.code {
+        let v = crate::net::pol::patchver::write(&plan.server.version, plan.service.title);
+        write_atomic(&root.join(PATCH_VER), &v)?;
+    }
     // A new stamp the same size within the filesystem's timestamp step would look unchanged to the cache.
     *SEEN.lock().unwrap_or_else(|e| e.into_inner()) = None;
     Ok(())
@@ -945,9 +1071,129 @@ mod tests {
         out
     }
 
+    /// The Viewer's check: 0x58 bytes, title "1000", a blank block; the game's tags stay title 1.
+    #[test]
+    fn viewer_frames() {
+        let f = version_request(&VIEWER.tags, None);
+        assert_eq!((f.len(), &f[8..24]), (0x58, &b"POLP\x07\0\0\0W20\x001000"[..]));
+        assert!(f[24..].iter().all(|&b| b == 0));
+        assert_eq!(&version_request(&GAME.tags, None)[16..24], b"W20\x000001");
+        assert!(up_to_date("20261022_0", "20261022_0") && up_to_date("20261022_0", "20261201_0"));
+        assert!(!up_to_date("20261201_0", "20261022_0") && !up_to_date("2026102_0", "20261022_0"));
+    }
+
+    /// A platform-marked path: kept without the marker for W20, dropped for another platform.
+    #[test]
+    fn manifest_platform_marks() {
+        let v = |p: &str| format!("20261022_0 4 1 2 20261022_0/Direct/{p}.slc 9");
+        let text = format!(
+            "file x__DWJ__.bin {{\n{}\n}}\nfile y__W20__.bin {{\n{}\n}}\nfile a.txt {{\n{}\n}}\nend\n",
+            v("x__DWJ__.bin"),
+            v("y__W20__.bin"),
+            v("a.txt")
+        );
+        let paths: Vec<_> = parse_manifest(&text).unwrap().into_iter().map(|e| e.path).collect();
+        assert_eq!(paths, ["y.bin", "a.txt"]);
+    }
+
+    /// A Viewer update against a local patch server: version, manifest, files (code too; an absent option file left
+    /// away), then the stamp and patch.ver last; a game plan writes no patch.ver.
+    #[test]
+    fn viewer_update_against_a_mock() {
+        use std::net::TcpListener;
+        let files: [(&str, &[u8]); 3] =
+            [("viewer/com/app.dll", b"MZ app"), ("data/x.txt", b"hello"), ("EU/env.dat", b"eu")];
+        let line = |p: &str, d: &[u8]| {
+            let g = Sig::of(d);
+            format!(
+                "file {p} {{\n20261022_0 {} {} {} 20261022_0/Direct/{p}.slc {}\n}}\n",
+                g.len,
+                g.sum,
+                g.md5,
+                d.len() + 1
+            )
+        };
+        let manifest = format!(
+            "{}{}option {{\n{}}}\nend\n",
+            line(files[0].0, files[0].1),
+            line(files[1].0, files[1].1),
+            line(files[2].0, files[2].1)
+        );
+        let literals = |t: &[u8]| pack(&t.iter().flat_map(|&b| [(0, 1), (b as u32, 8)]).collect::<Vec<_>>());
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let mut asked = Vec::new();
+            for c in l.incoming().take(3) {
+                let mut c = c.unwrap();
+                loop {
+                    let mut head = [0u8; 4];
+                    if c.read_exact(&mut head).is_err() {
+                        break;
+                    }
+                    let mut f = vec![0u8; u32::from_le_bytes(head) as usize];
+                    f[..4].copy_from_slice(&head);
+                    c.read_exact(&mut f[4..]).unwrap();
+                    let (k, b) = open(&f).unwrap();
+                    let reply = match k {
+                        kind::VERSION => {
+                            assert_eq!(&b[..8], b"W20\x001000");
+                            let mut r = vec![0u8; 8 + VERSION_BLOCK];
+                            r.extend(10u32.to_le_bytes());
+                            r.extend(b"20261022_0");
+                            seal(kind::VERSION_REPLY, &r)
+                        }
+                        kind::HELLO => {
+                            let mut r = vec![2u8];
+                            r.extend(literals(manifest.as_bytes()));
+                            seal(kind::MANIFEST, &r)
+                        }
+                        kind::FILE_REQUEST => {
+                            assert_eq!(&b[8..16], b"W20\x001000");
+                            let n = u32::from_le_bytes(b[16..20].try_into().unwrap()) as usize;
+                            let path = std::str::from_utf8(&b[20..20 + n - 1]).unwrap().to_string();
+                            let name = path.strip_prefix("20261022_0/Direct/").unwrap().strip_suffix(".slc").unwrap();
+                            asked.push(name.to_string());
+                            let data = files.iter().find(|f| f.0 == name).unwrap().1;
+                            let mut r = 0u32.to_le_bytes().to_vec();
+                            r.extend((data.len() as u32 + 1).to_le_bytes());
+                            r.extend(0u32.to_le_bytes());
+                            r.push(1);
+                            r.extend(data);
+                            seal(kind::FILE_CHUNK, &r)
+                        }
+                        k => panic!("frame {k}"),
+                    };
+                    c.write_all(&reply).unwrap();
+                }
+            }
+            asked
+        });
+        let service = Service { host: "127.0.0.1", port, ..VIEWER };
+        let root = std::env::temp_dir().join(format!("vana-patch-viewer-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let server_version = Session::open(service, None, None).unwrap().version(None).unwrap();
+        assert_eq!(installed_version(&root, VIEWER), None);
+        let plan = plan_for(service, &root, true, server_version).unwrap();
+        assert_eq!(plan.todo.len(), 2);
+        apply(&root, &plan, 1, &|_, _| {}).unwrap();
+        let mut asked = server.join().unwrap();
+        asked.sort();
+        assert_eq!(asked, ["data/x.txt", "viewer/com/app.dll"]);
+        assert_eq!(std::fs::read(root.join("viewer/com/app.dll")).unwrap(), b"MZ app");
+        assert!(!root.join("EU/env.dat").exists());
+        assert_eq!(installed_version(&root, VIEWER).as_deref(), Some("20261022_0"));
+        // The same plan as the game's writes no patch.ver (its code files stay behind).
+        std::fs::remove_file(root.join(PATCH_VER)).unwrap();
+        let game = Plan { service: GAME, todo: Vec::new(), ..plan };
+        apply(&root, &game, 1, &|_, _| {}).unwrap();
+        assert!(!root.join(PATCH_VER).exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     #[test]
     fn frames_seal_and_open() {
-        let f = file_request("ROM/0/0.DAT", 0x10000, CHUNK);
+        let f = file_request(&TAGS, "ROM/0/0.DAT", 0x10000, CHUNK);
         let (k, b) = open(&f).unwrap();
         assert_eq!((k, &b[16..20], &b[20..]), (kind::FILE_REQUEST, &12u32.to_le_bytes()[..], &b"ROM/0/0.DAT\0"[..]));
         let mut bad = f.clone();
@@ -987,11 +1233,11 @@ mod tests {
     /// The version check carries the applied version; its reply's field holds the label and the download host.
     #[test]
     fn version_frames() {
-        let f = version_request(Some("30261102_0"));
+        let f = version_request(&TAGS, Some("30261102_0"));
         let (k, b) = open(&f).unwrap();
         assert_eq!((k, f.len(), &b[..8], &b[8..19]), (kind::VERSION, 0x58, &TAGS[..], &b"30261102_0\0"[..]));
         assert!(b[19..].iter().all(|&c| c == 0));
-        assert_eq!(open(&version_request(None)).unwrap().1[8..], [0; VERSION_BLOCK]);
+        assert_eq!(open(&version_request(&TAGS, None)).unwrap().1[8..], [0; VERSION_BLOCK]);
         let mut r = vec![0u8; 8 + VERSION_BLOCK];
         r[..4].copy_from_slice(&1_793_600_228u32.to_le_bytes());
         r[8..30].copy_from_slice(b"registered\x00192.0.2.7\x000");
@@ -1053,20 +1299,20 @@ mod tests {
         let (file, tmp2) = (root.join("ROM/1/2.DAT"), root.join("ROM/1/2.DAT.tmp2"));
         std::fs::write(&file, &v1).unwrap();
         // The optional file is not there: left out. The other one by its lines.
-        assert_eq!(check(&root, &m[1], None).unwrap().0, (Action::Current, 0));
-        assert_eq!(check(&root, &m[0], Some("30261006_0")).unwrap().0, (Action::Deltas(1), 7));
-        assert_eq!(check(&root, &m[0], None).unwrap().0, (Action::Direct, 90));
+        assert_eq!(check(&root, &m[1], None, false).unwrap().0, (Action::Current, 0));
+        assert_eq!(check(&root, &m[0], Some("30261006_0"), false).unwrap().0, (Action::Deltas(1), 7));
+        assert_eq!(check(&root, &m[0], None, false).unwrap().0, (Action::Direct, 90));
         // Nothing newer than the applied version: not read at all (the file is not the current one).
-        assert_eq!(check(&root, &m[0], Some("30261102_0")).unwrap().0, (Action::Current, 0));
+        assert_eq!(check(&root, &m[0], Some("30261102_0"), false).unwrap().0, (Action::Current, 0));
         // A staged older version is the base; one that matches nothing is given back to be deleted.
         std::fs::write(&tmp2, &v1).unwrap();
         std::fs::write(&file, b"something else").unwrap();
-        assert_eq!(check(&root, &m[0], Some("30261006_0")).unwrap(), ((Action::StagedDeltas(1), 7), None));
+        assert_eq!(check(&root, &m[0], Some("30261006_0"), false).unwrap(), ((Action::StagedDeltas(1), 7), None));
         std::fs::write(&tmp2, b"half a download").unwrap();
-        assert_eq!(check(&root, &m[0], Some("30261006_0")).unwrap(), ((Action::Direct, 90), Some(tmp2.clone())));
+        assert_eq!(check(&root, &m[0], Some("30261006_0"), false).unwrap(), ((Action::Direct, 90), Some(tmp2.clone())));
         // The staged current version only moves into place, with no server.
         std::fs::write(&tmp2, &v2).unwrap();
-        let found = check(&root, &m[0], Some("30261006_0")).unwrap();
+        let found = check(&root, &m[0], Some("30261006_0"), false).unwrap();
         assert_eq!(found, ((Action::Staged, 0), None));
         let stale = root.join("ROM/1/3.DAT.tmp2");
         std::fs::write(&stale, b"x").unwrap();
@@ -1125,13 +1371,45 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// A patched install's FFXiMain.dll (the one the client reads) checks against its stamped manifest.
+    /// Our FFXiMain.dll copy lags when it misses the stamp, or when the Viewer patched past the stamp and our copy
+    /// differs from the game folder's.
     #[test]
-    fn installed_ffximain_current() {
-        let root = crate::config::Config::load().ffxi_dir();
-        if root.join(STAMP_FILE).is_file() {
-            assert!(code_current(&root));
-        }
+    fn own_ffximain_lags() {
+        let root = std::env::temp_dir().join(format!("vana-patch-lags-{}", std::process::id()));
+        let (old, new) = (b"MZ 30261006".to_vec(), b"MZ 30261102".to_vec());
+        let s = Sig::of(&old);
+        std::fs::create_dir_all(root.join("vana-client")).unwrap();
+        // No stamp: nothing to compare with.
+        assert!(!code_lags(&root));
+        let stamp = format!(
+            "file FFXiMain.dll {{\n30261006_0 {} {} {} 30261006_0/Direct/FFXiMain.dll.slc 9\n}}\nend\n",
+            s.len, s.sum, s.md5
+        );
+        std::fs::write(root.join(STAMP_FILE), &stamp).unwrap();
+        // The folder's 2019 copy behind the stamp (a data-only run), then our copy at the stamp.
+        std::fs::write(root.join("FFXiMain.dll"), b"MZ 2019").unwrap();
+        assert!(code_lags(&root));
+        std::fs::write(crate::dat::own_ffximain(&root), &old).unwrap();
+        assert!(!code_lags(&root));
+        // The Viewer patched the folder past the stamp: our copy lags until it matches the folder's.
+        std::fs::write(root.join("FFXiMain.dll"), &new).unwrap();
+        std::fs::write(root.join(PATCH_VER), crate::net::pol::patchver::write("30261102_0", GAME.title)).unwrap();
+        assert!(code_lags(&root));
+        // The server's manifest has the Viewer's version: a lagging copy is read past the version skip.
+        let n = Sig::of(&new);
+        let server = stamp.replace(
+            "}",
+            &format!("30261102_0 {} {} {} 30261102_0/Direct/FFXiMain.dll.slc 9\n}}", n.len, n.sum, n.md5),
+        );
+        let e = &parse_manifest(&server).unwrap()[0];
+        assert_eq!(check(&root, e, Some("30261102_0"), false).unwrap().0, (Action::Current, 0));
+        assert_ne!(check(&root, e, Some("30261102_0"), true).unwrap().0, (Action::Current, 0));
+        std::fs::write(crate::dat::own_ffximain(&root), &new).unwrap();
+        assert!(!code_lags(&root));
+        // With no copy of ours, the client reads the Viewer's.
+        std::fs::remove_file(crate::dat::own_ffximain(&root)).unwrap();
+        assert!(!code_lags(&root));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -1220,7 +1498,7 @@ mod tests {
         for (path, stale) in [("ROM/1.DAT", true), ("ROM2/1.DAT", false)] {
             let m = parse_manifest(&text(path)).unwrap();
             std::fs::write(root.join(format!("{path}.tmp2")), b"matches nothing").unwrap();
-            let (_, old) = check(&root, &m[0], None).unwrap();
+            let (_, old) = check(&root, &m[0], None, false).unwrap();
             assert_eq!(old.is_some(), stale, "{path}");
         }
         std::fs::remove_dir_all(&base).unwrap();

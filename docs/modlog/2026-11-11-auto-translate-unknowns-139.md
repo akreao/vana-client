@@ -35,10 +35,9 @@ checked in Rizin.
   `second_keys`). The client itself is English only, so the French second words, the per-language compares and the
   Japanese / French candidate lists are not built.
 
-The linkshell message editor (found on the way; corrected by item 161, "Menu captions do not take the mouse": the
-submenus' caption is in state 0x10 from the window's open, registry flag 0x200000, so it never takes the cursor,
-case 4 never runs and nothing opens the editor's mode 3. The caption bullets below are wrong and ours no longer does
-them):
+The linkshell message editor (found on the way, then corrected: the submenus carry registry flag 0x200000, so their
+open puts the caption in state 0x10, it never takes the cursor, case 4 never runs and nothing opens the editor's
+mode 3. The caption bullets below are wrong and ours does not do them):
 - The comment window's mode 3 edits the linkshell message (blocks 3 / 6). menu_comment_fn (FUN_101e7530) opens it
   (+0x16 = 3, +0x17 = 0x73) from case 4 of the holder's and the pearlsack's submenus (link2 / link3,
   menu_link2_fn / menu_link3_fn). MODLOG "Linkshell menu" called that case dead code because child 4 is the caption.
@@ -59,9 +58,11 @@ them):
   and the sent block takes them. Then, with linkshell 1 worn (FUN_100e9870(.., 1)), c2s 0x0E2 with flag 0x40
   (FUN_100eae20), the packet /lsmes set sends. Nothing fills the lines from the server; only the holder's
   constructor clears them.
-- Ours: `seacom::open_ls_message`, `Store` for block 3 / 6 (`World.ls_edit_msg`), `linkshell::set_message`; the
-  linkshell submenus' pointer takes captions; `step` leaves a caption for 0xff.
+- Ours: `Store` for block 3 / 6 (`World.ls_edit_msg`), `linkshell::set_message`; a link of 0xff leaves the
+  cursor where it is (`linkshell::link_to`); link5 has no wheel, scroll bar or cursor focus while the editor is
+  open (`linkshell::has_focus`). Nothing opens mode 3 yet.
 - Not built: FUN_10191710 on the drawn lines; the caption taking the mouse cursor in the other windows of the game
-  (the hit test is generic; ours' other pointers skip parts whose links are 0xff); the modern UI has no way to the
+  (the hit test is generic; our other pointers skip parts whose links are 0xff); the modern UI has no way to the
   linkshell message editor.
-- Tests: `client::seacom::tests::ls_message_text`, `dat::autotrans::tests::second_keys`. Not checked live.
+- Tests: `client::seacom::tests::ls_message_text`, `dat::autotrans::tests::second_keys`,
+  `client::linkshell::tests::caption_links_stay`, `client::linkshell::tests::editor_takes_focus`. Not checked live.

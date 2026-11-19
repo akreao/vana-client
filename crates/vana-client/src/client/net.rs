@@ -560,6 +560,8 @@ pub enum NetEvent {
     /// s2c 0x05E (GP_SERV_COMMAND_CONQUEST) and 0x071 (campaign / colonization), raw.
     Conquest(Vec<u8>),
     Influence(Vec<u8>),
+    /// s2c 0x072 (FUN_100999a0), the reply to c2s 0x112, raw (client/battlefield.rs).
+    BattlefieldInfo(Vec<u8>),
     InspectMessage(Vec<u8>),
     /// s2c 0x04D (GP_SERV_COMMAND_FRAGMENTS): the whole packet (client/servmes.rs reads it).
     Fragments(Vec<u8>),
@@ -1219,9 +1221,12 @@ pub struct SelfState {
     pub target: u16,
     /// c2s 0x015 @0x15 bit 2, GroundMode (FUN_100983f0): HackMove, GroundFlag or entity +0x120 bit 21.
     pub ground_mode: bool,
-    /// FUN_100983f0 builds no 0x015 (the datagram still goes): our status in force is 0x1c / 0x1f, the control lock
-    /// is on, or we are bound to the running event without Mode bit 4 (`event::no_position`).
+    /// FUN_100983f0 builds no 0x015 (the datagram still goes): our status in force is 0x1c / 0x1f, or we are bound to
+    /// the running event without Mode bit 4 (`event::no_position`).
     pub silent: bool,
+    /// The control lock (World::control_lock, DAT_10482f18 in 30261006_0): FUN_100983f0 builds no c2s 0x015 while
+    /// it is set (0x10098530). Ours sets it for a talk request, a zone-in event and op 0x20.
+    pub locked: bool,
 }
 
 pub struct NetHandle {
@@ -1323,7 +1328,13 @@ pub fn charreq_body(index: u16) -> [u8; 4] {
     [lo, hi, 0, 0]
 }
 
-/// c2s 0x01A body (FUN_10077120, size 0x1c): UniqueNo, ActIndex, ActionID, ActionBuf[4] zeroed.
+/// FUN_100983f0 builds c2s 0x015 neither while our status in force is a rider's nor under the control lock (the test at
+/// 0x10098530 in 30261006_0). The retail server answers an event's 0x05C with the place it has stored for us, so a
+/// 0x015 riding with the 0x05C would give it the pre-event place back (Port Jeuno's airship doors).
+fn sends_position(s: &SelfState) -> bool {
+    !s.silent && !s.locked
+}
+
 /// The tick's 0x015 into the datagram: last, as retail. Ours, not retail: the server starts a cast, a ranged attack or
 /// an item where it last heard we were, and stops it on any move after that or when the last two positions were apart
 /// (LSB HasMoved, m_lastMoveDistance). Standing still, the position goes before such an action, twice, so it starts
@@ -1511,6 +1522,7 @@ fn stopped_by_moving(p: &[u8]) -> bool {
     (id == 0x01A && matches!(category, 0x03 | 0x10)) || id == 0x037
 }
 
+/// c2s 0x01A body (FUN_10077120, size 0x1c): UniqueNo, ActIndex, ActionID, ActionBuf[4] zeroed.
 pub fn action_body(target: u32, index: u16, action: u16) -> Vec<u8> {
     let mut body = vec![0u8; 24];
     body[0..4].copy_from_slice(&target.to_le_bytes());
@@ -2091,10 +2103,12 @@ impl Session<'_> {
                 self.map.zoned_in(&p);
                 let pos = [p.f32(12), p.f32(16), p.f32(20)];
                 let (scene, myroom) = scene_of(&p);
-                // FUN_10094190: a zone-in that carries an event sets the control lock (DAT_104840c8) at once, so no
-                // c2s 0x015 goes out before the event has ended (FUN_100983f0).
-                let silent = p.u16(0x62) != 0;
-                *self.me.lock().unwrap() = SelfState { pos, dir: p.u8(11), silent, ..Default::default() };
+                // EventNum @0x62, EventPara @0x64, EventMode @0x66, EventNo @0x40: the client starts
+                // the login event itself, on the player (FUN_10094ea0).
+                let (event_num, event_para) = (p.u16(0x62), p.u16(0x64));
+                // FUN_10094190 locks control here when the 0x00A carries an event: no 0x015 before the first frame.
+                let locked = event_num != 0;
+                *self.me.lock().unwrap() = SelfState { pos, dir: p.u8(11), locked, ..Default::default() };
                 self.zoned = true;
                 self.my_index = p.u16(8);
                 self.queue.push(build(0x00C, &[0u8; 8]));
@@ -2104,9 +2118,6 @@ impl Session<'_> {
                 if self.login.lsb.is_some() && self.stats.gm_window.load(Relaxed) {
                     self.queue.push(build(0x1F0, &super::gm::CATALOG_REQUEST));
                 }
-                // EventNum @0x62, EventPara @0x64, EventMode @0x66, EventNo @0x40: the client starts
-                // the login event itself, on the player (FUN_10094ea0).
-                let (event_num, event_para) = (p.u16(0x62), p.u16(0x64));
                 let event = (event_num != 0).then(|| EventStart {
                     target: p.u32(4),
                     index: p.u16(8),
@@ -2570,6 +2581,7 @@ impl Session<'_> {
             0x048 => self.tx.send(NetEvent::Concierge(p.data))?,
             0x05E => self.tx.send(NetEvent::Conquest(p.data))?,
             0x071 => self.tx.send(NetEvent::Influence(p.data))?,
+            0x072 => self.tx.send(NetEvent::BattlefieldInfo(p.data))?,
             0x0C9 => self.tx.send(NetEvent::InspectEquip(p.data))?,
             0x008 if p.data.len() >= 4 + 0x30 => {
                 self.tx.send(NetEvent::KnownZones(p.data[4..4 + 0x30].try_into().unwrap()))?
@@ -2951,7 +2963,10 @@ impl Session<'_> {
         // once, as s2c 0x005 does.
         let wanted = wanted_interval(self.stats, self.login.lsb.is_some(), self.server_base);
         if wanted != self.wanted {
-            (self.wanted, self.base, self.interval) = (wanted, wanted, wanted);
+            // Before the zone-in the login's retry keeps the connect pace: a fast Send Rate here resent 0x00A every
+            // 50 ms, and LSB's session stalled on a retry that beat its first answer.
+            let interval = if self.zoned { wanted } else { connect_interval(wanted) };
+            (self.wanted, self.base, self.interval) = (wanted, wanted, interval);
         }
         if self.zoned && self.last_send.elapsed() >= Duration::from_millis(self.interval as u64) {
             let stepped = step_interval(self.interval, self.base, self.map.lag());
@@ -2974,7 +2989,7 @@ impl Session<'_> {
             body[17] = (s.ground_mode as u8) << 2;
             // FUN_10096c00: @0x16 the current target's ActIndex (FUN_10152f20).
             body[18..20].copy_from_slice(&s.target.to_le_bytes());
-            if !s.silent {
+            if sends_position(&s) {
                 add_position(&mut self.queue, build(0x015, &body), s.moving);
             }
             // A batch holding an id a mod hooks goes to the main thread and comes back as SendBatch.
@@ -3487,6 +3502,14 @@ mod tests {
         );
         let s = event_start(&p);
         assert_eq!((s.event, s.strings[0].as_str(), s.params[0]), (5, "Bastok", 3));
+    }
+
+    /// c2s 0x015 goes out unless we ride or the control lock is on (FUN_100983f0).
+    #[test]
+    fn position_gate() {
+        assert!(sends_position(&SelfState::default()));
+        assert!(!sends_position(&SelfState { locked: true, ..Default::default() }));
+        assert!(!sends_position(&SelfState { silent: true, ..Default::default() }));
     }
 
     /// GP_CLI_COMMAND_EVENTEND: UniqueNo, EndPara, ActIndex, Mode, EventNum, EventPara.

@@ -40,6 +40,7 @@ pub use hudtop::topbar_shot;
 pub use lua::stubs as lua_stubs;
 pub use modern::shot::{Opts as ModernShotOpts, shot as modern_shot};
 mod augment;
+mod battlefield;
 mod buffs;
 mod bump;
 mod camera;
@@ -878,6 +879,11 @@ pub(crate) fn is_playonline(server: &str) -> bool {
     server.trim().eq_ignore_ascii_case(PLAYONLINE)
 }
 
+/// Whether this player signs in through PlayOnline (the form or a saved login): only then is the Viewer checked.
+fn uses_playonline(cfg: &crate::config::Config) -> bool {
+    is_playonline(&cfg.server) || cfg.logins.iter().any(|l| is_playonline(&l.server))
+}
+
 const PLAYONLINE: &str = "PlayOnline";
 /// The Server Type list.
 const SERVER_TYPES: [&str; 2] = [PLAYONLINE, "Private"];
@@ -1440,6 +1446,18 @@ fn login_window(
     if busy { None } else { chosen }
 }
 
+/// The Ctrl / Alt shortcuts' test (FUN_101ae010 in 30261006_0): no event hold, no sub-target prompt, alive, no Num+
+/// focus (log or status icons), not in layout mode; set 4 (E, I, C, M, J, W, B) also no window with flag 0x20000.
+fn shortcut_ok(w: &World, set4: bool) -> bool {
+    !event::active(w)
+        && !w.dead()
+        && !target::sub_up(w)
+        && !w.log_active
+        && w.log_focus != 2
+        && w.layout.is_none()
+        && !(set4 && w.main_open)
+}
+
 /// A line from a menu or key (text command mode 0).
 fn send_chat(world: &mut World, text: String) {
     textcmd::run(world, &text, textcmd::Mode::Internal);
@@ -1498,9 +1516,37 @@ fn slot_resets(id: u32, slot: Option<u32>, moved: bool, sweeps: bool) -> Vec<u32
     out
 }
 
-/// FUN_1008ee30 / FUN_10092900 / FUN_1008a350(0) as ours has it: the entity and all it owns go.
-fn drop_entity(w: &mut World, id: u32) {
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum FirstUpdate {
+    Apply,
+    /// Dropped, the actor asked for again (+0x12c bit 15, FUN_1008d280).
+    Ask,
+    /// The slot is reset first (FUN_1008ee30: out of any event), then asked for.
+    ResetAndAsk,
+}
+
+/// 0x1009a0bf: an update for an actor we don't have (`known` None), or one waiting for a full update after a held
+/// despawn (+0x145 = 0, `known` Some(false)), needs the full mask; a reserved actor takes any (0x1009b963).
+fn first_update(known: Option<bool>, reserved: bool, complete: bool) -> FirstUpdate {
+    match known {
+        _ if reserved || complete => FirstUpdate::Apply,
+        Some(true) => FirstUpdate::Apply,
+        Some(false) => FirstUpdate::ResetAndAsk,
+        None => FirstUpdate::Ask,
+    }
+}
+
+/// A slot reset (FUN_1008ee30 / FUN_10092900 / FUN_1008a350(0)) as ours has it: the entity leaves any event and all it
+/// owns goes.
+fn reset_entity(w: &mut World, id: u32) {
     event::unbind(w, id);
+    drop_entity(w, id);
+}
+
+/// A despawn: the entity and all it owns go, but no event is told. Retail's despawn path (0x1009b7e4..0x1009b945)
+/// never calls FUN_1008ee30; it sets +0x124 bit 12, +0x145 = 0 and the +0x120 bit 14 hide, so an actor the VM drives
+/// that respawns mid-event is posed again.
+fn drop_entity(w: &mut World, id: u32) {
     w.forget_entity(id);
     w.actors.remove(&id);
     w.rests.remove(&id);
@@ -2646,6 +2692,7 @@ fn world_hud(
     gu.set_ttf(world.opts.ttf_text);
     let (sw, sh) = (size[0] as f32, size[1] as f32);
     world.ui_wh = (sw, sh);
+    world.battlefield.frame();
     world.lua.set_view_proj(view_proj);
     // The focused list's scroll bar and the wheel, before the windows see the press.
     // Game files from 30261102 on hold fe_main (client/celestite.rs).
@@ -2868,7 +2915,7 @@ fn world_hud(
             }
             egui::Event::Copy if world.log_selection.is_some() => world.copied = world.log_selection.clone(),
             egui::Event::Copy if world.typing => {}
-            egui::Event::Copy if !event::active(world) => check_target(world),
+            egui::Event::Copy if shortcut_ok(world, true) => check_target(world),
             egui::Event::Cut if world.typing && fep::selection(world).is_some() => {
                 world.copied = fep::selected_text(world);
                 fep::delete_selection(world);
@@ -3052,7 +3099,9 @@ fn world_hud(
                     world.log_active = false;
                 }
                 egui::Key::Escape if world.log_active => world.log_active = false,
-                egui::Key::A if modifiers.ctrl || modifiers.alt => send_chat(world, "/attack".into()),
+                egui::Key::A if (modifiers.ctrl || modifiers.alt) && shortcut_ok(world, false) => {
+                    send_chat(world, "/attack".into())
+                }
                 // The palette (FUN_101a3960): Left / Right move the cursor (wrapping), Down / Up the next / previous set,
                 // Enter runs the cell and closes, Escape closes. Other keys pass (Ctrl / Alt + M opens magic).
                 egui::Key::ArrowLeft
@@ -3116,10 +3165,7 @@ fn world_hud(
                 // Ctrl / Alt + M, J, W, B (key functions 0x41, 0x7f, 0x80, 0x9f): magic in list mode without trusts, job
                 // abilities, weapon skills, pet commands; in the field, alive, no prompt.
                 egui::Key::M | egui::Key::J | egui::Key::W | egui::Key::B
-                    if (modifiers.ctrl || modifiers.alt)
-                        && !event::active(world)
-                        && !world.dead()
-                        && !target::sub_up(world) =>
+                    if (modifiers.ctrl || modifiers.alt) && shortcut_ok(world, true) =>
                 {
                     match key {
                         egui::Key::M => magic::open_magic(world, 0, true, 0x100),
@@ -3145,14 +3191,18 @@ fn world_hud(
                         magic::key(world, *key);
                     }
                 }
-                egui::Key::H if modifiers.ctrl || modifiers.alt => {
+                egui::Key::H if (modifiers.ctrl || modifiers.alt) && shortcut_ok(world, false) => {
                     world.sounds.push(crate::audio::Ui::Select as u32);
                     send_chat(world, "/heal".into());
                 }
-                egui::Key::C if modifiers.ctrl || modifiers.alt => check_target(world),
+                egui::Key::C if (modifiers.ctrl || modifiers.alt) && shortcut_ok(world, true) => check_target(world),
                 // FUN_1012ec60 / FUN_101e9f10.
-                egui::Key::E if modifiers.ctrl || modifiers.alt => items::open_equipment(world),
-                egui::Key::I if modifiers.ctrl || modifiers.alt => items::open_items(world),
+                egui::Key::E if (modifiers.ctrl || modifiers.alt) && shortcut_ok(world, true) => {
+                    items::open_equipment(world)
+                }
+                egui::Key::I if (modifiers.ctrl || modifiers.alt) && shortcut_ok(world, true) => {
+                    items::open_items(world)
+                }
                 // Ours (Extras): plain T slides the Timers out or in, with no window open (Ctrl / Alt + T is /tell).
                 egui::Key::T
                     if !modifiers.ctrl
@@ -3574,6 +3624,7 @@ fn world_hud(
                     world.sounds.push(crate::audio::Ui::Select as u32);
                     m.return_menu = world.menu;
                     world.map = Some(m);
+                    battlefield::map_set_up(world);
                     world.menu = None;
                 }
                 // FUN_101f86b0: "There is no map for this area."
@@ -4258,7 +4309,9 @@ fn world_hud(
     }
     region::draw(gu, world, sw, sh);
     let modern = world.modern;
+    world.title_up = gu.was_up("menu    titlewin");
     if let Some(m) = world.map.as_mut() {
+        (m.battlefield, m.title_up) = (world.battlefield.overlay.clone(), world.title_up);
         m.draw(gu, sw, sh, modern);
         world.sounds.append(&mut m.sounds);
         let (zone, key) = (m.zone(), m.asked_key());
@@ -4516,6 +4569,7 @@ fn world_hud(
     world.hud_top = top;
     let party = st.party_window.clone();
     let mut blockers: Vec<[f32; 4]> = [party.as_str()].iter().filter_map(|n| gu.window_rect(n, sw, sh)).collect();
+    let mut sidebar_eases = None;
     winhits::clear(world);
     for (k, n) in ["menu    raid1", "menu    raid2"].iter().enumerate() {
         if st.alliance[k].is_some() {
@@ -4840,6 +4894,8 @@ fn world_hud(
         }
         magic::draw_event_timer(gu, world, sw, sh);
         objective::draw_countdown(gu, world, sw, sh);
+        // The compass draw (FUN_102219c0): FUN_10220a20 first, then the bars (FUN_102212f0).
+        sidebar_eases = battlefield::draw_sidebar(gu, world);
         objective::draw_bars(gu, world);
     }
     racing::draw(gu, world, sw, sh);
@@ -5367,6 +5423,7 @@ fn world_hud(
         credits::draw(gu, world, sw, sh);
         let modern = world.modern;
         if let Some(m) = world.map.as_mut() {
+            (m.battlefield, m.title_up) = (world.battlefield.overlay.clone(), gu.was_up("menu    titlewin"));
             m.draw(gu, sw, sh, modern);
         }
         // cnqframe has flag 0x40 too; its info windows don't.
@@ -5377,6 +5434,10 @@ fn world_hud(
         return Vec::new();
     }
 
+    // FUN_10220f60's gauges ease after its draw.
+    if let Some(t) = sidebar_eases {
+        world.battlefield.ease(t, std::time::Instant::now());
+    }
     blockers
 }
 
@@ -6197,11 +6258,8 @@ struct Actor {
     tilt_rot: Option<glam::Mat3>,
     /// The front (points 10 / 11) and rear (8 / 9) feet midpoints of the last drawn pose, in the world (FUN_100a4d10).
     feet: Option<[Vec3; 2]>,
-    /// FUN_100a4ed0's probe counter (+0x5f0, None before the first update) and the position it last saw.
-    feet_count: Option<u8>,
-    feet_last: Vec3,
-    /// A probe found no posed feet (ours): the next frame poses and probes again.
-    feet_retry: bool,
+    /// FUN_100a4ed0's feet probe gate (tilt::feet_gate).
+    feet_gate: tilt::FeetGate,
     /// Entity +0x130 bits 5..6 (op 0xac): which death scheduler runs (combat::death_scheduler).
     death_pick: u8,
     /// The riding files on `extra`.
@@ -6363,9 +6421,7 @@ impl Actor {
             mouth_name: "mou4",
             ground_tilt: Default::default(),
             feet: None,
-            feet_count: None,
-            feet_last: Vec3::ZERO,
-            feet_retry: false,
+            feet_gate: Default::default(),
             tilt_rot: None,
             death_pick: 0,
             mouth: None,
@@ -6855,16 +6911,41 @@ fn effect_held(w: &World) -> bool {
 /// log-out and shut-down prompts (FUN_10161fc0 / FUN_10161f30: the main menu's rows, Pause, the pad's slot) do not
 /// open then, with no line.
 fn prompt_held(w: &World) -> bool {
-    w.dead() || w.buffs.iter().any(|&b| matches!(b, 2 | 7 | 10 | 28))
+    use crate::dat::effect;
+    w.dead()
+        || w.buffs.iter().any(|&b| matches!(b, effect::SLEEP | effect::PETRIFICATION | effect::STUN | effect::TERROR))
 }
 
 /// Our run speed in units per second (FUN_100a6240, vt+0x1a0 = actor +0x15c): Speed x0.1, doubled while riding
 /// (status 5 / 0x55), at most 30. Speed 0 is 0: retail has no default, and a server roots us with it (LSB's Bind sets
 /// the base speed 0, so 0x037 carries Speed 0).
 fn own_speed(w: &World) -> f32 {
-    let s = w.my_motion.speed as f32 * 0.1;
-    let riding = matches!(w.my_motion.status, 5 | 0x55);
-    (if riding { s * 2.0 } else { s }).min(30.0)
+    run_speed(w.my_motion.speed, w.my_motion.status)
+}
+
+fn run_speed(speed: u8, status: u8) -> f32 {
+    let s = speed as f32 * 0.1;
+    (if matches!(status, 5 | 0x55) { s * 2.0 } else { s }).min(30.0)
+}
+
+/// Autorun's forced end: in an event, dead, rooted (speed 0: the run's vector is cut to the tick's move, none, and
+/// FUN_100a6240's |vector| <= 0.001 test ends it), resting, seated and the like.
+fn autorun_ends(in_event: bool, dead: bool, speed: f32, status: u8) -> bool {
+    in_event
+        || dead
+        || speed == 0.0
+        || matches!(status, 6 | 7 | 0x21 | 0x26..=0x2c | 0x2f | 0x30 | 0x32..=0x35 | 0x38..=0x53)
+}
+
+/// FUN_100a6240 at speed 0 (Bind): the move vector is the input x the tick's speed, so there is none and the function
+/// goes on as with no input (+0x598 = 0, no step, no strafe: FUN_100a8000 scales the same zero vector). Its tail still
+/// turns a free, unlocked third-person heading to the input by the camera, so the keys turn us in place. The forced
+/// follow (`pulled`) moves by its own step. Returns the step and the heading to turn to.
+fn rooted_step(step: Vec3, speed: f32, pulled: bool, locked: bool) -> (Vec3, Option<Vec3>) {
+    if pulled || step == Vec3::ZERO || speed != 0.0 {
+        return (step, None);
+    }
+    (Vec3::ZERO, (!locked).then(|| step.normalize()))
 }
 
 /// Our movement ratio at full stride (FUN_100c68f0): the run speed over SpeedBase x0.1, x1.6 riding; at most 3.
@@ -7954,6 +8035,12 @@ struct World {
     /// Region Info: the conquest data and marker tables, the region menu, the map (cnqframe), a /regionmap to open.
     conquest: region::Data,
     region_menu: Option<region::Menu>,
+    /// c2s 0x112 / s2c 0x072: the battlefield info requests and blocks (client/battlefield.rs).
+    battlefield: battlefield::Battlefield,
+    /// prty5's handler +0x2c: the party languages, loaded from config 0x98 at each zone-in (partymenu::zone_in).
+    party_langs: u32,
+    /// titlewin open as the last window walk left it (DAT_10579638 +8), for FUN_101fc0c0 at a map's setup.
+    title_up: bool,
     /// FUN_1015fa00's walk suspends the main menu (mcrmenu over its group): the modern command menu hides too.
     main_off: bool,
     /// The target window is open but suspended by the window walk this frame (world_hud's `target_off`).
@@ -9000,6 +9087,8 @@ pub struct App {
     /// No game files yet: the download window (not retail).
     first_run: Option<firstrun::FirstRun>,
     update_ui: Option<updater::UpdateUi>,
+    /// The Update window opened by itself for an out-of-date PlayOnline Viewer (once a run).
+    viewer_asked: bool,
     /// The change notes the last update left for this version, shown over the title once (client/notes.rs), and their
     /// window while open.
     whats_new: Option<notes::Saved>,
@@ -9134,7 +9223,7 @@ impl App {
         let drive_checks = drive.login.is_none() || std::env::var_os("FFXI_UPDATE_CHECK").is_some();
         let updates = (drive_checks && cfg.ffxi_dir().join("VTABLE.DAT").is_file()).then(|| {
             updater::tidy();
-            updater::start(cfg.ffxi_dir())
+            updater::start(cfg.ffxi_dir(), uses_playonline(&cfg))
         });
         let whats_new = notes::pending();
         // A test drive asks for the notes only with FFXI_NOTES_CHECK set (or FFXI_UPDATE_CHECK).
@@ -9266,6 +9355,7 @@ impl App {
             updates,
             first_run: None,
             update_ui: None,
+            viewer_asked: false,
             whats_new,
             notes_ui: None,
             notes_fetch,
@@ -9902,10 +9992,16 @@ impl App {
         if self.drive.login.is_none() {
             let _ = self.cfg.save();
         }
+        // PlayOnline picked after start: the Viewer's row, for the update the check below may ask for.
+        if let Some(s) = self.updates.as_ref().filter(|s| s.lock().unwrap().viewer.is_none()) {
+            updater::start_viewer(s);
+        }
         let replies = self.start_entry_run();
         let watch = replies.clone();
         self.spawn(move || {
             let result = (|| {
+                // The Viewer's start-up check comes before its sign-in: no sign-in while it is out of date.
+                crate::net::pol::viewer_check(&crate::config::viewer_dir())?;
                 let creds = crate::net::pol::Credentials {
                     pol_id: cfg.pol_id.clone(),
                     pol_password,
@@ -10182,7 +10278,7 @@ impl App {
             }
             Task::Flyover(Ok(mut data)) => {
                 self.flyover_next = std::mem::take(&mut data.rest);
-                let mut f = flyover::Flyover::new(data);
+                let mut f = flyover::Flyover::new(data, select::TITLE_VOICES);
                 f.clip_x = crate::dat::weather::clipping_factor(self.cfg.game.for_character(None).get(0x3e));
                 self.flyover = Some(f);
                 self.flyover_state = LoadState::Idle;
@@ -10191,7 +10287,11 @@ impl App {
                 if self.nation.loading == Some(n) {
                     self.nation.loading = None;
                     match res {
-                        Ok(data) => self.nation.fly = Some((n, flyover::Flyover::new(data).unfaded())),
+                        Ok(data) => {
+                            let old = self.nation.fly.take().map(|f| f.1);
+                            self.stop_fly(old);
+                            self.nation.fly = Some((n, flyover::Flyover::new(data, select::NATION_VOICES).unfaded()));
+                        }
                         Err(e) => log::warn!("nation flyover {n}: {e:#}"),
                     }
                 }
@@ -10566,6 +10666,9 @@ impl App {
                             seacom: Default::default(),
                             seacom_edit: None,
                             conquest: region::Data::new(self.cnq_tables.clone()),
+                            battlefield: Default::default(),
+                            party_langs: 0,
+                            title_up: false,
                             region_menu: None,
                             confirm_text: String::new(),
                             confirm_click: None,
@@ -11803,6 +11906,9 @@ impl App {
                     world.index_masks.clear();
                     border::remove(world);
                     (world.region_menu, world.cnq) = (None, None);
+                    // FUN_10093720: the one-shot reply callbacks of c2s 0x05A (not the colonization one) and 0x112.
+                    world.conquest.zone_load();
+                    world.battlefield.zone_load();
                     world.names_hidden = None;
                     world.res_rdy = ResRdy { send_count, since: Some(Instant::now()), ..ResRdy::default() };
                     world.myroom = myroom;
@@ -11824,7 +11930,6 @@ impl App {
                     {
                         world.equipsets = Some(equipsets::EquipSets::new(dir));
                     }
-                    equipsets::field_entry(world);
                     if !world.synth.loaded
                         && let Some(dir) = world.macros.as_ref().map(|m| m.dir().to_path_buf())
                     {
@@ -11876,6 +11981,10 @@ impl App {
                     // FUN_1015ef60 (game mode 0x70 / 0xe0, leaving the field): FUN_10127ea0.
                     event::cancel_queues(world);
                     world.hud_top.enter();
+                    // The zone-in's sends in retail's order (captures, 30261102_0): FUN_10093db0's c2s 0x061 (after its
+                    // 0x00C, which the net thread sends), FUN_10095650's 0x118 / 0x11B, the lockstyle's 0x053, then
+                    // netstat's 0x0E0 / 0x00F and the handler walk (seacom::zone_in, zone_walk below).
+                    let _ = world.net.commands.send(NetCommand::StatusRequest(0));
                     // FUN_10095650 at the world start: the Unity chat setting (config 0xb2) and the job master display
                     // (config 0x99 bit 8 clear) go to the server again.
                     let _ = world
@@ -11886,6 +11995,7 @@ impl App {
                         id: 0x11B,
                         body: vec![(world.game.get(0x99) & 0x100 == 0) as u8, 0, 0, 0],
                     });
+                    equipsets::field_entry(world);
                     world.map = None;
                     world.scan = Default::default();
                     // LSB re-sends every container after c2s 0x00C and empties the temporary items and the recycle
@@ -11901,7 +12011,6 @@ impl App {
                         world.screen.hold_black();
                         event::queue(world, ev);
                     }
-                    let _ = world.net.commands.send(NetCommand::StatusRequest(0));
                     world.music.zone_in(music);
                     // FUN_10094190: solo and party battle music 0x46 in Monstrosity.
                     if monstrosity::active(world) {
@@ -11973,6 +12082,7 @@ impl App {
                     world.my_id = char_id;
                     world.name = name;
                     seacom::zone_in(world);
+                    zone_walk(world);
                     world.entities.clear();
                     world.entity_index.clear();
                     world.new_challenge = false;
@@ -12039,7 +12149,7 @@ impl App {
                     let moved = world.entities.get(&e.id).is_some_and(|x| x.index != e.index);
                     for old in slot_resets(e.id, slot, moved, e.kind == EntityKind::Npc || e.complete()) {
                         log::info!("index {:#x} takes {:#x}: {old:#x} is reset", e.index, e.id);
-                        drop_entity(world, old);
+                        reset_entity(world, old);
                     }
                     // The name, before the despawn and first-update tests (0x1009b666).
                     if e.kind == EntityKind::Npc
@@ -12065,17 +12175,17 @@ impl App {
                         }
                         continue;
                     }
-                    // 0x1009a0bf: a first update without the full mask is dropped and the actor asked for again
-                    // (+0x12c bit 15, FUN_1008d280). A reserved actor takes any (0x1009b963).
                     let known = world.entities.get(&e.id).filter(|x| x.index == e.index).map(|x| !x.awaiting_full);
-                    if known != Some(true) && !reserved && !e.complete() {
-                        log::info!("partial first update {:#x} (mask {:#x}): asking again", e.id, e.mask);
-                        // The reset takes an event's actor out of the event too (FUN_1008ee30).
-                        if known == Some(false) {
-                            drop_entity(world, e.id);
+                    match first_update(known, reserved, e.complete()) {
+                        FirstUpdate::Apply => {}
+                        step => {
+                            log::info!("partial first update {:#x} (mask {:#x}): asking again", e.id, e.mask);
+                            if step == FirstUpdate::ResetAndAsk {
+                                reset_entity(world, e.id);
+                            }
+                            let _ = world.net.commands.send(NetCommand::CharReq(e.index));
+                            continue;
                         }
-                        let _ = world.net.commands.send(NetCommand::CharReq(e.index));
-                        continue;
                     }
                     if let Some(x) = world.entities.get_mut(&e.id) {
                         x.awaiting_full = false;
@@ -12323,8 +12433,7 @@ impl App {
                         entry.dir = e.dir;
                         entry.dir_seen = e.dir;
                     }
-                    // FUN_10093430 via the 0x00E handler: the packet's name where it carries one (players, index >= 0x700,
-                    // text marked 0x01), else the zone list by server id (FUN_1008a930), else "NPC" (0x1035bb44).
+                    // The name rules (`name_update`): a new actor's, and a player's on every update.
                     if fresh || e.kind == EntityKind::Player {
                         name_update(entry, &e, &world.npc_names);
                     }
@@ -12703,6 +12812,7 @@ impl App {
                 NetEvent::KnownZones(z) => world.known_zones = Some(z),
                 NetEvent::Conquest(p) => region::on_conquest(world, &p),
                 NetEvent::Influence(p) => region::on_influence(world, &p),
+                NetEvent::BattlefieldInfo(p) => world.battlefield.on_reply(&p),
                 // G+0x9808 / +0x980f by linkshell number: its item's slot and bag.
                 NetEvent::LinkshellEquip { num, index, bag } => {
                     if let Some(l) = world.linkshells.get_mut(num as usize) {
@@ -12816,9 +12926,19 @@ impl App {
                         world.ko_deadline = end.saturating_sub(360);
                     }
                     world.my_pet = pet;
-                    // Held mid-swing: applied when the hold ends (the disengage waits for the swing).
+                    // Held mid-swing: applied when the hold ends (the disengage waits for the swing). Ours: our
+                    // engage is never held, so the draw comes before our first hits while a monster acts on us.
                     let rising = chair::rise(world, world.my_id, status);
-                    if rising || combat::held(world, world.my_id) || fishrod::walking_hold(world, world.my_id, status) {
+                    let engage = status == 1 && world.my_motion.status == 0;
+                    let held = combat::held(world, world.my_id) && !engage;
+                    if rising || held || fishrod::walking_hold(world, world.my_id, status) {
+                        if world.my_motion.status != status {
+                            log::info!(
+                                "status {status} parked (was {}): {}",
+                                world.my_motion.status,
+                                combat::held_why(world, world.my_id)
+                            );
+                        }
                         world.held_status.insert(world.my_id, status);
                     } else {
                         world.held_status.remove(&world.my_id);
@@ -13224,9 +13344,19 @@ impl App {
             }
         }
         for id in std::mem::take(&mut world.effects.skill_files_done) {
+            let mut gone = Vec::new();
             if let Some(a) = world.actors.get_mut(&id) {
                 log::info!("actor {id:#x}: skill files dropped (its last skill main ended)");
+                gone = a.extra.iter().filter(|(k, _)| *k == actmotion::Kind::Skill).map(|(_, f)| f.id).collect();
                 actmotion::drop_kind(&mut a.extra, actmotion::Kind::Skill);
+            }
+            // A file no other actor holds is freed, its effects with it (Effects::release_file).
+            for f in gone {
+                let held =
+                    world.actors.values().any(|a| a.extra.iter().any(|(_, m)| m.id == f) || a.skill_want.contains(&f));
+                if !held {
+                    world.effects.release_file(f);
+                }
             }
         }
         for (id, file) in std::mem::take(&mut world.effects.effect_motions) {
@@ -14058,14 +14188,7 @@ impl App {
         // Autorun: the first move becomes the vector; X input steers it 2 degrees a tick (ticks x 0.01745 x 2); no
         // input and no vector ends it. Forced off while dead, resting or seated and in events. Locked on, it runs at
         // the target (below).
-        // Speed 0 (FUN_100a6240): the run's vector is cut to the tick's move, none, and the |vector| <= 0.001 test ends
-        // it.
-        if world.autorun
-            && (in_event
-                || world.dead()
-                || own_speed(world) == 0.0
-                || matches!(world.my_motion.status, 6 | 7 | 0x21 | 0x26..=0x2c | 0x2f | 0x30 | 0x32..=0x35 | 0x38..=0x53))
-        {
+        if world.autorun && autorun_ends(in_event, world.dead(), own_speed(world), world.my_motion.status) {
             world.autorun = false;
         }
         // /follow (FUN_100a6070's users): autorun points at the target each tick; the target gone, dead or without a
@@ -14346,17 +14469,13 @@ impl App {
             world.move_tier = if step == Vec3::ZERO { 0.0 } else { 1.0 };
             world.autorun = false;
         }
-        // FUN_100a6240 at speed 0 (Bind): the move vector is the input x the tick's speed, so there is none and the
-        // function goes on as with no input (+0x598 = 0, no step, no strafe: FUN_100a8000 scales the same zero
-        // vector). Its tail still turns a free, unlocked third-person heading to the input by the camera, so the keys
-        // turn us in place. The forced follow moves by its own step.
-        let mut rooted_face = None;
-        if pull.is_none() && step != Vec3::ZERO && own_speed(world) == 0.0 {
-            rooted_face = (!tank).then(|| step.normalize());
-            step = Vec3::ZERO;
-            world.move_tier = 0.0;
+        let (rooted, rooted_face) = rooted_step(step, own_speed(world), pull.is_some(), tank);
+        if rooted != step {
+            (step, world.move_tier) = (rooted, 0.0);
         }
-        let stepping = step != Vec3::ZERO;
+        // A zone line walked through with the key held: no steps on the new zone until the zone-in has settled (they
+        // ran on its unsettled height and walked us under the floor).
+        let stepping = step != Vec3::ZERO && !world.unsettled;
         let moving = stepping;
         // Whole retail frames of FUN_100a48d0 / FUN_100a3560; a position set elsewhere starts over from it.
         if world.pos != world.step_to {
@@ -14558,6 +14677,7 @@ impl App {
             me.ground_mode = world.my_plate.no_snap
                 || world.event.as_ref().is_some_and(|l| l.no_ground(world.my_id, world.my_id))
                 || carrier::no_ground(status, bound);
+            me.locked = world.control_lock.is_some();
             // Standing still keeps the facing; only the camera turns. Locked, we face the target.
             let to = if let Some((_, Some(y))) = pin {
                 Some(Vec3::new(y.cos(), 0.0, -y.sin()))
@@ -15523,7 +15643,7 @@ impl App {
                     if let Err(e) = self.cfg.save() {
                         log::warn!("saving the config: {e:#}");
                     }
-                    self.updates = Some(updater::start(self.cfg.ffxi_dir()));
+                    self.updates = Some(updater::start(self.cfg.ffxi_dir(), uses_playonline(&self.cfg)));
                 }
                 firstrun::Action::Begin(dir) => {
                     self.cfg.game_dir = dir;
@@ -15988,6 +16108,21 @@ impl App {
                                 a.ui(crate::audio::Ui::Select);
                             }
                         }
+                    }
+                    // As the Viewer asks for its update before its sign-in: the window opens by itself, once.
+                    let viewer_behind = self
+                        .updates
+                        .as_ref()
+                        .is_some_and(|s| s.lock().unwrap().viewer.as_ref().is_some_and(updater::Game::offered));
+                    if viewer_behind
+                        && !self.viewer_asked
+                        && self.update_ui.is_none()
+                        && self.login_error.is_none()
+                        && is_playonline(&self.cfg.server)
+                        && let Some(s) = self.updates.clone()
+                    {
+                        self.viewer_asked = true;
+                        self.update_ui = Some(updater::UpdateUi::open(s, self.cfg.ffxi_dir()));
                     }
                     match chosen.filter(|_| self.login_error.is_none()) {
                         Some(LoginChoice::Exit) => self.exit_requested = true,
@@ -17274,13 +17409,17 @@ impl App {
                     for (id, key, value) in changes {
                         if key == lua::SCOPE_CHARACTER || key == lua::SCOPE_JOB {
                             let (folder, on) = (lua::folder_name(&id), value.as_bool() == Some(true));
+                            // This character's and job's state stays as it was (ModRef::set_scope).
+                            let character = uiconf::character(&world.world_name, &world.name);
+                            let job = uiconf::job_of(world).map(str::to_string);
                             let set = |list: &mut Vec<crate::config::ModRef>| {
                                 for r in list.iter_mut().filter(|r| r.name == folder) {
-                                    if key == lua::SCOPE_CHARACTER {
-                                        r.per_character = on;
+                                    let (c, j) = if key == lua::SCOPE_CHARACTER {
+                                        (on, r.per_job)
                                     } else {
-                                        r.per_job = on;
-                                    }
+                                        (r.per_character, on)
+                                    };
+                                    r.set_scope(Some(&character), job.as_deref(), c, j);
                                 }
                             };
                             set(&mut self.cfg.mods);
@@ -17880,6 +18019,15 @@ impl App {
     }
 
     /// The login screen and title menu play the flyover behind the lobby art.
+    /// A title or nation movie going: the stops for the voices its effects still hold.
+    fn stop_fly(&mut self, fly: Option<flyover::Flyover>) {
+        if let (Some(mut f), Some(a)) = (fly, &mut self.audio) {
+            for c in f.stop_sounds() {
+                play_fx_sound(a, c);
+            }
+        }
+    }
+
     fn title_backdrop(&self) -> bool {
         matches!(
             self.phase,
@@ -17898,7 +18046,8 @@ impl App {
                 self.load_flyover();
             }
         } else if matches!(self.phase, Phase::World(_)) {
-            self.flyover = None;
+            let old = self.flyover.take();
+            self.stop_fly(old);
         }
         let in_select =
             matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Select | LobbyScreen::Delete, .. });
@@ -18014,9 +18163,10 @@ impl App {
                     && ns.loading.is_none()
                     && let Ok((index, keys)) = self.game_data()
                 {
+                    let old = self.nation.fly.take().map(|f| f.1);
+                    self.stop_fly(old);
                     let ns = &mut self.nation;
                     ns.loading = Some(want);
-                    ns.fly = None;
                     let tx = self.tasks_tx.clone();
                     std::thread::spawn(move || {
                         let _ = tx.send(Task::Nation(
@@ -18027,11 +18177,14 @@ impl App {
                 }
             }
         } else if self.nation.fly.is_some() || self.nation.fade < 1.0 {
+            let old = self.nation.fly.take().map(|f| f.1);
+            self.stop_fly(old);
             self.nation = NationShow::default();
         }
         // A finished movie makes way for another random one.
         if self.flyover.as_ref().is_some_and(|f| f.done) {
-            self.flyover = None;
+            let old = self.flyover.take();
+            self.stop_fly(old);
         }
     }
 
@@ -18667,6 +18820,16 @@ impl App {
         if !select_ticks && let Some(fx) = self.select.as_mut().and_then(|s| s.effects()) {
             paused.extend(fx.pause_sounds());
         }
+        // The movies' voices too, while their screen is not up.
+        if !self.title_backdrop()
+            && let Some(f) = self.flyover.as_mut()
+        {
+            paused.extend(f.pause_sounds());
+        }
+        let nation_shown = creating && self.creator_step >= 6;
+        if !nation_shown && let Some((_, f)) = self.nation.fly.as_mut() {
+            paused.extend(f.pause_sounds());
+        }
         if let Some(a) = &mut self.audio {
             for c in paused {
                 play_fx_sound(a, c);
@@ -18682,6 +18845,8 @@ impl App {
                     if fly.done {
                         fly.restart();
                     }
+                    let alive = self.audio.as_ref().map(|a| a.alive());
+                    fly.draw_distance = self.cfg.draw_distance;
                     fly.render(
                         &gfx.gpu,
                         gfx.config.format,
@@ -18690,7 +18855,12 @@ impl App {
                         &scene_depth,
                         bg,
                         aspect,
+                        alive,
                     );
+                    for c in fly.take_sounds() {
+                        let Some(a) = &mut self.audio else { break };
+                        play_fx_sound(a, c);
+                    }
                 }
                 _ => {
                     let alive = self.audio.as_ref().map(|a| a.alive());
@@ -18720,7 +18890,22 @@ impl App {
             if fly.done {
                 fly.restart();
             }
-            fly.render(&gfx.gpu, gfx.config.format, encoder, (&scene_view, Some(&scene_tex)), &scene_depth, bg, aspect);
+            let alive = self.audio.as_ref().map(|a| a.alive());
+            fly.draw_distance = self.cfg.draw_distance;
+            fly.render(
+                &gfx.gpu,
+                gfx.config.format,
+                encoder,
+                (&scene_view, Some(&scene_tex)),
+                &scene_depth,
+                bg,
+                aspect,
+                alive,
+            );
+            for c in fly.take_sounds() {
+                let Some(a) = &mut self.audio else { break };
+                play_fx_sound(a, c);
+            }
             g.drew_world = true;
         }
         if matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Select | LobbyScreen::Delete, .. })
@@ -18747,6 +18932,8 @@ impl App {
             && let Some(fly) = &mut self.flyover
         {
             fly.advance(dt);
+            let alive = self.audio.as_ref().map(|a| a.alive());
+            fly.draw_distance = self.cfg.draw_distance;
             g.drew_world = fly.render(
                 &gfx.gpu,
                 gfx.config.format,
@@ -18755,7 +18942,12 @@ impl App {
                 &scene_depth,
                 bg,
                 aspect,
+                alive,
             ) || g.drew_world;
+            for c in fly.take_sounds() {
+                let Some(a) = &mut self.audio else { break };
+                play_fx_sound(a, c);
+            }
         }
     }
 
@@ -19034,6 +19226,12 @@ impl App {
         }
         if let Some(fx) = self.creator.as_mut().and_then(|c| c.effects.as_mut()) {
             fx.after_submit(&gfx.gpu);
+        }
+        if let Some(f) = self.flyover.as_mut() {
+            f.after_submit(&gfx.gpu);
+        }
+        if let Some((_, f)) = self.nation.fly.as_mut() {
+            f.after_submit(&gfx.gpu);
         }
         if let Phase::World(w) = &mut self.phase
             && let Some(r) = &mut w.renderer
@@ -19469,8 +19667,10 @@ fn world_uploads(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRender
 /// areas' lights.
 fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &WorldFrame) {
     let (dt, ev_clock) = (wf.dt, wf.ev_clock);
-    // Zone lighting for the Vana'diel time and weather the server gave us.
-    if let (Some(zw), Some((t, at))) = (&w.zone_weather, w.clock) {
+    // Zone lighting for the Vana'diel time and weather the server gave us. A scene whose weather data gives no env (none
+    // at all, e.g. 516 in the Zilart cutscene) is not left unlit: Env::scene (FUN_10188a70 -> FUN_10189690).
+    let zw = w.zone_weather.as_ref();
+    if let (true, Some((t, at))) = (zw.is_some() || w.zone.is_some(), w.clock) {
         // Op 0x77 sets the hour and weather while an event runs.
         let ev_weather = w.event.as_ref().and_then(|l| l.st.weather);
         let clock = crate::dat::weather::vana_minute(t, at.elapsed().as_secs_f32());
@@ -19529,7 +19729,8 @@ fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &Worl
             )
         };
         let static_env = w.static_env;
-        r.lighting = mix(&|t| zw.at(t, minute)).or(static_env).map(|e| step(&mut w.light_ease, &e));
+        let env = crate::dat::weather::Env::scene(zw.and_then(|zw| mix(&|t| zw.at(t, minute))), static_env);
+        r.lighting = Some(step(&mut w.light_ease, &env));
         // Real character shadows (render/sunshadow.rs): cast by the sun, or by the moon at night (fainter by its
         // colour, softer), faded out around the change at 6:00 and 18:00. Indoors the room light keeps day's edges.
         r.shadow_level = crate::render::sunshadow::twilight(minute);
@@ -19552,8 +19753,8 @@ fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &Worl
         }
         let sub_areas = w.sub.weather.iter().flat_map(|s| s.areas.iter());
         w.area_lights = zw
-            .areas
-            .iter()
+            .into_iter()
+            .flat_map(|zw| zw.areas.iter())
             .chain(sub_areas)
             .filter_map(|(&id, a)| Some((id, mix(&|t| a.at(t, minute))?.area_light())))
             .collect();
@@ -19563,7 +19764,7 @@ fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &Worl
         let mut lights = Vec::with_capacity(keys.len());
         for k in keys {
             let sub = w.sub.weather.as_ref().and_then(|s| s.areas.get(&k));
-            let e = sub.or_else(|| zw.areas.get(&k)).and_then(|a| mix(&|t| a.at(t, minute)));
+            let e = sub.or_else(|| zw.and_then(|zw| zw.areas.get(&k))).and_then(|a| mix(&|t| a.at(t, minute)));
             lights.push(e.map(|e| step(w.area_ease.entry((sub.is_some(), k)).or_default(), &e)));
         }
         r.set_area_lights(lights);
@@ -19592,6 +19793,24 @@ fn cross_capture(cx: &mut WorldDraw, gfx: &Gfx, fg: &FrameGpu, w: &mut World, r:
             // A snapshot alone: its faded actors drawn at once.
             r.defer_faded = false;
             r.render(&gfx.gpu, &mut enc, target, &scene_depth, &cam, aspect, &actors);
+            // Retail fades from the whole last frame, effects too (an effect sea, e.g. Qufim's, would blink out).
+            if let Some(eg) = cx.effects_gpu.as_mut() {
+                let (fog_color, fog) = r
+                    .lighting
+                    .as_ref()
+                    .map_or(([0.0; 3], [150.0, 600.0]), |l| (l.fog.to_array(), [l.fog_start, l.fog_end]));
+                eg.draw(
+                    &gfx.gpu,
+                    &mut enc,
+                    (target, &scene_depth, bg),
+                    None,
+                    &w.effects,
+                    (cam.proj(aspect), cam.view(), cam.eye),
+                    [crate::render::NEAR, crate::render::FAR],
+                    fog_color,
+                    fog,
+                );
+            }
             gfx.gpu.queue.submit([enc.finish()]);
         }
         if let Some(c) = &mut w.screen.cross {
@@ -19771,6 +19990,28 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
                 a.status_force.get_or_insert(-1.0);
             }
         }
+        // Scheduler op 0x05 motions (0x1005cd69): a swing's or a death's one-shot, and the play's whose tick has come.
+        // Each is queued once, from its start (no phase carry), stretched over its op's length.
+        let mut starts: Vec<crate::dat::sched::Motion> = Vec::new();
+        let mut rates: Vec<Option<f32>> = Vec::new();
+        if let Some(o) = shot {
+            rates.push(Some(o.speed));
+            starts.push(crate::dat::sched::Motion {
+                name: o.name,
+                at: 0,
+                speed: 1.0,
+                ticks: 0,
+                count: o.count,
+                blend: o.blend as u16,
+                out: o.out as u16,
+                half: o.half,
+            });
+        }
+        if let Some(p) = a.play.as_mut() {
+            let v = p.take_starts();
+            rates.extend(v.iter().map(|_| None));
+            starts.extend(v);
+        }
         // FUN_100c83c0: re-queued on a name change, a counted end or a blanked +0x7d8; a rate change alone goes on the
         // newest entries. Op 0x28 (0x1005b12e) queues it past the +0x80 hold. *(ours: so does an empty queue, not a rod.)*
         let stance = a.status_force.is_some_and(|b| b >= 0.0);
@@ -19798,13 +20039,16 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
             // +0x200), so the corpse motion does not cut the fall short. *(ours: only while a death or other motion
             // of ours is still running; one who arrives dead lies down at once.)*
             let falling = matches!(pick_status, 2 | 3) && !a.q.done && (a.oneshot.is_some() || a.play.is_some());
+            // A region-0 motion queued this frame clears the counted end's mark (+0x79c, vtable +0x1fc(0)) before
+            // FUN_100c6380 tests it: the scheduler's next motion takes over from the last pose, not from the status.
+            let ended = a.q.done && starts.is_empty();
             let force = a.status_force;
             if falling {
-            } else if a.q.done || force.is_some() || s != a.q_status {
+            } else if ended || force.is_some() || s != a.q_status {
                 let (blend, carry, why) = match force {
                     Some(b) if b >= 0.0 => (b, false, "stance op"),
                     // After a counted motion: in over its out length, from the start.
-                    _ if a.q.done => (a.q.back_blend(), false, "counted motion ended"),
+                    _ if ended => (a.q.back_blend(), false, "counted motion ended"),
                     _ => (crate::motion::BLEND_TICKS, !s.starts_with("jmp"), "status"),
                 };
                 let e = crate::motionq::Enq::status(r, blend, carry);
@@ -19823,28 +20067,6 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
                 a.q.set_rate(r);
                 a.q_rate = r;
             }
-        }
-        // Scheduler op 0x05 motions (0x1005cd69): a swing's or a death's one-shot, and the play's whose tick has come.
-        // Each is queued once, from its start (no phase carry), stretched over its op's length.
-        let mut starts: Vec<crate::dat::sched::Motion> = Vec::new();
-        let mut rates: Vec<Option<f32>> = Vec::new();
-        if let Some(o) = shot {
-            rates.push(Some(o.speed));
-            starts.push(crate::dat::sched::Motion {
-                name: o.name,
-                at: 0,
-                speed: 1.0,
-                ticks: 0,
-                count: o.count,
-                blend: o.blend as u16,
-                out: o.out as u16,
-                half: o.half,
-            });
-        }
-        if let Some(p) = a.play.as_mut() {
-            let v = p.take_starts();
-            rates.extend(v.iter().map(|_| None));
-            starts.extend(v);
         }
         for (m, rate) in starts.iter().zip(rates) {
             let first = actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, &m.name).first().copied();
@@ -20009,46 +20231,27 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
             crate::dat::character::pose_layers(&ch.skeleton, &pl, over, &held)
         };
         let posed_anchor = a.anchors[..2].iter().any(|&k| k != 2);
-        // FUN_100a4d10 reads the feet points of the drawn pose (vt+0x1c4), so these models pose on the CPU. A riding
-        // animal never probes (vt+0x360): it takes its rider's normal.
+        // FUN_100a4d10 reads the feet points of the drawn pose (vt+0x1c4), so these models pose on the CPU when they
+        // probe (FUN_100a4ed0, tilt::feet_gate). A riding animal takes its rider's normal and is left out *(inf: vt+0x360
+        // only clears the moving / near branch; whether the animal class answers vt+0x3fc for the counter branch is not
+        // traced)*.
         let feet_probe = ch.cib[0] == 2 && ch.cib[2] == 2 && *id & ride::ANIMAL == 0;
-        // FUN_100a4ed0: the probe runs each frame for a moving actor (more than 1e-7) at view depth <= 10.0
-        // (+0xbc) or one bound to the event (+0x120 bit 7), on the first update (+0x5ec), else when a counter
-        // (+0x5f0, from rand() % 120; ours dealt by id) passes 120: every 121st frame. The feet read last frame's
-        // pose, so a far one poses only the frame before its probe.
-        let near = -cview.transform_point3(pos).z <= 10.0;
-        let first = a.feet_count.is_none();
-        let probe_now = feet_probe && {
-            let moved = pos.distance(a.feet_last) > 1e-7;
-            a.feet_last = pos;
+        let (probe_now, feet_pose) = if feet_probe {
+            let depth = -cview.transform_point3(pos).z;
             let bound = w.event.as_ref().is_some_and(|l| l.is_bound(*id));
-            match a.feet_count {
-                None => {
-                    a.feet_count = Some(((id.wrapping_mul(0x9e37_79b1) >> 8) % 120) as u8);
-                    true
-                }
-                Some(_) if (near && moved) || bound || a.feet_retry => true,
-                Some(c) => {
-                    let c = c + 1;
-                    a.feet_count = Some(if c > 120 { 0 } else { c });
-                    c > 120
-                }
-            }
+            // rand() & 0x7fff, as the CRT's.
+            let seed = if a.feet_gate.fresh() { getrandom::u32().unwrap_or(0) & 0x7fff } else { 0 };
+            tilt::feet_gate(&mut a.feet_gate, seed, pos, depth, bound)
+        } else {
+            (false, false)
         };
-        // Retail always has last frame's drawn pose. Ours has none when last frame was not posed (a far moving one
-        // just came near): the probe keeps the old normal and runs again next frame, posed *(ours)*.
-        let feet_miss = probe_now && !first && a.feet.is_none();
-        a.feet_retry = feet_miss;
-        let probe_now = probe_now && !feet_miss;
-        // A near one poses every frame even standing still (it probes only on the counter then), so a move in
-        // range finds last frame's feet at once.
-        let feet_pose = feet_probe && (near || feet_miss || a.feet_count.is_some_and(|c| c >= 120));
         if (w.locked && (*id == w.my_id || w.target == Some(*id)))
             || (w.camst.first && *id == w.my_id)
             || fx_posed.contains(id)
             || posed_anchor
             || feet_pose
             || a.camera_rig
+            || feet_pose
         {
             a.bones = pose_now();
         } else {
@@ -21632,6 +21835,34 @@ fn app_egui_context() -> egui::Context {
     ctx
 }
 
+/// FUN_10160530 -> FUN_101604c0: entering game mode 0x60 once the zone is loaded (DAT_1047e5a0, set by FUN_10093db0
+/// with the zone-in's c2s 0x00C and 0x061) runs every registered handler's slot 0x30 in registry order (0x10373320).
+/// Three send: prty5 (entry 94: c2s 0x0DB kind 1), mapframe (204: c2s 0x112 kind 0), cnqframe (210: c2s 0x05A). They
+/// go in the frame of the zone-in's other sends, after netstat's c2s 0x0E0 / 0x00F (its open slot), as here.
+fn zone_walk(world: &mut World) {
+    let (langs, sends) = walk_sends(world.game.get(0x98), &world.conf_sys, &mut world.conquest, &mut world.battlefield);
+    world.party_langs = langs;
+    for (id, body) in sends {
+        let _ = world.net.commands.send(NetCommand::Packet { id, body });
+    }
+}
+
+/// The walk's sends in order, and the party languages prty5 keeps.
+fn walk_sends(
+    config_98: u32,
+    conf: &[u8; 12],
+    conquest: &mut region::Data,
+    bf: &mut battlefield::Battlefield,
+) -> (u32, Vec<(u16, Vec<u8>)>) {
+    let langs = partymenu::zone_langs(config_98);
+    let mut out = vec![(0x0DB, partymenu::body_0db(conf, 1, langs))];
+    out.extend(bf.request(battlefield::Kind::Both).map(|b| (0x112, b)));
+    if conquest.zone_in() {
+        out.push((0x05A, Vec::new()));
+    }
+    (langs, out)
+}
+
 /// A test's egui pass, its texture deltas cleared (epaint debug-asserts on a dropped unapplied one).
 #[cfg(test)]
 pub(crate) fn egui_pass(ctx: &egui::Context, raw: egui::RawInput, ui: impl FnMut(&mut egui::Ui)) {
@@ -21640,6 +21871,62 @@ pub(crate) fn egui_pass(ctx: &egui::Context, raw: egui::RawInput, ui: impl FnMut
 
 #[cfg(test)]
 mod tests {
+    /// The zone-in walk's sends as a retail capture has them after c2s 0x00F: 0x0DB kind 1, 0x112 kind 0, 0x05A; again
+    /// at the next zone-in, within the conquest gate's 120 s and with no reply to either request.
+    #[test]
+    fn zone_walk_sends_in_retail_order() {
+        let mut conquest = super::region::Data::new(None);
+        let mut bf = super::battlefield::Battlefield::default();
+        let conf = [0x18, 0, 0, 4, 0, 0, 0, 0, 0, 0x18, 0, 0];
+        let (langs, sends) = super::walk_sends(0, &conf, &mut conquest, &mut bf);
+        assert_eq!(langs, 2);
+        let ids: Vec<u16> = sends.iter().map(|s| s.0).collect();
+        assert_eq!(ids, [0x0DB, 0x112, 0x05A]);
+        assert_eq!(sends[0].1[2], 1);
+        assert_eq!(&sends[0].1[0x20..], &[2, 0, 0, 0]);
+        assert_eq!(sends[1].1, [0, 0, 0, 0]);
+        assert!(sends[2].1.is_empty());
+        conquest.zone_load();
+        bf.zone_load();
+        let (_, sends) = super::walk_sends(0b10010, &conf, &mut conquest, &mut bf);
+        assert_eq!(sends.iter().map(|s| s.0).collect::<Vec<_>>(), [0x0DB, 0x112, 0x05A]);
+        assert_eq!(&sends[0].1[0x20..], &[0b10010, 0, 0, 0]);
+    }
+
+    /// Speed 0 (Bind) is 0, not a default; riding doubles, capped at 30.
+    #[test]
+    fn run_speed_has_no_default() {
+        assert_eq!(super::run_speed(0, 0), 0.0);
+        assert_eq!(super::run_speed(0, 5), 0.0);
+        assert_eq!(super::run_speed(50, 0), 5.0);
+        assert_eq!(super::run_speed(50, 5), 10.0);
+        assert_eq!(super::run_speed(200, 0x55), 30.0);
+    }
+
+    /// FUN_100a6240's zero vector ends autorun at speed 0, as an event, death or a seated status does.
+    #[test]
+    fn autorun_ends_when_rooted() {
+        use super::autorun_ends;
+        assert!(!autorun_ends(false, false, 5.0, 0));
+        assert!(autorun_ends(false, false, 0.0, 0));
+        assert!(autorun_ends(true, false, 5.0, 0));
+        assert!(autorun_ends(false, true, 5.0, 0));
+        assert!(autorun_ends(false, false, 5.0, 0x21));
+        assert!(!autorun_ends(false, false, 5.0, 1));
+    }
+
+    /// Rooted: no step, the keys turn us (not while locked on); the forced follow and a free speed still step.
+    #[test]
+    fn rooted_turns_in_place() {
+        use super::{Vec3, rooted_step};
+        let x = Vec3::new(2.0, 0.0, 0.0);
+        assert_eq!(rooted_step(x, 0.0, false, false), (Vec3::ZERO, Some(Vec3::X)));
+        assert_eq!(rooted_step(x, 0.0, false, true), (Vec3::ZERO, None));
+        assert_eq!(rooted_step(x, 0.0, true, false), (x, None));
+        assert_eq!(rooted_step(x, 5.0, false, false), (x, None));
+        assert_eq!(rooted_step(Vec3::ZERO, 0.0, false, false), (Vec3::ZERO, None));
+    }
+
     #[test]
     fn macro_gate_closes_on_each_retail_test() {
         use super::{GateState, gate_open};
@@ -21930,6 +22217,20 @@ mod tests {
 
     /// The slot rules of FUN_1009b550 / FUN_10099ae0: another id in the slot is reset; the id's old slot goes when
     /// an 0x00E takes a new one, and for an 0x00D only with a slot in use or the full mask.
+    /// A held despawn leaves the actor waiting (known Some(false)): a partial update resets the slot and asks again,
+    /// a full one keeps it; a reserved actor takes either, and an actor we lack wants the full mask.
+    #[test]
+    fn held_despawn_wants_a_full_update() {
+        use super::{FirstUpdate::*, first_update};
+        assert_eq!(first_update(Some(false), false, false), ResetAndAsk);
+        assert_eq!(first_update(Some(false), false, true), Apply);
+        assert_eq!(first_update(Some(false), true, false), Apply);
+        assert_eq!(first_update(Some(true), false, false), Apply);
+        assert_eq!(first_update(None, false, false), Ask);
+        assert_eq!(first_update(None, false, true), Apply);
+        assert_eq!(first_update(None, true, false), Apply);
+    }
+
     #[test]
     fn slot_reset_rules() {
         assert_eq!(slot_resets(7, None, false, true), Vec::<u32>::new());

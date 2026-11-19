@@ -25,7 +25,7 @@ pub enum Kind {
     /// The riding files (FUN_100d2800, tag 7) while on a chocobo or mount.
     Ride,
     /// Battle files retail has already taken off the list (FUN_100d44b0(1) in FUN_1008b460's state 5 / 7) while the
-    /// sheathe's motions still play from them (retail's motion player keeps its own reference): motions resolve,
+    /// sheathe's motions still play from them (retail's motion player keeps a reference): motions resolve,
     /// schedulers do not.
     Sheathed,
 }
