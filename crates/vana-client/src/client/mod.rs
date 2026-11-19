@@ -13127,9 +13127,11 @@ impl App {
             }
         }
         // FUN_10095900: models under an unload mark are freed, the ones whose mark is gone are asked for again.
-        event::unload_models(world);
+        // Their looks go first: a newer one that came with the update that ended the mark wins.
+        let back = event::unload_models(world);
         // Looks the event scripts changed (op 0xb6) load like the server's; held ones go first, newer ones win.
         looks.extend(std::mem::take(&mut world.event_looks));
+        looks.splice(0..0, back);
         looks.splice(0..0, std::mem::take(&mut world.held_looks));
         // The mods' looks changed (render.look): every player look in sight again, before the newer ones.
         let models_ver = world.lua.models_ver();
@@ -13147,11 +13149,6 @@ impl App {
         let mut wanted = Vec::new();
         for (id, source) in looks {
             if matches!(source, Source::Pc(l) if l.race == 0) {
-                continue;
-            }
-            // FUN_10095900 makes no model for an actor under an unload mark: its look waits for the mark to go.
-            if let Some(kept) = world.unloaded.get_mut(&id) {
-                *kept = Some(source);
                 continue;
             }
             // The look before the mods': what waits (held, under a costume) is normalized again when it comes back.
@@ -13175,6 +13172,11 @@ impl App {
                 }
                 _ => source,
             };
+            // FUN_10095900 makes no model for an actor under an unload mark: its look waits for the mark to go.
+            if let Some(kept) = world.unloaded.get_mut(&id) {
+                *kept = Some(base);
+                continue;
+            }
             let key = format!("{source:?}");
             let spawn_fx = world.entities.get(&id).is_some_and(|e| e.spawn_fx);
             let shadow =

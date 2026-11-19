@@ -3179,20 +3179,28 @@ fn remake_model(w: &mut World, id: u32) {
     }
 }
 
-/// FUN_10092900: the entity's model goes, its riding animal and chair with it, and what ran on them.
+/// FUN_10092900: the entity's model goes, its riding animal and chair with it, and what ran on them. The model made
+/// next is a new one, so its `init` runs again (FUN_1008c480).
 fn free_model(w: &mut World, id: u32) {
     for gone in [id, super::ride::ANIMAL | id, super::chair::CHAIR | id] {
         if w.actors.remove(&gone).is_some() {
             w.effects.forget_actor(gone);
         }
     }
+    if id == w.my_id {
+        w.my_init_done = false;
+    }
+    if let Some(e) = w.entities.get_mut(&id) {
+        e.init_done = false;
+    }
+    super::chair::model_freed(w, id);
 }
 
 /// FUN_10095900 on FUN_1008e4d0's unload marks (+0x120 bit 23, `unloaded`), once a frame ahead of the model loader:
 /// a marked actor's model is freed (FUN_10092900) and none is made while the mark stays; the frame the mark is gone
 /// FUN_1008f740 makes it again as a new model (colour 0x80808080, the load fade from 0, the status motion from its
 /// start). `World::unloaded` holds the look each marked actor comes back with; the loader leaves a newer one there.
-pub fn unload_models(w: &mut World) {
+pub fn unload_models(w: &mut World) -> Vec<(u32, super::Source)> {
     let marked = unloaded(w);
     // The models in play: the marked actors' (freed now) and those of actors whose mark is gone.
     let shown: HashMap<u32, Option<super::Source>> = marked
@@ -3205,7 +3213,7 @@ pub fn unload_models(w: &mut World) {
     for &id in &marked {
         free_model(w, id);
     }
-    w.event_looks.extend(back);
+    back
 }
 
 /// One frame of `World::unloaded` (`kept`): every marked actor has an entry, with the look of the model it had
