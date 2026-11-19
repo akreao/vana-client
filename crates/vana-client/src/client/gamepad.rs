@@ -503,6 +503,10 @@ impl Gamepad {
             return self.release_all();
         }
         self.connect();
+        #[cfg(windows)]
+        if let (true, Some(x)) = (self.xinput_plays, &mut self.xinput) {
+            x.enable(focused || set.background);
+        }
         let (padsin, padexsin) = (set.padsin.as_str(), set.padexsin.as_str());
         if self.maps.as_ref().is_none_or(|m| m.0 != padsin || m.1 != padexsin) {
             self.maps =

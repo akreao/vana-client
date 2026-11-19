@@ -1,9 +1,11 @@
 //! XInput as gamepad.rs's fallback on Windows, used while gilrs (Windows.Gaming.Input) has no pad. Some Wine front
 //! ends on Android hook XInputGetState in the process but never make a WGI device, so gilrs sees nothing.
-//! Retail's own XInput branch: FUN_10008e10 loads xinputdll.dll from the game folder (which links XINPUT1_3.dll) and
-//! takes XInputGetState_ / XInputSetState_ / XInputEnable_; FUN_10005a40 reads one slot a frame through FUN_10008ea0
-//! and turns it into the pad word with table 0x1032a818. We load the system DLLs ourselves, xinput1_3 first as
-//! retail's, and keep the values raw as retail reads them (no dead zone or rescale here).
+//! Retail's own XInput branch: FUN_10008e10 loads xinputdll.dll from the game folder (32-bit, a wrapper that links
+//! XINPUT1_3.dll) and takes XInputGetState_ / XInputSetState_ / XInputEnable_; FUN_10005a40 reads its slot each frame
+//! through FUN_10008ea0 and turns it into the pad word with table 0x1032a818. The slot (pad +0xc9c) comes from the
+//! DirectInput enumeration FUN_100057d0: with no padguid000 the first pad, slot 0; with padguid000, the count of
+//! XInput pads (FUN_10008ab0) enumerated up to that one. Ours: slot 0 (see SLOT), xinput1_3 itself, and the values
+//! raw as retail reads them (no dead zone or rescale here).
 
 use super::gamepad::Pad;
 
@@ -58,21 +60,13 @@ pub fn pad_of(g: &XGamepad) -> Pad {
     }
 }
 
-/// Anything held, for the pad that plays being the last one touched (as gilrs's and SDL's).
-fn touched(g: &XGamepad, prev: &XGamepad) -> bool {
-    g.buttons & !prev.buttons != 0
-        || (g.left_trigger != 0 && prev.left_trigger == 0)
-        || (g.right_trigger != 0 && prev.right_trigger == 0)
-}
-
 #[cfg(windows)]
 pub use dll::XInput;
 
 #[cfg(windows)]
 mod dll {
-    use super::{XGamepad, pad_of, touched};
+    use super::{XGamepad, pad_of};
     use crate::client::gamepad::Pad;
-    use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::{FreeLibrary, HMODULE};
     use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 
@@ -93,155 +87,99 @@ mod dll {
 
     type GetState = unsafe extern "system" fn(u32, *mut State) -> u32;
     type SetState = unsafe extern "system" fn(u32, *mut Vibration) -> u32;
+    type Enable = unsafe extern "system" fn(i32);
 
-    /// xinput1_3 first (retail's xinputdll.dll links it), then the newer ones. A shim may hook only one of them, so
-    /// each that loads is kept and the first with a pad plays.
+    /// xinput1_3 as retail's xinputdll.dll links it. *(Not retail: xinput1_4 and xinput9_1_0 when it is missing; it
+    /// comes with the DirectX redistributable, which a Windows without retail installed may lack.)*
     const DLLS: [&str; 3] = ["xinput1_3.dll", "xinput1_4.dll", "xinput9_1_0.dll"];
-    /// How often the slots with no pad are asked again (an empty slot is slow to ask on some systems).
-    const SCAN: Duration = Duration::from_secs(1);
-    const SLOTS: u32 = 4;
+    /// Pad +0xc9c as FUN_100057d0 sets it without padguid000. *(Not retail: with padguid000 retail's slot is that
+    /// DirectInput device's place among the XInput pads it enumerates (FUN_10008ab0); we have no DirectInput
+    /// enumeration and read slot 0 then too.)*
+    const SLOT: u32 = 0;
 
-    struct Dll {
+    pub struct XInput {
         name: &'static str,
         module: HMODULE,
         get: GetState,
         set: Option<SetState>,
-    }
-
-    impl Drop for Dll {
-        fn drop(&mut self) {
-            unsafe { FreeLibrary(self.module) };
-        }
-    }
-
-    pub struct XInput {
-        dlls: Vec<Dll>,
-        /// The DLL whose pads play (index into `dlls`), and each slot's last state while it has a pad.
-        cur: Option<usize>,
-        slots: [Option<XGamepad>; SLOTS as usize],
-        active: Option<u32>,
-        next_scan: Instant,
-        /// The slot the motors run on and their level.
-        motor: Option<(u32, u16)>,
+        enable: Option<Enable>,
+        /// The slot's state this frame (None: no pad).
+        state: Option<XGamepad>,
+        /// The motors' level, and XInputEnable's last value.
+        motor: u16,
+        enabled: Option<bool>,
     }
 
     impl XInput {
         pub fn new() -> Result<XInput, String> {
-            let mut dlls = Vec::new();
             for name in DLLS {
                 let wide: Vec<u16> = name.encode_utf16().chain([0]).collect();
                 let module = unsafe { LoadLibraryW(wide.as_ptr()) };
                 if module.is_null() {
                     continue;
                 }
-                let get = unsafe { GetProcAddress(module, c"XInputGetState".as_ptr().cast()) };
-                let set = unsafe { GetProcAddress(module, c"XInputSetState".as_ptr().cast()) };
+                let proc = |n: &std::ffi::CStr| unsafe { GetProcAddress(module, n.as_ptr().cast()) };
+                let (get, set, enable) = (proc(c"XInputGetState"), proc(c"XInputSetState"), proc(c"XInputEnable"));
                 let Some(get) = get else {
                     log::info!("gamepad (XInput): {name} has no XInputGetState");
                     unsafe { FreeLibrary(module) };
                     continue;
                 };
-                // SAFETY: XInputGetState / XInputSetState have these signatures in every XInput DLL.
+                // SAFETY: these are the functions' signatures in every XInput DLL (XInputEnable is BOOL -> void).
                 type Proc = unsafe extern "system" fn() -> isize;
-                let (get, set) = unsafe {
-                    (std::mem::transmute::<Proc, GetState>(get), set.map(|s| std::mem::transmute::<Proc, SetState>(s)))
+                let (get, set, enable) = unsafe {
+                    (
+                        std::mem::transmute::<Proc, GetState>(get),
+                        set.map(|f| std::mem::transmute::<Proc, SetState>(f)),
+                        enable.map(|f| std::mem::transmute::<Proc, Enable>(f)),
+                    )
                 };
-                dlls.push(Dll { name, module, get, set });
+                log::info!("gamepad: XInput ({name}, user index {SLOT}) as the fallback");
+                return Ok(XInput { name, module, get, set, enable, state: None, motor: 0, enabled: None });
             }
-            if dlls.is_empty() {
-                return Err("no XInput DLL".into());
-            }
-            let names: Vec<&str> = dlls.iter().map(|d| d.name).collect();
-            log::info!("gamepad: XInput ({}) as the fallback", names.join(", "));
-            Ok(XInput { dlls, cur: None, slots: [None; 4], active: None, next_scan: Instant::now(), motor: None })
+            Err("no XInput DLL".into())
         }
 
-        fn get(&self, dll: usize, slot: u32) -> Option<XGamepad> {
+        /// FUN_10005a40's poll (FUN_10008ea0): the slot's state, every frame.
+        pub fn update(&mut self) {
             let mut s = State::default();
             // ERROR_SUCCESS; anything else (ERROR_DEVICE_NOT_CONNECTED) is no pad.
-            (unsafe { (self.dlls[dll].get)(slot, &mut s) } == 0).then_some(s.pad)
+            let now = (unsafe { (self.get)(SLOT, &mut s) } == 0).then_some(s.pad);
+            match (self.state.is_some(), now.is_some()) {
+                (false, true) => log::info!("gamepad (XInput) {} connected through {}", SLOT + 1, self.name),
+                (true, false) => {
+                    log::info!("gamepad (XInput) {} disconnected", SLOT + 1);
+                    self.motor = 0;
+                }
+                _ => {}
+            }
+            self.state = now;
         }
 
-        /// Reads the pads: every frame the slots that have one, every SCAN the others (and, with none, the other DLLs).
-        pub fn update(&mut self) {
-            let now = Instant::now();
-            let scan = now >= self.next_scan;
-            if scan {
-                self.next_scan = now + SCAN;
-            }
-            if self.slots.iter().all(Option::is_none) {
-                if !scan {
-                    return;
-                }
-                self.cur = None;
-                self.active = None;
-                for d in 0..self.dlls.len() {
-                    if (0..SLOTS).any(|s| self.get(d, s).is_some()) {
-                        self.cur = Some(d);
-                        break;
-                    }
-                }
-            }
-            let Some(d) = self.cur else { return };
-            for s in 0..SLOTS {
-                let i = s as usize;
-                if self.slots[i].is_none() && !scan {
-                    continue;
-                }
-                let prev = self.slots[i];
-                self.slots[i] = self.get(d, s);
-                match (prev, self.slots[i]) {
-                    (None, Some(_)) => {
-                        log::info!("gamepad (XInput) {} connected through {}", s + 1, self.dlls[d].name);
-                        self.active.get_or_insert(s);
-                    }
-                    (Some(_), None) => {
-                        log::info!("gamepad (XInput) {} disconnected", s + 1);
-                        if self.motor.is_some_and(|(m, _)| m == s) {
-                            self.motor = None;
-                        }
-                    }
-                    (Some(p), Some(g)) if touched(&g, &p) => self.active = Some(s),
-                    _ => {}
-                }
-            }
-            if self.active.is_none_or(|s| self.slots[s as usize].is_none()) {
-                self.active = (0..SLOTS).find(|&s| self.slots[s as usize].is_some());
-            }
-        }
-
-        /// The pad that plays, as gamepad.rs reads one.
+        /// The pad, as gamepad.rs reads one.
         pub fn state(&self) -> Option<Pad> {
-            self.active.and_then(|s| self.slots[s as usize]).map(|g| pad_of(&g))
+            self.state.as_ref().map(pad_of)
         }
 
-        /// The connected pads' names, the one that plays first.
+        /// The connected pad's name.
         pub fn names(&self) -> Vec<String> {
-            let Some(d) = self.cur else { return Vec::new() };
-            let mut v: Vec<(bool, u32)> =
-                (0..SLOTS).filter(|&s| self.slots[s as usize].is_some()).map(|s| (Some(s) != self.active, s)).collect();
-            v.sort();
-            v.into_iter().map(|(_, s)| format!("XInput controller {} ({})", s + 1, self.dlls[d].name)).collect()
+            self.state.iter().map(|_| format!("XInput controller {} ({})", SLOT + 1, self.name)).collect()
         }
 
-        /// Both motors at `level` on the pad that plays (FUN_10008ed0, XInputSetState); a pad that stops playing
-        /// stops.
-        pub fn motors(&mut self, level: u16) {
-            let Some(d) = self.cur else { return };
-            let Some(set) = self.dlls[d].set else { return };
-            let target = self.active.filter(|_| level != 0);
-            if let Some((s, l)) = self.motor {
-                if Some(s) == target && l == level {
-                    return;
-                }
-                if Some(s) != target {
-                    unsafe { set(s, &mut Vibration { left: 0, right: 0 }) };
-                    self.motor = None;
-                }
+        /// FUN_10005a40 calls FUN_10008f00 (XInputEnable) with the focus each frame, unless the background option
+        /// is on and the game is in the background: the pad reads and rumbles only while `on`.
+        pub fn enable(&mut self, on: bool) {
+            if let Some(f) = self.enable.filter(|_| self.enabled != Some(on)) {
+                unsafe { f(on as i32) };
+                self.enabled = Some(on);
             }
-            if let Some(s) = target {
-                unsafe { set(s, &mut Vibration { left: level, right: level }) };
-                self.motor = Some((s, level));
+        }
+
+        /// Both motors at `level` (FUN_10008ed0, XInputSetState).
+        pub fn motors(&mut self, level: u16) {
+            if let Some(set) = self.set.filter(|_| level != self.motor) {
+                unsafe { set(SLOT, &mut Vibration { left: level, right: level }) };
+                self.motor = level;
             }
         }
     }
@@ -249,6 +187,7 @@ mod dll {
     impl Drop for XInput {
         fn drop(&mut self) {
             self.motors(0);
+            unsafe { FreeLibrary(self.module) };
         }
     }
 }
@@ -275,13 +214,5 @@ mod tests {
         let back: Vec<i32> = a[..4].iter().map(|v| (v * 127.0).round() as i32).collect();
         assert_eq!(back, vec![126, -127, -1, 1]);
         assert_eq!((a[4], a[5]), (0.0, 0.0));
-    }
-
-    #[test]
-    fn touched_is_a_new_press() {
-        let held = XGamepad { buttons: 0x1000, ..Default::default() };
-        assert!(touched(&held, &XGamepad::default()));
-        assert!(!touched(&held, &held));
-        assert!(touched(&XGamepad { left_trigger: 3, ..held }, &held));
     }
 }
