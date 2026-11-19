@@ -53,7 +53,7 @@ The dictionary in the client's language:
   ours' look-up by id gives the same text.
 
 German's quotation marks (FUN_10191710; language 2 and the flag clear): each lone `"` (a one-byte character by
-FUN_10191050 / FUN_10190ff0, called with second byte 0) becomes 85 44 („), the next 85 53 (“), by turns; a line of
+FUN_10191050 / FUN_10190ff0, called with second byte 0) becomes 85 44, the next 85 53, by turns (*inf: German's „ and “; the font's glyphs not checked*); a line of
 half the caller's buffer or more is left alone. Callers: the log (FUN_10129090, lines whose mode word's second byte has
 no low five bits, 0x800), the chat line (FUN_101b9c30, 0x968), the macro editor's lines not being edited
 (win_macro_v10, 0x98), the text field (FUN_101c76b0, 0x41a, 15 windows), the search comment printer (FUN_101ded50,
@@ -80,3 +80,8 @@ Found on the way (new queue row 175): the macro editor draws a line that is not 
 brackets (win_macro_v10: FUN_101b8850(.., 0x98, 1, 0), the same call the comment window makes); ours draws it plain
 (macroedit::shown). Search with a typed word inside a category (FUN_101bd060 with both) is built in the dictionary,
 but the candidate list only asks a category with no word, as before.
+
+Review notes: typed accented letters are not found because ours encodes é as `?` (encode_sjis has no 0x85 row; the
+European text encoding is part of row 174); typing the word without accents finds it, as the folded compare does. A
+typed word inside the Key Items category is searched over an unsorted list, as retail does (FUN_101bd230 on
+FUN_101bc480, which FUN_101bbcb0 leaves in table order). The modern layer draws German's marks as „ and “.

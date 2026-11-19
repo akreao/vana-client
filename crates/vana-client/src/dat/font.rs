@@ -133,8 +133,8 @@ pub fn char_len(b: u8) -> usize {
     }
 }
 
-/// FUN_10191710 in a German client (language 2, not the European-as-English flag): each lone '"' becomes 85 44 („),
-/// the next 85 53 (“), by turns; `room` is the caller's buffer, and a line of half of it or more stays as it is. The
+/// FUN_10191710 in a German client (language 2, not the European-as-English flag): each lone '"' becomes 85 44, the
+/// next 85 53, by turns (inf: German's „ and “; the font's glyphs are not checked); `room` is the caller's buffer, and a line of half of it or more stays as it is. The
 /// walk steps by `char_len` and stops at a NUL.
 pub fn german_quotes(text: &[u8], room: usize) -> Vec<u8> {
     quotes_in(super::lang::files() == super::items::Lang::De, text, room)
@@ -558,13 +558,16 @@ const PAIR_BASE: u32 = 0xF0000;
 const BYTE_BASE: u32 = PAIR_BASE + 0x1000;
 
 /// The game's glyphs as Unicode for faces that lack them (the modern interface's): its apostrophe (0x8552) and
-/// curly quotes (0x87B2 / 0x87B3); the other private-use characters (gaiji, pairs Shift-JIS lacks, the in-line colour
+/// curly quotes (0x87B2 / 0x87B3), German's marks (0x8544 / 0x8553); the other private-use characters (gaiji, pairs Shift-JIS lacks, the in-line colour
 /// codes and phrase bytes kept in plane 16) are left out.
 pub fn plain_char(c: char) -> Option<char> {
     match c as u32 {
         0xF8552 => Some('\u{2019}'),
         0xF87B2 => Some('\u{201C}'),
         0xF87B3 => Some('\u{201D}'),
+        // German's quotation marks (german_quotes, 85 44 / 85 53; inf: „ and “, the glyphs not checked).
+        0xF8544 => Some('\u{201E}'),
+        0xF8553 => Some('\u{201C}'),
         // Full-width forms (Shift-JIS 81 xx: Kupipi's "pre～sent") as their ASCII, the ideographic space as a space.
         0xFF01..=0xFF5E => char::from_u32(c as u32 - 0xFEE0),
         0x3000 => Some(' '),
