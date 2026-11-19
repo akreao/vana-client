@@ -253,6 +253,10 @@ pub struct PadCfg {
     pub listening: Option<f32>,
     /// To store: the maps, on, background, dead zone.
     pub save: Option<(String, String, bool, bool, u32)>,
+    /// Movement Rate shown (config move_rate, 30 or 60).
+    pub move_rate: u32,
+    /// To store: Movement Rate.
+    pub save_move_rate: Option<u32>,
     /// To store: the rumble option (config gamepad_rumble).
     pub save_rumble: Option<bool>,
     /// Clear config.json's maps (retail's or the default then play).
@@ -294,6 +298,12 @@ impl PadCfg {
         }
         self.dead = dead;
         self.store(self.maps());
+    }
+
+    /// Stores Movement Rate (config move_rate), which also moves the character on the keyboard.
+    pub fn set_move_rate(&mut self, rate: u32) {
+        self.move_rate = rate;
+        self.save_move_rate = Some(rate);
     }
 
     /// Stores the rumble option. Retail's setting (padmode000) stops deciding it once config.json has maps, so

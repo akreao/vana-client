@@ -96,6 +96,7 @@ enum Click {
     Clear,
     Options(bool, bool, u32),
     Rumble(bool),
+    MoveRate(u32),
     Defaults,
     Copy,
     Retail,
@@ -236,6 +237,16 @@ fn side(ui: &mut Ui, m: &super::Modern, p: &PadCfg, click: &mut Option<Click>) {
         {
             *click = Some(Click::Options(set.on, set.background, k as u32 * 5));
         }
+        heading(ui, m, "Movement", false);
+        ui.label(
+            egui::RichText::new("Movement Rate: how many times a second your character moves and turns, with a stick or the keyboard. 30 as the game runs, or 60 as it does with a frame rate add-on (not retail).")
+                .size(m.theme.small)
+                .color(m.theme.color("text")),
+        );
+        let rates = ["30".to_string(), "60".to_string()];
+        if let Some(k) = kit::choice(ui, m, &rates, (p.move_rate == 60) as usize, 0) {
+            *click = Some(Click::MoveRate(if k == 1 { 60 } else { 30 }));
+        }
         heading(ui, m, "Settings in Use", false);
         let (from, colour) = match set.source {
             Source::Config => ("Saved by Vana Client in config.json.".to_string(), "text"),
@@ -302,6 +313,10 @@ fn apply(w: &mut World, c: Click) {
         }
         Click::Options(on, bg, dead) => {
             p.set_options(on, bg, dead);
+            Se::Cursor
+        }
+        Click::MoveRate(rate) => {
+            p.set_move_rate(rate);
             Se::Cursor
         }
         Click::Rumble(on) => {
