@@ -53,4 +53,7 @@ Not done (deviations to flag):
   raised window already had the focus; ours only on a change.
 - The cursor moves with a pointer warp from window code (FUN_1011a240(child, 1), and FUN_10241c00 / FUN_10246840
   calling FUN_10126000 after setting a cursor): queue row 177.
+- The field's pick and the press / drag positions keep using the mouse's window position, not the warped pointer
+  (retail picks at +4 / +8); only the windows and the sprite use the warp. A later stacked-window shift
+  (World::ptr_dy, FUN_101626e0) moves the warped pointer with it.
 - Not checked live.

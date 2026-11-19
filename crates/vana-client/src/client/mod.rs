@@ -5529,11 +5529,13 @@ pub fn downloading(gu: &mut GameUi, n: usize, sw: f32, sh: f32) {
 /// FUN_10125b90's SetCursorPos for a pointer put on `at` (UI pixels, `k` UI pixels per window pixel): only when the
 /// Windows cursor is the one shown (config 0021), in full screen or borderless at the desktop size (DAT_10457c2c 0 /
 /// 3) and with the window active. Elsewhere (and where the system refuses, as Wayland does) only the game's pointer
-/// moves until the mouse does.
-fn os_pointer_warp(cfg: &Config, k: (f32, f32), window: &Window, at: (f32, f32)) {
-    if cfg.tool("0021") != 0 && matches!(cfg.window_mode(), 0 | 3) && window.has_focus() {
-        let _ = window.set_cursor_position(winit::dpi::PhysicalPosition::new((at.0 / k.0) as f64, (at.1 / k.1) as f64));
+/// moves until the mouse does. The window position it went to, when it went.
+fn os_pointer_warp(cfg: &Config, k: (f32, f32), window: &Window, at: (f32, f32)) -> Option<(f64, f64)> {
+    if cfg.tool("0021") == 0 || !matches!(cfg.window_mode(), 0 | 3) || !window.has_focus() {
+        return None;
     }
+    let phys = ((at.0 / k.0) as f64, (at.1 / k.1) as f64);
+    window.set_cursor_position(winit::dpi::PhysicalPosition::new(phys.0, phys.1)).ok().map(|_| phys)
 }
 
 /// Logs a zone without a group 0x14 name once per zone.
@@ -15374,6 +15376,15 @@ impl App {
         }
     }
 
+    /// The mouse at window pixel `at` (the window's motion or a script's): FUN_100016c0 -> FUN_10125ad0, more than 2
+    /// pixels from a warped game pointer moves it back to the mouse.
+    fn pointer_moved(&mut self, at: (f64, f64)) {
+        let (k, dy) = (self.ui_k, if let Phase::World(w) = &self.phase { w.ptr_dy } else { 0.0 });
+        if self.ptr_warp.is_some_and(|pw| pw.shifted(dy).left_by((at.0 as f32 * k.0, at.1 as f32 * k.1 + dy))) {
+            self.ptr_warp = None;
+        }
+    }
+
     /// A look drag begins: the pointer hidden and held where it is, as modern MMOs do.
     fn grab_pointer(&mut self) {
         let Some(g) = self.gfx.as_ref() else { return };
@@ -15694,7 +15705,7 @@ impl App {
         let input = ctx.input(|i| UiInput {
             wheel: if mine { notches as i32 } else { 0 },
             pointer: match &self.ptr_warp {
-                Some(pw) => pw.pointer(),
+                Some(pw) => pw.shifted(ptr_dy).pointer(),
                 None => i.pointer.hover_pos().map(|p| (p.x * ppp * k.0, p.y * ppp * k.1 + ptr_dy)),
             },
             moved: i.pointer.delta() != egui::Vec2::ZERO,
@@ -18498,6 +18509,7 @@ impl App {
                             self.mouse.visible = true;
                         }
                         (self.cursor_in, self.last_cursor) = (true, Some(at));
+                        self.pointer_moved(at);
                     }
                     egui::Event::PointerButton { button, pressed, .. } if !consumed || !*pressed => {
                         let b = if *button == egui::PointerButton::Secondary {
@@ -19122,12 +19134,12 @@ impl App {
                 && !(3..=6).contains(&self.mouse.kind)
             {
                 let k = self.ui_k;
-                let drawn = self.ptr_warp.map(|pw| pw.drawn);
-                let drawn = drawn.or(self.last_cursor.map(|(x, y)| (x as f32 * k.0, y as f32 * k.1 + dy)));
-                self.ptr_warp = Some(ptrwarp::PtrWarp::new(at, drawn.unwrap_or(at)));
-                // last_cursor stands for the game's pointer (+4 / +8) as well: the pick, the 2-pixel motion test.
-                self.last_cursor = Some(((at.0 / k.0) as f64, (at.1 / k.1) as f64));
-                os_pointer_warp(&self.cfg, k, &gfx.window, at);
+                let mouse = self.last_cursor.map(|(x, y)| (x as f32 * k.0, y as f32 * k.1 + dy));
+                let drawn = self.ptr_warp.map(|pw| pw.shifted(dy).drawn).or(mouse).unwrap_or(at);
+                self.ptr_warp = Some(ptrwarp::PtrWarp::new(at, drawn, dy));
+                if let Some(phys) = os_pointer_warp(&self.cfg, k, &gfx.window, at) {
+                    self.last_cursor = Some(phys);
+                }
             }
             if let Some(pw) = &mut self.ptr_warp {
                 pw.step(dt);
@@ -19142,7 +19154,9 @@ impl App {
                 let fs =
                     if self.cfg.cursor_size == 0 { 1.0 } else { self.cfg.cursor_size as f32 / 100.0 } * self.ui_k.1;
                 // The sprite at +0xc / +0x10, which follows a warped pointer (FUN_10126340).
-                let at = self.ptr_warp.map_or((x as f32 * self.ui_k.0, y as f32 * self.ui_k.1 + dy), |pw| pw.drawn);
+                let at = self
+                    .ptr_warp
+                    .map_or((x as f32 * self.ui_k.0, y as f32 * self.ui_k.1 + dy), |pw| pw.shifted(dy).drawn);
                 // Over the modern layer too: drawn after its pass.
                 lu.start_top();
                 self.mouse.draw(lu, self.index.as_ref(), at.0, at.1, dt, s, fs);
@@ -21503,6 +21517,7 @@ impl ApplicationHandler for App {
                 self.mouse_button(button, state == ElementState::Pressed, consumed);
             }
             WindowEvent::CursorMoved { position, .. } => {
+                self.pointer_moved((position.x, position.y));
                 // FUN_100016c0: window-message motion shows the cursor only past 2 px (not while a look drag holds it).
                 if self.look_grab.is_none()
                     && self
@@ -21531,11 +21546,6 @@ impl ApplicationHandler for App {
                     }
                 }
                 self.last_cursor = Some((position.x, position.y));
-                // FUN_100016c0 -> FUN_10125ad0: the mouse 2 pixels away from a warped pointer moves it back there.
-                let k = self.ui_k;
-                if self.ptr_warp.is_some_and(|pw| pw.left_by((position.x as f32 * k.0, position.y as f32 * k.1))) {
-                    self.ptr_warp = None;
-                }
             }
             WindowEvent::MouseWheel { delta, .. } if !consumed => {
                 if let Phase::World(world) = &mut self.phase {

@@ -11,14 +11,23 @@ pub struct PtrWarp {
     pub drawn: (f32, f32),
     /// +0x48: ticks left of the glide; while above 0 the children's hit test (FUN_1011a140) finds nothing.
     pub glide: f32,
+    /// The stacked windows' pointer shift (World::ptr_dy) when it was put: a later change moves it with them, as
+    /// FUN_101626e0 moves +4 / +8.
+    pub dy: f32,
     /// Retail frames (30 a second) not yet stepped.
     acc: f32,
 }
 
 impl PtrWarp {
     /// FUN_10126000: +0x48 = 18.0, then FUN_10125b90 puts +4 / +8 on `at`; the sprite starts from `drawn`.
-    pub fn new(at: (f32, f32), drawn: (f32, f32)) -> Self {
-        Self { at, drawn, glide: 18.0, acc: 0.0 }
+    pub fn new(at: (f32, f32), drawn: (f32, f32), dy: f32) -> Self {
+        Self { at, drawn, glide: 18.0, dy, acc: 0.0 }
+    }
+
+    /// This warp with the stacked windows' shift now `dy`: the pointer and the sprite moved by its change.
+    pub fn shifted(&self, dy: f32) -> Self {
+        let d = dy - self.dy;
+        Self { at: (self.at.0, self.at.1 + d), drawn: (self.drawn.0, self.drawn.1 + d), ..*self }
     }
 
     /// FUN_101267f0's head, once a retail frame (2 ticks of FUN_10014cf0): with no glide left the sprite is at the
@@ -61,7 +70,7 @@ mod tests {
 
     #[test]
     fn glides_half_way_for_eighteen_ticks_then_sits_on_the_pointer() {
-        let mut w = PtrWarp::new((100.0, 50.0), (0.0, 0.0));
+        let mut w = PtrWarp::new((100.0, 50.0), (0.0, 0.0), 0.0);
         assert_eq!(w.pointer(), None);
         w.step(0.034);
         assert_eq!((w.drawn, w.glide), ((50.0, 25.0), 16.0));
@@ -82,7 +91,7 @@ mod tests {
 
     #[test]
     fn steps_at_thirty_a_second_whatever_the_frame_rate() {
-        let mut w = PtrWarp::new((64.0, 0.0), (0.0, 0.0));
+        let mut w = PtrWarp::new((64.0, 0.0), (0.0, 0.0), 0.0);
         w.step(0.017);
         assert_eq!((w.drawn, w.glide), ((0.0, 0.0), 18.0));
         w.step(0.017);
@@ -91,14 +100,20 @@ mod tests {
 
     #[test]
     fn negative_distances_round_toward_zero() {
-        let mut w = PtrWarp::new((0.0, 0.0), (5.0, -5.0));
+        let mut w = PtrWarp::new((0.0, 0.0), (5.0, -5.0), 0.0);
         w.step(0.034);
         assert_eq!(w.drawn, (3.0, -3.0));
     }
 
     #[test]
+    fn follows_the_stacked_windows() {
+        let w = PtrWarp::new((100.0, 50.0), (90.0, 40.0), -4.0).shifted(-10.0);
+        assert_eq!((w.at, w.drawn), ((100.0, 44.0), (90.0, 34.0)));
+    }
+
+    #[test]
     fn motion_past_two_pixels_ends_it() {
-        let w = PtrWarp::new((100.0, 50.0), (0.0, 0.0));
+        let w = PtrWarp::new((100.0, 50.0), (0.0, 0.0), 0.0);
         assert!(!w.left_by((102.0, 48.0)));
         assert!(w.left_by((103.0, 50.0)));
         assert!(w.left_by((100.0, 47.5)));
