@@ -356,12 +356,12 @@ pub struct Config {
     /// padguid000: the controller that plays, its DirectInput instance GUID as FFXiPadConfig writes it
     /// ("{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}"); empty = retail's padguid000, else the first controller.
     pub gamepad_padguid: String,
-    /// Read an XInput controller through XInput (padmode000's [5], "Use XInput").
-    pub gamepad_xinput: bool,
-    /// A DirectInput controller's sliders take axis codes 7 and 8 (padmode000's [2]).
-    pub gamepad_sliders: bool,
-    /// A DirectInput controller's hat switch takes axis codes 9 and 10 (padmode000's [3]).
-    pub gamepad_hat: bool,
+    /// Read an XInput controller through XInput (padmode000's [5], "Use XInput"); unset: retail's padmode000, else on.
+    pub gamepad_xinput: Option<bool>,
+    /// A DirectInput controller's sliders take axis codes 7 and 8 (padmode000's [2]); unset as gamepad_xinput.
+    pub gamepad_sliders: Option<bool>,
+    /// A DirectInput controller's hat switch takes axis codes 9 and 10 (padmode000's [3]); unset as gamepad_xinput.
+    pub gamepad_hat: Option<bool>,
     /// LAN voice chat (ours, hidden: Ctrl+Alt+Shift+V).
     pub voice: crate::voice::Settings,
     /// Fields a newer client wrote, kept and saved back as they are: an older client drops nothing it doesn't know.
@@ -646,9 +646,9 @@ impl Default for Config {
             gamepad_padsin: String::new(),
             gamepad_padexsin: String::new(),
             gamepad_padguid: String::new(),
-            gamepad_xinput: true,
-            gamepad_sliders: true,
-            gamepad_hat: true,
+            gamepad_xinput: None,
+            gamepad_sliders: None,
+            gamepad_hat: None,
             voice: Default::default(),
             unknown: Default::default(),
             tool: Default::default(),
