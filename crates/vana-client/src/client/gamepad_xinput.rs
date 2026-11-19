@@ -68,7 +68,9 @@ mod dll {
     use super::{XGamepad, pad_of};
     use crate::client::gamepad::Pad;
     use windows_sys::Win32::Foundation::{FreeLibrary, HMODULE};
-    use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+    use windows_sys::Win32::System::LibraryLoader::{
+        GetProcAddress, LOAD_LIBRARY_SEARCH_APPLICATION_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
+    };
 
     /// XINPUT_STATE.
     #[repr(C)]
@@ -114,7 +116,9 @@ mod dll {
         pub fn new() -> Result<XInput, String> {
             for name in DLLS {
                 let wide: Vec<u16> = name.encode_utf16().chain([0]).collect();
-                let module = unsafe { LoadLibraryW(wide.as_ptr()) };
+                // The exe's folder (a front end's shim) and System32 only, never the working directory or PATH.
+                let search = LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32;
+                let module = unsafe { LoadLibraryExW(wide.as_ptr(), std::ptr::null_mut(), search) };
                 if module.is_null() {
                     continue;
                 }
