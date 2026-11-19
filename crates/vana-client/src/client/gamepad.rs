@@ -410,6 +410,14 @@ pub struct Gamepad {
     sdl: Option<super::gamepad_sdl::Sdl>,
     #[cfg(target_os = "linux")]
     sdl_tried: bool,
+    /// XInput's pads (Windows): started once when gilrs fails or finds none, played while gilrs has none; whether
+    /// the pad that plays is XInput's (the rumble goes to it).
+    #[cfg(windows)]
+    xinput: Option<super::gamepad_xinput::XInput>,
+    #[cfg(windows)]
+    xinput_tried: bool,
+    #[cfg(windows)]
+    xinput_plays: bool,
     active: Option<GamepadId>,
     maps: Option<(String, String, PadMap, PadMap)>,
     /// DAT_10455c3e: the left stick's mode (0 move, 1 d-pad, 2 camera), stepped by slot 31.
@@ -573,6 +581,13 @@ impl Gamepad {
 
     /// Both motors at `level` (XInputSetState's scale).
     fn motors(&mut self, level: u16) {
+        #[cfg(windows)]
+        if self.xinput_plays {
+            if let Some(x) = &mut self.xinput {
+                x.motors(level);
+            }
+            return;
+        }
         let Some(g) = &mut self.gilrs else { return };
         if self.ff.as_ref().is_some_and(|(id, _)| Some(*id) != self.active) {
             // Another pad plays now: the old one's effect goes with its handle.
@@ -613,7 +628,8 @@ impl Gamepad {
         self.ff_level = level;
     }
 
-    /// Starts gilrs, again every RETRY while it fails, and on Linux SDL once when gilrs failed or found no pad.
+    /// Starts gilrs, again every RETRY while it fails, and once when gilrs failed or found no pad SDL (Linux) or
+    /// XInput (Windows).
     fn connect(&mut self) {
         let now = Instant::now();
         if self.gilrs.is_none() && self.next_try.is_none_or(|t| now >= t) {
@@ -647,9 +663,17 @@ impl Gamepad {
                 Err(e) => log::warn!("gamepad: SDL: {e}"),
             }
         }
+        #[cfg(windows)]
+        if !self.xinput_tried && self.gilrs.as_ref().is_none_or(|g| g.gamepads().next().is_none()) {
+            self.xinput_tried = true;
+            match super::gamepad_xinput::XInput::new() {
+                Ok(x) => self.xinput = Some(x),
+                Err(e) => log::warn!("gamepad: XInput: {e}"),
+            }
+        }
     }
 
-    /// The pad that plays (the last one touched): gilrs's, else SDL's.
+    /// The pad that plays (the last one touched): gilrs's, else SDL's (Linux) or XInput's (Windows).
     fn read_pad(&mut self) -> Option<Pad> {
         #[cfg(target_os = "linux")]
         if let Some(s) = &mut self.sdl {
@@ -671,15 +695,36 @@ impl Gamepad {
                     _ => {}
                 }
             }
-            if let Some(p) = self.active.and_then(|id| g.connected_gamepad(id)) {
-                return Some(gilrs_pad(&p));
+            if let Some(p) = self.active.and_then(|id| g.connected_gamepad(id)).map(|p| gilrs_pad(&p)) {
+                #[cfg(windows)]
+                self.xinput_off();
+                return Some(p);
             }
         }
+        // XInput only while gilrs has no pad: a pad both see plays once.
+        #[cfg(windows)]
+        if let Some(x) = &mut self.xinput {
+            x.update();
+            if let Some(p) = x.state() {
+                self.xinput_plays = true;
+                return Some(p);
+            }
+        }
+        #[cfg(windows)]
+        self.xinput_off();
         #[cfg(target_os = "linux")]
         if let Some(p) = self.sdl.as_ref().and_then(|s| s.state()) {
             return Some(p);
         }
         None
+    }
+
+    /// XInput's pad no longer plays: its motors stop.
+    #[cfg(windows)]
+    fn xinput_off(&mut self) {
+        if let (true, Some(x)) = (std::mem::take(&mut self.xinput_plays), &mut self.xinput) {
+            x.motors(0);
+        }
     }
 
     /// Reads retail's registry values again, on a thread (at start, and when the Controller window asks).
@@ -706,10 +751,14 @@ impl Gamepad {
             .collect();
         v.sort();
         let mut v: Vec<String> = v.into_iter().map(|p| p.1).collect();
-        // SDL sees gilrs's pads too: its list only when gilrs has none.
+        // SDL and XInput see gilrs's pads too: their list only when gilrs has none.
         #[cfg(target_os = "linux")]
         if let (true, Some(s)) = (v.is_empty(), &self.sdl) {
             v = s.names();
+        }
+        #[cfg(windows)]
+        if let (true, Some(x)) = (v.is_empty(), &self.xinput) {
+            v = x.names();
         }
         v
     }

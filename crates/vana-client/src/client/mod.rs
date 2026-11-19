@@ -61,6 +61,8 @@ mod game_ui;
 mod gamepad;
 #[cfg(target_os = "linux")]
 mod gamepad_sdl;
+#[cfg(any(windows, test))]
+mod gamepad_xinput;
 mod hudtop;
 mod input;
 mod iteminfo;
