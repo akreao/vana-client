@@ -89,6 +89,7 @@ impl Sdl {
         Some(Pad {
             buttons,
             axes: [s(Axis::LeftX), -s(Axis::LeftY), s(Axis::RightX), -s(Axis::RightY), lt.min(1.0), rt.min(1.0)],
+            di: None,
         })
     }
 
