@@ -329,13 +329,17 @@ pub struct Settings {
 /// the background ([4]) and rumbles ([1]); else FFXiPadConfig's XInput layout. config gamepad off always turns it
 /// off, and so does gamepad_rumble the rumble.
 /// A config.json gamepad_padexsin is used whatever the main map's source.
-/// config.json's padguid wins, else retail's whatever the maps' source (the game reads padguid000 on its own,
+/// config.json's padguid and XInput / sliders / hat options win, else retail's whatever the maps' source (the game reads padguid000 on its own,
 /// FUN_10002840).
 pub fn settings(cfg: &Config, retail: Option<&crate::padreg::Retail>) -> Settings {
     let mut s = settings_of(cfg, retail);
     if !cfg.gamepad_padexsin.trim().is_empty() {
         (s.padexsin, s.saved) = (cfg.gamepad_padexsin.clone(), true);
     }
+    // padmode000's XInput / sliders / hat: config.json's when the Controller window set them, whatever the maps' source.
+    s.xinput = cfg.gamepad_xinput.unwrap_or(s.xinput);
+    s.sliders = cfg.gamepad_sliders.unwrap_or(s.sliders);
+    s.hat = cfg.gamepad_hat.unwrap_or(s.hat);
     s.padguid = if !cfg.gamepad_padguid.trim().is_empty() {
         cfg.gamepad_padguid.trim().to_string()
     } else {
@@ -346,7 +350,9 @@ pub fn settings(cfg: &Config, retail: Option<&crate::padreg::Retail>) -> Setting
 
 fn settings_of(cfg: &Config, retail: Option<&crate::padreg::Retail>) -> Settings {
     let (on, background, rumble) = (cfg.gamepad, cfg.gamepad_background, cfg.gamepad_rumble);
-    let (xinput, sliders, hat, padguid) = (cfg.gamepad_xinput, cfg.gamepad_sliders, cfg.gamepad_hat, String::new());
+    // padmode000's [5] / [2] / [3] from retail's settings whatever the maps' source (on without them).
+    let flag = |i: usize| retail.and_then(|r| r.mode(i)) != Some(false);
+    let (xinput, sliders, hat, padguid) = (flag(5), flag(2), flag(3), String::new());
     if !cfg.gamepad_padsin.trim().is_empty() {
         let padexsin = DEFAULT_PADEXSIN.to_string();
         return Settings {
@@ -371,9 +377,9 @@ fn settings_of(cfg: &Config, retail: Option<&crate::padreg::Retail>) -> Settings
             on: on && r.mode(0) != Some(false),
             background: background || r.mode(4) == Some(true),
             rumble: rumble && r.mode(1) != Some(false),
-            xinput: xinput && r.mode(5) != Some(false),
-            sliders: sliders && r.mode(2) != Some(false),
-            hat: hat && r.mode(3) != Some(false),
+            xinput,
+            sliders,
+            hat,
             padguid,
             source: Source::Retail,
             saved: false,
@@ -622,7 +628,9 @@ impl Gamepad {
         }
         self.mute.retain(|b| buttons.contains(b));
         buttons.retain(|b| !self.mute.contains(b));
-        let taken = mods(&buttons, axes, true);
+        // Mods read XInput's button numbers (lua/input.rs pad_filter): a DirectInput device's own numbers are not
+        // given to them, so its buttons all go to the game.
+        let taken = if di.is_some() { mods(&[], [0.0; 6], false) } else { mods(&buttons, axes, true) };
         buttons.retain(|b| !taken.contains(b));
         let axis = |code: u8| match (di, code) {
             (Some(a), 1..=10) => a[code as usize - 1],
@@ -985,8 +993,14 @@ impl Gamepad {
     }
 
     fn release_all(&mut self) -> Frame {
+        // The DirectInput effect is infinite: it stops before the device stops taking the rumble.
         #[cfg(windows)]
         {
+            if self.di_plays
+                && let Some(d) = &mut self.dinput
+            {
+                d.force(0);
+            }
             self.di_plays = false;
         }
         let f = self.step(0, &[], 0.0);
@@ -1225,6 +1239,13 @@ mod tests {
         let mut cfg = Config::default();
         let s = settings(&cfg, Some(&retail));
         assert_eq!((s.xinput, s.sliders, s.hat), (false, false, true));
+        // Saved maps keep retail's flags; the window's own choice wins over them either way.
+        cfg.gamepad_padsin = DEFAULT_PADSIN.into();
+        assert!(!settings(&cfg, Some(&retail)).xinput);
+        cfg.gamepad_xinput = Some(true);
+        assert!(settings(&cfg, Some(&retail)).xinput);
+        cfg.gamepad_padsin.clear();
+        cfg.gamepad_xinput = None;
         assert_eq!(s.padguid, "{55DDF31E-8F9C-11F1-8001-000044455354}");
         let s = settings(&cfg, None);
         assert_eq!((s.xinput, s.sliders, s.hat, s.padguid.as_str()), (true, true, true, ""));

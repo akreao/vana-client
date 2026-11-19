@@ -18016,7 +18016,7 @@ impl App {
         }
         if let Some((guid, xinput, sliders, hat)) = p.save_device.take() {
             (cfg.gamepad_padguid, cfg.gamepad_xinput, cfg.gamepad_sliders, cfg.gamepad_hat) =
-                (guid, xinput, sliders, hat);
+                (guid, Some(xinput), Some(sliders), Some(hat));
             save = true;
         }
         if let Some((padsin, padexsin, on, bg, dead)) = p.save.take() {
