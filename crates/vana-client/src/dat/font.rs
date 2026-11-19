@@ -121,6 +121,71 @@ pub fn is_lead(b: u8) -> bool {
     (0x81..0xA0).contains(&b) || (0xE0..0xF0).contains(&b) || (0xFA..0xFD).contains(&b)
 }
 
+/// FUN_10191050(b, 0): the bytes of the character `b` starts, as the text walkers that pass no second byte count them:
+/// FD 6 (a phrase block), 1E / 1F / EF / 7F 2, NUL 0, another control byte 1 (LF and CR as text), a lead byte 2.
+pub fn char_len(b: u8) -> usize {
+    match b {
+        0xfd => 6,
+        0x7f | 0x1e | 0x1f | 0xef => 2,
+        0 => 0,
+        _ if b < 0x20 && b != b'\n' && b != b'\r' => 1,
+        _ => 1 + is_lead(b) as usize,
+    }
+}
+
+/// FUN_10191710 in a German client (language 2, not the European-as-English flag): each lone '"' becomes 85 44 („),
+/// the next 85 53 (“), by turns; `room` is the caller's buffer, and a line of half of it or more stays as it is. The
+/// walk steps by `char_len` and stops at a NUL.
+pub fn german_quotes(text: &[u8], room: usize) -> Vec<u8> {
+    quotes_in(super::lang::files() == super::items::Lang::De, text, room)
+}
+
+fn quotes_in(german: bool, text: &[u8], room: usize) -> Vec<u8> {
+    if !german || text.len() >= room / 2 {
+        return text.to_vec();
+    }
+    let mut out = Vec::with_capacity(text.len() * 2);
+    let mut open = false;
+    let mut i = 0;
+    while i < text.len() {
+        let n = char_len(text[i]);
+        if n == 0 {
+            break;
+        }
+        if text[i] == b'"' {
+            out.extend([0x85, if open { b'S' } else { b'D' }]);
+            open = !open;
+        } else {
+            out.extend(text.iter().skip(i).take(n));
+        }
+        i += n;
+    }
+    out
+}
+
+/// `german_quotes` on a decoded line.
+pub fn german_quotes_str(text: &str, room: usize) -> String {
+    if super::lang::files() != super::items::Lang::De || !text.contains('"') {
+        return text.to_string();
+    }
+    decode_sjis(&german_quotes(&encode_sjis(text), room))
+}
+
+/// `german_quotes` on a line drawn in parts (the quotes alternate across them): each part keeps its chars (a quote
+/// stays one char).
+pub fn german_quotes_parts(parts: &mut [&mut String], room: usize) {
+    let whole: String = parts.iter().map(|p| p.as_str()).collect();
+    let done = german_quotes_str(&whole, room);
+    if done == whole {
+        return;
+    }
+    let mut chars = done.chars();
+    for p in parts.iter_mut() {
+        let n = p.chars().count();
+        **p = chars.by_ref().take(n).collect();
+    }
+}
+
 /// FUN_1018fc40: a chat line cut before the first byte FUN_1018fa20 rates 2 or 3 (0x1E, 0x1F, 0xEF, 0x7F not followed
 /// by 0xFB / 0xFC, any other byte below 0x20 but LF and CR), stepping by whole characters (FUN_1018fa80): an 0xFD
 /// auto-translate block, a lead byte and its pair. Returns how many bytes stay.
@@ -658,6 +723,19 @@ pub fn encode_sjis(text: &str) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+
+    /// FUN_10191710: the quotes by turns, a phrase block stepped over whole, a line of half the buffer left alone.
+    #[test]
+    fn german_quote_marks() {
+        assert_eq!(quotes_in(true, b"a \"b\" \"c", 0x200), b"a \x85Db\x85S \x85Dc");
+        assert_eq!(quotes_in(false, b"\"b\"", 0x200), b"\"b\"");
+        assert_eq!(quotes_in(true, b"\xfd\x02\x02\"\x01\xfd\"", 0x200), b"\xfd\x02\x02\"\x01\xfd\x85D");
+        assert_eq!(quotes_in(true, b"\"0123", 10), b"\"0123");
+        assert_eq!(quotes_in(true, b"\"0123", 12), b"\x85D0123");
+        assert_eq!(char_len(0x82), 2);
+        assert_eq!(char_len(b'\n'), 1);
+    }
+
     use super::*;
 
     /// A pair kept as its bytes still reaches the modern faces as its character; the game's glyphs stay theirs.
