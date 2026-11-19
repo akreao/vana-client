@@ -54,7 +54,7 @@ use Item::{Head, Open, Ours, Retail};
 
 /// The topic pages: (group, name, lines). Every retail setting of the old list and every row of ours has one place
 /// (the test `every_setting_has_a_page`).
-const PAGES: [(&str, &str, &[Item]); 13] = [
+const PAGES: [(&str, &str, &[Item]); 14] = [
     (
         "Game",
         "Gameplay",
@@ -200,13 +200,19 @@ const PAGES: [(&str, &str, &[Item]); 13] = [
     ),
     (
         "Input",
-        "Mouse, Camera & Keys",
+        "Mouse & Cursor",
         &[
             Head("Mouse"),
             Ours("Hardware Mouse"),
             Ours("Cursor Size"),
             Ours("Keys Hide the Cursor"),
             Ours("Mouse Camera Speed"),
+        ],
+    ),
+    (
+        "Input",
+        "Camera & Keys",
+        &[
             Head("Camera"),
             Retail("conf7", 5),
             Retail("conf7", 7),
@@ -221,11 +227,13 @@ const PAGES: [(&str, &str, &[Item]); 13] = [
             Retail("conf6win", 9),
             Retail("conf6win", 10),
             Retail("conf13wi", 1),
-            Head("Movement"),
-            Ours("Movement Rate"),
         ],
     ),
-    ("Input", "Controller", &[Head("Controller"), Ours("Gamepad"), Ours("Stick Dead Zone")]),
+    (
+        "Input",
+        "Controller",
+        &[Head("Controller"), Ours("Gamepad"), Ours("Stick Dead Zone"), Head("Movement"), Ours("Movement Rate")],
+    ),
     (
         "System",
         "Startup & Account",
@@ -2347,7 +2355,7 @@ pub fn draw(p: &mut Panels, w: &mut World) {
                 match page {
                     // Controller is a button: the page only says what it opens.
                     Entry::Topic if PAGES[entry].1 == CONTROLLER && find.is_none() => {
-                        ui.label(egui::RichText::new("Button assignments, the gamepad options and the stick dead zone are in the Controller window, Vana Client's copy of the retail Gamepad Config tool.").size(m.theme.small).color(m.theme.color("text")));
+                        ui.label(egui::RichText::new("Button assignments, the gamepad options, the stick dead zone and Movement Rate (how often your character moves, with a stick or the keyboard) are in the Controller window, Vana Client's copy of the retail Gamepad Config tool.").size(m.theme.small).color(m.theme.color("text")));
                         ui.add_space(8.0);
                         let b = Btn { cursor: true, ..Default::default() };
                         if kit::clicked(&kit::button(ui, m, "Open Controller Window \u{203a}", 0.0, b), b) {
@@ -2882,12 +2890,21 @@ mod tests {
         // Of ours, only the rows that hold a retail setting stay (Lamp Lights does not).
         assert!(lines.iter().all(|l| !matches!(l.item, Ours(_)) || l.retail));
         assert!(!lines.iter().any(|l| l.item == Ours("Lamp Lights")));
-        c.m_entry = PAGES.iter().position(|p| p.1 == "Mouse, Camera & Keys").unwrap();
+        c.m_entry = PAGES.iter().position(|p| p.1 == "Mouse & Cursor").unwrap();
         let lines = view(&c, Some(&s));
         assert!(
             lines.iter().any(|l| l.item == Ours("Hardware Mouse"))
                 && !lines.iter().any(|l| l.item == Ours("Cursor Size"))
         );
+        // Camera & Keys keeps the camera and keyboard rows and none of the mouse's.
+        c.m_entry = PAGES.iter().position(|p| p.1 == "Camera & Keys").unwrap();
+        let lines = view(&c, Some(&s));
+        assert!(lines.iter().any(|l| l.item == Retail("conf7", 5)));
+        assert!(!lines.iter().any(|l| l.item == Ours("Hardware Mouse") || l.item == Ours("Mouse Camera Speed")));
+        // Movement Rate sits under the Controller entry (found by search), not on Camera & Keys.
+        let pad = self::lines(PAGES.iter().position(|p| p.1 == "Controller").unwrap(), Some(&s));
+        assert!(pad.iter().any(|l| l.item == Ours("Movement Rate")));
+        assert!(!lines.iter().any(|l| l.item == Ours("Movement Rate")));
         c.m_entry = PAGES.iter().position(|p| p.1 == "Mods").unwrap();
         assert!(view(&c, Some(&s)).is_empty());
     }

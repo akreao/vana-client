@@ -17999,6 +17999,15 @@ impl App {
             w.sounds.push(crate::audio::Ui::Select as u32);
         }
         let mut save = false;
+        if let Some(rate) = p.save_move_rate.take() {
+            cfg.move_rate = rate;
+            ground::set_move_rate(rate);
+            save = true;
+            if let Some(s) = w.settings.as_mut() {
+                s.s.move_rate = rate;
+            }
+        }
+        let p = &mut w.padcfg;
         if let Some(on) = p.save_rumble.take() {
             cfg.gamepad_rumble = on;
         }
@@ -18028,6 +18037,7 @@ impl App {
         let p = &mut w.padcfg;
         p.set = Some(gamepad::settings(cfg, gp.retail()));
         p.dead = (cfg.gamepad_deadzone * 100.0).round() as u32;
+        p.move_rate = cfg.move_rate;
         p.retail = gp.retail().map(|r| r.source.clone());
         p.pads = gp.pads();
     }
