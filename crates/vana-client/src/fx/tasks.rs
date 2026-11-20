@@ -5644,61 +5644,74 @@ mod tests {
         assert!(checked > 0, "no disc clone alive past frame 130");
     }
 
-    /// Nightmare Scythe's `g000` (endless, flag 0x1000) outlives its stop (`st44` runs on the undolled pair) until the
-    /// skill file is freed at `main`'s end: then nothing from 37131 is left.
+    /// Nightmare Scythe (skill file 37131): a freed skill file (FUN_100d44b0(caster, 6) at `main`'s end) takes its live
+    /// clones and tasks with it. Its endless `g000` does not outlive the skill: its `st44` stop ends it, as the doll ops
+    /// move no clones (FUN_10062d50 matches a clone +0xf0 nothing sets), so it stays on the pair the stop names.
     #[test]
     fn released_skill_file_takes_its_clones() {
         let cfg = crate::config::Config::load();
         let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
         let index = std::sync::Arc::new(index);
-        let mut fx = Effects::new();
-        fx.set_index(index.clone());
-        fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
-        fx.preload(&[8392, 37131]);
-        while [8392, 37131].iter().any(|f| fx.reg.lib_of(*f).is_none()) {
-            fx.poll_loads();
-            std::thread::sleep(std::time::Duration::from_millis(5));
+        let start = || {
+            let mut fx = Effects::new();
+            fx.set_index(index.clone());
+            fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
+            fx.preload(&[8392, 37131]);
+            while [8392, 37131].iter().any(|f| fx.reg.lib_of(*f).is_none()) {
+                fx.poll_loads();
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let lib = fx.reg.lib_of(37131).unwrap();
+            let f = Frame {
+                dt: 1.0,
+                seconds: 1.0 / 60.0,
+                dayfrac: 0.5,
+                view: Mat4::IDENTITY,
+                view_rot: Mat4::IDENTITY,
+                eye: Vec3::new(0.0, -2.0, -10.0),
+                draw_distance: 2000.0,
+                area_light: Vec3::ONE,
+                focal: 350.0,
+                moon_phase: 0,
+                weekday: 0,
+            };
+            let a = Action {
+                actor: HUME,
+                category: 3,
+                arg: 99,
+                info: 0,
+                targets: vec![ActionTarget {
+                    id: ORC,
+                    results: vec![ActionResult { animation: 64, message: 185, value: 40, ..Default::default() }],
+                }],
+                seq: 0,
+            };
+            fx.on_action(&a, None);
+            (fx, lib, f)
+        };
+        let live = |fx: &Effects, lib: usize| {
+            fx.insts.iter().flatten().filter(|x| x.src.0 == lib).map(|x| x.name).collect::<Vec<_>>()
+        };
+        // Freed mid-skill: what is alive goes, and the file's tasks with it.
+        let (mut fx, lib, f) = start();
+        for _ in 0..150 {
+            fx.tick(&f, &MithraWs);
         }
-        let lib = fx.reg.lib_of(37131).unwrap();
-        let f = Frame {
-            dt: 1.0,
-            seconds: 1.0 / 60.0,
-            dayfrac: 0.5,
-            view: Mat4::IDENTITY,
-            view_rot: Mat4::IDENTITY,
-            eye: Vec3::new(0.0, -2.0, -10.0),
-            draw_distance: 2000.0,
-            area_light: Vec3::ONE,
-            focal: 350.0,
-            moon_phase: 0,
-            weekday: 0,
-        };
-        let a = Action {
-            actor: HUME,
-            category: 3,
-            arg: 99,
-            info: 0,
-            targets: vec![ActionTarget {
-                id: ORC,
-                results: vec![ActionResult { animation: 64, message: 185, value: 40, ..Default::default() }],
-            }],
-            seq: 0,
-        };
-        fx.on_action(&a, None);
-        let mut done = None;
-        for frame in 1..=400 {
+        assert!(!live(&fx, lib).is_empty(), "nothing from 37131 alive at frame 150");
+        fx.release_file(37131);
+        assert!(live(&fx, lib).is_empty() && fx.tasks.iter().flatten().all(|t| t.res.0 != lib));
+        // Run to `main`'s end: the sphere has gone by then.
+        let (mut fx, lib, f) = start();
+        let mut done = false;
+        for _ in 1..=400 {
             fx.tick(&f, &MithraWs);
             if fx.skill_files_done.drain(..).any(|c| c == HUME) {
-                done = Some(frame);
+                done = true;
                 break;
             }
         }
-        assert!(done.is_some(), "main never ended");
-        let live =
-            |fx: &Effects| fx.insts.iter().flatten().filter(|x| x.src.0 == lib).map(|x| x.name).collect::<Vec<_>>();
-        assert!(live(&fx).contains(b"g000"), "{:?}", live(&fx));
-        fx.release_file(37131);
-        assert!(live(&fx).is_empty() && fx.tasks.iter().flatten().all(|t| t.res.0 != lib));
+        assert!(done, "main never ended");
+        assert!(!live(&fx, lib).contains(b"g000"), "{:?}", live(&fx, lib));
     }
 }
 
