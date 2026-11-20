@@ -258,12 +258,13 @@ impl MapSession {
 
         let mut dgram = self.header();
         let stamped = self.stamp(&[packet]);
-        crate::net::capture::packet(true, &stamped);
         dgram.extend_from_slice(&stamped);
         log::info!("map out (login): header {} [{}]", hex::encode(&dgram[..HEADER]), sub_ids(&dgram[HEADER..]));
         let digest = Md5::digest(&dgram[HEADER..]);
         dgram.extend_from_slice(&digest);
         self.sock.send(&dgram)?;
+        // Recorded once sent: a failed send ends the session and never went out.
+        crate::net::capture::packet(true, &stamped);
         crate::net::capture::datagram(true, dgram.len(), self.seq, self.server_seq, None);
         Ok(())
     }
@@ -337,10 +338,11 @@ impl MapSession {
             return Ok(());
         };
         body.extend_from_slice(&bits.to_le_bytes());
+        let mut first_sends = Vec::new();
         for &i in &picked {
             if self.unacked[i].0 == 0 {
                 self.unacked[i].0 = seq;
-                crate::net::capture::packet(true, &self.unacked[i].1);
+                first_sends.push(i);
             }
         }
         let left = self.unacked.len() - picked.len();
@@ -360,6 +362,10 @@ impl MapSession {
         dgram.extend_from_slice(&body);
         self.sock.send(&dgram)?;
         self.bytes_out += dgram.len() as u64;
+        // Recorded once sent (a failed send ends the session), each sub-packet on its first datagram only.
+        for i in first_sends {
+            crate::net::capture::packet(true, &self.unacked[i].1);
+        }
         crate::net::capture::datagram(true, dgram.len(), seq, u16::from_le_bytes([dgram[2], dgram[3]]), Some(form));
         Ok(())
     }
@@ -672,6 +678,7 @@ mod tests {
     fn captured_both_ways() {
         use crate::net::capture::{self, Dir, Kind};
         let dir = std::env::temp_dir().join(format!("vana-capture-session-{}", std::process::id()));
+        let _held = capture::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _ = std::fs::remove_dir_all(&dir);
         capture::test_capture(Some(dir.clone()));
         let key = [7u8; 20];

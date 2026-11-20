@@ -60,6 +60,8 @@ pub enum Kind {
 }
 
 static ON: AtomicBool = AtomicBool::new(false);
+/// A capture file could not be opened or written: capture stays off until the switch goes off and on again.
+static FAILED: AtomicBool = AtomicBool::new(false);
 static OUT: Mutex<Option<LineWriter<File>>> = Mutex::new(None);
 /// The zone the last s2c 0x00A named.
 static ZONE: AtomicU16 = AtomicU16::new(0);
@@ -75,9 +77,21 @@ fn env() -> Option<String> {
 /// The config switch, set each frame; the environment variable turns it on whatever the config says.
 pub fn set(on: bool) {
     let on = on || env().is_some();
-    if !ON.swap(on, Relaxed) && on {
+    if !on {
+        ON.store(false, Relaxed);
+        FAILED.store(false, Relaxed);
+        return;
+    }
+    // After a failure the switch, still on each frame, does not try again (and warn) every frame.
+    if !FAILED.load(Relaxed) && !ON.swap(true, Relaxed) {
         log::info!("capture: on, writing to {}", dir().display());
     }
+}
+
+/// Capture off after a file error, until the switch is turned off and on.
+fn fail() {
+    FAILED.store(true, Relaxed);
+    ON.store(false, Relaxed);
 }
 
 /// Whether a capture file is being written.
@@ -100,6 +114,9 @@ pub fn take_live() -> Vec<Record> {
 
 #[cfg(test)]
 static TEST_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+/// Held by each test that turns capture on: the switch and the folder are process-wide.
+#[cfg(test)]
+pub static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 /// Capture on into `dir` (a test's own folder), or off.
 #[cfg(test)]
@@ -178,7 +195,7 @@ fn record(out: bool, kind: Kind) {
             }
             Err(e) => {
                 log::warn!("capture: not opened in {}, capture off: {e}", dir().display());
-                ON.store(false, Relaxed);
+                fail();
                 return;
             }
         }
@@ -186,7 +203,7 @@ fn record(out: bool, kind: Kind) {
     let w = file.as_mut().unwrap();
     if let Err(e) = serde_json::to_string(&rec).map_err(std::io::Error::other).and_then(|l| writeln!(w, "{l}")) {
         log::warn!("capture: write failed, capture off: {e}");
-        ON.store(false, Relaxed);
+        fail();
         *file = None;
     }
 }
@@ -576,6 +593,28 @@ mod tests {
             assert_eq!(std::fs::metadata(&a).unwrap().permissions().mode() & 0o777, 0o600);
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A capture that cannot be opened stays off while the switch stays on (set each frame), and tries again once the
+    /// switch goes off and on.
+    #[test]
+    fn failure_latches_until_switched() {
+        let _held = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let blocker = std::env::temp_dir().join(format!("vana-capture-blocker-{}", std::process::id()));
+        std::fs::write(&blocker, b"not a folder").unwrap();
+        *TEST_DIR.lock().unwrap() = Some(blocker.join("captures"));
+        set(true);
+        assert!(recording());
+        packet(true, &crate::net::map::session::build(0x015, &[0u8; 4]));
+        assert!(!recording());
+        set(true);
+        assert!(!recording());
+        set(false);
+        set(true);
+        assert!(recording());
+        set(false);
+        *TEST_DIR.lock().unwrap() = None;
+        let _ = std::fs::remove_file(&blocker);
     }
 
     /// Lines round-trip through save and load in the documented shape, and the report filters and counts them.
