@@ -1,6 +1,5 @@
 pub mod action;
 pub mod auth;
-pub mod capture;
 pub mod lobby;
 pub mod map;
 pub mod pol;

@@ -22,7 +22,7 @@ with no `weat` folder, so the live client kept that table and drew the scene unl
 **Ours.** `Env::scene(weather, static_env)`: the weather's env, else the static env, else `Env::retail_default`;
 `world_lighting` takes it for any loaded scene, with or without a table.
 
-**For lenonk.** Op 0x7c (FUN_10188ac0 in this build) makes a new weather object and leaves DAT_1065dc10 alone, so a
+**Open question.** Op 0x7c (FUN_10188ac0 in this build) makes a new weather object and leaves DAT_1065dc10 alone, so a
 static env set by op 0x7e still shows under a later weather that has no key; event.rs clears `static_env` on op 0x7c.
 Not changed here.
 

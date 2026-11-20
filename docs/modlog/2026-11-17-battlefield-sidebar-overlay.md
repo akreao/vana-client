@@ -38,10 +38,12 @@ blocks and the c2s 0x112 kind 2 send. All of them are gated to zone 0x11e, which
   the Primer) ends with FUN_101fc100: FUN_101fbc90(.., 2) while FUN_101fc0c0 holds. FUN_10098100 sends only while the
   sidebar callback is clear, so in zone 0x11e it goes once the zone-in's kind 0 has been answered.
 - Ours: battlefield.rs (draw_sidebar, draw_overlay, map_set_up, the getters), MapWin::battlefield / title_up set
-  each frame, World::title_up (GameUi::was_up: the last walk's titlewin, read without opening it).
+  each frame, World::title_up (GameUi::was_up: the last walk's titlewin, read without opening it). The gauges ease
+  only on frames the sidebar is drawn, as retail's draw does: one step at the first draw, then 30 a second, and a
+  frame without the sidebar drops the time since (Battlefield::frame / ease).
 - Not built: FUN_10220a90 (the Conflict sidebar of the entity's +0x27c..+0x298, which we do not parse).
 - Not matched exactly: the sidebar draws in the classic UI only, with the objective bars (the modern layer has no
   panel for it); the gauge
   bytes start at 0 with each World, retail's once a run; FUN_101f87d0 with both second fields 0 is an integer divide
   fault in retail, 0 in ours; titlewin's "open" is our window walk's (last frame's) view.
-- Tests: battlefield.rs (getters, the ease step, the gates, kind 2).
+- Tests: battlefield.rs (getters, the ease step and its per-draw timing, the gates, kind 2).
