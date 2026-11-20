@@ -257,14 +257,11 @@ impl MapSession {
         let packet = build(0x00A, &body);
 
         let mut dgram = self.header();
-        let stamped = self.stamp(&[packet]);
-        crate::net::capture::packet(true, &stamped);
-        dgram.extend_from_slice(&stamped);
+        dgram.extend_from_slice(&self.stamp(&[packet]));
         log::info!("map out (login): header {} [{}]", hex::encode(&dgram[..HEADER]), sub_ids(&dgram[HEADER..]));
         let digest = Md5::digest(&dgram[HEADER..]);
         dgram.extend_from_slice(&digest);
         self.sock.send(&dgram)?;
-        crate::net::capture::datagram(true, dgram.len(), self.seq, self.server_seq, None);
         Ok(())
     }
 
@@ -340,7 +337,6 @@ impl MapSession {
         for &i in &picked {
             if self.unacked[i].0 == 0 {
                 self.unacked[i].0 = seq;
-                crate::net::capture::packet(true, &self.unacked[i].1);
             }
         }
         let left = self.unacked.len() - picked.len();
@@ -353,14 +349,12 @@ impl MapSession {
             self.logged.1 += 1;
             log::info!("map out: header {} [{}]", hex::encode(&dgram[..HEADER]), sub_ids(&raw));
         }
-        let form = body[0];
         let digest = Md5::digest(&body);
         body.extend_from_slice(&digest);
         self.cipher.encrypt(&mut body);
         dgram.extend_from_slice(&body);
         self.sock.send(&dgram)?;
         self.bytes_out += dgram.len() as u64;
-        crate::net::capture::datagram(true, dgram.len(), seq, u16::from_le_bytes([dgram[2], dgram[3]]), Some(form));
         Ok(())
     }
 
@@ -468,9 +462,6 @@ impl MapSession {
         // FUN_100f76b0: a datagram not newer than the last one handled is dropped (counted), and so is a sub-packet
         // whose sync is not newer; only an accepted datagram moves the stored sequence and ack.
         let seq = u16::from_le_bytes([dgram[0], dgram[1]]);
-        // Captured after its sub-packets, so a zone-in's datagram is counted in the zone it enters.
-        let ack = u16::from_le_bytes([dgram[2], dgram[3]]);
-        let capture = || crate::net::capture::datagram(false, n, seq, ack, Some(dgram[HEADER]));
         if self.logged.0 < LOG_DATAGRAMS {
             self.logged.0 += 1;
             log::info!("map in: header {} [{}]", hex::encode(&dgram[..HEADER]), sub_ids(&plain));
@@ -479,7 +470,6 @@ impl MapSession {
         if !newer(seq) {
             // LSB resends its last datagram when our ack lags (map_networking.cpp parse).
             log::debug!("dropped resent datagram {seq}");
-            capture();
             return Ok(Some(Vec::new()));
         }
 
@@ -493,7 +483,6 @@ impl MapSession {
             }
             let sync = u16::from_le_bytes([plain[at + 2], plain[at + 3]]);
             if newer(sync) {
-                crate::net::capture::packet(false, &plain[at..at + len]);
                 out.push(SubPacket { id: word & 0x1FF, sync, data: plain[at..at + len].to_vec() });
             }
             at += len;
@@ -506,7 +495,6 @@ impl MapSession {
             let at = |o: usize| u32::from_le_bytes(dgram[o..o + 4].try_into().unwrap());
             self.clock = Some((at(8), at(4), std::time::Instant::now()));
         }
-        capture();
         Ok(Some(out))
     }
 }
@@ -666,55 +654,6 @@ mod tests {
     }
 
     /// A codec of plain 8-bit codes (each byte its code), so the test needs no FFXiMain.dll.
-    /// With capture on, both directions land in the file at the wire: the login without its account and ticket,
-    /// each datagram's form, and the sub-packets as sent and as read.
-    #[test]
-    fn captured_both_ways() {
-        use crate::net::capture::{self, Dir, Kind};
-        let dir = std::env::temp_dir().join(format!("vana-capture-session-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        capture::test_capture(Some(dir.clone()));
-        let key = [7u8; 20];
-        let server = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let mut s = MapSession::connect(server.local_addr().unwrap(), &key, long_codec()).unwrap();
-        s.send_login(0x1234, "Livea", "secretacct", 0).unwrap();
-        let mut buf = [0u8; 4096];
-        let (n, from) = server.recv_from(&mut buf).unwrap();
-        assert!(buf[..n].windows(10).any(|w| w == b"secretacct"));
-        let slot = build(0x0DD, &[0xFF; 500]);
-        s.send(std::slice::from_ref(&slot)).unwrap();
-        let (n, _) = server.recv_from(&mut buf).unwrap();
-        let cipher = Blowfish::for_session_key(&key);
-        cipher.decrypt(&mut buf[HEADER..n]);
-        buf[..2].copy_from_slice(&1u16.to_le_bytes());
-        cipher.encrypt(&mut buf[HEADER..n]);
-        server.send_to(&buf[..n], from).unwrap();
-        assert_eq!(s.recv(Duration::from_secs(1)).unwrap().unwrap().len(), 1);
-        capture::test_capture(None);
-
-        let file = std::fs::read_dir(&dir).unwrap().next().unwrap().unwrap().path();
-        let text = std::fs::read_to_string(&file).unwrap();
-        assert!(!text.contains(&hex::encode(b"secretacct")), "{text}");
-        let recs = capture::load(&file).unwrap();
-        let has = |dir: Dir, f: &dyn Fn(&Kind) -> bool| recs.iter().any(|r| r.dir == dir && f(&r.kind));
-        // As sent: the login's sync is its datagram's sequence (1).
-        assert!(has(
-            Dir::Out,
-            &|k| matches!(k, Kind::Packet { id: 0x00A, hex } if hex[0x22..0x27] == *b"Livea" && hex[2..4] == [1, 0])
-        ));
-        assert!(has(Dir::Out, &|k| matches!(k, Kind::Datagram { form, .. } if form == "raw")));
-        assert!(has(Dir::Out, &|k| matches!(k, Kind::Packet { id: 0x0DD, hex } if hex[4..] == slot[4..])));
-        assert!(has(Dir::Out, &|k| matches!(k, Kind::Datagram { form, seq: 2, .. } if form == "plain")));
-        assert!(has(Dir::In, &|k| matches!(k, Kind::Packet { id: 0x0DD, hex } if hex.len() == 504)));
-        assert!(has(Dir::In, &|k| matches!(k, Kind::Datagram { form, seq: 1, .. } if form == "plain")));
-        // The datagram line follows the sub-packets it carried.
-        let at = |f: &dyn Fn(&capture::Record) -> bool| recs.iter().position(f).unwrap();
-        let sub = at(&|r| r.dir == Dir::In && matches!(r.kind, Kind::Packet { id: 0x0DD, .. }));
-        let dg = at(&|r| r.dir == Dir::In && matches!(r.kind, Kind::Datagram { seq: 1, .. }));
-        assert!(sub < dg);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
     fn plain_codec() -> Codec {
         let mut table = vec![0u8; 2048];
         for b in 0..=255u8 {

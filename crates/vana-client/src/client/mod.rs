@@ -79,7 +79,6 @@ mod modsui;
 mod myroom;
 pub mod net;
 mod notes;
-mod packets;
 mod padcfg;
 pub(crate) mod perf;
 mod portrait;
@@ -356,8 +355,6 @@ fn text_field_open(w: &World) -> bool {
 /// A text field other than the list search's takes the typing.
 fn typing_elsewhere(w: &World) -> bool {
     w.typing
-        // Ours: the Packets window's fields.
-        || w.packets.typing
         || w.ctx_menu_open
         || event::input(w).is_some()
         || w.map.as_ref().is_some_and(|m| m.typing())
@@ -1449,6 +1446,18 @@ fn login_window(
         lu.cursor(hx, hy);
     }
     if busy { None } else { chosen }
+}
+
+/// The Ctrl / Alt shortcuts' test (FUN_101ae010 in 30261006_0): no event hold, no sub-target prompt, alive, no Num+
+/// focus (log or status icons), not in layout mode; set 4 (E, I, C, M, J, W, B) also no window with flag 0x20000.
+fn shortcut_ok(w: &World, set4: bool) -> bool {
+    !event::active(w)
+        && !w.dead()
+        && !target::sub_up(w)
+        && !w.log_active
+        && w.log_focus != 2
+        && w.layout.is_none()
+        && !(set4 && w.main_open)
 }
 
 /// A line from a menu or key (text command mode 0).
@@ -2678,6 +2687,7 @@ fn world_hud(
     gu.set_ttf(world.opts.ttf_text);
     let (sw, sh) = (size[0] as f32, size[1] as f32);
     world.ui_wh = (sw, sh);
+    world.battlefield.frame();
     world.lua.set_view_proj(view_proj);
     // The focused list's scroll bar and the wheel, before the windows see the press.
     // Game files from 30261102 on hold fe_main (client/celestite.rs).
@@ -2772,11 +2782,6 @@ fn world_hud(
     if gm_typing {
         keys.clear();
     }
-    // Ours: the Packets window's text fields take the keys while one has the focus.
-    let packets_typing = world.packets.typing && world.packets.open;
-    if packets_typing {
-        keys.clear();
-    }
     // Ours: the Controller window takes the keys while it is open (over the Settings window it is opened from).
     let pad_typing = modern::pad_events(world, &input.events);
     if pad_typing {
@@ -2803,7 +2808,6 @@ fn world_hud(
         || find_typing
         || settings_typing
         || gm_typing
-        || packets_typing
         || pad_typing
         || mods_typing;
     if post_typing {
@@ -2906,7 +2910,7 @@ fn world_hud(
             }
             egui::Event::Copy if world.log_selection.is_some() => world.copied = world.log_selection.clone(),
             egui::Event::Copy if world.typing => {}
-            egui::Event::Copy if !event::active(world) => check_target(world),
+            egui::Event::Copy if shortcut_ok(world, true) => check_target(world),
             egui::Event::Cut if world.typing && fep::selection(world).is_some() => {
                 world.copied = fep::selected_text(world);
                 fep::delete_selection(world);
@@ -2986,11 +2990,6 @@ fn world_hud(
                 // (FUN_101dd4c0) read ids 0..3 instead, bound with no flag: Shift + arrows still step them.
                 egui::Key::ArrowUp | egui::Key::ArrowDown | egui::Key::ArrowLeft | egui::Key::ArrowRight
                     if modifiers.shift && !arrows_take_shift(world) => {}
-                // Ours: Escape closes the Packets window (its fields keep the keys while they have the focus).
-                egui::Key::Escape if world.modern && world.packets.open => {
-                    world.packets.open = false;
-                    world.sounds.push(crate::audio::Ui::Cancel as u32);
-                }
                 // Ours: Escape closes the modern UI Modes editor (/uimodes), drawn over everything.
                 egui::Key::Escape if world.modern && world.uimodes_open => {
                     world.uimodes_open = false;
@@ -3095,7 +3094,9 @@ fn world_hud(
                     world.log_active = false;
                 }
                 egui::Key::Escape if world.log_active => world.log_active = false,
-                egui::Key::A if modifiers.ctrl || modifiers.alt => send_chat(world, "/attack".into()),
+                egui::Key::A if (modifiers.ctrl || modifiers.alt) && shortcut_ok(world, false) => {
+                    send_chat(world, "/attack".into())
+                }
                 // The palette (FUN_101a3960): Left / Right move the cursor (wrapping), Down / Up the next / previous set,
                 // Enter runs the cell and closes, Escape closes. Other keys pass (Ctrl / Alt + M opens magic).
                 egui::Key::ArrowLeft
@@ -3159,10 +3160,7 @@ fn world_hud(
                 // Ctrl / Alt + M, J, W, B (key functions 0x41, 0x7f, 0x80, 0x9f): magic in list mode without trusts, job
                 // abilities, weapon skills, pet commands; in the field, alive, no prompt.
                 egui::Key::M | egui::Key::J | egui::Key::W | egui::Key::B
-                    if (modifiers.ctrl || modifiers.alt)
-                        && !event::active(world)
-                        && !world.dead()
-                        && !target::sub_up(world) =>
+                    if (modifiers.ctrl || modifiers.alt) && shortcut_ok(world, true) =>
                 {
                     match key {
                         egui::Key::M => magic::open_magic(world, 0, true, 0x100),
@@ -3188,14 +3186,18 @@ fn world_hud(
                         magic::key(world, *key);
                     }
                 }
-                egui::Key::H if modifiers.ctrl || modifiers.alt => {
+                egui::Key::H if (modifiers.ctrl || modifiers.alt) && shortcut_ok(world, false) => {
                     world.sounds.push(crate::audio::Ui::Select as u32);
                     send_chat(world, "/heal".into());
                 }
-                egui::Key::C if modifiers.ctrl || modifiers.alt => check_target(world),
+                egui::Key::C if (modifiers.ctrl || modifiers.alt) && shortcut_ok(world, true) => check_target(world),
                 // FUN_1012ec60 / FUN_101e9f10.
-                egui::Key::E if modifiers.ctrl || modifiers.alt => items::open_equipment(world),
-                egui::Key::I if modifiers.ctrl || modifiers.alt => items::open_items(world),
+                egui::Key::E if (modifiers.ctrl || modifiers.alt) && shortcut_ok(world, true) => {
+                    items::open_equipment(world)
+                }
+                egui::Key::I if (modifiers.ctrl || modifiers.alt) && shortcut_ok(world, true) => {
+                    items::open_items(world)
+                }
                 // Ours (Extras): plain T slides the Timers out or in, with no window open (Ctrl / Alt + T is /tell).
                 egui::Key::T
                     if !modifiers.ctrl
@@ -5433,7 +5435,7 @@ fn world_hud(
 
     // FUN_10220f60's gauges ease after its draw.
     if let Some(t) = sidebar_eases {
-        world.battlefield.ease(t);
+        world.battlefield.ease(t, std::time::Instant::now());
     }
     blockers
 }
@@ -8196,8 +8198,6 @@ struct World {
     recent_save: bool,
     /// The modern UI Modes editor is open (/uimodes, modern/modes.rs).
     uimodes_open: bool,
-    /// Ours (a developer tool): the Packets window (/packets with config `dev_tools`, client/packets.rs).
-    packets: packets::Packets,
     /// Favourites (favs.rs keys, the strip's order), whether the strip shows, and whether either changed since the save.
     favourites: Vec<String>,
     fav_strip: bool,
@@ -10447,7 +10447,6 @@ impl App {
                     &std::fs::read(crate::dat::ffximain(&self.cfg.ffxi_dir())).unwrap_or_default(),
                 ) {
                     Ok(codec) => {
-                        crate::net::capture::set(self.cfg.packet_capture);
                         let net = net::spawn(login.clone(), self.cfg.username.clone(), codec, self.cfg.gm_window);
                         self.status = format!("Connecting to {}:{}...", login.map.0, login.map.1);
                         let features = if let Phase::Characters { features, .. } = &self.phase { *features } else { 0 };
@@ -10836,7 +10835,6 @@ impl App {
                             recent_picks: self.cfg.modern_recent.get(&login.name).cloned().unwrap_or_default(),
                             recent_save: false,
                             uimodes_open: false,
-                            packets: packets::Packets::new(self.cfg.dev_tools),
                             favourites: self.cfg.modern_favourites.get(&login.name).cloned().unwrap_or_default(),
                             fav_strip: self.cfg.modern_fav_strip,
                             fav_save: false,
@@ -11763,8 +11761,6 @@ impl App {
         let Phase::World(world) = &mut self.phase else { return };
         world.net.stats.rate_ms.store(self.cfg.send_interval, std::sync::atomic::Ordering::Relaxed);
         world.net.stats.gm_window.store(self.cfg.gm_window, std::sync::atomic::Ordering::Relaxed);
-        crate::net::capture::set(self.cfg.packet_capture || world.packets.record);
-        world.packets.tick();
         let mut load = None;
         let mut looks: Vec<(u32, Source)> = Vec::new();
         // Lines that need the message tables wait for them (they load on a thread at world start), in order.
@@ -13340,9 +13336,19 @@ impl App {
             }
         }
         for id in std::mem::take(&mut world.effects.skill_files_done) {
+            let mut gone = Vec::new();
             if let Some(a) = world.actors.get_mut(&id) {
                 log::info!("actor {id:#x}: skill files dropped (its last skill main ended)");
+                gone = a.extra.iter().filter(|(k, _)| *k == actmotion::Kind::Skill).map(|(_, f)| f.id).collect();
                 actmotion::drop_kind(&mut a.extra, actmotion::Kind::Skill);
+            }
+            // A file no other actor holds is freed, its effects with it (Effects::release_file).
+            for f in gone {
+                let held =
+                    world.actors.values().any(|a| a.extra.iter().any(|(_, m)| m.id == f) || a.skill_want.contains(&f));
+                if !held {
+                    world.effects.release_file(f);
+                }
             }
         }
         for (id, file) in std::mem::take(&mut world.effects.effect_motions) {
@@ -20085,6 +20091,28 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
                 a.status_force.get_or_insert(-1.0);
             }
         }
+        // Scheduler op 0x05 motions (0x1005cd69): a swing's or a death's one-shot, and the play's whose tick has come.
+        // Each is queued once, from its start (no phase carry), stretched over its op's length.
+        let mut starts: Vec<crate::dat::sched::Motion> = Vec::new();
+        let mut rates: Vec<Option<f32>> = Vec::new();
+        if let Some(o) = shot {
+            rates.push(Some(o.speed));
+            starts.push(crate::dat::sched::Motion {
+                name: o.name,
+                at: 0,
+                speed: 1.0,
+                ticks: 0,
+                count: o.count,
+                blend: o.blend as u16,
+                out: o.out as u16,
+                half: o.half,
+            });
+        }
+        if let Some(p) = a.play.as_mut() {
+            let v = p.take_starts();
+            rates.extend(v.iter().map(|_| None));
+            starts.extend(v);
+        }
         // FUN_100c83c0: re-queued on a name change, a counted end or a blanked +0x7d8; a rate change alone goes on the
         // newest entries. Op 0x28 (0x1005b12e) queues it past the +0x80 hold. *(ours: so does an empty queue, not a rod.)*
         let stance = a.status_force.is_some_and(|b| b >= 0.0);
@@ -20112,13 +20140,16 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
             // +0x200), so the corpse motion does not cut the fall short. *(ours: only while a death or other motion
             // of ours is still running; one who arrives dead lies down at once.)*
             let falling = matches!(pick_status, 2 | 3) && !a.q.done && (a.oneshot.is_some() || a.play.is_some());
+            // A region-0 motion queued this frame clears the counted end's mark (+0x79c, vtable +0x1fc(0)) before
+            // FUN_100c6380 tests it: the scheduler's next motion takes over from the last pose, not from the status.
+            let ended = a.q.done && starts.is_empty();
             let force = a.status_force;
             if falling {
-            } else if a.q.done || force.is_some() || s != a.q_status {
+            } else if ended || force.is_some() || s != a.q_status {
                 let (blend, carry, why) = match force {
                     Some(b) if b >= 0.0 => (b, false, "stance op"),
                     // After a counted motion: in over its out length, from the start.
-                    _ if a.q.done => (a.q.back_blend(), false, "counted motion ended"),
+                    _ if ended => (a.q.back_blend(), false, "counted motion ended"),
                     _ => (crate::motion::BLEND_TICKS, !s.starts_with("jmp"), "status"),
                 };
                 let e = crate::motionq::Enq::status(r, blend, carry);
@@ -20137,28 +20168,6 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
                 a.q.set_rate(r);
                 a.q_rate = r;
             }
-        }
-        // Scheduler op 0x05 motions (0x1005cd69): a swing's or a death's one-shot, and the play's whose tick has come.
-        // Each is queued once, from its start (no phase carry), stretched over its op's length.
-        let mut starts: Vec<crate::dat::sched::Motion> = Vec::new();
-        let mut rates: Vec<Option<f32>> = Vec::new();
-        if let Some(o) = shot {
-            rates.push(Some(o.speed));
-            starts.push(crate::dat::sched::Motion {
-                name: o.name,
-                at: 0,
-                speed: 1.0,
-                ticks: 0,
-                count: o.count,
-                blend: o.blend as u16,
-                out: o.out as u16,
-                half: o.half,
-            });
-        }
-        if let Some(p) = a.play.as_mut() {
-            let v = p.take_starts();
-            rates.extend(v.iter().map(|_| None));
-            starts.extend(v);
         }
         for (m, rate) in starts.iter().zip(rates) {
             let first = actmotion::find_cached(&mut cache.borrow_mut(), &extra, &ch, &m.name).first().copied();

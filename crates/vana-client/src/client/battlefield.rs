@@ -57,6 +57,8 @@ pub struct Battlefield {
     gauges: [u8; 7],
     acc: f32,
     last: Option<Instant>,
+    /// The sidebar was drawn (and eased) in the last HUD frame.
+    drawn: bool,
 }
 
 fn word(p: &[u8], o: usize) -> u32 {
@@ -150,11 +152,19 @@ impl Battlefield {
         overlay_shown(map_zone, player, title_up).then(|| self.request(Kind::MapOverlay)).flatten()
     }
 
-    /// The gauges' ease after a draw, at 30 a second (FUN_101cc4d0 / FUN_101cca00 run once a draw at retail's rate).
-    pub fn ease(&mut self, targets: Eases) {
-        let now = Instant::now();
-        self.acc += self.last.map_or(0.0, |t| (now - t).as_secs_f32()).min(1.0);
-        self.last = Some(now);
+    /// Once a HUD frame, before the draw: a frame the sidebar was not drawn in eased nothing (retail eases only in the
+    /// compass draw), so the time since then is not paid back.
+    pub fn frame(&mut self) {
+        if !std::mem::take(&mut self.drawn) {
+            (self.last, self.acc) = (None, 0.0);
+        }
+    }
+
+    /// The gauges' ease after a draw, at 30 a second (FUN_101cc4d0 / FUN_101cca00 run once a draw at retail's rate);
+    /// the first draw after a gap takes one step, as retail's does.
+    pub fn ease(&mut self, targets: Eases, now: Instant) {
+        self.acc += self.last.map_or(1.0 / 30.0, |t| (now - t).as_secs_f32().min(1.0));
+        (self.last, self.drawn) = (Some(now), true);
         while self.acc >= 1.0 / 30.0 {
             self.acc -= 1.0 / 30.0;
             for (k, v) in targets {
@@ -423,6 +433,26 @@ mod tests {
         b.request(Kind::Both);
         b.on_reply(&reply(0, &[0; 12]));
         assert_eq!(b.side_share(1, 2), 0);
+    }
+
+    /// One step at the first draw; a frame without the sidebar drops the time since, so the next draw is one step too.
+    #[test]
+    fn ease_runs_per_draw() {
+        let mut b = Battlefield::default();
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + std::time::Duration::from_millis(ms);
+        let to80 = [(1, 80), (4, 0), (6, 0), (2, 0), (5, 0)];
+        b.frame();
+        b.ease(to80, at(0));
+        assert_eq!(b.gauges[1], 12, "the first draw eases once");
+        b.frame();
+        b.ease(to80, at(34));
+        assert_eq!(b.gauges[1], 22);
+        // Not drawn for two seconds: no catch-up when it comes back.
+        b.frame();
+        b.frame();
+        b.ease(to80, at(2034));
+        assert_eq!(b.gauges[1], 30);
     }
 
     #[test]
