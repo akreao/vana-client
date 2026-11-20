@@ -59,6 +59,10 @@ const CHUNK: u32 = 0x10000;
 const VERSION_BLOCK: usize = 0x40;
 /// Our record of the last manifest applied (not the Viewer's patch.cfg: code files may stay behind).
 pub const STAMP_FILE: &str = "vana-update.cfg";
+/// Not retail: left by [`forget_applied`] until an update applies a manifest again. While it is there the folder's
+/// patch.ver does not count as the version applied: an install that stopped part way may have put older files under
+/// it.
+const FORGOTTEN_FILE: &str = "vana-update.reinstalled";
 
 mod kind {
     pub const HELLO: u32 = 1;
@@ -719,8 +723,11 @@ fn sig_of_path(p: &Path) -> Result<Option<Sig>> {
 }
 
 /// The game's version here: the newest stamp of the manifest last applied (our stamp file), or the folder's patch.ver
-/// (a Viewer patched it) when that is newer.
+/// (a Viewer patched it) when that is newer; none after [`forget_applied`] until an update applies again.
 pub fn applied_version(root: &Path) -> Option<String> {
+    if root.join(FORGOTTEN_FILE).exists() {
+        return None;
+    }
     let stamped = std::fs::read_to_string(root.join(STAMP_FILE)).ok().and_then(|text| {
         parse_manifest(&text)
             .ok()?
@@ -746,7 +753,7 @@ static SEEN: std::sync::Mutex<Option<Seen>> = std::sync::Mutex::new(None);
 pub fn applied_version_cached(root: &Path) -> Option<String> {
     let path = root.join(STAMP_FILE);
     let (stamp, ver) = (std::fs::metadata(&path).ok(), std::fs::metadata(root.join(PATCH_VER)).ok());
-    if stamp.is_none() && ver.is_none() {
+    if (stamp.is_none() && ver.is_none()) || root.join(FORGOTTEN_FILE).exists() {
         return None;
     }
     // Each file's own time and length: a change to either one reads the version again.
@@ -841,9 +848,11 @@ pub fn plan_against(root: &Path, server: ServerVersion) -> Result<Plan> {
     plan_for(GAME, root, true, server)
 }
 
-/// Drops the applied manifest: the folder's files are about to be replaced by older ones, so the stamp would
-/// wrongly vouch for them (the next update then reads every file).
+/// Drops the applied manifest: the folder's files are about to be replaced by older ones, so neither the stamp nor a
+/// patch.ver the install may not reach (it can stop part way) vouches for them; the next update reads every file.
 pub fn forget_applied(root: &Path) -> Result<()> {
+    std::fs::write(root.join(FORGOTTEN_FILE), b"").context("marking the applied version forgotten")?;
+    *SEEN.lock().unwrap_or_else(|e| e.into_inner()) = None;
     match std::fs::remove_file(root.join(STAMP_FILE)) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e).context("clearing the applied manifest"),
         _ => Ok(()),
@@ -1046,6 +1055,11 @@ pub fn apply(root: &Path, plan: &Plan, connections: usize, progress: &(dyn Fn(us
         log::info!("updater: {reset} reset and {reset2} reset2 files replaced");
     }
     write_atomic(&root.join(STAMP_FILE), &plan.manifest)?;
+    // A manifest applied whole again: the folder's versions count from here.
+    match std::fs::remove_file(root.join(FORGOTTEN_FILE)) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e).context("clearing the reinstall mark"),
+        _ => {}
+    }
     // Last, as the Viewer's install does (state 0x6a6): only for a service whose code was written too. The game's
     // patch.ver stays the Viewer's, since its code files were left behind.
     if plan.service.code {
@@ -1183,11 +1197,13 @@ mod tests {
         assert_eq!(std::fs::read(root.join("viewer/com/app.dll")).unwrap(), b"MZ app");
         assert!(!root.join("EU/env.dat").exists());
         assert_eq!(installed_version(&root, VIEWER).as_deref(), Some("20261022_0"));
-        // The same plan as the game's writes no patch.ver (its code files stay behind).
+        // The same plan as the game's writes no patch.ver (its code files stay behind), and a whole manifest applied
+        // ends a reinstall's mark.
         std::fs::remove_file(root.join(PATCH_VER)).unwrap();
+        forget_applied(&root).unwrap();
         let game = Plan { service: GAME, todo: Vec::new(), ..plan };
         apply(&root, &game, 1, &|_, _| {}).unwrap();
-        assert!(!root.join(PATCH_VER).exists());
+        assert!(!root.join(PATCH_VER).exists() && !root.join(FORGOTTEN_FILE).exists());
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1507,13 +1523,26 @@ mod tests {
     #[test]
     fn forgetting_the_applied_manifest() {
         let root = std::env::temp_dir().join(format!("vana-patch-forget-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        forget_applied(&root).unwrap();
         let line = "1_0 1 1 1 1_0/Direct/x.slc 5\n";
         std::fs::write(root.join(STAMP_FILE), format!("file ROM/0/0.DAT {{\n{line}}}\nend\n")).unwrap();
         assert_eq!(applied_version(&root).as_deref(), Some("1_0"));
         forget_applied(&root).unwrap();
         assert_eq!(applied_version(&root), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An install that stopped part way over a Viewer-patched folder leaves its current patch.ver: after
+    /// `forget_applied` that version does not count until an update applies a manifest again.
+    #[test]
+    fn forgotten_folder_ignores_its_patch_ver() {
+        let root = std::env::temp_dir().join(format!("vana-patch-forgotten-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join(PATCH_VER), crate::net::pol::patchver::write("30261102_0", GAME.title)).unwrap();
+        assert_eq!(applied_version(&root).as_deref(), Some("30261102_0"));
+        forget_applied(&root).unwrap();
+        assert_eq!((applied_version(&root), applied_version_cached(&root)), (None, None));
         let _ = std::fs::remove_dir_all(&root);
     }
 }
