@@ -3000,7 +3000,9 @@ fn motion_files(op: u8, file: i32, id: u32, a: &super::Actor) -> Vec<u32> {
 /// FUN_10089a60, each frame on our character: its place (+4, facing +0x14) follows its model. Bound in an event it
 /// waits unless (DAT_1046df04 | Mode) & 4, so the model the event moved is where we stand once it ends.
 fn keep_pose(w: &mut World, p: Pose) {
-    (w.pos, w.step_hist, w.step_ticks, w.step_to, w.draw_pos) = (p.pos, [p.pos; 4], 0.0, p.pos, p.pos);
+    (w.pos, w.step_ticks, w.step_to, w.draw_pos) = (p.pos, 0.0, p.pos, p.pos);
+    // A place set from outside snaps the drawn position (+0x5fc) too.
+    (w.turn_draw, w.draw_from, w.turn_rot) = (None, p.pos, None);
     w.yaw = super::player_yaw(p.yaw);
 }
 
@@ -3058,6 +3060,8 @@ fn finish(w: &mut World, live: Box<Live>) {
                 if let Some(e) = w.entities.get_mut(id) {
                     // +0x24 too: the slide's target, or the next frame takes the actor back.
                     (e.pos, e.slide, e.last_pos, e.target, e.remain) = (p.pos, p.pos, p.pos, p.pos, 0.0);
+                    // The drawn place (+0x5fc) snaps with it, as for any place set from outside (FUN_100929a0).
+                    e.drawn = None;
                     // The slide stands a grounded actor by the server's height: that is this place's now.
                     (e.server_y, e.raw_y) = (p.pos.y, p.pos.y);
                 }
@@ -4189,7 +4193,19 @@ pub fn text_ctx(w: &World) -> dialog::Ctx {
         let group10 = Box::new(move |id: u16| bt.group10_raw(id as usize));
         Arc::new(dialog::Dates { group10, date_key: (w.game.get(0x95) & 3) as usize, h12: w.game.get(0x96) & 1 != 0 })
     });
-    let texts = EventTexts {
+    dialog::Ctx {
+        dates,
+        party: w.party.indexed().map(|(i, m)| (i as u8, m.id, m.number, m.name.clone())).collect(),
+        concierge: super::concierge::names(w),
+        me: w.my_id,
+        texts: Some(point_texts(w)),
+        ..Default::default()
+    }
+}
+
+/// The name tables FUN_100c1650 reads besides the item names (the point and Monstrosity names load on first use).
+pub fn point_texts(w: &World) -> Arc<dyn dialog::Texts> {
+    Arc::new(EventTexts {
         bt: w.battle.clone(),
         index: w.index.clone(),
         files: w.point_files,
@@ -4199,15 +4215,7 @@ pub fn text_ctx(w: &World) -> dialog::Ctx {
         mon: Default::default(),
         words: Default::default(),
         logs: w.logs.clone().map(std::sync::OnceLock::from).unwrap_or_default(),
-    };
-    dialog::Ctx {
-        dates,
-        party: w.party.indexed().map(|(i, m)| (i as u8, m.id, m.number, m.name.clone())).collect(),
-        concierge: super::concierge::names(w),
-        me: w.my_id,
-        texts: Some(Arc::new(texts)),
-        ..Default::default()
-    }
+    })
 }
 
 /// s2c 0x036 / 0x02A: zone dialogue by server id (mapped to the install with MsgShift), into the log.

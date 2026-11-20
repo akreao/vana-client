@@ -112,6 +112,28 @@ enum Cmd {
         #[arg(long)]
         to: Option<PathBuf>,
     },
+    /// Read a packet capture (config `packet_capture` or VANA_CAPTURE=1 writes them to the data folder's
+    /// captures/): its sub-packets, then a count of each id each way and of the datagram forms.
+    Capture {
+        file: PathBuf,
+        /// Only these ids, hex (0x08F,0c5).
+        #[arg(long, value_delimiter = ',')]
+        id: Vec<String>,
+        /// Only "in" (server to client) or "out".
+        #[arg(long)]
+        dir: Option<String>,
+        #[arg(long)]
+        zone: Option<u16>,
+        /// Only sub-packets holding these bytes, hex (1e09).
+        #[arg(long)]
+        find: Option<String>,
+        /// Print each sub-packet's bytes.
+        #[arg(long)]
+        hex: bool,
+        /// Also write the kept lines to this file, to share a smaller capture.
+        #[arg(long)]
+        save: Option<PathBuf>,
+    },
     /// Trust a server's new TLS certificate: forget what is pinned for HOST (every port, or --port), so the next
     /// connection pins the certificate it is sent. With --fingerprint and --port, pin that key's SHA-256 instead.
     TrustServer {
@@ -643,6 +665,9 @@ enum Cmd {
         /// Ours: the Mods window (a Look Changer sample on its Commands, a form filled in).
         #[arg(long)]
         mods: bool,
+        /// Ours: the Packets window with sample records.
+        #[arg(long)]
+        packets: bool,
         /// The favourites strip and starred list rows.
         #[arg(long)]
         favs: bool,
@@ -1014,6 +1039,7 @@ fn zone_in(cfg: &config::Config, m: &net::lobby::MapLogin, account: &str, stay: 
     use std::time::Instant;
 
     let codec = net::map::compress::Codec::from_ffximain(&std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir()))?)?;
+    net::capture::set(cfg.packet_capture);
     let addr = std::net::SocketAddr::from((m.map.0, m.map.1));
     let mut map = MapSession::connect(addr, &m.key, codec)?.or_key(m.old_key);
     // The zone server learns of us a moment after the lobby replies, so retry like the client does.
@@ -1297,6 +1323,28 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
+        Cmd::Capture { file, id, dir, zone, find, hex, save } => {
+            use anyhow::Context as _;
+            let ids = id
+                .iter()
+                .map(|s| u16::from_str_radix(s.trim().trim_start_matches("0x"), 16))
+                .collect::<Result<Vec<_>, _>>()
+                .context("--id takes hex ids")?;
+            let dir = match dir.as_deref() {
+                None => None,
+                Some("in") => Some(net::capture::Dir::In),
+                Some("out") => Some(net::capture::Dir::Out),
+                Some(d) => anyhow::bail!("--dir is in or out, not {d}"),
+            };
+            let find = hex::decode(find.unwrap_or_default()).context("--find takes hex bytes")?;
+            let filter = net::capture::Filter { ids, dir, zone, find };
+            let records = net::capture::load(&file)?;
+            print!("{}", net::capture::report(&records, &filter, hex));
+            if let Some(path) = save {
+                net::capture::save(&path, records.iter().filter(|r| filter.keeps(r)))?;
+            }
+            Ok(())
+        }
         Cmd::TrustServer { host, port, fingerprint } => {
             let store = config::known_servers_path();
             for line in net::tls::trust(&store, &host, port, fingerprint.as_deref())? {
@@ -1424,6 +1472,7 @@ fn main() -> Result<()> {
             gm,
             controller,
             mods,
+            packets,
         } => {
             let list = font.is_some();
             client::modern_shot(
@@ -1449,6 +1498,7 @@ fn main() -> Result<()> {
                     gm,
                     controller,
                     mods,
+                    packets,
                 },
             )
         }

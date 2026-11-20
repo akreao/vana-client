@@ -226,6 +226,10 @@ pub struct Config {
     /// Milliseconds between the datagrams sent to a private server's zone server (50..400; 400 is the game's, which a
     /// PlayOnline sign-in always keeps). The server answers each one, so its updates come sooner. Not a retail option.
     pub send_interval: u32,
+    /// Movement Rate: the retail frames a second our own character moves in, 30 (the game's, two ticks a frame) or 60
+    /// (one tick a frame, as retail plays with an fps add-on): the drawn place and turn ease once per frame either way.
+    /// Not a retail option.
+    pub move_rate: u32,
     /// Party and alliance rows show TP (retail config 0xae bit 0, default off; ours on, as the add-ons do).
     pub party_tp: bool,
     /// Per-window opacity the player set (no row for it yet), by window: a modern panel's id, a mod's window
@@ -249,6 +253,11 @@ pub struct Config {
     /// on and only to a private server. No Settings row: only a server with its GM extension can use it, so it is set
     /// in config.json by hand.
     pub gm_window: bool,
+    /// Packet capture (ours, net/capture.rs): the map server's traffic each way to `<data dir>/captures`. No Settings
+    /// row; set in config.json by hand, or run with VANA_CAPTURE=1.
+    pub packet_capture: bool,
+    /// Developer tools (ours): the Packets window (/packets, modern UI). No Settings row; set in config.json by hand.
+    pub dev_tools: bool,
     /// The version whose change notes were last shown (client/notes.rs): a newer client shows the notes since. A
     /// config from before the notes has none, so its first newer build shows that build's.
     #[serde(default)]
@@ -344,6 +353,15 @@ pub struct Config {
     pub gamepad_padsin: String,
     /// padexsin000, the map used while slot 34 is held; empty = gamepad::DEFAULT_PADEXSIN.
     pub gamepad_padexsin: String,
+    /// padguid000: the controller that plays, its DirectInput instance GUID as FFXiPadConfig writes it
+    /// ("{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}"); empty = retail's padguid000, else the first controller.
+    pub gamepad_padguid: String,
+    /// Read an XInput controller through XInput (padmode000's [5], "Use XInput"); unset: retail's padmode000, else on.
+    pub gamepad_xinput: Option<bool>,
+    /// A DirectInput controller's sliders take axis codes 7 and 8 (padmode000's [2]); unset as gamepad_xinput.
+    pub gamepad_sliders: Option<bool>,
+    /// A DirectInput controller's hat switch takes axis codes 9 and 10 (padmode000's [3]); unset as gamepad_xinput.
+    pub gamepad_hat: Option<bool>,
     /// LAN voice chat (ours, hidden: Ctrl+Alt+Shift+V).
     pub voice: crate::voice::Settings,
     /// Fields a newer client wrote, kept and saved back as they are: an older client drops nothing it doesn't know.
@@ -579,9 +597,12 @@ impl Default for Config {
             grading: 0,
             draw_distance: 0,
             send_interval: 400,
+            move_rate: 30,
             party_tp: true,
             window_opacity: Default::default(),
             gm_window: false,
+            packet_capture: false,
+            dev_tools: false,
             notes_seen: env!("CARGO_PKG_VERSION").into(),
             lamp_lights: true,
             smooth_lights: false,
@@ -624,6 +645,10 @@ impl Default for Config {
             gamepad_rumble: true,
             gamepad_padsin: String::new(),
             gamepad_padexsin: String::new(),
+            gamepad_padguid: String::new(),
+            gamepad_xinput: None,
+            gamepad_sliders: None,
+            gamepad_hat: None,
             voice: Default::default(),
             unknown: Default::default(),
             tool: Default::default(),
