@@ -851,6 +851,10 @@ pub fn plan_against(root: &Path, server: ServerVersion) -> Result<Plan> {
 /// Drops the applied manifest: the folder's files are about to be replaced by older ones, so neither the stamp nor a
 /// patch.ver the install may not reach (it can stop part way) vouches for them; the next update reads every file.
 pub fn forget_applied(root: &Path) -> Result<()> {
+    // A fresh install's folder is not there yet: no version was applied to forget.
+    if !root.is_dir() {
+        return Ok(());
+    }
     std::fs::write(root.join(FORGOTTEN_FILE), b"").context("marking the applied version forgotten")?;
     *SEEN.lock().unwrap_or_else(|e| e.into_inner()) = None;
     match std::fs::remove_file(root.join(STAMP_FILE)) {
@@ -1544,5 +1548,8 @@ mod tests {
         forget_applied(&root).unwrap();
         assert_eq!((applied_version(&root), applied_version_cached(&root)), (None, None));
         let _ = std::fs::remove_dir_all(&root);
+        // A fresh install: the folder does not exist yet, and nothing is made.
+        forget_applied(&root).unwrap();
+        assert!(!root.exists());
     }
 }
