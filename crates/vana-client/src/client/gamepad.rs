@@ -345,7 +345,17 @@ pub fn settings(cfg: &Config, retail: Option<&crate::padreg::Retail>) -> Setting
     } else {
         retail.and_then(|r| r.padguid.clone()).unwrap_or_default()
     };
+    // The controller choice saved is a saved setting too: Use Retail Settings has something to take back.
+    s.saved |= device_saved(cfg);
     s
+}
+
+/// The Controller window saved a controller or its options (config.json's padguid / XInput / sliders / hat).
+pub fn device_saved(cfg: &Config) -> bool {
+    !cfg.gamepad_padguid.trim().is_empty()
+        || cfg.gamepad_xinput.is_some()
+        || cfg.gamepad_sliders.is_some()
+        || cfg.gamepad_hat.is_some()
 }
 
 fn settings_of(cfg: &Config, retail: Option<&crate::padreg::Retail>) -> Settings {
@@ -575,6 +585,14 @@ impl Gamepad {
         let set = settings(cfg, self.retail.as_ref());
         if !set.on && !capture {
             mods(&[], [0.0; 6], false);
+            // The pad turned off lets the DirectInput device go (a changed padmode000, DAT_10456df0), so a background
+            // exclusive acquisition does not hold it from other programs; turned on again it is picked anew.
+            #[cfg(windows)]
+            if self.di_key.take().is_some()
+                && let Some(d) = &mut self.dinput
+            {
+                d.reset();
+            }
             return self.release_all();
         }
         self.connect();
@@ -1147,6 +1165,26 @@ mod tests {
         assert!(settings(&cfg, Some(&retail("1,0,0,0,0,1"))).rumble);
         cfg.gamepad_rumble = false;
         assert!(!settings(&cfg, None).rumble);
+    }
+
+    /// A controller choice or option saved alone (no maps) counts as saved settings, so Use Retail Settings is offered
+    /// and, cleared, retail's padmode000 decides again.
+    #[test]
+    fn device_options_count_as_saved() {
+        let retail = crate::padreg::Retail {
+            padmode: Some("1,0,0,0,0,1".into()),
+            padsin: Some(DEFAULT_PADSIN.into()),
+            ..Default::default()
+        };
+        let mut cfg = Config::default();
+        let s = settings(&cfg, Some(&retail));
+        assert!(!s.saved && s.xinput);
+        cfg.gamepad_xinput = Some(false);
+        let s = settings(&cfg, Some(&retail));
+        assert!(s.saved && !s.xinput);
+        cfg.gamepad_xinput = None;
+        cfg.gamepad_padguid = "{55DDF31E-8F9C-11F1-8001-000044455354}".into();
+        assert!(settings(&cfg, Some(&retail)).saved);
     }
 
     /// The default padsin: A confirm (slot 0), B cancel (3), X slot 1, Y slot 2, LB 8, LT 9, L3 10, RB 12, RT 13, R3 14,
