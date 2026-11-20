@@ -35,6 +35,7 @@ mod macros;
 mod maze;
 mod modmgr;
 mod modwin;
+mod packetwin;
 mod padwin;
 mod pupset;
 mod regioninfo;
@@ -345,9 +346,12 @@ impl Modern {
             self.styled = true;
         }
         // The game's keys are not egui's: Tab (targeting) must not walk egui's focus onto a widget for Enter or Space
-        // (talking, a door) to press it (a chat tab switched by itself). Nothing here keeps the keyboard focus.
+        // (talking, a door) to press it (a chat tab switched by itself). Nothing here keeps the keyboard focus but the
+        // Packets window's text fields (ours, a developer tool).
         ctx.memory_mut(|mem| {
-            if let Some(id) = mem.focused() {
+            if let Some(id) = mem.focused()
+                && !packetwin::keeps_focus(w, id)
+            {
                 mem.surrender_focus(id);
             }
         });
@@ -415,6 +419,7 @@ impl Modern {
         padwin::draw(&mut p, w);
         modmgr::draw(&mut p, w);
         modwin::draw(&mut p, w);
+        packetwin::draw(&mut p, w);
         // A mod HUD element's tooltip, unless a panel is over it.
         if let Some((title, text, _)) = w.lua.hud_tip()
             && let Some(at) = ctx.input(|i| i.pointer.hover_pos())
@@ -656,6 +661,7 @@ fn focus_panel(w: &World) -> Option<&'static str> {
         _ if w.friendui.is_some() => "window",
         _ if w.settings.is_some() || w.config.is_some() || w.bluset.is_some() || w.pupset.is_some() => "window",
         _ if gmwin::shown(w) => "window",
+        _ if packetwin::shown(w) => "window",
         _ if padwin::shown(w) => "window",
         _ if modmgr::shown(w) => "window",
         _ if w.magic.is_some() || w.ability.is_some() => "list",
@@ -743,6 +749,7 @@ fn default_place(id: &str) -> Place {
         "minimap" => at(-0.001, 0.0353),
         // The command window: every window the command menu opens shows here. The item info rides the log as retail's
         // (mode 0, flag 0x1000).
+        "packets" => at(0.04, 0.12),
         "window" => at(0.0047, 0.0347),
         // Ours: the Controller window over the Settings window it is opened from.
         "controller" => at(0.03, 0.06),
