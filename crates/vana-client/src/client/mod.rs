@@ -18187,6 +18187,9 @@ impl App {
         }
         if std::mem::take(&mut p.use_retail) {
             (cfg.gamepad_padsin, cfg.gamepad_padexsin) = (String::new(), String::new());
+            // The controller choice and its options go back to retail's too (padguid000, padmode000).
+            cfg.gamepad_padguid.clear();
+            (cfg.gamepad_xinput, cfg.gamepad_sliders, cfg.gamepad_hat) = (None, None, None);
             save = true;
         }
         if std::mem::take(&mut p.reread) {
