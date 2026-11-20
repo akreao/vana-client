@@ -120,16 +120,11 @@ pub fn dir() -> PathBuf {
     }
 }
 
-/// A file only this user can read (a capture holds chat and tells), made new (`fresh`, failing if it exists) or
-/// replacing one.
-fn private_file(path: &Path, fresh: bool) -> std::io::Result<File> {
+/// A new file only this user can read (a capture holds chat and tells), failing if it exists: never one a recording
+/// is writing, nor an existing file's looser permissions.
+fn private_file(path: &Path) -> std::io::Result<File> {
     let mut o = std::fs::OpenOptions::new();
-    o.write(true);
-    if fresh {
-        o.create_new(true);
-    } else {
-        o.create(true).truncate(true);
-    }
+    o.write(true).create_new(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
     o.open(path)
@@ -141,7 +136,7 @@ fn new_capture(dir: &Path) -> std::io::Result<(File, PathBuf)> {
     let stem = format!("{}-{}", ms() / 1000, std::process::id());
     for n in 0..100 {
         let path = dir.join(if n == 0 { format!("{stem}.jsonl") } else { format!("{stem}-{n}.jsonl") });
-        match private_file(&path, true) {
+        match private_file(&path) {
             Ok(f) => return Ok((f, path)),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(e),
@@ -408,11 +403,12 @@ pub fn decode(dir: Dir, data: &[u8]) -> Vec<(&'static str, String)> {
     out
 }
 
-/// Bytes to look for, typed as hex ("1e 09") or as text in quotes ("\"Celestite\"").
+/// Bytes to look for, typed as hex ("1e 09") or as text in quotes ("\"Celestite\""), the text as the packets carry
+/// it (Shift-JIS).
 pub fn parse_find(s: &str) -> Result<Vec<u8>, String> {
     let s = s.trim();
     if let Some(t) = s.strip_prefix('"') {
-        return Ok(t.strip_suffix('"').unwrap_or(t).as_bytes().to_vec());
+        return Ok(crate::dat::font::encode_sjis(t.strip_suffix('"').unwrap_or(t)));
     }
     hex::decode(s.replace([' ', ','], "")).map_err(|_| format!("not hex: {s}"))
 }
@@ -457,10 +453,11 @@ pub fn load(path: &Path) -> Result<Vec<Record>> {
     Ok(out)
 }
 
-/// Writes records as a capture file.
+/// Writes records as a new capture file (an existing one, a recording among them, is left alone).
 pub fn save<'a>(path: &Path, records: impl IntoIterator<Item = &'a Record>) -> Result<()> {
-    let mut w =
-        std::io::BufWriter::new(private_file(path, false).with_context(|| format!("{} not created", path.display()))?);
+    let f =
+        private_file(path).with_context(|| format!("{} not created (a file by that name exists?)", path.display()))?;
+    let mut w = std::io::BufWriter::new(f);
     for r in records {
         writeln!(w, "{}", serde_json::to_string(r)?)?;
     }
@@ -547,6 +544,8 @@ mod tests {
         assert!(f.contains(&("id", "(past the end)".into())), "{f:?}");
         assert_eq!(parse_find("1e 09"), Ok(vec![0x1e, 9]));
         assert_eq!(parse_find("\"Cel\""), Ok(b"Cel".to_vec()));
+        // Text as the packets carry it: Shift-JIS.
+        assert_eq!(parse_find("\"ア\""), Ok(vec![0x83, 0x41]));
         assert_eq!(parse_ids("08f, 0x0C5"), Ok(vec![0x08F, 0x0C5]));
         assert!(parse_ids("zz").is_err());
     }
@@ -600,7 +599,11 @@ mod tests {
         let line = serde_json::to_string(&recs[1]).unwrap();
         assert_eq!(line, r#"{"t":1000,"dir":"in","zone":230,"id":143,"hex":"8f2c01001e09"}"#);
         let path = std::env::temp_dir().join(format!("vana-capture-{}.jsonl", std::process::id()));
+        let _ = std::fs::remove_file(&path);
         save(&path, &recs).unwrap();
+        assert_eq!(load(&path).unwrap(), recs);
+        // An existing file (a recording, say) is never replaced.
+        assert!(save(&path, &recs[..1]).is_err());
         assert_eq!(load(&path).unwrap(), recs);
         let _ = std::fs::remove_file(&path);
 
