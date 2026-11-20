@@ -1383,7 +1383,7 @@ impl Effects {
         self.run_ready(i, &mut t, actors);
         // Once a frame: the walk passes it in the frame it started in, if that walk is still to reach it (a slot past
         // its running task, or a start before the walk).
-        t.stepped = outer.map_or(self.walk_pending, |o| i > o);
+        t.stepped = self.walk_pending && outer.is_none_or(|o| i > o);
         let done = t.done;
         self.settle(t, i);
         self.stepping.pop();
@@ -4154,6 +4154,57 @@ mod tests {
         assert_eq!(at30, (vec![7, 14, 22], Some(129)));
         for dt in [1.0, 0.5, 60.0 / 144.0, 0.2] {
             assert_eq!(run(dt), at30, "{dt} ticks a frame");
+        }
+    }
+
+    #[test]
+    fn pending_scheduler_child_steps_on_the_next_retail_walk() {
+        let parent = u32::from_le_bytes(*b"prnt");
+        let child = u32::from_le_bytes(*b"chld");
+        let mut dat = Vec::new();
+        let schedulers =
+            [(parent, vec![sop(0x3b, 0, 0, child)]), (child, vec![sop(0x01, 3, 0, 0), sop(0x67, 0, 0, 0)])];
+        for (name, ops) in schedulers {
+            let mut chunk = vec![0; 0x30];
+            chunk[..4].copy_from_slice(&name.to_le_bytes());
+            chunk[0x24..0x28].copy_from_slice(&0x30u32.to_le_bytes());
+            for op in ops {
+                chunk.extend(op.raw);
+            }
+            chunk.resize(chunk.len().next_multiple_of(16), 0);
+            let header = ((chunk.len() as u32 / 16) << 7) | u32::from(kind::SCHEDULER);
+            chunk[4..8].copy_from_slice(&header.to_le_bytes());
+            dat.extend(chunk);
+        }
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::ZERO,
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        for start_tick in 0..=1 {
+            let mut fx = Effects::new();
+            fx.reg.add(Library::load(1, dat.clone()).unwrap());
+            for tick in 0..=1 {
+                if tick == start_tick {
+                    fx.on_event_scheduler(1, parent, Who::None, Who::None);
+                }
+                fx.tick(&f, &Two);
+                if tick >= start_tick {
+                    assert!(fx.tasks[0].as_ref().unwrap().waiting);
+                    assert_eq!(fx.tasks[1].as_ref().unwrap().countdown, 1.0);
+                }
+            }
+            fx.tick(&f, &Two);
+            assert!(fx.tasks[1].is_none(), "child still live after the next walk (started at tick {start_tick})");
+            assert!(!fx.tasks[0].as_ref().unwrap().waiting);
         }
     }
 
