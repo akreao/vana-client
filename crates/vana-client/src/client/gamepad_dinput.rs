@@ -207,6 +207,19 @@ impl Pick {
     }
 }
 
+/// FUN_10005a40 before the read: whether FUN_100083d0 picks a device this frame. A change of the options
+/// (`changed`, DAT_10456df0, the device already let go) picks again at once if the pad is on (de4). Else only with no
+/// device, nothing read through XInput (+0xc99), the pad on, and on the 0x5b-th frame since (`lost`). With +0xc99 set
+/// the pick is never made again: a DirectInput device picked after an XInput pad (no padguid000) and lost later, as
+/// a foreground device is when the window loses the focus, leaves the XInput pad at slot 0 playing until an option
+/// changes, as in retail.
+pub fn again(changed: bool, on: bool, has_device: bool, pick: Pick, lost: impl FnOnce() -> bool) -> bool {
+    if changed {
+        return on;
+    }
+    on && !has_device && !pick.xinput && lost()
+}
+
 /// A controller DirectInput lists (FFXiPadConfig's list: attached game controllers).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Listed {
@@ -863,5 +876,24 @@ mod tests {
         assert_eq!(run(Guid::default(), false), (Pick { slot: 0, xinput: false }, Some(1)));
         // padguid not attached: nothing.
         assert_eq!(run(g(9), true), (Pick { slot: 1, xinput: false }, None));
+    }
+
+    #[test]
+    fn picks_again() {
+        let seen = Pick { slot: 0, xinput: true };
+        let none = Pick { slot: 0, xinput: false };
+        // An option changed: the pick runs at once with the pad on; turned off, the device just goes.
+        assert!(again(true, true, false, seen, || panic!("no wait")));
+        assert!(!again(true, false, false, none, || panic!("no wait")));
+        // A device in hand, or the pad off: nothing.
+        assert!(!again(false, true, true, none, || true));
+        assert!(!again(false, false, false, none, || true));
+        // Lost with nothing through XInput: on the 0x5b-th frame.
+        assert!(!again(false, true, false, none, || false));
+        assert!(again(false, true, false, none, || true));
+        // Lost after an XInput pad was passed (no padguid000): never again until an option changes; the XInput
+        // pad at slot 0 plays.
+        assert!(!again(false, true, false, seen, || true));
+        assert!(again(true, true, false, seen, || panic!("no wait")));
     }
 }

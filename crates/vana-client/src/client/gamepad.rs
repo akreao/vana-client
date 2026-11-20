@@ -575,7 +575,12 @@ impl Gamepad {
         let set = settings(cfg, self.retail.as_ref());
         if !set.on && !capture {
             mods(&[], [0.0; 6], false);
-            return self.release_all();
+            let f = self.release_all();
+            // FUN_10005a40 runs with the pad off too: the change of de4 (DAT_10456df0) lets the device go, and with
+            // the pad off it is not picked again.
+            #[cfg(windows)]
+            self.di_changed(&set, false);
+            return f;
         }
         self.connect();
         #[cfg(windows)]
@@ -593,7 +598,8 @@ impl Gamepad {
             self.maps =
                 Some((padsin.to_string(), padexsin.to_string(), PadMap::parse(padsin), PadMap::parse(padexsin)));
         }
-        let pad = match self.read_pad(&set, dt) {
+        // The pad is read with Enable Gamepad off only while the Controller window waits for a button.
+        let pad = match self.read_pad(&set, set.on || capture, dt) {
             Some(p) if focused || set.background => p,
             _ => {
                 mods(&[], [0.0; 6], false);
@@ -798,12 +804,12 @@ impl Gamepad {
 
     /// The pad that plays: on Windows retail's (read_retail); else gilrs's (padguid's when connected, else the last
     /// one touched), else SDL's (Linux) or XInput's (Windows without DirectInput).
-    fn read_pad(&mut self, set: &Settings, dt: f32) -> Option<Pad> {
+    fn read_pad(&mut self, set: &Settings, on: bool, dt: f32) -> Option<Pad> {
         #[cfg(windows)]
         if self.dinput.is_some() {
-            return self.read_retail(set, dt);
+            return self.read_retail(set, on, dt);
         }
-        let _ = dt;
+        let (_, _) = (dt, on);
         #[cfg(target_os = "linux")]
         if let Some(s) = &mut self.sdl {
             s.update();
@@ -853,19 +859,13 @@ impl Gamepad {
     /// that pick it lets the device go and picks again (DAT_10456df0); with no device the XInput branch reads the
     /// picked slot, or with nothing picked the pick runs again after 0x5a frames; else the DirectInput branch.
     #[cfg(windows)]
-    fn read_retail(&mut self, set: &Settings, dt: f32) -> Option<Pad> {
+    fn read_retail(&mut self, set: &Settings, on: bool, dt: f32) -> Option<Pad> {
         use super::gamepad_dinput as di;
-        let key = (set.padguid.clone(), set.on, set.xinput, set.rumble, set.background);
         let frame = super::camera::retail_frame(&mut self.di_clock, dt, 8.0).is_some();
         let want = di::Guid::parse(&set.padguid);
-        let again = if self.di_key.as_ref() != Some(&key) {
-            self.di_key = Some(key);
-            self.dinput.as_mut()?.reset();
-            true
-        } else {
-            let d = self.dinput.as_mut()?;
-            !d.has_device() && !d.pick.xinput && frame && d.lost_frame()
-        };
+        let changed = self.di_changed(set, on);
+        let d = self.dinput.as_mut()?;
+        let again = di::again(changed, on, d.has_device(), d.pick, || frame && d.lost_frame());
         if again {
             // FUN_10008d90 / FUN_10008e10: the XInput DLL, with the option.
             let loaded = set.xinput.then(|| {
@@ -911,6 +911,21 @@ impl Gamepad {
         let p = x.state();
         self.xinput_plays = p.is_some();
         p
+    }
+
+    /// DAT_10456df0: padguid000 or an option that picks the device changed since the last frame; the device goes
+    /// and the pick starts over (FUN_10005a40's first step, whether the pad is on or off).
+    #[cfg(windows)]
+    fn di_changed(&mut self, set: &Settings, on: bool) -> bool {
+        let Some(d) = &mut self.dinput else { return false };
+        let key = (set.padguid.clone(), on, set.xinput, set.rumble, set.background);
+        if self.di_key.as_ref() == Some(&key) {
+            return false;
+        }
+        self.di_key = Some(key);
+        d.reset();
+        self.di_plays = false;
+        true
     }
 
     /// The window DirectInput's cooperative level is set on (retail: the game window, DAT_103d4d64 +0x18).
