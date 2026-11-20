@@ -426,9 +426,15 @@ function M.set_sticky(main, id, on)
     if on then
       nid = new_sticky_id()
       sticky.library[nid] = entry
+      -- The shared file first: if it cannot be written the macro stays in the job's library, as it was.
+      if not save_sticky() then
+        sticky.library[nid] = nil
+        return id
+      end
       job_part(main, "library", false)[id] = nil
       repoint(main, id, nid)
       move_last(main, id, nid)
+      M.save()
     else
       local function take(job)
         local jid = new_job_id(job)
@@ -441,9 +447,9 @@ function M.set_sticky(main, id, on)
         if job ~= main and uses_in(job, id) > 0 then take(job) end
       end)
       nid = take(main)
-      sticky.library[id] = nil
+      -- The world's file first: if it cannot be written the shared entry stays, which that file still names.
+      if M.save() then sticky.library[id] = nil end
     end
-    M.save()
     return nid
   end)
 end
