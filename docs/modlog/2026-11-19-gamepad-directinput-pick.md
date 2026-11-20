@@ -1,5 +1,5 @@
-<!-- dll-build: 30261102_0 -->
 ## Gamepad: retail's controller choice (padguid000) and DirectInput read on Windows (2026-11-19)
+<!-- dll-build: 30261102_0 -->
 
 - Setup (FUN_100058f0 -> FUN_100083d0): DirectInput8Create into pad +0x84. With padmode000's [5] (XInput,
   DAT_10456de8) FUN_10008d90 checks the game folder's xinputdll.dll loads (+0xc9a) and returns when it does not (no

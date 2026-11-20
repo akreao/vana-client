@@ -1,5 +1,5 @@
-<!-- dll-build: 30261102_0 -->
 ## B / Shift held (Compact 2): the body still turns to the stick, eased (2026-11-17)
+<!-- dll-build: 30261102_0 -->
 
 - Report: on retail with Keyboard Compact 2 (Config > Misc. 2, config 0x42 = 2), holding the pad's B (slot 3, key
   function 0x9c with LShift) keeps the camera's angle, and the character still turns toward the stick. Full and
