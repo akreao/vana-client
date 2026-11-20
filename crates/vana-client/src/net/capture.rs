@@ -78,7 +78,10 @@ fn env() -> Option<String> {
 pub fn set(on: bool) {
     let on = on || env().is_some();
     if !on {
-        ON.store(false, Relaxed);
+        // Off closes the file now, not at the next packet: turned on again it starts a new one.
+        if ON.swap(false, Relaxed) {
+            *OUT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        }
         FAILED.store(false, Relaxed);
         return;
     }
@@ -122,6 +125,7 @@ pub static TEST_LOCK: Mutex<()> = Mutex::new(());
 #[cfg(test)]
 pub fn test_capture(dir: Option<PathBuf>) {
     ON.store(dir.is_some(), Relaxed);
+    *OUT.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *TEST_DIR.lock().unwrap() = dir;
 }
 
