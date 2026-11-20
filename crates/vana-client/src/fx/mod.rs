@@ -31,6 +31,12 @@ use std::sync::Arc;
 pub type Ref = (usize, usize);
 
 /// What the effect system asks of the world's actors (CXiActor vtable +0x1c4, +0x1ec, FUN_100cc440).
+/// Retail's frame at 30 fps, and the most ticks FUN_10014cf0 gives a frame (FUN_10011a00).
+pub const RETAIL_FRAME: f32 = 2.0;
+const MAX_FRAME_TICKS: f32 = 20.0;
+/// Our ticks are summed f32 frame times: a retail frame ends within this of its last tick.
+const WALK_EPS: f32 = 1e-3;
+
 pub trait Actors {
     /// Placement: rotation and translation (model space faces +x).
     fn matrix(&self, id: u32) -> Option<Mat4>;
@@ -1056,11 +1062,21 @@ pub struct Effects {
     models: HashMap<u32, Vec<u32>>,
     /// Actors whose model is hidden (+0xb2 bit 1, FUN_10085a50 ran).
     hidden_actors: HashSet<u32>,
-    /// DAT_1065cb18 (the time of day in 1/60 Vana'diel seconds) and DAT_1065cb0c (its change this frame), for op 0x52.
+    /// DAT_1065cb18 (the time of day in 1/60 Vana'diel seconds) and DAT_1065cb0c (its change over the task walk's
+    /// retail frame), for op 0x52; `vana_acc` gathers the change until the next walk.
     vana_now: i32,
     vana_dt: f32,
-    /// The frame's ticks, for a task's first step outside the frame's walk (FUN_100748c0 runs the full update).
-    frame_dt: f32,
+    vana_acc: f32,
+    /// The task walk's retail frame. Retail walks the tasks once a frame and each takes the frame's ticks, +0xeb0 =
+    /// FUN_10014cf0 (FUN_10069f90): whole ticks, 2 at 30 fps, up to 20; a new task's first step takes them too
+    /// (FUN_100748c0 runs the whole update). Ours walks once a retail frame at any rate: at the first tick of ours in
+    /// it, with its ticks (`walk_ticks`); `walk_owed` is what of them our ticks have not reached yet (at most 0: the
+    /// next tick starts a new one).
+    walk_ticks: f32,
+    walk_owed: f32,
+    /// This retail frame's walk is still to run: a task started now has taken its first step and the walk passes it
+    /// (once a frame).
+    walk_pending: bool,
     vana_seen: bool,
     /// Action contexts of looping tasks that restarted: retail drops them without the release, so their rest never
     /// prints.
@@ -1310,7 +1326,10 @@ impl Effects {
             hidden_actors: HashSet::new(),
             vana_now: 0,
             vana_dt: 0.0,
-            frame_dt: 0.0,
+            vana_acc: 0.0,
+            walk_ticks: RETAIL_FRAME,
+            walk_owed: 0.0,
+            walk_pending: true,
             vana_seen: false,
             leaked: Vec::new(),
             models: HashMap::new(),
@@ -2128,20 +2147,28 @@ impl Effects {
     /// One frame: attachments, generator updates and emissions, element lives (FUN_10043ca0) and expiry.
     pub fn tick(&mut self, f: &Frame, actors: &dyn Actors) {
         let dt = f.dt;
-        self.frame_dt = dt;
         self.ticks = self.ticks.wrapping_add(1);
         // FUN_1018c2b0: the time of day (rounded: 11:00 from an f32 day fraction must not land on 10:59:59.98) and
         // its change since the last frame.
         let now =
             ((f.dayfrac as f64 * tasks::VANA_DAY as f64).round() as i64).rem_euclid(tasks::VANA_DAY as i64) as i32;
-        self.vana_dt = if self.vana_seen { (now - self.vana_now).rem_euclid(tasks::VANA_DAY) as f32 } else { 0.0 };
+        self.vana_acc += if self.vana_seen { (now - self.vana_now).rem_euclid(tasks::VANA_DAY) as f32 } else { 0.0 };
         (self.vana_now, self.vana_seen) = (now, true);
+        // A new retail frame when our ticks have reached the last one's end: its whole ticks, our surplus carried.
+        let walk = self.walk_owed <= WALK_EPS;
+        if walk {
+            let n = (dt - self.walk_owed).floor().clamp(RETAIL_FRAME, MAX_FRAME_TICKS);
+            (self.walk_ticks, self.walk_owed) = (n, self.walk_owed + n);
+            self.vana_dt = std::mem::take(&mut self.vana_acc);
+        }
+        self.walk_owed -= dt;
+        self.walk_pending = walk;
         self.weather_step(f.seconds);
         self.poll_loads();
         self.model_generators(actors);
         self.run_equip(actors);
         self.run_pending(f, actors);
-        self.step_tasks(f, actors);
+        self.step_tasks(f, walk, actors);
         self.step_drives(f, actors);
         self.step_trails(f, actors);
         // Op 0xbf: the push starts when its delay has counted down (its task's destructor).
@@ -2227,6 +2254,8 @@ impl Effects {
                 self.kill(i);
             }
         }
+        // A task started before the next tick starts the next retail frame with it.
+        self.walk_pending = self.walk_owed <= WALK_EPS;
     }
 
     /// How instance `i` runs this frame (FUN_1004a980, the element update stream): its task once; an element's
