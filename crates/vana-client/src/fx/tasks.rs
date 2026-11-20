@@ -1067,8 +1067,9 @@ impl Effects {
             );
         }
         if walk {
+            self.walking = true;
             self.walk(&Frame { dt: self.walk_ticks, ..*f }, actors);
-            self.walk_pending = false;
+            (self.walking, self.walk_pending) = (false, false);
         }
         self.after_tasks(f, actors);
     }
@@ -1381,9 +1382,10 @@ impl Effects {
             t.countdown -= if t.vana { self.vana_dt } else { self.walk_ticks };
         }
         self.run_ready(i, &mut t, actors);
-        // Once a frame: the walk passes it in the frame it started in, if that walk is still to reach it (a slot past
-        // its running task, or a start before the walk).
-        t.stepped = self.walk_pending && outer.is_none_or(|o| i > o);
+        // Once a frame: the walk passes it in the frame it started in, if that walk is still to reach it. Inside the
+        // walk that is a slot past its running task; outside it, any slot while the frame's walk is still to come
+        // (a start, or its children, before the walk), none after it.
+        t.stepped = if self.walking { outer.is_some_and(|o| i > o) } else { self.walk_pending };
         let done = t.done;
         self.settle(t, i);
         self.stepping.pop();
@@ -4206,6 +4208,64 @@ mod tests {
             assert!(fx.tasks[1].is_none(), "child still live after the next walk (started at tick {start_tick})");
             assert!(!fx.tasks[0].as_ref().unwrap().waiting);
         }
+    }
+
+    /// A task started before its frame's walk starts a child in an earlier slot (op 0x5f freed it, as efon's efkl
+    /// does before the new orbs): the walk still passes the child, which took this frame's ticks in its first step.
+    #[test]
+    fn child_in_earlier_slot_before_the_walk_is_passed() {
+        let name = |n: &[u8; 4]| u32::from_le_bytes(*n);
+        let (old, parent, child) = (name(b"oldt"), name(b"prnt"), name(b"chld"));
+        let mut dat = Vec::new();
+        let schedulers = [
+            (old, vec![sop(0x01, 100, 0, 0), sop(0x00, 0, 0, 0)]),
+            (parent, vec![sop(0x5f, 0, 0, old), sop(0x3b, 0, 0, child)]),
+            (child, vec![sop(0x01, 3, 0, 0), sop(0x67, 0, 0, 0)]),
+        ];
+        for (name, ops) in schedulers {
+            let mut chunk = vec![0; 0x30];
+            chunk[..4].copy_from_slice(&name.to_le_bytes());
+            chunk[0x24..0x28].copy_from_slice(&0x30u32.to_le_bytes());
+            for op in ops {
+                chunk.extend(op.raw);
+            }
+            chunk.resize(chunk.len().next_multiple_of(16), 0);
+            let header = ((chunk.len() as u32 / 16) << 7) | u32::from(kind::SCHEDULER);
+            chunk[4..8].copy_from_slice(&header.to_le_bytes());
+            dat.extend(chunk);
+        }
+        let f = Frame {
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::ZERO,
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        let mut fx = Effects::new();
+        fx.reg.add(Library::load(1, dat).unwrap());
+        fx.on_event_scheduler(1, old, Who::None, Who::None);
+        fx.tick(&f, &Two);
+        // Started at the next tick's start (the file is in), before its walk: its first step frees the old task's slot
+        // and starts the child there; the child's first step takes 2 of its wait's 3 and the walk passes it.
+        fx.on_event_scheduler(1, parent, Who::None, Who::None);
+        let at = |fx: &Effects, n: u32| {
+            let named = |t: &Task| fx.reg.libs[t.res.0].tree.nodes[t.res.1].name == n.to_le_bytes();
+            fx.tasks.iter().position(|t| t.as_ref().is_some_and(named))
+        };
+        let o = at(&fx, old).unwrap();
+        fx.tick(&f, &Two);
+        let (c, p) = (at(&fx, child).unwrap(), at(&fx, parent).unwrap());
+        assert!(c == o && c < p && at(&fx, old).is_none(), "old {o}, child {c}, parent {p}");
+        assert_eq!(fx.tasks[c].as_ref().unwrap().countdown, 1.0);
+        // The next walk ends the wait.
+        fx.tick(&f, &Two);
+        assert!(at(&fx, child).is_none());
     }
 
     /// Op 0x2e (dur 30): the root holds while its counter is not below 0, so the restart comes on the 31st frame;
