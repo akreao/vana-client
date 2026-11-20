@@ -1077,6 +1077,8 @@ pub struct Effects {
     /// This retail frame's walk is still to run: a task started now has taken its first step and the walk passes it
     /// (once a frame).
     walk_pending: bool,
+    /// The walk is running: a task started inside it is passed by it only from a later slot.
+    walking: bool,
     vana_seen: bool,
     /// Action contexts of looping tasks that restarted: retail drops them without the release, so their rest never
     /// prints.
@@ -1330,6 +1332,7 @@ impl Effects {
             walk_ticks: RETAIL_FRAME,
             walk_owed: 0.0,
             walk_pending: true,
+            walking: false,
             vana_seen: false,
             leaked: Vec::new(),
             models: HashMap::new(),
