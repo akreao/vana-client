@@ -685,11 +685,6 @@ pub(super) fn run_unfiltered(w: &mut World, line: &str, mode: Mode) {
         w.uimodes_open = !w.uimodes_open;
         return;
     }
-    // Ours (a developer tool, config dev_tools): /packets opens or closes the Packets window (modern UI).
-    if first.eq_ignore_ascii_case("/packets") && w.packets.enabled && w.modern {
-        w.packets.toggle();
-        return;
-    }
     // Ours (not retail; modern favourites): /favs [on | off] shows or hides the favourites strip.
     if first.eq_ignore_ascii_case("/favs") && w.modern {
         super::favs::command(w, line.split_whitespace().nth(1));

@@ -253,11 +253,6 @@ pub struct Config {
     /// on and only to a private server. No Settings row: only a server with its GM extension can use it, so it is set
     /// in config.json by hand.
     pub gm_window: bool,
-    /// Packet capture (ours, net/capture.rs): the map server's traffic each way to `<data dir>/captures`. No Settings
-    /// row; set in config.json by hand, or run with VANA_CAPTURE=1.
-    pub packet_capture: bool,
-    /// Developer tools (ours): the Packets window (/packets, modern UI). No Settings row; set in config.json by hand.
-    pub dev_tools: bool,
     /// The version whose change notes were last shown (client/notes.rs): a newer client shows the notes since. A
     /// config from before the notes has none, so its first newer build shows that build's.
     #[serde(default)]
@@ -601,8 +596,6 @@ impl Default for Config {
             party_tp: true,
             window_opacity: Default::default(),
             gm_window: false,
-            packet_capture: false,
-            dev_tools: false,
             notes_seen: env!("CARGO_PKG_VERSION").into(),
             lamp_lights: true,
             smooth_lights: false,
