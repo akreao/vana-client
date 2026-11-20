@@ -20,6 +20,7 @@ pub struct Settings {
     pub grading: u32,
     pub draw_distance: u32,
     pub send_interval: u32,
+    pub move_rate: u32,
     pub party_tp: bool,
     pub lamp_lights: bool,
     pub smooth_lights: bool,
@@ -66,6 +67,7 @@ impl Settings {
             grading: c.grading,
             draw_distance: c.draw_distance,
             send_interval: c.send_interval,
+            move_rate: c.move_rate,
             party_tp: c.party_tp,
             lamp_lights: c.lamp_lights,
             smooth_lights: c.smooth_lights,
@@ -108,6 +110,7 @@ impl Settings {
         c.grading = self.grading;
         c.draw_distance = self.draw_distance;
         c.send_interval = self.send_interval;
+        c.move_rate = self.move_rate;
         c.party_tp = self.party_tp;
         c.lamp_lights = self.lamp_lights;
         c.smooth_lights = self.smooth_lights;
@@ -160,6 +163,7 @@ enum Val {
     Grading,
     DrawDistance,
     SendRate,
+    MoveRate,
     PartyTp,
     LampLights,
     SmoothLights,
@@ -659,6 +663,13 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
             &[(25, "25%"), (50, "50%"), (75, "75%"), (100, "100%"), (150, "150%"), (200, "200%")],
             Now,
         ),
+        row(
+            "Movement Rate",
+            "How many times a second your character moves and turns, with a stick or the keyboard: 30 as the game runs, or 60 as it does with a frame rate add-on (not retail).",
+            MoveRate,
+            &[(30, "30"), (60, "60")],
+            Now,
+        ),
     ];
     const MAPS: &[SRow] = &[
         row(
@@ -961,6 +972,7 @@ impl SettingsUi {
             Val::Grading => self.s.grading,
             Val::DrawDistance => self.s.draw_distance,
             Val::SendRate => self.s.send_interval,
+            Val::MoveRate => self.s.move_rate,
             Val::PartyTp => self.s.party_tp as u32,
             Val::ModernUi => self.s.modern_ui as u32,
             Val::ModernScale => self.s.modern_scale,
@@ -997,6 +1009,7 @@ impl SettingsUi {
             Val::Grading => self.s.grading = x,
             Val::DrawDistance => self.s.draw_distance = x,
             Val::SendRate => self.s.send_interval = x,
+            Val::MoveRate => self.s.move_rate = x,
             Val::PartyTp => self.s.party_tp = x != 0,
             Val::ModernUi => self.s.modern_ui = x != 0,
             Val::ModernScale => self.s.modern_scale = x,
