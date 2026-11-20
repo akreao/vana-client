@@ -23,20 +23,29 @@ pub struct Carriers {
     before: [Vec3; 2],
 }
 
+/// Set A (DAT_10485a08): the carrier statuses that publish its step, and the rider status that follows it.
+const CARRIER_A: [u8; 2] = [0x1a, 0x1b];
+const RIDER_A: u8 = 0x1c;
+/// Set B (DAT_104859e8).
+const CARRIER_B: [u8; 2] = [0x1d, 0x1e];
+const RIDER_B: u8 = 0x1f;
+
 /// The set a carrier status feeds.
 pub fn carrier_set(status: u8) -> Option<usize> {
-    match status {
-        0x1a | 0x1b => Some(0),
-        0x1d | 0x1e => Some(1),
-        _ => None,
+    if CARRIER_A.contains(&status) {
+        Some(0)
+    } else if CARRIER_B.contains(&status) {
+        Some(1)
+    } else {
+        None
     }
 }
 
 /// The set a rider status follows.
 pub fn rider_set(status: u8) -> Option<usize> {
     match status {
-        0x1c => Some(0),
-        0x1f => Some(1),
+        RIDER_A => Some(0),
+        RIDER_B => Some(1),
         _ => None,
     }
 }

@@ -202,11 +202,7 @@ pub fn draw(p: &mut Panels, w: &mut World) {
             .group
             .iter()
             .map(|&id| {
-                let mp = w
-                    .actions
-                    .as_ref()
-                    .and_then(|a| a.spell(id))
-                    .map_or(String::new(), |_| format!("{} MP", magic::spell_mp(w, id)));
+                let mp = magic::spell_mp_known(w, id).map_or(String::new(), |mp| format!("{mp} MP"));
                 let icon = p.gu.and_then(|gu| m.row_icon(p.ctx, gu, w, Kind::Magic, id));
                 (magic::spell_name(w, id), mp, icon)
             })

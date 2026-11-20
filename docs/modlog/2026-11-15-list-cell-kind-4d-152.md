@@ -34,8 +34,8 @@ fe_inven (object DAT_104e2d24, vtable 0x10334058), called from its vtable functi
   current set's ten slot bytes (FUN_10118150); else 0x80404040 unless all of these hold, which give 0x80808080:
   fe_equip's byte +0x50 is set, the row is within ten rows of the cursor (FUN_101f8710) and its record is loaded
   (only those rows ask FUN_1015cfb0 for it), the record's level byte (the first byte of its +0x14 block, record
-  store +0x1530) is not above the main job's level (FUN_101181a0, DAT_104867f1), and bit `set` of the block's
-  second byte is set (FUN_101181d0).
+  store +0x1530) is not above the main job's level (FUN_101181a0, DAT_104867f1), and bit `set` + 1 of the block's
+  second byte is set (FUN_101181d0: 1 shifted by FUN_10117b10(set), which maps sets 0..5 to 1..6).
 - FUN_101f8630(rows, count, 1) hands the rows to the list; a pending row id at +0x54 then moves the cursor to its
   row (FUN_101f8690).
 

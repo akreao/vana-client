@@ -7,6 +7,7 @@ use crate::dat::{DatIndex, zone};
 use crate::render::ui::{UiBatch, UiRenderer};
 use crate::render::{Camera, Gpu, ZoneRenderer};
 use anyhow::{Context, Result};
+use std::sync::Arc;
 
 /// Texture name of the offscreen frame a crossfade fades out.
 const PREVIOUS: &str = "\0flyover previous";
@@ -16,6 +17,8 @@ pub struct FlyoverData {
     title: Title,
     ops: Vec<Op>,
     scene: zone::ZoneScene,
+    /// The zone's collision, for the camera list under the movie camera.
+    ground: super::ground::Ground,
     /// The zone's weather keys, and the title DAT's 0x2f blocks that op 0x7e applies.
     weather: Option<ZoneWeather>,
     envs: Vec<(String, Env)>,
@@ -23,11 +26,14 @@ pub struct FlyoverData {
     pub rest: Vec<String>,
     /// The movie's zone (op 0x7b).
     zone: u32,
+    /// The zone's effect libraries: op 0x7b loads the whole scene (FUN_1018b3a0), so its auto-start generators run,
+    /// their sounds too (birds, water, crowds).
+    fx: Option<super::select::FxLibs>,
 }
 
 impl FlyoverData {
     /// The next movie of "loop": `queue`'s first, or a new pass's (`enabled`: the content bits op 0xaf tests).
-    pub fn load_next(index: &DatIndex, keys: &zone::Keys, queue: Vec<String>, enabled: u32) -> Result<Self> {
+    pub fn load_next(index: &Arc<DatIndex>, keys: &Arc<zone::Keys>, queue: Vec<String>, enabled: u32) -> Result<Self> {
         let mut q = queue;
         if q.is_empty() {
             let title = Title::parse(&index.read(TITLE_FILE)?)?;
@@ -50,7 +56,7 @@ impl FlyoverData {
 
     /// A movie of any file laid out like 23 (the creator's nation files 24..26, FUN_1023ad60); the zone comes
     /// from the movie's op 0x7b or else from "main"'s.
-    pub fn load_file(index: &DatIndex, keys: &zone::Keys, file_id: u32, movie: &str) -> Result<Self> {
+    pub fn load_file(index: &Arc<DatIndex>, keys: &Arc<zone::Keys>, file_id: u32, movie: &str) -> Result<Self> {
         let file = index.read(file_id)?;
         let title = Title::parse(&file)?;
         let envs = crate::dat::chunks(&file)?
@@ -65,9 +71,11 @@ impl FlyoverData {
             .with_context(|| format!("{movie} loads no zone"))?;
         let zone_file = index.read(crate::dat::zone::file_id(zone))?;
         let scene = zone::load_scene(keys, &zone_file)?;
+        let ground = super::ground::Ground::build(&scene);
         let weather = ZoneWeather::parse(&zone_file).ok();
+        let fx = super::select::FxLibs::load_zone(index, keys, zone, &zone_file);
         log::info!("flyover {file_id} {movie}: zone {zone}, {} ops", ops.len());
-        Ok(Self { title, ops, scene, weather, envs, rest: Vec::new(), zone })
+        Ok(Self { title, ops, scene, ground, weather, envs, rest: Vec::new(), zone, fx })
     }
 }
 
@@ -82,7 +90,9 @@ pub struct Flyover {
     data: FlyoverData,
     zone: Option<ZoneRenderer>,
     ui: Option<UiRenderer>,
+    /// The crossfade's outgoing frame, and whether it holds this crossfade's frame yet.
     previous: Option<wgpu::Texture>,
+    captured: bool,
     /// Movie clock in ticks (1/60 s), when the next op runs, and the op cursor.
     tick: f32,
     next_at: f32,
@@ -100,31 +110,41 @@ pub struct Flyover {
     blur: ([f32; 5], [f32; 5], f32, f32),
     blur_starts: u32,
     screen_fx: Option<crate::render::screenfx::ScreenFx>,
+    /// The zone's effects, with their sounds.
+    effects: Option<super::select::LobbyFx>,
     /// The Clipping setting's factor (config 0x3e) for the fog, as in the world.
     pub clip_x: f32,
+    /// Settings' Draw Distance (100 Retail, 0 Unlimited): past Retail the camera list holds within retail's reach.
+    pub draw_distance: u32,
     pub done: bool,
 }
 
 impl Flyover {
-    pub fn new(data: FlyoverData) -> Self {
+    /// `voices`: the effects' voice handle base (select::TITLE_VOICES, NATION_VOICES).
+    pub fn new(mut data: FlyoverData, voices: u32) -> Self {
+        let minute = 12.5 * 60.0;
+        let effects = data.fx.take().map(|l| super::select::LobbyFx::new(l, minute, voices));
         Self {
             data,
             zone: None,
             ui: None,
             previous: None,
+            captured: false,
             tick: 0.0,
             next_at: 0.0,
             cursor: 0,
             shot: None,
             fade: ([0.0; 3], [0.0; 3], 0.0, 0.0),
             cross: None,
-            minute: 12.5 * 60.0,
+            minute,
             weather: "suny".into(),
             env: None,
             blur: ([0.0; 5], [0.0; 5], 0.0, 0.0),
             blur_starts: 0,
             screen_fx: None,
+            effects,
             clip_x: 1.0,
+            draw_distance: 0,
             done: false,
         }
     }
@@ -132,6 +152,7 @@ impl Flyover {
     /// Plays the movie again from the start (the nation files' "loop" repeats mov1).
     pub fn restart(&mut self) {
         (self.tick, self.next_at, self.cursor, self.shot, self.cross, self.done) = (0.0, 0.0, 0, None, None, false);
+        self.captured = false;
     }
 
     /// Starts at full brightness: the nation movies have no fade op (the creator's 'ffin' fades them in).
@@ -143,6 +164,9 @@ impl Flyover {
     /// Runs the ops due by now (each op waits its `wait` ticks before the next one starts).
     pub fn advance(&mut self, dt: f32) {
         self.tick += dt * 60.0;
+        if let Some(fx) = &mut self.effects {
+            fx.advance(dt);
+        }
         while !self.done && self.tick >= self.next_at {
             let Some(op) = self.data.ops.get(self.cursor).cloned() else {
                 self.done = true;
@@ -173,14 +197,23 @@ impl Flyover {
                 Op::Crossfade { wait, ticks } => {
                     if let Some(cam) = self.camera() {
                         self.cross = Some((cam, now, ticks.max(1) as f32));
+                        self.captured = false;
                     }
                     self.next_at = now + wait as f32;
                 }
                 // The lobby clock starts at 12:30 (FUN_1023b3f0); 0x7d sets it, 0x7e applies a title
                 // 0x2f block, 0x7c switches to the zone's keys for a weather.
-                Op::Time(t) => self.minute = hour_of(t) * 60.0,
+                Op::Time(t) => {
+                    self.minute = hour_of(t) * 60.0;
+                    if let Some(fx) = &mut self.effects {
+                        fx.set_minute(self.minute);
+                    }
+                }
                 Op::Env(name) => self.env = self.data.envs.iter().find(|e| e.0 == name).map(|e| e.1),
                 Op::Weather { tag, .. } => {
+                    if let Some(fx) = &mut self.effects {
+                        fx.set_weather(&tag);
+                    }
                     self.weather = tag;
                     self.env = None;
                 }
@@ -219,8 +252,31 @@ impl Flyover {
         })
     }
 
-    /// Draws the zone through the movie camera into `view`, with any crossfade and fade.
-    /// Returns false (nothing drawn) before the first camera op.
+    /// Effect sounds since the last call, for the sound thread.
+    pub fn take_sounds(&mut self) -> Vec<crate::fx::sound::SoundCmd> {
+        self.effects.as_mut().map(|fx| fx.take_sounds()).unwrap_or_default()
+    }
+
+    /// The movie is not drawn this frame: the stops for its voices (loops start again when it is).
+    pub fn pause_sounds(&mut self) -> Vec<crate::fx::sound::SoundCmd> {
+        self.effects.as_mut().map(|fx| fx.pause_sounds()).unwrap_or_default()
+    }
+
+    /// The movie is going: the stops for every voice it still holds.
+    pub fn stop_sounds(&mut self) -> Vec<crate::fx::sound::SoundCmd> {
+        self.effects.as_mut().map(|fx| fx.stop_sounds()).unwrap_or_default()
+    }
+
+    /// After the frame's submit: the effects' readback.
+    pub fn after_submit(&mut self, gpu: &Gpu) {
+        if let Some(fx) = &mut self.effects {
+            fx.after_submit(gpu);
+        }
+    }
+
+    /// Draws the zone and its effects through the movie camera into `view`, with any crossfade and fade. `alive`:
+    /// the sound thread's live voices. Returns false (nothing drawn) before the first camera op.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         gpu: &Gpu,
@@ -230,6 +286,7 @@ impl Flyover {
         depth: &wgpu::TextureView,
         size: [u32; 2],
         aspect: f32,
+        alive: Option<Vec<u32>>,
     ) -> bool {
         let Some(cam) = self.camera() else { return false };
         let cross = self.cross.filter(|(_, start, len)| self.tick < start + len);
@@ -245,10 +302,20 @@ impl Flyover {
         });
         let zone = self.zone.get_or_insert_with(|| ZoneRenderer::new(gpu, &self.data.scene, format));
         zone.lighting = lighting;
+        // The lobby state (FUN_10013ad0) probes under its camera each frame (FUN_101829c0) and puts that camera list
+        // in force (FUN_1017a960), as the world does: without it, a zone that places a detailed mesh and a simpler
+        // stand-in at one spot (Ru'Aun Gardens' ground and gates) draws both, and they fight for depth.
+        // Past Retail, as the world: the list holds within retail's distance and the rest draws beyond it.
+        let ground = &self.data.ground;
+        let reach = crate::dat::weather::clipping(env.map_or(100.0, |e| e.draw_dist), self.clip_x, zone_id).0;
+        let far = (self.draw_distance != 100).then_some(reach).filter(|d| *d > 0.0);
         let ui = self.ui.get_or_insert_with(|| UiRenderer::new(gpu, format));
         let mut batch = UiBatch::default();
         if let Some((old, start, len)) = cross {
-            // The outgoing shot renders offscreen, then fades out over the new one.
+            // Op 0x10, as the world's crossfade (event.rs Cross): the frame before the cut, drawn once offscreen
+            // from the camera it had, then faded out over the new shot. Its own submit keeps that camera in the
+            // zone's uniforms: drawn in this frame's encoder, both passes would read the new camera's while the old
+            // one picked the runs drawn, and whole runs of scenery would drop out of it.
             let fits = self.previous.as_ref().is_some_and(|t| t.width() == size[0] && t.height() == size[1]);
             if !fits {
                 let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -263,13 +330,24 @@ impl Flyover {
                 });
                 ui.insert_view(gpu, PREVIOUS, &tex.create_view(&Default::default()));
                 self.previous = Some(tex);
+                self.captured = false;
             }
-            let prev_view = self.previous.as_ref().unwrap().create_view(&Default::default());
-            zone.render(gpu, encoder, &prev_view, depth, &old, aspect, &[]);
+            if !self.captured {
+                zone.set_camera_list(gpu, ground.camera_list(old.eye), far);
+                let prev_view = self.previous.as_ref().unwrap().create_view(&Default::default());
+                let mut enc = gpu.device.create_command_encoder(&Default::default());
+                zone.render(gpu, &mut enc, &prev_view, depth, &old, aspect, &[]);
+                gpu.queue.submit([enc.finish()]);
+                self.captured = true;
+            }
             let a = 1.0 - ((tick - start) / len).clamp(0.0, 1.0);
             batch.push_image(PREVIOUS, 0.0, 0.0, size[0] as f32, size[1] as f32, [1.0, 1.0, 1.0, a]);
         }
+        zone.set_camera_list(gpu, ground.camera_list(cam.eye), far);
         zone.render(gpu, encoder, view, depth, &cam, aspect, &[]);
+        if let Some(fx) = &mut self.effects {
+            fx.draw(gpu, format, encoder, (view, tex, size), depth, zone, &cam, aspect, alive);
+        }
         // FUN_100132b0's second block: last frame over the scene while the blur's alpha is not 0.
         let blur = (b[3] * 255.0 >= 0.5).then(|| crate::render::screenfx::Blur {
             rgb: [b[0], b[1], b[2]],

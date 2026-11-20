@@ -1625,10 +1625,13 @@ fn main() -> Result<()> {
             let sky = dat::weather::Sky::of_zone_file(&file);
             let lighting = match hour {
                 Some(h) => {
-                    let w = dat::weather::ZoneWeather::parse(&file)?;
                     // The zone's `@ini` may fix the sky time or tilt the sun (Escha, Reisenjima).
                     let m = sky.minute(h * 60.0);
-                    let env = w.at(&weather, m).ok_or_else(|| anyhow::anyhow!("zone {zone} has no weat keys"))?;
+                    let w = dat::weather::ZoneWeather::parse(&file)
+                        .ok()
+                        .filter(|w| w.at(&weather, m).is_some())
+                        .unwrap_or_else(dat::weather::ZoneWeather::retail_default);
+                    let env = w.at(&weather, m).ok_or_else(|| anyhow::anyhow!("zone {zone} has no env"))?;
                     println!("weather {weather} at {:.2} h, tilt {}: {env:?}", m / 60.0, sky.tilt);
                     Some(dat::weather::Lighting::from_env_k(&env, m, sky.tilt, 1.0))
                 }

@@ -2,6 +2,7 @@
 //! ("comm", 0x30-byte AbilityInfo records, DAT_1066714c), each record masked as FUN_1021e870 undoes it.
 
 use super::DatIndex;
+use super::effect::*;
 use anyhow::{Context, Result};
 
 const FILE: u32 = 81;
@@ -174,16 +175,17 @@ impl Actions {
         let Some(s) = self.spell(id) else { return false };
         let has = |e: u16| effects.contains(&e);
         let reach = |(job, level): (u8, u8)| s.levels.get(job as usize).is_some_and(|&l| l >= 0 && l <= level as i16);
-        let addendum = (s.kind == 1 && (has(401) || has(416))) || (s.kind == 2 && (has(402) || has(416)));
+        let addendum = (s.kind == 1 && (has(ADDENDUM_WHITE) || has(ENLIGHTENMENT)))
+            || (s.kind == 2 && (has(ADDENDUM_BLACK) || has(ENLIGHTENMENT)));
         if reach(main) {
             if s.flags & 0x20 != 0 {
                 return main.0 == 21;
             }
             if main.0 == 20 && s.flags & 8 != 0 {
-                return has(377);
+                return has(TABULA_RASA);
             }
             if s.flags & 0x10 != 0 {
-                return main.0 == 23 || has(79);
+                return main.0 == 23 || has(ELEMENTAL_SEAL);
             }
             if main.0 != 20 || s.flags & 4 == 0 || addendum {
                 return true;
@@ -197,7 +199,7 @@ impl Actions {
                 return true;
             }
             if s.flags & 8 != 0 {
-                return has(377);
+                return has(TABULA_RASA);
             }
             if s.flags & 4 == 0 || addendum {
                 return true;
@@ -217,14 +219,14 @@ impl Actions {
 pub fn mp_cost(cost: u16, kind: u16, flags: u8, effects: &[u16]) -> u16 {
     let has = |e: u16| effects.contains(&e);
     let pct = |c: u32, p: u32| (c * p).div_ceil(100);
-    if has(47) || has(229) {
+    if has(MANAFONT) || has(MANAWELL) {
         return 0;
     }
     let c = cost as u32;
-    let (light, dark) = (has(358) || has(401), has(359) || has(402));
+    let (light, dark) = (has(LIGHT_ARTS) || has(ADDENDUM_WHITE), has(DARK_ARTS) || has(ADDENDUM_BLACK));
     let school = |own: bool, other: bool, wide: bool, half: bool| {
         if !own {
-            return if has(377) {
+            return if has(TABULA_RASA) {
                 pct(c, 90)
             } else if other {
                 pct(c, 120)
@@ -242,9 +244,9 @@ pub fn mp_cost(cost: u16, kind: u16, flags: u8, effects: &[u16]) -> u16 {
         }
     };
     (match kind {
-        1 => school(light, dark, has(366) && flags & 1 != 0, has(360)),
-        2 => school(dark, light, has(367) && flags & 2 != 0, has(361)),
-        99 if has(583) => pct(c, 150),
+        1 => school(light, dark, has(ACCESSION) && flags & 1 != 0, has(PENURY)),
+        2 => school(dark, light, has(MANIFESTATION) && flags & 2 != 0, has(PARSIMONY)),
+        99 if has(APOGEE) => pct(c, 150),
         _ => c,
     }) as u16
 }
@@ -253,8 +255,8 @@ pub fn mp_cost(cost: u16, kind: u16, flags: u8, effects: &[u16]) -> u16 {
 /// with Pianissimo (409), a geomancy spell (type 7) without +0x44 bit 5 with Entrust (584).
 pub fn spell_targets(targets: u16, kind: u16, flags: u8, effects: &[u16]) -> u16 {
     let wider = match kind {
-        5 => effects.contains(&409),
-        7 => flags & 0x20 == 0 && effects.contains(&584),
+        5 => effects.contains(&PIANISSIMO),
+        7 => flags & 0x20 == 0 && effects.contains(&ENTRUST),
         _ => false,
     };
     if wider && targets == 1 { 5 } else { targets }
@@ -285,6 +287,57 @@ mod tests {
         assert_eq!(mp_cost(100, 5, 0, &[358, 583]), 100);
         assert_eq!(mp_cost(7, 1, 0, &[358]), 7);
         assert_eq!(mp_cost(8, 1, 0, &[359]), 10);
+    }
+
+    /// A one-spell table: spell 1 of `kind` with +0x44 `flags`, learnt at `lv` by the (job, level) pairs.
+    fn one(kind: u16, flags: u8, lv: &[(usize, i16)], jp_mask: u32) -> Actions {
+        let mut levels = [-1; 24];
+        for &(j, l) in lv {
+            levels[j] = l;
+        }
+        let spell = Spell { id: 1, kind, flags, levels, jp_mask, ..Default::default() };
+        Actions { spells: vec![Spell::default(), spell], abilities: vec![] }
+    }
+
+    /// FUN_101021a0's job rule, branch by branch (SCH 20, GEO 21, RUN 23, WHM 3, RDM 5).
+    #[test]
+    fn job_rule_by_effects() {
+        // Bit 2 on SCH: the addendum of the spell's school or Enlightenment; other jobs never need it.
+        let a = one(1, 4, &[(20, 30), (3, 30)], 0);
+        assert!(!a.can_cast_now(1, (20, 99), (0, 0), 0, &[]));
+        assert!(a.can_cast_now(1, (20, 99), (0, 0), 0, &[ADDENDUM_WHITE]));
+        assert!(!a.can_cast_now(1, (20, 99), (0, 0), 0, &[ADDENDUM_BLACK]));
+        assert!(a.can_cast_now(1, (20, 99), (0, 0), 0, &[ENLIGHTENMENT]));
+        assert!(a.can_cast_now(1, (3, 99), (0, 0), 0, &[]));
+        // SCH sub without the addendum fails, and the main job (WHM) carries it.
+        assert!(!a.can_cast_now(1, (1, 99), (20, 49), 0, &[]));
+        assert!(a.can_cast_now(1, (3, 99), (20, 49), 0, &[]));
+        let b = one(2, 4, &[(20, 30)], 0);
+        assert!(b.can_cast_now(1, (20, 99), (0, 0), 0, &[ADDENDUM_BLACK]));
+        assert!(!b.can_cast_now(1, (20, 99), (0, 0), 0, &[ADDENDUM_WHITE]));
+        // Bit 3 on SCH (main or sub): Tabula Rasa.
+        let t = one(1, 8, &[(20, 30)], 0);
+        assert!(!t.can_cast_now(1, (20, 99), (0, 0), 0, &[]));
+        assert!(t.can_cast_now(1, (20, 99), (0, 0), 0, &[TABULA_RASA]));
+        assert!(!t.can_cast_now(1, (1, 99), (20, 49), 0, &[]));
+        assert!(t.can_cast_now(1, (1, 99), (20, 49), 0, &[TABULA_RASA]));
+        // Bit 4: RUN main as it is, others under Elemental Seal; the sub job has no such test.
+        let e = one(2, 0x10, &[(23, 30), (5, 30)], 0);
+        assert!(e.can_cast_now(1, (23, 99), (0, 0), 0, &[]));
+        assert!(!e.can_cast_now(1, (5, 99), (0, 0), 0, &[]));
+        assert!(e.can_cast_now(1, (5, 99), (0, 0), 0, &[ELEMENTAL_SEAL]));
+        assert!(e.can_cast_now(1, (1, 99), (5, 49), 0, &[]));
+        // Bit 5: GEO main only.
+        let g = one(7, 0x20, &[(21, 30)], 0);
+        assert!(g.can_cast_now(1, (21, 99), (0, 0), 0, &[]));
+        assert!(!g.can_cast_now(1, (1, 99), (21, 49), 0, &[]));
+        // Too low on both jobs, and a job-point spell: main 99 with enough points.
+        assert!(!a.can_cast_now(1, (3, 29), (0, 0), 0, &[]));
+        let j = one(1, 0, &[(3, 100)], 1 << 3);
+        assert!(!j.can_cast_now(1, (3, 99), (0, 0), 99, &[]));
+        assert!(j.can_cast_now(1, (3, 99), (0, 0), 100, &[]));
+        assert!(!j.can_cast_now(1, (3, 98), (0, 0), 100, &[]));
+        assert!(!a.can_cast_now(2, (3, 99), (0, 0), 0, &[]));
     }
 
     #[test]

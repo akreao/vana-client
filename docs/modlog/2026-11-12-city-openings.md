@@ -4,7 +4,7 @@ From a survey of the nine city openings (LSB `New_Character_Cutscenes.lua`: Bast
 Port Bastok 1, Northern San d'Oria 535, Southern 503, Port 500, Windurst Waters 531, Woods 367, Port Windurst 305; all
 Mode 0x83) played live on the test bed and set against retail footage. Addresses are 30261102_0.
 
-- Reported by the user: in a Windurst opening NPCs floated on the water and his own character stood among them.
+- Reported: in a Windurst opening NPCs floated on the water and the player's own character stood among them.
   Reproduced on Port Windurst (event 305): the three Windurst openings film their night narration in Windurst Walls
   (op 0x34 #239 at the start, cameras from DAT 30843, op 0x35 back to the city before the talk), and during it our
   player (at its zone-in place, -140, -7, 172) and the port's NPCs (Calixte, Alizabe, Machichi, Yapam-Alpam, Skopopo,
@@ -34,10 +34,10 @@ Mode 0x83) played live on the test bed and set against retail footage. Addresses
   an opening the server hears no position at all, and the retail server sends the area's NPCs by position: they fade
   in once the opening is over *(inf: the server half)*.
 - Ours sent 0x015 through events; LSB spawns NPCs, monsters and trusts on every 0x015 (`0x015_pos.cpp`). Now
-  `event::no_position` (unit test `position_packets_stop_in_events`): none while a zone-in event waits or runs, none
-  while we are bound to the running event without bit 4, none under the control lock outside an event (a talk
-  request waiting for its answer, as MODLOG "The control lock" already read). The 0x00A handler sets it on the net
-  thread too, so nothing slips out before the first frame. The datagram itself still goes, as for riders.
+  none while we are bound to the running event without Mode bit 4 (`event::no_position`, `mode::SEND_POSITION`; unit
+  test `position_packets_stop_in_events`), on top of the control lock gate (`SelfState::locked`, 0x10098530), which
+  the zone-in set-up sets (FUN_10094190, also on the net thread at the 0x00A) and the opening keeps to its end. The
+  datagram itself still goes, as for riders.
 - Also in FUN_10094190 with Mode & 0x80: DAT_104871a4 = 1 (the event's end then resets the camera as Mode & 1 does),
   the message window's cinema place (FUN_10137c70(1, 0, 0), built), first person off (FUN_100a8cc0(0)), and
   DAT_10489179 = 1, which nothing reads.
@@ -48,15 +48,13 @@ Mode 0x83) played live on the test bed and set against retail footage. Addresses
 - **Event maps never show NO MAP.** FUN_101fb060 (the map window's open) calls FUN_101f9970 with its "owned"
   argument 1 in modes 1..3, the event maps (ops 0x89 / 0x8d / 0xc8 through FUN_100b2570 -> FUN_101f8ef0); only modes 0
   and 5 ask FUN_10097e80 for the area's key item. Ours tested the key item there too, so a character without
-  Windurst's map got the NO MAP sheet in the Windurst Woods opening (seen live with a Bastok character). And a
-  negative sub-key is the one FUN_101827a0 finds under a point of the loaded area, which is the player's place only
-  with FUN_101f8ef0's last argument set; every event op passes 0, so it is the origin's (ours took the player's).
+  Windurst's map got the NO MAP sheet in the Windurst Woods opening (seen live with a Bastok character). (The
+  negative sub-key under the loaded area's origin, FUN_101f8ef0's last argument 0, was already right here.)
 - Ops 0x34 / 0x35 (evop_34 0x100b5a90 / evop_35 0x100b5b70), first frame: FUN_10092900 on every entity, ours
   included, so all models go and load again in the new area with their load fade; the scripts' `80 <actor>` waits
-  after the swap wait for that. Ours kept the models; now the op drops every entity's actor and ours and queues
-  its look again (`remake_model`, as op 0xab 0x11's rebuild does).
-- Not built: 0x037 Flags0 bits 1 and 3 on our own actor (+0x120 bits 18 and 22). Ours, not retail: a zone-in event
-  starts as soon as its bound actors are there, where retail first waits for the King NPC count of the 0x00A
+  after the swap wait for that. Already handled here by the event models' area swap (`models.free`, `remade`).
+- Not built: 0x037 Flags0 bits 1 and 3 on our own actor (+0x120 bits 18 and 22). Not retail, and already so before
+  this change (left open): a zone-in event starts as soon as its bound actors are there, where retail first waits for the King NPC count of the 0x00A
   (DAT_104840f3, or 600 ticks); LSB sends a count of 1 and no King NPC, so retail's order would hold every zone-in
   event 10 s on black.
 - Live (test bed, character Opencs, 2026-11-12): Port Windurst 305 and Windurst Waters 531 start with 6 and 4 actors

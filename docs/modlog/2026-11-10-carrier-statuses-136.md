@@ -40,17 +40,18 @@ the same addresses in 30261006_0.
     still takes last frame's step), `carrier::update` after `doors::update`, the step added to riders in the entity
     loop after the slide (also after a push or an op 0x6e step) with the slide goal moved along, and to our own
     position. A carrier that is not a door publishes nothing (retail: undefined).
-  - Not retail: while the rider status holds, riders skip the static floor snap and we skip gravity and the floor
-    follow; input moves use the wall sweep only (`Ground::walk_carried`: no floor needed, height kept). Retail's floor ray also meets door models (FUN_1017a660), so a rider
-    stands on its carrier there; ours has no door floors, and the static floor would take back a rising carrier's lift.
+  - *(Open, for lenonk: retail's floor ray also meets door models (FUN_1017a660), so a rider stands on its carrier;
+    ours has no door-model floors, so a rider's floor snap and our gravity follow the static floor and take back a
+    rising carrier's lift. An earlier workaround (skip the floor and gravity while carried) was not retail and is
+    gone; door floors are not built.)*
   - bit 21 from these statuses stops the ground tilt and the event ground snaps (`carrier::no_ground`).
   - c2s 0x015: GroundMode is sent (HackMove, GroundFlag, op 0x33's bit, the carrier statuses); no 0x015 while our
     status in force is 0x1c / 0x1f. LSB reads neither.
-  - the door status ops honour the +0x120 bit 2 lock and write the one event status (doors and characters); op 0xac
-    sub 1 no longer tests the lock.
+  - the door status ops (lock honoured) and op 0xac sub 1 (no lock test) already shared the one +0x174 field here;
+    the event ground snap of a bound actor reads whichever of the two wrote last.
   - the feet normal uses the posed points of the last drawn frame through that frame's matrix (`Actor.feet`); such
-    models (info[0] == info[2] == 2) now always pose on the CPU. Before: the rest pose through this frame's
-    untilted matrix.
+    models (info[0] == info[2] == 2) pose on the CPU when they probe (the probe gate, FUN_100a4ed0, is in MODLOG
+    "Ground tilt"). Before: the rest pose through this frame's untilted matrix.
 - Not built: TargetMode / RunMode (+0x124 bits 18 / 19, writers not traced) and TimeNow in c2s 0x015; FUN_100ae3f0's
   copy of +0x174 into +0x16c / +0x170 at the event's end for entities with +0x138 bit 31 (op 0xac sub 2).
 - Still open (footage only): the across-slope no-roll of long bodies and the scale overshoot.

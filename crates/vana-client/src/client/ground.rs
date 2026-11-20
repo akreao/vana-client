@@ -674,7 +674,9 @@ impl Ground {
     /// Where a character placed at height `y` lands: the first floor below (zone-in points sit mid-air at the
     /// zone line's centre), allowing a small sink; failing that the nearest surface.
     pub fn settle(&self, x: f32, z: f32, y: f32) -> Option<f32> {
-        self.floor(x, z, y, 0.5)
+        // FUN_1017a400's segments (from 2 above the feet), not a step's 0.5: a floor a little over the server's height
+        // is the one we stand on, not the next one down.
+        self.snap(x, z, y)
             .or_else(|| self.hits(x, z).map(|(h, _)| h).min_by(|a, b| (a - y).abs().total_cmp(&(b - y).abs())))
     }
 
@@ -1102,14 +1104,6 @@ impl Ground {
         pos
     }
 
-    /// Not retail: a step on a carrier (statuses 0x1c / 0x1f). Walls stop it as in the sweep, but no floor is needed
-    /// under it and its height stays: the carrier holds the rider (retail's floor ray meets the door model, which ours
-    /// has no floor for).
-    pub fn walk_carried(&self, from: Vec3, to: Vec3) -> Vec3 {
-        let (out, _) = self.sweep(from, to);
-        Vec3::new(out.x, to.y, out.z)
-    }
-
     /// Walks from `from` towards `to` as the player would at run speed, a frame at a time, until it gets
     /// there or stops getting closer. `_climb` is unused: retail has no climb limit, only the sweep's.
     pub fn walk(&self, from: Vec3, to: Vec3, _climb: f32) -> Vec3 {
@@ -1360,20 +1354,6 @@ mod tests {
         assert!(pos.x < -0.4 && pos.y.abs() < 0.01, "{pos}");
     }
 
-    #[test]
-    fn carried_step_keeps_height_and_walls() {
-        // Off the block's edge with no floor under the step: the carrier holds the height.
-        let g = step(3.0);
-        let p = g.walk_carried(Vec3::new(1.0, -5.0, 0.0), Vec3::new(1.0 - RUN_STEP, -5.0, 0.0));
-        assert!((p.x - (1.0 - RUN_STEP)).abs() < 1e-4 && p.y == -5.0, "{p}");
-        // The block's side still stops a step at floor height.
-        let mut pos = Vec3::new(-2.0, 0.0, 0.0);
-        for _ in 0..30 {
-            pos = g.walk_carried(pos, pos + Vec3::new(RUN_STEP, 0.0, 0.0));
-        }
-        assert!(pos.x < 0.0 && pos.y == 0.0, "{pos}");
-    }
-
     /// Crawlers' Nest region c_196, where LSB's height is 2.02 under the floor at (57, -25) and the snap from it finds
     /// the level 27 below: a goal there keeps an actor walking on the floor on it, and an actor drawn below comes
     /// back up when the next goal is sent (the gap is over 12).
@@ -1520,6 +1500,17 @@ mod tests {
         println!("river facings (k x 22.5 deg from +z): {river:?}");
         assert!(!river.is_empty());
         assert_eq!(at(27.69, 53.10, -52.28), Vec::<i32>::new());
+    }
+
+    /// Ru'Aun Gardens' zone-in from Ve'Lugannon Palace (145.6, -25.66, 404.5): the road is at -24.0. From a height a
+    /// little under it the settle keeps the road (FUN_1017a400 starts 2 above), not the island's underside far below.
+    #[test]
+    fn ruaun_zone_in_settles_on_the_road() {
+        let Some(g) = zone(130) else { return };
+        for y in [-25.66, -24.5, -23.0] {
+            let got = g.settle(145.574, 404.53, y).unwrap();
+            assert!((got + 24.0).abs() < 0.1, "from {y}: {got}");
+        }
     }
 
     #[test]

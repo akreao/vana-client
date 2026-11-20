@@ -1348,6 +1348,28 @@ pub(super) fn held(w: &World, id: u32) -> bool {
         || w.rounds.values().any(|(_, rest)| rest.iter().any(|a| a.targets.iter().any(|t| t.id == id)))
 }
 
+/// Which holds keep `id` busy (for the log).
+pub(super) fn held_why(w: &World, id: u32) -> String {
+    let now = Instant::now();
+    let mut why = Vec::new();
+    if let Some(t) = w.holds.get(&id).filter(|t| **t > now) {
+        why.push(format!("swing {:.2} s", (*t - now).as_secs_f32()));
+    }
+    if w.effects.held.get(&id).is_some_and(|k| k & crate::fx::HOLD_STATUS != 0) {
+        why.push(format!("effect tasks {:?}", w.effects.held_by(id)));
+    }
+    if let Some(l) = w.loads.get(&id).filter(|l| l.1 > now) {
+        why.push(format!("load x{}", l.0));
+    }
+    if w.knocks.contains_key(&id) {
+        why.push("knockback".into());
+    }
+    if w.rounds.values().any(|(_, rest)| rest.iter().any(|a| a.targets.iter().any(|t| t.id == id))) {
+        why.push("queued round".into());
+    }
+    why.join(", ")
+}
+
 /// A running knockback (actor +0x102): velocity per tick, signed speed, decay, constant-phase ticks left, the
 /// pusher's position, the motion, and the part tick carried to the next frame.
 pub(super) struct KnockState {

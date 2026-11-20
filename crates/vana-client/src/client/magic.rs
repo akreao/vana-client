@@ -7,6 +7,7 @@ use super::game_ui::GameUi;
 use super::target::{self, SubThen};
 use crate::audio::Ui;
 use crate::dat::actions::RANGES;
+use crate::dat::effect;
 use crate::dat::names::NameSource;
 use crate::render::invwin::{ActionRow, push_action_list, push_category, push_cost_box};
 use std::time::Instant;
@@ -278,8 +279,13 @@ pub(super) fn ability_recast(w: &World, timer: u16) -> f32 {
 
 /// A spell's MP cost under our effects (FUN_10101e50 with the record's type and +0x44).
 pub fn spell_mp(w: &World, s: u16) -> u16 {
-    let Some(r) = w.actions.as_ref().and_then(|a| a.spell(s)) else { return 0 };
-    crate::dat::actions::mp_cost(r.mp, r.kind, r.flags, &w.buffs)
+    spell_mp_known(w, s).unwrap_or(0)
+}
+
+/// `spell_mp`, None for a spell the DAT does not have.
+pub fn spell_mp_known(w: &World, s: u16) -> Option<u16> {
+    let r = w.actions.as_ref()?.spell(s)?;
+    Some(crate::dat::actions::mp_cost(r.mp, r.kind, r.flags, &w.buffs))
 }
 
 /// An ability's MP cost under our effects (FUN_10101e50 with type 99: Apogee, Manafont, Manawell).
@@ -291,7 +297,7 @@ pub fn ability_mp(w: &World, cost: u16) -> u16 {
 /// Under Chainspell (48) or Spontaneity (230) there is none (FUN_1022c940).
 pub fn set_recast(w: &mut World, spell: u16, info: u32) {
     let Some(r) = w.actions.as_ref().and_then(|a| a.spell(spell)) else { return };
-    if w.buffs.iter().any(|&b| b == 48 || b == 230) {
+    if w.buffs.iter().any(|&b| b == effect::CHAINSPELL || b == effect::SPONTANEITY) {
         w.spell_recast.remove(&spell);
         w.spell_total.remove(&spell);
         return;
@@ -734,7 +740,7 @@ pub(super) fn ability_check(w: &World, i: u16) -> Option<usize> {
     }
     // Saber Dance (410) refuses the row that opens list 0xc, Fan Dance (411) list 0xb: code 0xc, 7 0xbd.
     let has = |e: u16| w.buffs.contains(&e);
-    if (has(410) && a.sub == 0xc) || (has(411) && a.sub == 0xb) {
+    if (has(effect::SABER_DANCE) && a.sub == 0xc) || (has(effect::FAN_DANCE) && a.sub == 0xb) {
         return Some(0xbd);
     }
     let tp = w.vitals.map_or(0, |v| v.2);
@@ -746,11 +752,11 @@ pub(super) fn ability_check(w: &World, i: u16) -> Option<usize> {
         9 if w.stats.as_ref().map_or(0, |s| s.main.1) < a.level => Some(SILENT),
         2 | 3 | 5 if a.timer != 900 && ability_recast(w, a.timer) > 0.0 => Some(0x5c),
         // Trance (376) lifts the TP cost.
-        3 if a.tp != 255 && tp < a.tp as u32 && !has(376) => Some(0x5f),
+        3 if a.tp != 255 && tp < a.tp as u32 && !has(effect::TRANCE) => Some(0x5f),
         4 if w.my_motion.status != 1 => Some(0x52),
         4 if tp < 1000 => Some(0x5f),
         // The cost by our effects; Manafont (47) lifts it.
-        6 if !has(47) && w.vitals.is_some_and(|v| v.1 < ability_mp(w, a.cost) as u32) => Some(0x58),
+        6 if !has(effect::MANAFONT) && w.vitals.is_some_and(|v| v.1 < ability_mp(w, a.cost) as u32) => Some(0x58),
         _ => None,
     }
 }
@@ -874,15 +880,16 @@ pub(super) fn enter(w: &mut World, kind: Kind) {
         }
         Kind::Ability => {
             let Some(a) = w.actions.as_ref().and_then(|x| x.abilities.get(id as usize)).cloned() else { return };
-            if a.sub != 0 {
-                let sortable = win.sort.is_some();
-                open_ability(w, a.sub as u16, sortable);
-                return;
-            }
+            // FUN_10224b70 runs before the +0xe sub-list test, so Saber / Fan Dance refuse the Waltz / Samba row.
             if let Some(m) = ability_check(w, id) {
                 if m != SILENT {
                     refuse(w, m);
                 }
+                return;
+            }
+            if a.sub != 0 {
+                let sortable = win.sort.is_some();
+                open_ability(w, a.sub as u16, sortable);
                 return;
             }
             let name = ability_name(w, id);

@@ -77,11 +77,13 @@ pass ends with nothing left to do (state 0x6a4..0x6a9).
   ROM/21/40.DAT one version back, ROM/24/48.DAT two versions back, a staged old ROM/82/64.DAT beside a wrong
   file, and no patch.sin came out matching the manifest (deltas in one and two steps, a whole file).
 - Not retail: an "unknown" answer is followed by a blank check in the same run, and vana-update.cfg is kept (it is
-  also what FFXiMain.dll is matched against), so a stopped run still takes deltas. FFXiMain.dll is always read
-  (the copy this client keeps may be behind the stamp). No patch.cfg / patch2.cfg / patch.ver / patch.rst files:
-  the manifest and the work list stay in memory, and nothing of this client restarts on a `reset` file (the
-  count is logged). Several download connections where retail has one. No caller timeout or retry count: 120 s
-  socket timeouts end the run.
+  also what FFXiMain.dll is matched against), so a stopped run still takes deltas. FFXiMain.dll is read past the
+  version skip, and the start-up check offers an update, while the copy the client reads lags (`code_lags`): it
+  misses the stamped manifest (a `--data-only` run, an install patched before the copy existed), or the Viewer
+  patched the folder past the stamp and our copy differs from the folder's. Retail keeps no such copy. No patch.cfg /
+  patch2.cfg / patch.ver / patch.rst files: the manifest and the work list stay in memory, and nothing of this client
+  restarts on a `reset` file (the count is logged). Several download connections where retail has one. No caller
+  timeout or retry count: 120 s socket timeouts end the run.
 - A back copy longer than its distance repeats the bytes in ours; retail copies with memmove (*polcore*
   FUN_10056d30), which would read bytes not written yet. None of the 626,851 copies in the live manifest stream is
   one, and every result is checked against its signature.

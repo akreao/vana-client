@@ -1084,8 +1084,8 @@ mod tests {
         assert_eq!(link_to(1, Some(0x7f)), Some(0x7f));
     }
 
-    /// The message editor (link2 / link3's case 4) opens over link5 with no submenu left: link5 loses the wheel, its
-    /// scroll bar and its cursor's focus.
+    /// A comment editor open over link5 with no submenu left: link5 loses the wheel, its scroll bar and its cursor's
+    /// focus.
     #[test]
     fn editor_takes_focus() {
         let l = Linkshell { top: 0, cursor: 0, sub: None, naming: None };

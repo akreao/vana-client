@@ -693,6 +693,23 @@ impl Effects {
         }
     }
 
+    /// A skill file its last actor let go (FUN_100d44b0 -> the list entry's FUN_1001b7d0 -> FUN_10073b20): its resource
+    /// tree is deleted, and with it every live clone of its generators (an endless one a missed stop left running,
+    /// Nightmare Scythe's `g000`) and every task on its schedulers.
+    pub fn release_file(&mut self, file: u32) {
+        let Some(l) = self.reg.lib_of(file) else { return };
+        for t in self.tasks.iter_mut() {
+            if t.as_ref().is_some_and(|t| t.res.0 == l) {
+                *t = None;
+            }
+        }
+        for i in 0..self.insts.len() {
+            if self.insts[i].as_ref().is_some_and(|x| x.src.0 == l) {
+                self.kill(i);
+            }
+        }
+    }
+
     /// Vtable +0x298(name, 0, 0) (FUN_100cee40 -> FUN_10056c70): a scheduler on an actor with no second actor, as
     /// the entity's machine starts `bntg` and `klbt` (FUN_1008b460).
     pub fn on_scheduler_alone(&mut self, actor: u32, name: u32) {
@@ -1038,7 +1055,8 @@ impl Effects {
 
     /// Every task one frame on (the CMoSchedularTask update): countdown -= ticks; ops run while it is <= 0, each
     /// adding its wait x speed.
-    pub(super) fn step_tasks(&mut self, f: &Frame, actors: &dyn Actors) {
+    /// The task walk (once a retail frame, `walk`, with its ticks) and what the tasks own (every tick of ours).
+    pub(super) fn step_tasks(&mut self, f: &Frame, walk: bool, actors: &dyn Actors) {
         for d in self.dolls.iter_mut().filter(|d| d.unposed && actors.posed(d.of)) {
             d.points = (0..DOLL_POINTS).map(|k| actors.point(d.of, k)).collect();
             d.unposed = false;
@@ -1048,6 +1066,15 @@ impl Effects {
                 d.points.get(0x2b).copied().flatten()
             );
         }
+        if walk {
+            self.walk(&Frame { dt: self.walk_ticks, ..*f }, actors);
+            self.walk_pending = false;
+        }
+        self.after_tasks(f, actors);
+    }
+
+    /// FUN_10073910's walk over the tasks, one retail frame (`f.dt` its ticks).
+    fn walk(&mut self, f: &Frame, actors: &dyn Actors) {
         let mut i = 0;
         while i < self.tasks.len() {
             let Some(mut t) = self.tasks[i].take() else {
@@ -1083,7 +1110,6 @@ impl Effects {
             self.step_slot(i, f, actors);
             i += 1;
         }
-        self.after_tasks(f, actors);
     }
 
     /// One task's update in the frame's walk.
@@ -1349,14 +1375,15 @@ impl Effects {
         // Inside an `init`'s first step a task stepped at once sees its wanted sub-animation too (kept over a file
         // retry); one that steps later (ops 0x30, 0x5c, 0x76 / 0x77, 0x84) sees the model's.
         t.init_sub = t.init_sub.or(self.sub_now);
-        // The first step is the whole update (FUN_100748c0 -> vt+0x20 = FUN_10057e10): the frame's ticks come off
-        // before the first op, so the wait after it is already one frame down.
+        // The first step is the whole update (FUN_100748c0 -> vt+0x20 = FUN_10057e10): the retail frame's ticks
+        // (+0xeb0) come off before the first op, so the wait after it is already one frame down.
         if !t.waiting {
-            t.countdown -= if t.vana { self.vana_dt } else { self.frame_dt };
+            t.countdown -= if t.vana { self.vana_dt } else { self.walk_ticks };
         }
         self.run_ready(i, &mut t, actors);
-        // Once a frame: the frame's step is still to come for a start before it or a slot past its running task.
-        t.stepped = outer.is_none_or(|o| i > o);
+        // Once a frame: the walk passes it in the frame it started in, if that walk is still to reach it (a slot past
+        // its running task, or a start before the walk).
+        t.stepped = self.walk_pending && outer.is_none_or(|o| i > o);
         let done = t.done;
         self.settle(t, i);
         self.stepping.pop();
@@ -2946,12 +2973,12 @@ impl Effects {
         // FUN_10056b20: one that did not end inside the skip takes its update at once (FUN_100748c0).
         if !ended && !t.restart {
             if !t.waiting {
-                t.countdown -= if t.vana { self.vana_dt } else { self.frame_dt };
+                t.countdown -= if t.vana { self.vana_dt } else { self.walk_ticks };
             }
             self.run_ready(i, &mut t, actors);
             ended = t.done;
         }
-        t.stepped = true;
+        t.stepped = self.walk_pending;
         t.done = ended;
         self.settle(t, i);
         self.stepping.pop();
@@ -4041,8 +4068,8 @@ mod tests {
             1.0,
         )));
         let f = Frame {
-            dt: 1.0,
-            seconds: 1.0 / 60.0,
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
             dayfrac: 0.5,
             view: Mat4::IDENTITY,
             view_rot: Mat4::IDENTITY,
@@ -4065,9 +4092,120 @@ mod tests {
                 end = Some(tick);
             }
         }
-        // The first frame's tick counts too: 15 apart from tick 14, then 0x32's 215 once.
-        assert_eq!(came, [14, 29, 44], "records");
-        assert_eq!(end, Some(259));
+        // Retail frames of 2 ticks, the first frame's ticks counting too: 15 ticks apart from tick 14 (frames 7, 14
+        // and 22, ticks 14..16, 28..30, 44..46), then 0x32's 215 once (frame 129, ticks 258..260).
+        assert_eq!(came, [7, 14, 22], "records");
+        assert_eq!(end, Some(129));
+    }
+
+    /// The task walk runs once a retail frame at any rate of ours (FUN_10069f90: +0xeb0, whole ticks, at least 2):
+    /// op 0x32's records come up in the same retail frames at 30, 60, 120, 144 and 300 fps, and the task ends in the
+    /// same one.
+    #[test]
+    fn record_loop_same_frames_at_any_rate() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let run = |dt: f32| {
+            let mut fx = Effects::new();
+            fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
+            let rec = |id| ActionTarget { id, results: vec![ActionResult::default()] };
+            let targets = vec![rec(HUME), rec(ORC), rec(HUME)];
+            let ctx = Rc::new(RefCell::new(ActionCtx {
+                action: Action { actor: HUME, category: 4, arg: 0, info: 0, targets, seq: 0 },
+                cur: 0,
+                swing: None,
+                printed: vec![false; 3],
+                client_swing: false,
+                last: 0,
+            }));
+            let ops = vec![sop(0x31, 0, 0, 0), sop(0x01, 15, 0, 0), sop(0x32, 215, 0, 0), sop(0x00, 0, 0, 0)];
+            let res = (fx.reg.global.unwrap(), 0);
+            let task = Task::new(res, Rc::new(ops), Who::Actor(HUME), Who::Actor(HUME), Some(ctx.clone()), 1.0);
+            fx.tasks.push(Some(task));
+            let f = Frame {
+                dt,
+                seconds: dt / 60.0,
+                dayfrac: 0.5,
+                view: Mat4::IDENTITY,
+                view_rot: Mat4::IDENTITY,
+                eye: Vec3::ZERO,
+                draw_distance: 2000.0,
+                area_light: Vec3::ONE,
+                focal: 350.0,
+                moon_phase: 0,
+                weekday: 0,
+            };
+            // The retail frame (ticks 2k..2k+2) each change falls in: the ticks before the tick of ours that saw it.
+            let (mut came, mut end) = (Vec::new(), None);
+            for n in 0..(600.0 / dt) as u32 {
+                let before = ctx.borrow().cur;
+                fx.tick(&f, &Two);
+                let frame = (n as f64 * dt as f64 / 2.0 + 1e-3).floor() as u32;
+                if ctx.borrow().cur != before {
+                    came.push(frame);
+                }
+                if end.is_none() && fx.tasks.iter().flatten().next().is_none() {
+                    end = Some(frame);
+                }
+            }
+            (came, end)
+        };
+        let at30 = run(2.0);
+        assert_eq!(at30, (vec![7, 14, 22], Some(129)));
+        for dt in [1.0, 0.5, 60.0 / 144.0, 0.2] {
+            assert_eq!(run(dt), at30, "{dt} ticks a frame");
+        }
+    }
+
+    #[test]
+    fn pending_scheduler_child_steps_on_the_next_retail_walk() {
+        let parent = u32::from_le_bytes(*b"prnt");
+        let child = u32::from_le_bytes(*b"chld");
+        let mut dat = Vec::new();
+        let schedulers =
+            [(parent, vec![sop(0x3b, 0, 0, child)]), (child, vec![sop(0x01, 3, 0, 0), sop(0x67, 0, 0, 0)])];
+        for (name, ops) in schedulers {
+            let mut chunk = vec![0; 0x30];
+            chunk[..4].copy_from_slice(&name.to_le_bytes());
+            chunk[0x24..0x28].copy_from_slice(&0x30u32.to_le_bytes());
+            for op in ops {
+                chunk.extend(op.raw);
+            }
+            chunk.resize(chunk.len().next_multiple_of(16), 0);
+            let header = ((chunk.len() as u32 / 16) << 7) | u32::from(kind::SCHEDULER);
+            chunk[4..8].copy_from_slice(&header.to_le_bytes());
+            dat.extend(chunk);
+        }
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::ZERO,
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        for start_tick in 0..=1 {
+            let mut fx = Effects::new();
+            fx.reg.add(Library::load(1, dat.clone()).unwrap());
+            for tick in 0..=1 {
+                if tick == start_tick {
+                    fx.on_event_scheduler(1, parent, Who::None, Who::None);
+                }
+                fx.tick(&f, &Two);
+                if tick >= start_tick {
+                    assert!(fx.tasks[0].as_ref().unwrap().waiting);
+                    assert_eq!(fx.tasks[1].as_ref().unwrap().countdown, 1.0);
+                }
+            }
+            fx.tick(&f, &Two);
+            assert!(fx.tasks[1].is_none(), "child still live after the next walk (started at tick {start_tick})");
+            assert!(!fx.tasks[0].as_ref().unwrap().waiting);
+        }
     }
 
     /// Op 0x2e (dur 30): the root holds while its counter is not below 0, so the restart comes on the 31st frame;
@@ -4152,10 +4290,11 @@ mod tests {
         )));
     }
 
+    /// One retail frame (2 ticks): the task walk runs once a retail frame.
     fn color_tick(fx: &mut Effects) -> Vec<crate::fx::ColorOp> {
         let f = Frame {
-            dt: 1.0,
-            seconds: 1.0 / 60.0,
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
             dayfrac: 0.5,
             view: Mat4::IDENTITY,
             view_rot: Mat4::IDENTITY,
@@ -4234,8 +4373,8 @@ mod tests {
         let (Ok(zone), Ok(dat0)) = (index.read(110), index.read(0)) else { return };
         let index = std::sync::Arc::new(index);
         let f = Frame {
-            dt: 1.0,
-            seconds: 1.0 / 60.0,
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
             dayfrac: 0.5,
             view: Mat4::IDENTITY,
             view_rot: Mat4::IDENTITY,
@@ -4797,8 +4936,8 @@ mod tests {
         fx.set_index(index.clone());
         fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
         let f = Frame {
-            dt: 1.0,
-            seconds: 1.0 / 60.0,
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
             dayfrac: 0.5,
             view: Mat4::IDENTITY,
             view_rot: Mat4::IDENTITY,
@@ -5096,8 +5235,8 @@ mod tests {
         };
         fx.on_action(&a, Some("ati0".into()));
         let f = Frame {
-            dt: 1.0,
-            seconds: 1.0 / 60.0,
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
             dayfrac: 0.5,
             view: Mat4::IDENTITY,
             view_rot: Mat4::IDENTITY,
@@ -5125,10 +5264,10 @@ mod tests {
             }
         }
         // dada at 40 in Hume ati0; damg and its spark 5 ticks later (MODLOG "Effect schedulers"). Each scheduler on
-        // the way takes the frame's tick in the step that starts it (FUN_100748c0 runs the whole update), so three
-        // waits are each one frame short: tick 42 at these 1-tick frames.
+        // the way takes the frame's 2 ticks in the step that starts it (FUN_100748c0 runs the whole update), so three
+        // waits are each one frame short: 45 - 6 = 39 ticks, reached in frame 20 (ticks 40..42).
         for g in ["g010", "g011", "g012", "g013"] {
-            assert!(started.iter().any(|s| s.1 == g && s.0 == 42), "{g}: {started:?}");
+            assert!(started.iter().any(|s| s.1 == g && s.0 == 20), "{g}: {started:?}");
         }
         // The orc hits back: orc ati0 dada at 36, then chit on the orc plays DAT 0 hit2 at the Hume (a doll).
         let a = Action {
@@ -5481,15 +5620,15 @@ mod tests {
     }
 
     /// 0x100a8db0: Combo's skill file goes when its `main` (waits summing to 140 ticks) ends, once; a second Combo at
-    /// frame 60 keeps it until that one's `main` ends too.
+    /// frame 30 (tick 60) keeps it until that one's `main` ends too.
     #[test]
     fn skill_files_dropped_at_main_end() {
         let cfg = crate::config::Config::load();
         let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
         let index = std::sync::Arc::new(index);
         let f = Frame {
-            dt: 1.0,
-            seconds: 1.0 / 60.0,
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
             dayfrac: 0.5,
             view: Mat4::IDENTITY,
             view_rot: Mat4::IDENTITY,
@@ -5534,10 +5673,169 @@ mod tests {
             }
             done
         };
+        // Frames of 2 ticks, the start frame counting: 140 ticks end in frame 70 (99 for the second), the task goes two
+        // frames after its end op.
         let once = run(None);
-        assert!(once.len() == 1 && (139..=142).contains(&once[0]), "{once:?}");
-        let twice = run(Some(60));
-        assert!(twice.len() == 1 && (199..=202).contains(&twice[0]), "{twice:?}");
+        assert_eq!(once, [72]);
+        let twice = run(Some(30));
+        assert_eq!(twice, [101]);
+    }
+
+    /// A Mithra with Nightmare Scythe's file (37131) on her motion list.
+    struct MithraWs;
+
+    impl Actors for MithraWs {
+        fn matrix(&self, id: u32) -> Option<Mat4> {
+            Some(Mat4::from_translation(if id == HUME {
+                Vec3::new(20.0, 4.0, -30.0)
+            } else {
+                Vec3::new(23.0, 4.0, -30.0)
+            }))
+        }
+        fn point(&self, _: u32, _: u16) -> Option<Vec3> {
+            Some(Vec3::new(0.0, -1.0, 0.0))
+        }
+        fn scale(&self, _: u32) -> f32 {
+            1.0
+        }
+        fn files(&self, id: u32) -> (Vec<u32>, Vec<u32>) {
+            if id == HUME { (vec![8392], vec![37131]) } else { (Vec::new(), Vec::new()) }
+        }
+        fn hidden(&self, _: u32) -> bool {
+            false
+        }
+        fn models(&self) -> Vec<(u32, Vec<u32>)> {
+            Vec::new()
+        }
+        fn pc(&self, id: u32) -> Option<(u8, i8)> {
+            (id == HUME).then_some((7, 0))
+        }
+    }
+
+    /// Nightmare Scythe's discs: g0a0..g0a2's elements (life 15) clone g0b0..g0b2 (op 0x53) at their place by the
+    /// target; the discs fly the `line` path for 90 ticks after the parents are gone. A mode-0 clone keeps the matrix
+    /// it was given (FUN_10052eb0 returns for mode 0), so they stay by the target, not at the world origin.
+    #[test]
+    fn element_clone_keeps_its_matrix() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let index = std::sync::Arc::new(index);
+        let mut fx = Effects::new();
+        fx.set_index(index.clone());
+        fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
+        fx.preload(&[8392, 37131]);
+        while [8392, 37131].iter().any(|f| fx.reg.lib_of(*f).is_none()) {
+            fx.poll_loads();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        let a = Action {
+            actor: HUME,
+            category: 3,
+            arg: 99,
+            info: 0,
+            targets: vec![ActionTarget {
+                id: ORC,
+                results: vec![ActionResult { animation: 64, message: 185, value: 40, ..Default::default() }],
+            }],
+            seq: 0,
+        };
+        fx.on_action(&a, None);
+        let mut checked = 0;
+        for frame in 1..=180 {
+            fx.tick(&f, &MithraWs);
+            if frame < 130 {
+                continue;
+            }
+            for x in fx.insts.iter().flatten().filter(|x| x.name.starts_with(b"g0b")) {
+                let at = x.matrix.map(|m| m.w_axis.truncate());
+                assert!(at.is_some_and(|p| (p - Vec3::new(23.0, 3.0, -30.0)).length() < 3.0), "{at:?}");
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "no disc clone alive past frame 130");
+    }
+
+    /// Nightmare Scythe (skill file 37131): a freed skill file (FUN_100d44b0(caster, 6) at `main`'s end) takes its live
+    /// clones and tasks with it. Its endless `g000` does not outlive the skill: its `st44` stop ends it, as the doll ops
+    /// move no clones (FUN_10062d50 matches a clone +0xf0 nothing sets), so it stays on the pair the stop names.
+    #[test]
+    fn released_skill_file_takes_its_clones() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let index = std::sync::Arc::new(index);
+        let start = || {
+            let mut fx = Effects::new();
+            fx.set_index(index.clone());
+            fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
+            fx.preload(&[8392, 37131]);
+            while [8392, 37131].iter().any(|f| fx.reg.lib_of(*f).is_none()) {
+                fx.poll_loads();
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let lib = fx.reg.lib_of(37131).unwrap();
+            let f = Frame {
+                dt: 1.0,
+                seconds: 1.0 / 60.0,
+                dayfrac: 0.5,
+                view: Mat4::IDENTITY,
+                view_rot: Mat4::IDENTITY,
+                eye: Vec3::new(0.0, -2.0, -10.0),
+                draw_distance: 2000.0,
+                area_light: Vec3::ONE,
+                focal: 350.0,
+                moon_phase: 0,
+                weekday: 0,
+            };
+            let a = Action {
+                actor: HUME,
+                category: 3,
+                arg: 99,
+                info: 0,
+                targets: vec![ActionTarget {
+                    id: ORC,
+                    results: vec![ActionResult { animation: 64, message: 185, value: 40, ..Default::default() }],
+                }],
+                seq: 0,
+            };
+            fx.on_action(&a, None);
+            (fx, lib, f)
+        };
+        let live = |fx: &Effects, lib: usize| {
+            fx.insts.iter().flatten().filter(|x| x.src.0 == lib).map(|x| x.name).collect::<Vec<_>>()
+        };
+        // Freed mid-skill: what is alive goes, and the file's tasks with it.
+        let (mut fx, lib, f) = start();
+        for _ in 0..150 {
+            fx.tick(&f, &MithraWs);
+        }
+        assert!(!live(&fx, lib).is_empty(), "nothing from 37131 alive at frame 150");
+        fx.release_file(37131);
+        assert!(live(&fx, lib).is_empty() && fx.tasks.iter().flatten().all(|t| t.res.0 != lib));
+        // Run to `main`'s end: the sphere has gone by then.
+        let (mut fx, lib, f) = start();
+        let mut done = false;
+        for _ in 1..=400 {
+            fx.tick(&f, &MithraWs);
+            if fx.skill_files_done.drain(..).any(|c| c == HUME) {
+                done = true;
+                break;
+            }
+        }
+        assert!(done, "main never ended");
+        assert!(!live(&fx, lib).contains(b"g000"), "{:?}", live(&fx, lib));
     }
 }
 
@@ -5584,8 +5882,8 @@ mod skillchain_tests {
         fx.set_index(index.clone());
         fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
         let f = Frame {
-            dt: 1.0,
-            seconds: 1.0 / 60.0,
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
             dayfrac: 0.5,
             view: Mat4::IDENTITY,
             view_rot: Mat4::IDENTITY,
@@ -5604,14 +5902,13 @@ mod skillchain_tests {
         assert_eq!(holds, [(task.uid, 1, HOLD_REACT)]);
         assert_eq!(task.a2, Who::None);
         // Another actor's `klbt` does it: the kill is by resource.
+        // Its first step takes this frame's 2 ticks, four frames make 10: the kill is in the fifth.
         fx.on_scheduler_alone(2, name(b"klbt"));
-        for _ in 0..8 {
+        for _ in 0..4 {
             fx.tick(&f, &Pair);
         }
         assert!(fx.actor_scheduler_running(1, name(b"bntg")) && fx.held.contains_key(&1));
-        for _ in 0..6 {
-            fx.tick(&f, &Pair);
-        }
+        fx.tick(&f, &Pair);
         assert!(!fx.actor_scheduler_running(1, name(b"bntg")));
         fx.tick(&f, &Pair);
         assert!(!fx.held.contains_key(&1));
@@ -5896,10 +6193,11 @@ mod auto_tests {
             .unwrap()
     }
 
+    /// One retail frame (2 ticks, 30 fps): the task walk runs once a retail frame.
     fn frame(dayfrac: f32) -> Frame {
         Frame {
-            dt: 1.0,
-            seconds: 1.0 / 60.0,
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
             dayfrac,
             view: Mat4::IDENTITY,
             view_rot: Mat4::IDENTITY,
@@ -6009,7 +6307,8 @@ mod auto_tests {
         assert_eq!(fx.tasks.iter().flatten().count(), 6);
     }
 
-    /// DAT 103 `s_pa/effe/nami/lop0` (waits 90, an end loop): it starts over every 91 ticks, one frame after its end.
+    /// DAT 103 `s_pa/effe/nami/lop0` (waits 90, an end loop): it starts over every 92 ticks, one retail frame (2 ticks)
+    /// after its end: every 46th frame.
     #[test]
     fn end_loop_period() {
         let Some(index) = index() else { return };
@@ -6029,7 +6328,7 @@ mod auto_tests {
             prev = ip;
         }
         let ticks: Vec<i32> = starts.iter().map(|s| s.0).collect();
-        assert_eq!(ticks, [1, 92, 183], "{starts:?}");
+        assert_eq!(ticks, [1, 47, 93, 139, 185], "{starts:?}");
     }
 
     /// FUN_1018a7a0 on DAT 103: the tag folder's schedulers replace the `weat` ones; no scheduler in `clod`; a
@@ -6062,7 +6361,8 @@ mod auto_tests {
     }
 
     /// DAT 62870 `m_ev/bels/s002` at 10:01:00 (inside 10:01..11:00, period 5 min): one copy at once with op 0x52's
-    /// wait (80) as its countdown, stepped in the same tick; the source sleeps 18000 units (to 10:06).
+    /// wait (80) as its countdown, stepped in the same frame (78 after the frame's 2 ticks); the source sleeps 18000
+    /// units (to 10:06).
     #[test]
     fn clone_inherits_wait() {
         let Some(index) = index() else { return };
@@ -6078,7 +6378,7 @@ mod auto_tests {
         assert_eq!(tasks.len(), 2);
         let (src, copy) = if tasks[0].vana { (tasks[0], tasks[1]) } else { (tasks[1], tasks[0]) };
         assert_eq!(src.countdown, 18000.0);
-        assert!(!copy.vana && (79.0..=80.0).contains(&copy.countdown), "{}", copy.countdown);
+        assert!(!copy.vana && copy.countdown == 78.0, "{}", copy.countdown);
     }
 
     /// FUN_100c46b0 on the clock (DAT 62933 `m_ev/toke`: `st00` / `st12`, op 0xa2 and a two-minute window at 00:00 /

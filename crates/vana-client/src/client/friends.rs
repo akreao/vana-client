@@ -180,36 +180,36 @@ pub fn settle_ready(has_cred: bool, loading: bool, loaded: bool, signed_on: bool
     !has_cred || (!loading && (!loaded || signed_on))
 }
 
-/// Requests per ChangeMyStatus before ours gives up (retail: 0x32 a round, rounds without end; see `change_retried`).
-pub const STATUS_TRIES: u32 = 5;
+/// Tries of a request in one run of the job (FUN_100f12a0: 0x32). Kept for the log only: the next run starts at
+/// once, so the run boundary changes nothing.
+pub const STATUS_TRIES: u32 = 0x32;
 
-/// The wait before try `n + 1` of a ChangeMyStatus: 250 ms doubling, at most 5 s.
-pub fn retry_delay(n: u32) -> Duration {
-    Duration::from_millis(250u64 << n.min(5)).min(Duration::from_secs(5))
-}
+/// The job runner (FUN_100f12a0) runs once a game frame, 1/30 s.
+pub const RETRY_DELAY: Duration = Duration::from_nanos(1_000_000_000 / 30);
 
-/// A failure worth another try: the connection or its I/O (a timeout, a reset, a closed stream), not an answer
-/// xi_profile gave (retail retries only results above -0x800, not refusals).
+/// A failure worth another try: the connection or its I/O (a timeout, a reset, a stream closed mid-request), not an
+/// answer from xi_profile (retail retries only results above -0x800, not refusals). xi_profile closing the link at
+/// the open and a failed TLS handshake are its answers (`profile::request`, `tls::HandshakeFailed`), so they are
+/// final.
 pub fn transient(e: &anyhow::Error) -> bool {
     e.chain().any(|c| c.is::<std::io::Error>())
 }
 
 /// One ChangeMyStatus, tried again on a connection failure. Retail's job runner (FUN_100f12a0) tries a failed
 /// request again each frame, up to 0x32 times for results above -0x800, and as the answer (FUN_100f7b00) leaves the
-/// job busy the whole job runs again after that, without end. Ours (a deviation) tries `STATUS_TRIES` times,
-/// `retry_delay` apart, only for `transient` errors, and not once `stop` is set. Each try can wait out the request's
-/// 30 s read timeout, so a server that never answers holds the status job for about 2 x 5 x 30 s, not an hour.
+/// job busy the whole job runs again after that, without end. Ours does the same for `transient` errors until `stop`
+/// is set (the session's end, which ends retail's jobs too).
 fn change_retried(c: &Cred, stop: &AtomicBool, slot: Option<u8>, open: Option<u8>) -> anyhow::Result<()> {
-    let mut n = 0;
+    let mut n = 0u32;
     loop {
         if stop.load(Ordering::Relaxed) {
             anyhow::bail!("the session ended");
         }
         match profile::change_my_status(c, slot, open) {
-            Err(e) if n + 1 < STATUS_TRIES && transient(&e) => {
-                log::debug!("friends: ChangeMyStatus try {}: {e:#}", n + 1);
-                std::thread::sleep(retry_delay(n));
+            Err(e) if transient(&e) => {
                 n += 1;
+                log::debug!("friends: ChangeMyStatus try {n} (run {}): {e:#}", n.div_ceil(STATUS_TRIES));
+                std::thread::sleep(RETRY_DELAY);
             }
             r => return r,
         }
@@ -884,27 +884,14 @@ mod tests {
         assert!(settle_ready(true, false, false, false));
     }
 
-    /// The tries back off from 250 ms to at most 5 s; a whole run, its sleeps and each try's 30 s read timeout, stays
-    /// under a few minutes.
-    #[test]
-    fn retry_backs_off() {
-        assert_eq!(retry_delay(0), Duration::from_millis(250));
-        assert_eq!(retry_delay(1), Duration::from_millis(500));
-        assert_eq!(retry_delay(4), Duration::from_secs(4));
-        assert_eq!(retry_delay(5), Duration::from_secs(5));
-        assert_eq!(retry_delay(40), Duration::from_secs(5));
-        let sleeps: Duration = (0..STATUS_TRIES - 1).map(retry_delay).sum();
-        assert!(sleeps < Duration::from_secs(10), "{sleeps:?}");
-        let worst = (sleeps + Duration::from_secs(30) * STATUS_TRIES) * 2;
-        assert!(worst < Duration::from_secs(360), "{worst:?}");
-    }
-
     /// Only a connection failure is tried again; an answer from xi_profile is final.
     #[test]
     fn retries_only_io() {
         let io = anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::TimedOut)).context("no answer");
         assert!(transient(&io));
         assert!(!transient(&anyhow::anyhow!("ChangeMyStatus: xi_profile error 0x1")));
+        let tls = std::io::Error::from(std::io::ErrorKind::InvalidData);
+        assert!(!transient(&anyhow::Error::from(crate::net::tls::HandshakeFailed(tls)).context("connecting")));
     }
 
     /// A stopped session sends nothing more.
