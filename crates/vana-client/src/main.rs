@@ -1828,7 +1828,6 @@ fn main() -> Result<()> {
                     let dayfrac = hour.unwrap_or(12.0) / 24.0;
                     // One renderer for both frames: the zone's meshes and textures upload once.
                     let mut eg_keep: Option<render::effects::EffectsGpu> = None;
-                    let mut unfit: Option<anyhow::Error> = None;
                     let mut lamps = client::Lamps::default();
                     let ground = Some(client::ground::Ground::build(&scene));
                     let mut post = |gpu: &render::Gpu,
@@ -1837,11 +1836,9 @@ fn main() -> Result<()> {
                                     depth: &wgpu::TextureView,
                                     cam: &render::Camera,
                                     l: Option<&dat::weather::Lighting>,
-                                    zr: &mut render::ZoneRenderer| {
-                        if let Err(e) = render::effects::fits(gpu) {
-                            unfit.get_or_insert(e);
-                            return;
-                        }
+                                    zr: &mut render::ZoneRenderer|
+                     -> anyhow::Result<()> {
+                        render::effects::fits(gpu)?;
                         let eg = eg_keep.get_or_insert_with(|| {
                             render::effects::EffectsGpu::new(gpu, wgpu::TextureFormat::Rgba8Unorm)
                         });
@@ -2020,6 +2017,7 @@ fn main() -> Result<()> {
                             fog_color,
                             fog,
                         );
+                        Ok(())
                     };
                     // Twice: the effects write the point lights the scenery reads on the next frame.
                     let draws = render::render_pngs_post(
@@ -2030,9 +2028,6 @@ fn main() -> Result<()> {
                         &setup,
                         &mut post,
                     )?;
-                    if let Some(e) = unfit {
-                        return Err(e);
-                    }
                     draws
                 }
             };
@@ -3917,7 +3912,6 @@ fn fx_shot(
     let list: Vec<(&render::Camera, &std::path::Path, Option<dat::weather::Lighting>)> =
         paths.iter().map(|p| (&camera, p.as_path(), lighting)).collect();
     let mut eg: Option<render::effects::EffectsGpu> = None;
-    let mut unfit: Option<anyhow::Error> = None;
     let mut started = false;
     let mut post = |gpu: &render::Gpu,
                     enc: &mut wgpu::CommandEncoder,
@@ -3925,11 +3919,9 @@ fn fx_shot(
                     depth: &wgpu::TextureView,
                     cam: &render::Camera,
                     l: Option<&dat::weather::Lighting>,
-                    zr: &mut render::ZoneRenderer| {
-        if let Err(e) = render::effects::fits(gpu) {
-            unfit.get_or_insert(e);
-            return;
-        }
+                    zr: &mut render::ZoneRenderer|
+     -> anyhow::Result<()> {
+        render::effects::fits(gpu)?;
         let eg = eg.get_or_insert_with(|| render::effects::EffectsGpu::new(gpu, wgpu::TextureFormat::Rgba8Unorm));
         eg.set_lights(&zr.lights);
         fx.reg.light_keys = zr.light_keys.clone();
@@ -4027,11 +4019,9 @@ fn fx_shot(
             fog_color,
             fog,
         );
+        Ok(())
     };
     render::render_pngs_post(&scene, &list, 1600, 900, &|_, _| Vec::new(), &mut post)?;
-    if let Some(e) = unfit {
-        return Err(e);
-    }
     println!("wrote {} frames", paths.len());
     Ok(())
 }

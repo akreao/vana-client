@@ -104,10 +104,11 @@ fn wanted_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
 /// generator's solve pass runs 256 invocations in x (render/mipgen.rs).
 fn short_limits(limits: &wgpu::Limits) -> Vec<String> {
     let mut out = Vec::new();
-    if limits.max_storage_buffers_per_shader_stage < 9 {
+    if limits.max_storage_buffers_per_shader_stage < effects::STORAGE_NEEDED {
         out.push(format!(
-            "{} storage buffers per shader stage, the effects need 9",
-            limits.max_storage_buffers_per_shader_stage
+            "{} storage buffers per shader stage, the effects need {}",
+            limits.max_storage_buffers_per_shader_stage,
+            effects::STORAGE_NEEDED
         ));
     }
     if limits.max_inter_stage_shader_variables < 13 {
@@ -4865,7 +4866,7 @@ pub fn render_pngs_lit(
     height: u32,
     setup: &dyn Fn(&Gpu, &mut ZoneRenderer) -> Vec<ActorGpu>,
 ) -> Result<usize> {
-    render_pngs_post(scene, frames, width, height, setup, &mut |_, _, _, _, _, _, _| {})
+    render_pngs_post(scene, frames, width, height, setup, &mut |_, _, _, _, _, _, _| Ok(()))
 }
 
 /// Draws over the scene in each frame (after the zone pass, same targets): gpu, encoder, colour, depth, camera,
@@ -4878,7 +4879,8 @@ pub type PostDraw<'a> = dyn FnMut(
         &Camera,
         Option<&crate::dat::weather::Lighting>,
         &mut ZoneRenderer,
-    ) + 'a;
+    ) -> Result<()>
+    + 'a;
 
 /// As render_pngs_lit, with `post` drawing over each frame.
 pub fn render_pngs_post(
@@ -5004,7 +5006,8 @@ pub fn render_pngs_post(
             width as f32 / height as f32,
             &actor_refs,
         );
-        post(&gpu, &mut encoder, (&view, &target), &depth, camera, lighting.as_ref(), &mut renderer);
+        // An error (a GPU short of what the pass needs) stops before the frame is written over an older one.
+        post(&gpu, &mut encoder, (&view, &target), &depth, camera, lighting.as_ref(), &mut renderer)?;
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &target,
