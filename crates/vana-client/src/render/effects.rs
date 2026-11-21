@@ -489,6 +489,20 @@ struct Staging {
     words: usize,
 }
 
+/// The effects update pass's storage buffers in one stage.
+pub const STORAGE_NEEDED: u32 = 9;
+
+/// Whether `gpu` can build the effects pipelines (headless tools check before EffectsGpu::new; the game stops at
+/// start-up, Gpu::with_adapter).
+pub fn fits(gpu: &super::Gpu) -> anyhow::Result<()> {
+    let n = gpu.device.limits().max_storage_buffers_per_shader_stage;
+    anyhow::ensure!(
+        n >= STORAGE_NEEDED,
+        "the effects need {STORAGE_NEEDED} storage buffers per shader stage; this GPU has {n}"
+    );
+    Ok(())
+}
+
 pub struct EffectsGpu {
     update: wgpu::ComputePipeline,
     update_layout: wgpu::BindGroupLayout,
