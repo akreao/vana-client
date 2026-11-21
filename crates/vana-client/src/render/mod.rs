@@ -473,6 +473,14 @@ impl Draw {
     }
 }
 
+/// How a scenery draw's instances were culled this frame: on the GPU (its culled instances' indirect arguments, and
+/// the runs that may show), or on the CPU (each run's instances in its `out`).
+#[derive(Clone, Copy)]
+enum Culled<'a> {
+    Gpu(&'a cull::Cull, &'a wgpu::Buffer, &'a [bool]),
+    Cpu(&'a cull::CpuCull, &'a [std::ops::Range<u32>]),
+}
+
 /// The scene projection's near and far planes. Near is retail's 0.1 (FUN_100146e0): the eye keeps only 0.17 off the
 /// floor, and a deeper near plane cut into slopes beside it.
 pub const NEAR: f32 = 0.1;
@@ -544,6 +552,8 @@ pub struct ZoneRenderer {
     pub light_boost: [f32; 4],
     /// The zone's scenery culled on the GPU (render/cull.rs) when the device draws indirectly, and its passes.
     cull: Option<cull::Cull>,
+    /// Culled on the CPU where the GPU's can't run (render/cull.rs CpuCull).
+    cpu_cull: Option<cull::CpuCull>,
     cull_pipes: [wgpu::ComputePipeline; 2],
     cull_layout: wgpu::BindGroupLayout,
     /// Ours (the Lamp Lights setting): each zone instance's light slots and world sphere, the light slots
@@ -697,6 +707,8 @@ struct SubGeometry {
     instances: wgpu::Buffer,
     /// Culled as the zone's scenery is (render/cull.rs).
     cull: Option<cull::Cull>,
+    /// Culled on the CPU where the GPU's can't run (render/cull.rs CpuCull).
+    cpu_cull: Option<cull::CpuCull>,
     draws: Vec<Draw>,
     tex_base: usize,
     link: u32,
@@ -2635,8 +2647,14 @@ impl ZoneRenderer {
             })
         };
         // The culling reads the instances as storage.
-        let instances = buffer("instances", m, wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE);
+        // COPY_SRC: the CPU culling copies the visible ones out.
+        let instances = buffer(
+            "instances",
+            m,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        );
         let cull = cull::Cull::new(gpu, &p.cull_layout, &geo.cull, &instances);
+        let cpu_cull = cull.is_none().then(|| cull::CpuCull::new(gpu, &geo.cull, geo.parts()[2])).flatten();
         let sway = sway::Sway::new(gpu, &geo.sway_insts, &geo.sway_curves, &instances);
         // Config 0017: the normal maps, uploaded at once (few and small).
         if !geo.bumps.is_empty() {
@@ -2690,6 +2708,7 @@ impl ZoneRenderer {
             magenta,
             instances,
             cull,
+            cpu_cull,
             cull_pipes: p.cull,
             cull_layout: p.cull_layout,
             inst_lights: geo.matrices.iter().map(|m| m.lights).collect(),
@@ -2862,8 +2881,10 @@ impl ZoneRenderer {
                 self.camera_lists.get(&list).map(|l| (0..base).chain(l.iter().copied()).collect());
             l.set_list(whole.as_deref());
         }
-        let Some(c) = self.cull.as_mut() else { return };
-        match self.camera_lists.get(&list) {
+        if self.cull.is_none() && self.cpu_cull.is_none() {
+            return;
+        }
+        let mask = match self.camera_lists.get(&list) {
             Some(l) => {
                 let listed: std::collections::HashSet<u32> = l.iter().copied().collect();
                 let variant = |p: u32| self.variants.get(p as usize).copied().flatten();
@@ -2883,9 +2904,16 @@ impl ZoneRenderer {
                         .collect(),
                     None => Vec::new(),
                 };
-                c.set_mask(gpu, Some((&allowed, &beyond, far.unwrap_or(0.0))));
+                Some((allowed, beyond, far.unwrap_or(0.0)))
             }
-            None => c.set_mask(gpu, None),
+            None => None,
+        };
+        let mask = mask.as_ref().map(|(a, b, r)| (a.as_slice(), b.as_slice(), *r));
+        if let Some(c) = self.cull.as_mut() {
+            c.set_mask(gpu, mask);
+        }
+        if let Some(c) = &self.cpu_cull {
+            c.set_mask(mask);
         }
     }
 
@@ -2915,7 +2943,10 @@ impl ZoneRenderer {
         if let Some(sub) = &mut self.sub {
             let snext = lamp_slots(&sub.inst_lights, &sub.spheres, &lamps);
             let put = |i: u32, l: &[u32; 4]| {
-                gpu.queue.put(&sub.instances, i as u64 * INSTANCE_BYTES + 64, bytemuck::cast_slice(l))
+                gpu.queue.put(&sub.instances, i as u64 * INSTANCE_BYTES + 64, bytemuck::cast_slice(l));
+                if let Some(c) = &sub.cpu_cull {
+                    c.patch(i as u64 * INSTANCE_BYTES + 64, bytemuck::cast_slice(l));
+                }
             };
             for (&i, l) in snext.iter().filter(|(i, l)| sub.lamp_patch.get(i) != Some(*l)) {
                 put(i, l);
@@ -2935,7 +2966,10 @@ impl ZoneRenderer {
         );
         self.lamps_last = lamps;
         let put = |i: u32, l: &[u32; 4]| {
-            gpu.queue.put(&self.instances, i as u64 * INSTANCE_BYTES + 64, bytemuck::cast_slice(l))
+            gpu.queue.put(&self.instances, i as u64 * INSTANCE_BYTES + 64, bytemuck::cast_slice(l));
+            if let Some(c) = &self.cpu_cull {
+                c.patch(i as u64 * INSTANCE_BYTES + 64, bytemuck::cast_slice(l));
+            }
         };
         for (&i, l) in &next {
             if self.lamp_patch.get(&i) != Some(l)
@@ -2983,6 +3017,9 @@ impl ZoneRenderer {
         }
         for (i, v) in &writes {
             gpu.queue.put(&self.instances, *i as u64 * INSTANCE_BYTES + 64, bytemuck::cast_slice(v));
+            if let Some(c) = &self.cpu_cull {
+                c.patch(*i as u64 * INSTANCE_BYTES + 64, bytemuck::cast_slice(v));
+            }
         }
         if let Some(l) = &mut self.leak {
             l.written.extend(writes);
@@ -3033,13 +3070,19 @@ impl ZoneRenderer {
                 ..*d
             })
             .collect();
-        let instances = buffer("sub-area instances", m, wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE);
+        let instances = buffer(
+            "sub-area instances",
+            m,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        );
         let cull = cull::Cull::new(gpu, &self.cull_layout, &geo.cull, &instances);
+        let cpu_cull = cull.is_none().then(|| cull::CpuCull::new(gpu, &geo.cull, m)).flatten();
         self.sub = Some(SubGeometry {
             vertices: buffer("sub-area vertices", v, wgpu::BufferUsages::VERTEX),
             indices: buffer("sub-area indices", i, wgpu::BufferUsages::INDEX),
             instances,
             cull,
+            cpu_cull,
             draws,
             tex_base,
             link,
@@ -3118,6 +3161,7 @@ impl ZoneRenderer {
                 instances: buffer("furniture instances", bytemuck::cast_slice(&inst), wgpu::BufferUsages::VERTEX),
                 // A few pieces that layout mode moves: drawn unculled.
                 cull: None,
+                cpu_cull: None,
                 draws,
                 tex_base,
                 link: 0,
@@ -3361,6 +3405,9 @@ impl ZoneRenderer {
         for (i, _, inst) in self.links.iter().filter(|x| x.1 == 999) {
             let v = if shown { *inst } else { Instance::zeroed() };
             gpu.queue.put(&self.instances, *i as u64 * INSTANCE_BYTES, bytemuck::bytes_of(&v));
+            if let Some(c) = &self.cpu_cull {
+                c.patch(*i as u64 * INSTANCE_BYTES, bytemuck::bytes_of(&v));
+            }
         }
         self.link999_off = !shown;
     }
@@ -3375,6 +3422,9 @@ impl ZoneRenderer {
                 let lights = self.lamp_patch.get(i).copied().unwrap_or(inst.lights);
                 let v = if *l == link { Instance::zeroed() } else { Instance { lights, ..*inst } };
                 gpu.queue.put(&self.instances, *i as u64 * INSTANCE_BYTES, bytemuck::bytes_of(&v));
+                if let Some(c) = &self.cpu_cull {
+                    c.patch(*i as u64 * INSTANCE_BYTES, bytemuck::bytes_of(&v));
+                }
             }
         }
         self.hidden = link;
@@ -3977,6 +4027,22 @@ impl ZoneRenderer {
         if let Some(c) = self.sub.as_ref().filter(|s| s.shown).and_then(|s| s.cull.as_ref()) {
             c.run(encoder, &self.globals, &self.cull_pipes);
         }
+        // Without it (GLES), the CPU's (render/cull.rs CpuCull) through the same uniforms.
+        let view = cull::View {
+            view_proj: Mat4::from_cols_array_2d(&u.view_proj),
+            eye: camera.eye,
+            voyage: Mat4::from_cols_array_2d(&u.voyage),
+            clip: self.clip,
+        };
+        let vp_now = Mat4::from_cols_array_2d(&u.view_proj);
+        let mut cpu = |c: &cull::CpuCull, src: &wgpu::Buffer| {
+            c.run(encoder, src, &view, &c.runs_shown(vp_now, camera.eye, self.clip))
+        };
+        let placed = self.cpu_cull.as_ref().map(|c| cpu(c, &self.instances)).unwrap_or_default();
+        let sub_placed = match self.sub.as_ref().filter(|s| s.shown) {
+            Some(SubGeometry { cpu_cull: Some(c), instances, .. }) => cpu(c, instances),
+            _ => Vec::new(),
+        };
         // Real character shadows (render/sunshadow.rs): the actors' depth from the zone's sun, laid on the scenery
         // below after all the scenery (the blended too) and before the actors.
         let sun = match (&self.sun_shadow, self.sun_shadow_light(camera.target), &self.pose_gpu, &self.sun_depth) {
@@ -4072,9 +4138,10 @@ impl ZoneRenderer {
         }
         // The zone's scenery draws from its culled instances when it is culled, only runs that may show.
         let shown = self.cull.as_ref().map(|c| c.runs_shown(vp, camera.eye, self.clip)).unwrap_or_default();
-        let (zone_inst, zone_args) = match &self.cull {
-            Some(c) => (&c.out, Some((c, &c.args, shown.as_slice()))),
-            None => (&self.instances, None),
+        let (zone_inst, zone_args) = match (&self.cull, &self.cpu_cull) {
+            (Some(c), _) => (&c.out, Some(Culled::Gpu(c, &c.args, shown.as_slice()))),
+            (None, Some(c)) => (&c.out, Some(Culled::Cpu(c, placed.as_slice()))),
+            (None, None) => (&self.instances, None),
         };
         let sub_shown = self
             .sub
@@ -4135,9 +4202,10 @@ impl ZoneRenderer {
                 self.draw_scenery(&mut pass, d, mode, &mut bound, &mut pipe, zone_args);
             }
             if let Some(s) = self.sub.as_ref().filter(|s| s.shown) {
-                let (inst, args) = match &s.cull {
-                    Some(c) => (&c.out, Some((c, &c.args, sub_shown.as_slice()))),
-                    None => (&s.instances, None),
+                let (inst, args) = match (&s.cull, &s.cpu_cull) {
+                    (Some(c), _) => (&c.out, Some(Culled::Gpu(c, &c.args, sub_shown.as_slice()))),
+                    (None, Some(c)) => (&c.out, Some(Culled::Cpu(c, sub_placed.as_slice()))),
+                    (None, None) => (&s.instances, None),
                 };
                 pass.set_vertex_buffer(1, inst.slice(..));
                 pass.set_vertex_buffer(0, s.vertices.slice(..));
@@ -4787,7 +4855,7 @@ impl ZoneRenderer {
         mode: u8,
         bound: &mut usize,
         pipe: &mut usize,
-        culled: Option<(&cull::Cull, &wgpu::Buffer, &[bool])>,
+        culled: Option<Culled>,
     ) {
         self.draw_scenery_pipes(pass, d, mode, bound, pipe, culled, false)
     }
@@ -4800,12 +4868,19 @@ impl ZoneRenderer {
         mode: u8,
         bound: &mut usize,
         pipe: &mut usize,
-        culled: Option<(&cull::Cull, &wgpu::Buffer, &[bool])>,
+        culled: Option<Culled>,
         furn: bool,
     ) {
         let furn = furn && mode >= 2;
         let runs = d.runs();
-        let live = |k: usize| !runs[k].1.is_empty() && culled.is_none_or(|(c, _, shown)| shown[c.run_of(d.args[k])]);
+        let live = |k: usize| {
+            !runs[k].1.is_empty()
+                && match culled {
+                    None => true,
+                    Some(Culled::Gpu(c, _, shown)) => shown[c.run_of(d.args[k])],
+                    Some(Culled::Cpu(c, placed)) => !placed[c.run_of(d.args[k])].is_empty(),
+                }
+        };
         if !live(0) && !live(1) {
             return;
         }
@@ -4835,7 +4910,12 @@ impl ZoneRenderer {
                 *pipe = want;
             }
             match culled {
-                Some((_, a, _)) => pass.draw_indexed_indirect(a, d.args[k] as u64 * 20),
+                Some(Culled::Gpu(_, a, _)) => pass.draw_indexed_indirect(a, d.args[k] as u64 * 20),
+                Some(Culled::Cpu(c, placed)) => pass.draw_indexed(
+                    d.first_index..d.first_index + d.index_count,
+                    d.base_vertex,
+                    placed[c.run_of(d.args[k])].clone(),
+                ),
                 None => pass.draw_indexed(d.first_index..d.first_index + d.index_count, d.base_vertex, range),
             }
         }
@@ -5007,6 +5087,9 @@ pub fn render_pngs_post(
         if let Some(c) = &renderer.cull {
             let (live, all, inst) = c.stats(&gpu);
             println!("cull: {live} of {all} indirect draws have an instance; {inst} instances drawn");
+        }
+        if let Some(c) = &renderer.cpu_cull {
+            println!("cull (CPU): {} instances drawn", c.drawn());
         }
     }
     for (camera, path, lighting) in frames {
