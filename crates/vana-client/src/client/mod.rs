@@ -21324,16 +21324,27 @@ impl ApplicationHandler for App {
         // A low-spec GPU (GL / GLES, no BC textures, a software rasterizer): the first time, the settings still at
         // their defaults take cheaper values (Config::low_spec_defaults).
         let class = crate::render::GpuClass::of(&gpu.adapter.get_info(), gpu.adapter.features());
+        // Builds before this halved the background and set anisotropy 1 for a software rasterizer once
+        // (software_gpu_seen): what the player made of those stays.
+        if class == crate::render::GpuClass::Software && self.cfg.software_gpu_seen {
+            self.cfg.low_spec_seen = true;
+        }
         if class != crate::render::GpuClass::Capable && !self.cfg.low_spec_seen {
             self.cfg.low_spec_seen = true;
-            let monitor = window.current_monitor().map(|m| [m.size().width, m.size().height]);
+            self.cfg.software_gpu_seen |= class == crate::render::GpuClass::Software;
+            // The game window's size, not the installer's (bootstrap opens a fixed one; the configured window follows
+            // when setup is done, window_dirty, in the mode set here). Wayland has no current monitor for a window
+            // not yet shown: the one picked for it then.
+            let game = if bootstrap { self.cfg.window_size() } else { [size.width, size.height] };
+            let screen = window.current_monitor().or_else(|| monitor.clone());
             let was_mode = self.cfg.window_mode();
-            let changes = self.cfg.low_spec_defaults(class, [size.width, size.height], monitor);
+            let changes =
+                self.cfg.low_spec_defaults(class, game, screen.as_ref().map(|m| [m.size().width, m.size().height]));
             log::info!("low-spec GPU ({class:?}), first start: {}", changes.join(", "));
             crate::render::ANISOTROPY.store(self.cfg.anisotropy, std::sync::atomic::Ordering::Relaxed);
             self.frame_limit = self.cfg.frame_limit();
-            if self.cfg.window_mode() == 3 && was_mode != 3 && !self.drive.driven() {
-                window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(window.current_monitor())));
+            if self.cfg.window_mode() == 3 && was_mode != 3 && !bootstrap && !self.drive.driven() {
+                window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(screen)));
             }
             if let Err(e) = self.cfg.save() {
                 log::warn!("saving the config: {e}");
