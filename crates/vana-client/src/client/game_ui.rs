@@ -1096,6 +1096,11 @@ impl GameUi {
         Some(r)
     }
 
+    /// The augment tables' no-mark weapon list, once loaded.
+    pub fn aug_no_mark(&self) -> Option<Vec<u16>> {
+        self.data.aug_tables.as_ref().map(|t| t.no_mark_ids())
+    }
+
     /// What augment decoding needs, when its texts and tables loaded.
     pub fn aug_ctx(&self) -> Option<super::augment::AugCtx<'_>> {
         Some(super::augment::AugCtx {
@@ -1744,6 +1749,23 @@ impl GameUi {
     pub fn child_place(&self, menu: &str, child: u16) -> Option<(f32, f32)> {
         let e = self.data.lobby.menu(menu)?.elements.iter().skip(1).find(|e| e.id == child)?;
         Some((e.x as f32, e.y as f32))
+    }
+
+    /// A window's caption, when it is one retail puts in state 0x10 as the window opens: with registry flag 0x200000
+    /// the open (FUN_1015f920, `test eax, 0x200000` at 0x1015fa80) calls FUN_1011a580, which gives the last child
+    /// that state. The hit test skips such a child and no arrow enters it, so the caption never takes the cursor.
+    /// (No window with the flag has a last child with cursor links; windows without it that have a caption set the
+    /// state themselves: menuwind / socialme child 15, bazaar 3, mp_cstm 13, post1 9, passinpu 1.)
+    pub fn caption(&self, name: &str) -> Option<u16> {
+        let last = self.data.lobby.menu(name)?.elements.len().checked_sub(1).filter(|&n| n > 0)?;
+        (self.reg_flags(name) & 0x20_0000 != 0).then_some(last as u16)
+    }
+
+    /// The child of window `name` under the mouse: `Menu::hit` at the window's place, the flagged caption passed
+    /// over. None while the window is opening.
+    pub fn hit(&self, name: &str, sw: f32, sh: f32, p: (f32, f32)) -> Option<u16> {
+        let off: Vec<u16> = self.caption(name).into_iter().collect();
+        self.data.lobby.menu(name)?.hit(self.window_xy(name, sw, sh)?, p, &off)
     }
 
     pub fn menu_def(&self, name: &str) -> Option<&crate::dat::ui::Menu> {
@@ -2958,6 +2980,84 @@ impl GameUi {
     }
 }
 
+/// FUN_1015fe20: the focus going from window `was` to the window drawn with the hand now calls FUN_10126000, which
+/// puts the pointer on its cursor child (FUN_1011c080: the part's x + w / 2, y + h / 2 on its shorts, C division).
+/// Focus going to no window, or staying, moves nothing.
+fn focus_warp(was: Option<&str>, now: Option<&(String, u16, [f32; 4])>) -> Option<(f32, f32)> {
+    let (name, _, r) = now?;
+    if was == Some(name.as_str()) {
+        return None;
+    }
+    let [x, y, w, h] = r.map(|v| v as i32);
+    Some(((x + w / 2) as f32, (y + h / 2) as f32))
+}
+
+/// FUN_10217de0's hand frame after `frames` drawn retail frames: (counter >> 2) % 6 with the counter wrapping at 24.
+fn faq_hand_frame(frames: f32) -> usize {
+    ((frames as usize % 24) >> 2) % 6
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{faq_hand_frame, focus_warp};
+
+    #[test]
+    fn focus_change_puts_the_pointer_on_the_cursor_child_centre() {
+        let menu = ("menu    menuwind".to_string(), 3, [100.0, 40.0, 63.0, 15.0]);
+        assert_eq!(focus_warp(None, Some(&menu)), Some((131.0, 47.0)));
+        assert_eq!(focus_warp(Some("menu    item"), Some(&menu)), Some((131.0, 47.0)));
+        // The same window (its cursor moving) or the focus going to none: nothing.
+        assert_eq!(focus_warp(Some("menu    menuwind"), Some(&menu)), None);
+        assert_eq!(focus_warp(Some("menu    menuwind"), None), None);
+    }
+
+    /// Registry flag 0x200000 (FUN_1015f920 at 0x1015fa80 -> FUN_1011a580) puts a window's last child in state 0x10.
+    /// In every layout that child is the caption: it has no cursor link, and no window with the flag ends in a row.
+    /// The linkshell submenus have the flag, so their caption (case 4 of link2 / link3) never takes the cursor; the
+    /// chat mode window does not, and its last child (8, the arrow beside the tell name) is live. Needs the installed
+    /// game; skipped without it.
+    #[test]
+    fn flagged_windows_end_in_a_caption() {
+        use crate::dat::ui::{LOBBY_US, UiFile, companions};
+        let dir = crate::config::Config::load().ffxi_dir();
+        let Ok(index) = crate::dat::DatIndex::open(&dir) else { return };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&dir)) else { return };
+        let (flags, _) = super::menu_registry(&dll);
+        let Ok(file) = index.read(LOBBY_US) else { return };
+        let mut ui = UiFile::parse(&file).unwrap();
+        for &c in companions(LOBBY_US) {
+            ui.absorb(UiFile::parse(&index.read(c).unwrap()).unwrap(), true);
+        }
+        let flag =
+            |n: &str| flags.get(n).copied().unwrap_or_else(|| panic!("{n} not in the registry")) & 0x20_0000 != 0;
+        let mut seen = 0;
+        for m in &ui.menus {
+            if !flags.get(&m.name).is_some_and(|f| f & 0x20_0000 != 0) || m.elements.len() < 2 {
+                continue;
+            }
+            let last = m.elements.last().unwrap();
+            assert_eq!(last.id as usize, m.elements.len() - 1, "{}", m.name);
+            assert!(last.links[2..].iter().all(|&l| l == 0xff), "{}: child {} {:?}", m.name, last.id, last.links);
+            seen += 1;
+        }
+        assert!(seen > 60, "{seen}");
+        for n in ["link1", "link2", "link3", "link4", "link13", "link7", "link10", "scoption", "prty1", "mcrselec"] {
+            assert!(flag(&format!("menu    {n}")), "{n}");
+        }
+        for n in ["chatctrl", "menuwind", "bazaar", "itemctrl", "quest01", "playermo"] {
+            assert!(!flag(&format!("menu    {n}")), "{n}");
+        }
+    }
+
+    /// The Help Desk hand: six frames, four drawn frames each, a 24-frame cycle.
+    #[test]
+    fn faq_hand_holds_four_frames() {
+        let f: Vec<usize> = (0..26).map(|n| faq_hand_frame(n as f32)).collect();
+        assert_eq!(&f[..9], &[0, 0, 0, 0, 1, 1, 1, 1, 2]);
+        assert_eq!((f[23], f[24], f[25]), (5, 0, 0));
+    }
+}
+
 /// FFXI Shift-JIS for a TrueType face: the font's Latin row 0x85 (byte + 0x21 is the Latin-1 letter: 0x85C8 e acute,
 /// 0x85D5 o umlaut) and 0x87C8 (c) as Unicode; the rest as decode_sjis gives it.
 fn latin_text(sjis: &[u8]) -> String {
@@ -2993,45 +3093,5 @@ mod latin_tests {
     #[test]
     fn credits_accents() {
         assert_eq!(super::latin_text(b" Cl\x85\xc8ment B\x85\xd5se \x87\xc8 2002"), " Clément Böse © 2002");
-    }
-}
-
-/// FUN_10217de0's hand frame after `frames` drawn retail frames: (counter >> 2) % 6 with the counter wrapping at 24.
-/// FUN_1015fe20: the focus going from window `was` to the window drawn with the hand now calls FUN_10126000, which
-/// puts the pointer on its cursor child (FUN_1011c080: the part's x + w / 2, y + h / 2 on its shorts, C division).
-/// Focus going to no window, or staying, moves nothing.
-fn focus_warp(was: Option<&str>, now: Option<&(String, u16, [f32; 4])>) -> Option<(f32, f32)> {
-    let (name, _, r) = now?;
-    if was == Some(name.as_str()) {
-        return None;
-    }
-    let [x, y, w, h] = r.map(|v| v as i32);
-    Some(((x + w / 2) as f32, (y + h / 2) as f32))
-}
-
-fn faq_hand_frame(frames: f32) -> usize {
-    ((frames as usize % 24) >> 2) % 6
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{faq_hand_frame, focus_warp};
-
-    /// The Help Desk hand: six frames, four drawn frames each, a 24-frame cycle.
-    #[test]
-    fn focus_change_puts_the_pointer_on_the_cursor_child_centre() {
-        let menu = ("menu    menuwind".to_string(), 3, [100.0, 40.0, 63.0, 15.0]);
-        assert_eq!(focus_warp(None, Some(&menu)), Some((131.0, 47.0)));
-        assert_eq!(focus_warp(Some("menu    item"), Some(&menu)), Some((131.0, 47.0)));
-        // The same window (its cursor moving) or the focus going to none: nothing.
-        assert_eq!(focus_warp(Some("menu    menuwind"), Some(&menu)), None);
-        assert_eq!(focus_warp(Some("menu    menuwind"), None), None);
-    }
-
-    #[test]
-    fn faq_hand_holds_four_frames() {
-        let f: Vec<usize> = (0..26).map(|n| faq_hand_frame(n as f32)).collect();
-        assert_eq!(&f[..9], &[0, 0, 0, 0, 1, 1, 1, 1, 2]);
-        assert_eq!((f[23], f[24], f[25]), (5, 0, 0));
     }
 }

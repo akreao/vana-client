@@ -26,7 +26,8 @@ struct Uniforms {
     // Config 0017 off: the sun and the moon (direction the light travels, colour) as two lights (FUN_10181b50).
     two: array<vec4<f32>, 4>,
     // x: 1 with bump mapping on (one eased light, vertex range fog), 0 off (two lights, table fog); y: 1 with
-    // Settings' Light Shading Smooth (point lights per pixel, ours), 0 Retail (per vertex).
+    // Settings' Light Shading Smooth (point lights per pixel, ours), 0 Retail (per vertex); z: Settings' Surface
+    // Detail strength (ours, `detail_normal`), 0 off.
     modes: vec4<f32>,
     // Windowed mode's light boost (render light_boost, FUN_1000be50): rgb factors, w = 1 on.
     boost: vec4<f32>,
@@ -89,6 +90,8 @@ struct LampShadowU {
 @group(0) @binding(5) var<uniform> lamp_sh: LampShadowU;
 // Config 0011: the animated meshes' vertex deltas (vertex flags >> 8, minus 1); the instance's sway is area.y.
 @group(0) @binding(4) var<storage, read> deltas: array<vec4<f32>>;
+// '#' placements' stage 0: the scenery sampler with CLAMP addressing.
+@group(0) @binding(6) var samp_clamp: sampler;
 
 fn part_k(time: vec4<f32>) -> f32 {
     return select(clamp((u.area_info.y - time.x) / time.y, 0.0, 1.0), 1.0, time.y <= 0.0);
@@ -122,7 +125,8 @@ struct VertexIn {
     @location(7) m3: vec4<f32>,
     // The placement's four lights (table slot + 1, 0 = none).
     @location(8) lights: vec4<u32>,
-    // Bit 0: the model's 'ev10' flag (MMB +0x10 bit 28).
+    // Bit 0: the model's 'ev10' flag (MMB +0x10 bit 28); bit 1: a bumped corner; bit 2: a '#' placement (UV clamped);
+    // bits 8..: the delta (sway or tangent) index + 1.
     @location(9) flags: u32,
     // x: the placement's area slot (0 = the zone's); y: the sway step (render/sway.rs); z: 1 with NORMALIZENORMALS.
     @location(10) area: vec4<u32>,
@@ -144,7 +148,8 @@ struct VertexOut {
     @location(6) point: vec3<f32>,
     // The placement's four light slots (+1, 0 = none) for the per-pixel point lights.
     @location(7) @interpolate(flat) lights: vec4<u32>,
-    // The area slot it is lit by (0 = the zone's); bit 15: the 'ev10' path, which keeps the zone's fog range.
+    // The area slot it is lit by (0 = the zone's); bit 15: the 'ev10' path, which keeps the zone's fog range; bit 14:
+    // stage 0 clamps its UV (a '#' placement).
     @location(8) @interpolate(flat) area: u32,
     // Actors: the model colour's RGB (actor +0x660, 0x80 = 1.0), the material colour of the ambient and diffuse terms.
     @location(9) @interpolate(flat) tint: vec3<f32>,
@@ -331,6 +336,7 @@ fn vs_main(v: VertexIn) -> VertexOut {
     out.lights = v.lights;
     let ev10 = u32(u.area_info.x);
     out.area = select(v.area.x, ev10 | 0x8000u, (v.flags & 1u) != 0u && ev10 != 0u);
+    out.area = out.area | select(0u, 0x4000u, (v.flags & 4u) != 0u);
     // FUN_1017c9c0's LOD pick: an instance outside its band collapses to nothing.
     let origin = select(v.m3.xyz, (u.voyage * v.m3).xyz, voyaged);
     let d = u.eye.xyz - origin;
@@ -569,13 +575,34 @@ fn shade(in: VertexOut, color: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(select(rgb, pow(rgb, vec3<f32>(1.0 / 2.2)), u.fog.z > 0.5), 1.0);
 }
 
+// FUN_1017c9c0: a '#' placement (+0xd6 = 2) samples stage 0 with ADDRESSU / ADDRESSV CLAMP (samp_clamp), the rest
+// WRAP. The derivatives are taken first, in uniform control flow, and the clamped sample uses them.
+fn tex0(in: VertexOut) -> vec4<f32> {
+    let dx = dpdx(in.uv);
+    let dy = dpdy(in.uv);
+    let t = textureSample(tex, samp, in.uv);
+    if ((in.area & 0x4000u) != 0u) {
+        return textureSampleGrad(tex, samp_clamp, in.uv, dx, dy);
+    }
+    return t;
+}
+
 // Most scenery is opaque; its texture alpha carries something other than coverage.
 @fragment
 fn fs_opaque(in: VertexOut) -> @location(0) vec4<f32> {
     if (u.sun.w > 0.5) {
-        return lit_zone(in, textureSample(tex, samp, in.uv));
+        return lit_zone(in, tex0(in));
     }
-    return shade(in, textureSample(tex, samp, in.uv) * in.color * 2.0);
+    return shade(in, tex0(in) * in.color * 2.0);
+}
+
+// The same with Surface Detail's pack (render ZoneRenderer::scenery_surface): the slopes at group 2.
+@fragment
+fn fs_opaque_pack(in: VertexOut) -> @location(0) vec4<f32> {
+    if (u.sun.w > 0.5) {
+        return lit_zone_pack(in, tex0(in));
+    }
+    return shade(in, tex0(in) * in.color * 2.0);
 }
 
 // Characters carry no baked lighting: shade by the normal. Placeholder until the D3D8 light setup is known.
@@ -637,19 +664,31 @@ fn fs_faded(in: FadedOut) -> @location(0) vec4<f32> {
 // the texture alpha already doubled).
 @fragment
 fn fs_alpha_test(in: VertexOut) -> @location(0) vec4<f32> {
-    let color = textureSample(tex, samp, in.uv) * in.color * 2.0;
+    let color = tex0(in) * in.color * 2.0;
     if (color.a <= 96.0 / 255.0) {
         discard;
     }
     if (u.sun.w > 0.5) {
-        return lit_zone(in, textureSample(tex, samp, in.uv));
+        return lit_zone(in, tex0(in));
+    }
+    return shade(in, color);
+}
+
+@fragment
+fn fs_alpha_test_pack(in: VertexOut) -> @location(0) vec4<f32> {
+    let color = tex0(in) * in.color * 2.0;
+    if (color.a <= 96.0 / 255.0) {
+        discard;
+    }
+    if (u.sun.w > 0.5) {
+        return lit_zone_pack(in, tex0(in));
     }
     return shade(in, color);
 }
 
 // MMB models with bit 31: blended by that alpha (SRCALPHA / INVSRCALPHA), alpha-tested only on '_' placements.
 fn blended(in: VertexOut) -> vec4<f32> {
-    let t = textureSample(tex, samp, in.uv);
+    let t = tex0(in);
     let a = clamp(t.a * in.color.a * 2.0, 0.0, 1.0);
     if (u.sun.w > 0.5) {
         return vec4<f32>(lit_zone(in, t).rgb, a);
@@ -660,6 +699,29 @@ fn blended(in: VertexOut) -> vec4<f32> {
 @fragment
 fn fs_blend(in: VertexOut) -> @location(0) vec4<f32> {
     return blended(in);
+}
+
+fn blended_pack(in: VertexOut) -> vec4<f32> {
+    let t = tex0(in);
+    let a = clamp(t.a * in.color.a * 2.0, 0.0, 1.0);
+    if (u.sun.w > 0.5) {
+        return vec4<f32>(lit_zone_pack(in, t).rgb, a);
+    }
+    return vec4<f32>(shade(in, t * in.color * 2.0).rgb, a);
+}
+
+@fragment
+fn fs_blend_pack(in: VertexOut) -> @location(0) vec4<f32> {
+    return blended_pack(in);
+}
+
+@fragment
+fn fs_blend_test_pack(in: VertexOut) -> @location(0) vec4<f32> {
+    let c = blended_pack(in);
+    if (c.a <= 96.0 / 255.0) {
+        discard;
+    }
+    return c;
 }
 
 @fragment
@@ -692,12 +754,32 @@ fn d3d_out_fog(in: VertexOut, rgb: vec3<f32>, fog_color: vec3<f32>) -> vec4<f32>
 // lit = clamp(vc * (ambient bytes / 255 + sun * max(N.-L, 0))); out = tex * lit * 2. The light, ambient and fog are the zone's,
 // or the area's (FUN_10183da0: FUN_10188ca0 lights, FUN_10188e00 ambient, FUN_10189120 fog).
 fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
+    let n = normalize(in.normal);
+    var nd = n;
+    if (u.modes.z > 0.0) {
+        nd = detail_normal(in, n, t);
+    }
+    return lit_zone_n(in, t, nd);
+}
+
+// lit_zone with Surface Detail's pack (the slopes at group 2) in place of the texture's own estimate.
+fn lit_zone_pack(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
+    let n = normalize(in.normal);
+    var nd = n;
+    if (u.modes.z > 0.0) {
+        nd = detail_normal_pack(in, n);
+    }
+    return lit_zone_n(in, t, nd);
+}
+
+// `nd`: the normal of the sun's and moon's terms (Surface Detail's, or the surface's own).
+fn lit_zone_n(in: VertexOut, t: vec4<f32>, nd: vec3<f32>) -> vec4<f32> {
     var sun = u.sun.xyz;
     var sun_color = u.sun_color.rgb;
     var ambient = u.ambient.rgb;
     var fog_color = u.fog_color.rgb;
     var fog = u.fog.xy;
-    let slot = in.area & 0x7fffu;
+    let slot = in.area & 0x3fffu;
     if (slot != 0u && areas[slot].sun.w > 0.5) {
         let a = areas[slot];
         sun = a.sun.xyz;
@@ -707,16 +789,18 @@ fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
         fog = select(a.fog.xy, u.fog.xy, (in.area & 0x8000u) != 0u);
     }
     let n = normalize(in.normal);
+    // Surface Detail (ours) bends the normal of the sun's and moon's terms only (`nd`); the vertex colours (the baked
+    // light), the ambient and the point lights keep the surface's own.
     // Config 0017 (FUN_10174610): on, the one eased light and vertex fog over the eye range; off, the sun and the
     // moon as two lights (the zone's, or the area's) and table fog over the view depth.
-    var direct = boost(sun_color) * max(dot(n, -sun), 0.0);
+    var direct = boost(sun_color) * max(dot(nd, -sun), 0.0);
     var d = in.range;
     if (u.modes.x < 0.5) {
         var two = u.two;
         if (slot != 0u && areas[slot].sun.w > 0.5) {
             two = areas[slot].two;
         }
-        direct = boost(two[1].rgb) * max(dot(n, -two[0].xyz), 0.0) + boost(two[3].rgb) * max(dot(n, -two[2].xyz), 0.0);
+        direct = boost(two[1].rgb) * max(dot(nd, -two[0].xyz), 0.0) + boost(two[3].rgb) * max(dot(nd, -two[2].xyz), 0.0);
         d = in.depth;
     }
     // Every N.L takes the normal's length (NORMALIZENORMALS off).
@@ -725,6 +809,87 @@ fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
     let f = clamp((fog.y - d) / (fog.y - fog.x), 0.0, 1.0);
     let c = mix(fog_color, rgb, f);
     return vec4<f32>(select(pow(c, vec3<f32>(2.2)), c, u.fog.z > 0.5), 1.0);
+}
+
+// ---- Surface Detail (ours; Settings' Surface Detail, u.modes.z the strength) ----
+// The texture's own brightness taken as a height field (bright stands out), its slope read by two more taps one
+// texel away (or one pixel's footprint, whichever is wider, so distant surfaces don't sparkle), and put on the surface
+// by the screen-space surface gradient (Mikkelsen, "Bump Mapping Unparametrized Surfaces on the GPU", 2010): no
+// tangents, mirrored or rotated UVs alike. It fades out with the view depth. The meshes retail bumps itself
+// (config 0017, fs_bump) never reach it.
+
+// World units of relief for the whole brightness range at strength 1.
+const DETAIL_HEIGHT: f32 = 0.04;
+// The view depths over which it fades out.
+const DETAIL_NEAR: f32 = 20.0;
+const DETAIL_FAR: f32 = 50.0;
+
+fn detail_height(in: VertexOut, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> f32 {
+    var c: vec4<f32>;
+    if ((in.area & 0x4000u) != 0u) {
+        c = textureSampleGrad(tex, samp_clamp, uv, dx, dy);
+    } else {
+        c = textureSampleGrad(tex, samp, uv, dx, dy);
+    }
+    return dot(c.rgb, vec3<f32>(0.299, 0.587, 0.114));
+}
+
+// `n`: the surface's unit normal; `t`: its texel at the pixel. Called in uniform control flow (derivatives).
+fn detail_normal(in: VertexOut, n: vec3<f32>, t: vec4<f32>) -> vec3<f32> {
+    let dx = dpdx(in.uv);
+    let dy = dpdy(in.uv);
+    let px = dpdx(in.world);
+    let py = dpdy(in.world);
+    let amp = DETAIL_HEIGHT * u.modes.z * (1.0 - smoothstep(DETAIL_NEAR, DETAIL_FAR, in.depth));
+    if (amp <= 0.0) {
+        return n;
+    }
+    let texel = 1.0 / vec2<f32>(textureDimensions(tex));
+    let e = max(texel, max(abs(dx), abs(dy)));
+    let h = dot(t.rgb, vec3<f32>(0.299, 0.587, 0.114));
+    let dhdu = (detail_height(in, in.uv + vec2<f32>(e.x, 0.0), dx, dy) - h) / e.x;
+    let dhdv = (detail_height(in, in.uv + vec2<f32>(0.0, e.y), dx, dy) - h) / e.y;
+    return bend(n, dx, dy, px, py, amp * dhdu, amp * dhdv);
+}
+
+// Surface Detail from the pack (surface.rs): the slope per texel along u and v, averaged over the pixel's footprint
+// by the mips, in one read. The pack's heights are evened out per texture, so they take their own scale.
+const DETAIL_PACK_HEIGHT: f32 = 0.025;
+
+fn detail_normal_pack(in: VertexOut, n: vec3<f32>) -> vec3<f32> {
+    let dx = dpdx(in.uv);
+    let dy = dpdy(in.uv);
+    let px = dpdx(in.world);
+    let py = dpdy(in.world);
+    let amp = DETAIL_PACK_HEIGHT * u.modes.z * (1.0 - smoothstep(DETAIL_NEAR, DETAIL_FAR, in.depth));
+    if (amp <= 0.0) {
+        return n;
+    }
+    var s: vec2<f32>;
+    if ((in.area & 0x4000u) != 0u) {
+        s = textureSampleGrad(bump_tex, samp_clamp, in.uv, dx, dy).rg;
+    } else {
+        s = textureSampleGrad(bump_tex, bump_samp, in.uv, dx, dy).rg;
+    }
+    // surface.rs `slopes`: 128 level, x2 per texel; per UV unit by the texture's size.
+    let per_texel = (s - 128.0 / 255.0) * 0.5;
+    let dims = vec2<f32>(textureDimensions(bump_tex));
+    return bend(n, dx, dy, px, py, amp * per_texel.x * dims.x, amp * per_texel.y * dims.y);
+}
+
+// The normal `n` bent by a height whose change per UV unit is (dhdu, dhdv) (world units), through the surface
+// gradient: the height's change per screen pixel by the UV's derivatives, against the position's.
+fn bend(n: vec3<f32>, dx: vec2<f32>, dy: vec2<f32>, px: vec3<f32>, py: vec3<f32>, dhdu: f32, dhdv: f32) -> vec3<f32> {
+    let hx = dhdu * dx.x + dhdv * dx.y;
+    let hy = dhdu * dy.x + dhdv * dy.y;
+    let r1 = cross(py, n);
+    let r2 = cross(n, px);
+    let det = dot(px, r1);
+    if (abs(det) < 1e-12) {
+        return n;
+    }
+    let grad = sign(det) * (hx * r1 + hy * r2);
+    return normalize(abs(det) * n - grad);
 }
 
 // Config 0017's type-3 meshes (FUN_10175ac0 case 3, ps.1.1 at 0x1036b264): the normal map against the interpolated
@@ -736,13 +901,13 @@ fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
 
 @fragment
 fn fs_bump(in: VertexOut) -> @location(0) vec4<f32> {
-    let t0 = textureSample(tex, samp, in.uv);
+    let t0 = tex0(in);
     let t1 = textureSample(bump_tex, bump_samp, in.uv).rgb;
     var sun_color = u.sun_color.rgb;
     var ambient = u.ambient.rgb;
     var fog_color = u.fog_color.rgb;
     var fog = u.fog.xy;
-    let slot = in.area & 0x7fffu;
+    let slot = in.area & 0x3fffu;
     if (slot != 0u && areas[slot].sun.w > 0.5) {
         let a = areas[slot];
         sun_color = a.sun_color.rgb;

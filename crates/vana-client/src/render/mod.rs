@@ -17,6 +17,7 @@ pub mod occlusion;
 pub mod points;
 pub mod portrait;
 pub mod postfx;
+pub mod reflect;
 pub mod scale;
 pub mod screenfx;
 pub mod screens;
@@ -368,7 +369,8 @@ pub struct Uniforms {
     voyage: [[f32; 4]; 4],
     /// Config 0017 off (FUN_10181b50): the sun and the moon as two lights, (direction, colour) each.
     two: [[f32; 4]; 4],
-    /// x: 1 with bump mapping on (one eased light, vertex fog), 0 off (two lights, table fog).
+    /// x: 1 with bump mapping on (one eased light, vertex fog), 0 off (two lights, table fog); y: smooth point lights;
+    /// z: Surface Detail's strength (0 off).
     modes: [f32; 4],
     /// Windowed mode's light boost (light_boost): rgb factors, w = 1 on.
     boost: [f32; 4],
@@ -460,6 +462,8 @@ struct Draw {
     args: [u32; 2],
     /// A bump-mapped model's normal map (ZoneGeometry::bumps index; config 0017).
     bump: Option<usize>,
+    /// Its texture's Surface Detail pack slopes (ZoneGeometry::surface index; surface.rs).
+    surface: Option<usize>,
 }
 
 impl Draw {
@@ -481,7 +485,7 @@ enum Culled<'a> {
     Cpu(&'a cull::CpuCull, &'a [std::ops::Range<u32>]),
 }
 
-/// The scene projection's near and far planes. Near is retail's 0.1 (FUN_100146e0): the eye keeps only 0.17 off the
+/// The scene projection's near plane. Near is retail's 0.1 (FUN_100146e0): the eye keeps only 0.17 off the
 /// floor, and a deeper near plane cut into slopes beside it.
 pub const NEAR: f32 = 0.1;
 /// A sub-area draw's texture from this up is the zone's slot (texture - ZONE_TEXTURE).
@@ -520,6 +524,12 @@ pub struct ZoneRenderer {
     /// Modes 2 / 3 (the blended classes) for furniture: depth writes on, no bias (batch 7 item 23).
     scenery_furn: [[wgpu::RenderPipeline; 3]; 2],
     scenery_bump: [wgpu::RenderPipeline; 3],
+    /// Surface Detail's pack pipelines (`scenery`, `scenery_furn` reading the slopes at group 2) and the slopes.
+    scenery_surface: [[wgpu::RenderPipeline; 3]; 4],
+    scenery_surface_furn: [[wgpu::RenderPipeline; 3]; 2],
+    surface_groups: Vec<wgpu::BindGroup>,
+    /// The texture names to look the pack up for, until asked (ZoneGeometry::surface_names).
+    surface_names: Option<Vec<String>>,
     /// The scenery as lines by cull, where the device draws lines (a mod's wireframe switch).
     scenery_wire: Option<[wgpu::RenderPipeline; 3]>,
     pub wireframe: bool,
@@ -548,6 +558,8 @@ pub struct ZoneRenderer {
     /// Settings' Light Shading (ours): false Retail (the scenery's point lights per vertex, hard cut at the range),
     /// true Smooth (per pixel, soft edge; not retail).
     pub smooth_lights: bool,
+    /// Surface Detail (ours, zone.wgsl `detail_normal`): 0 off, 1 subtle, 2 strong.
+    pub surface_detail: u32,
     /// Windowed mode's light boost (light_boost; zero = off).
     pub light_boost: [f32; 4],
     /// The zone's scenery culled on the GPU (render/cull.rs) when the device draws indirectly, and its passes.
@@ -596,9 +608,15 @@ pub struct ZoneRenderer {
     sun_shadow: Option<sunshadow::SunShadow>,
     /// Ambient occlusion on the scenery (render/ssao.rs; prepare_ssao).
     ssao: Option<ssao::Ssao>,
+    /// Water reflections (ours, render/reflect.rs): the zone's water faces, and the pass while the option is on.
+    water: std::sync::Arc<reflect::WaterSurface>,
+    floors: std::sync::Arc<reflect::WaterSurface>,
+    reflections: Option<reflect::Reflections>,
     /// Lamp shadows (render/lampshadow.rs): the maps (always made) and this frame's lamps (light slot, matrix,
     /// position; empty = none), which the client sets.
     lamp_shadow: lampshadow::LampShadows,
+    /// '#' placements' sampler (globals binding 6).
+    clamp_sampler: wgpu::Sampler,
     pub lamp_shadows: Vec<(u32, Mat4, Vec3)>,
     /// The real shadows' level from the Vana'diel clock (sunshadow::twilight; 0 at the sun / moon change) and their PCF
     /// spacing (softer by the moon).
@@ -681,6 +699,8 @@ pub struct ZoneRenderer {
     /// The sway deltas (globals binding 4), and each portrait's uniforms and globals (render_portrait).
     deltas_gpu: wgpu::Buffer,
     portrait_globals: Vec<(wgpu::Buffer, wgpu::BindGroup)>,
+    /// The mirrored characters' uniforms, one per reflecting plane a frame (render/reflect.rs).
+    mirror_globals: Vec<(wgpu::Buffer, wgpu::BindGroup)>,
     /// Door parts: slots by door id, their base matrices, their animations (CPU copy of the GPU table) and the tick
     /// they run against.
     pub door_parts: HashMap<u32, Vec<u32>>,
@@ -822,6 +842,30 @@ pub fn mip_sampler(device: &wgpu::Device) -> wgpu::Sampler {
     })
 }
 
+/// mip_sampler with ADDRESSU / ADDRESSV CLAMP ('#' placements).
+pub fn clamp_sampler(device: &wgpu::Device) -> wgpu::Sampler {
+    let clamp = wgpu::AddressMode::ClampToEdge;
+    if old_textures() {
+        return device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: clamp,
+            address_mode_v: clamp,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+    }
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        address_mode_u: clamp,
+        address_mode_v: clamp,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        lod_max_clamp: if MIPMAPS.load(std::sync::atomic::Ordering::Relaxed) { 32.0 } else { 0.0 },
+        anisotropy_clamp: ANISOTROPY.load(std::sync::atomic::Ordering::Relaxed).clamp(1, 16),
+        ..Default::default()
+    })
+}
+
 /// Bytes of texture memory uploaded so far (the F12 overlay and zone logs).
 pub static TEXTURE_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -876,6 +920,55 @@ pub fn upload_texture_seq(gpu: &Gpu, t: &crate::dat::zone::Texture, srgb: bool) 
     let mut up = upload::TexUp::new(gpu, t, srgb);
     let seq = up.step(gpu, t, true).unwrap_or(0);
     (up.texture.create_view(&Default::default()), seq)
+}
+
+/// Surface Detail's slopes (surface.rs, RG8) as a texture with its mips made here (each level the mean of the
+/// texels above it): the shader reads the slope averaged over a pixel's footprint.
+fn upload_slopes(gpu: &Gpu, w: u32, h: u32, rg: &[u8]) -> wgpu::TextureView {
+    let mut data = rg.to_vec();
+    let (mut lw, mut lh, mut level) = (w as usize, h as usize, rg.to_vec());
+    let mut levels = 1;
+    while lw > 1 || lh > 1 {
+        let (nw, nh) = ((lw / 2).max(1), (lh / 2).max(1));
+        let mut next = Vec::with_capacity(nw * nh * 2);
+        // Each texel over its 2 x 2 block; on an odd side the last one takes the leftover row or column too.
+        let span = |i: usize, n: usize, l: usize| 2 * i..if i + 1 == n { l } else { (2 * i + 2).min(l) };
+        for y in 0..nh {
+            for x in 0..nw {
+                for c in 0..2 {
+                    let (mut sum, mut k) = (0u32, 0u32);
+                    for yy in span(y, nh, lh) {
+                        for xx in span(x, nw, lw) {
+                            sum += level[(yy * lw + xx) * 2 + c] as u32;
+                            k += 1;
+                        }
+                    }
+                    next.push(((sum + k / 2) / k.max(1)) as u8);
+                }
+            }
+        }
+        data.extend_from_slice(&next);
+        (lw, lh, level) = (nw, nh, next);
+        levels += 1;
+    }
+    TEXTURE_BYTES.fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
+    gpu.device
+        .create_texture_with_data(
+            &gpu.queue,
+            &wgpu::TextureDescriptor {
+                label: Some("surface detail"),
+                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                mip_level_count: levels,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rg8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::MipMajor,
+            &data,
+        )
+        .create_view(&Default::default())
 }
 
 fn texture_bind_group(
@@ -1169,7 +1262,7 @@ pub const POSE_PER_BONE: usize = 3;
 const POSE_BINDING: u64 = ((POSE_HEAD + POSE_PER_BONE * (MAX_BONES + 1) + 2 * MAX_CLOTH) * 16) as u64;
 
 /// Strip to list, dropping the degenerate triangles that join strips.
-fn strip_to_list(strip: &[u16]) -> Vec<u16> {
+pub(crate) fn strip_to_list(strip: &[u16]) -> Vec<u16> {
     let mut out = Vec::with_capacity(strip.len() * 3);
     for i in 0..strip.len().saturating_sub(2) {
         let (a, b, c) = (strip[i], strip[i + 1], strip[i + 2]);
@@ -1191,6 +1284,9 @@ pub struct ZonePipes {
     scenery: [[wgpu::RenderPipeline; 3]; 4],
     scenery_furn: [[wgpu::RenderPipeline; 3]; 2],
     scenery_bump: [wgpu::RenderPipeline; 3],
+    /// Surface Detail's pack pipelines, as `scenery` and `scenery_furn`.
+    scenery_surface: [[wgpu::RenderPipeline; 3]; 4],
+    scenery_surface_furn: [[wgpu::RenderPipeline; 3]; 2],
     scenery_wire: Option<[wgpu::RenderPipeline; 3]>,
     actor_pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
@@ -1288,6 +1384,13 @@ impl ZonePipes {
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
+                    count: None,
+                },
+                // '#' placements' stage 0 (FUN_1017c9c0: ADDRESSU / ADDRESSV CLAMP): the scenery sampler clamped.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
             ],
@@ -1422,10 +1525,22 @@ impl ZonePipes {
         // depth bias of -8)*.
         // `furn`: furniture's pass (FUN_101844c0) sets neither ZWRITEENABLE nor ZBIAS, so its blended meshes keep
         // the actor pass's depth writes and bias 0 (batch 7 item 23).
-        let make_scenery_z = |fragment: &str, blend: bool, cull: Option<wgpu::Face>, wire: bool, furn: bool| {
+        // Config 0017's type-3 meshes and Surface Detail's pack (FUN_10175ac0 case 3 / ours): the colour texture,
+        // then the normal map or the pack's slopes at group 2.
+        let bump_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("zone bumped"),
+            bind_group_layouts: &[Some(&globals_layout), Some(&texture_layout), Some(&texture_layout)],
+            immediate_size: 0,
+        });
+        let make_scenery_l = |fragment: &str,
+                              blend: bool,
+                              cull: Option<wgpu::Face>,
+                              wire: bool,
+                              furn: bool,
+                              layout: &wgpu::PipelineLayout| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(fragment),
-                layout: Some(&layout),
+                layout: Some(layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
@@ -1468,7 +1583,19 @@ impl ZonePipes {
                 cache: None,
             })
         };
+        let make_scenery_z =
+            |f: &str, b: bool, c: Option<wgpu::Face>, w: bool, furn: bool| make_scenery_l(f, b, c, w, furn, &layout);
         let culls = [None, Some(wgpu::Face::Back), Some(wgpu::Face::Front)];
+        // Surface Detail's pack: the same classes reading the slopes at group 2.
+        let scenery_surface = [
+            ("fs_opaque_pack", false),
+            ("fs_alpha_test_pack", false),
+            ("fs_blend_pack", true),
+            ("fs_blend_test_pack", true),
+        ]
+        .map(|(f, b)| culls.map(|c| make_scenery_l(f, b, c, false, false, &bump_layout)));
+        let scenery_surface_furn = [("fs_blend_pack", true), ("fs_blend_test_pack", true)]
+            .map(|(f, b)| culls.map(|c| make_scenery_l(f, b, c, false, true, &bump_layout)));
         let make_scenery = |f: &str, b: bool, c: Option<wgpu::Face>, w: bool| make_scenery_z(f, b, c, w, false);
         let scenery = [("fs_opaque", false), ("fs_alpha_test", false), ("fs_blend", true), ("fs_blend_test", true)]
             .map(|(f, b)| culls.map(|c| make_scenery(f, b, c, false)));
@@ -1479,12 +1606,6 @@ impl ZonePipes {
             .features()
             .contains(wgpu::Features::POLYGON_MODE_LINE)
             .then(|| culls.map(|c| make_scenery("fs_opaque", false, c, true)));
-        // Config 0017's type-3 meshes (FUN_10175ac0 case 3): the colour texture, then the normal map at group 2.
-        let bump_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("zone bumped"),
-            bind_group_layouts: &[Some(&globals_layout), Some(&texture_layout), Some(&texture_layout)],
-            immediate_size: 0,
-        });
         let scenery_bump = culls.map(|cull| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("fs_bump"),
@@ -2011,6 +2132,8 @@ impl ZonePipes {
             scenery,
             scenery_furn,
             scenery_bump,
+            scenery_surface,
+            scenery_surface_furn,
             scenery_wire,
             actor_pipeline,
             sky_pipeline,
@@ -2128,6 +2251,15 @@ pub struct ZoneGeometry {
     sway_curves: crate::dat::zone::SwayCurves,
     /// Config 0017: the normal maps the bumped draws use.
     bumps: Vec<(u32, u32, Vec<u8>)>,
+    /// Surface Detail's pack slopes the draws use (surface.rs), one per texture.
+    surface: Vec<crate::surface::Slopes>,
+    /// The scene's texture names (a draw's texture slot - 1), when the pack wasn't looked for at load: Surface Detail
+    /// switched on later asks for it then (ZoneRenderer::surface_request).
+    surface_names: Option<Vec<String>>,
+    /// The water faces reflections draw on (render/reflect.rs); empty for a sub-area.
+    water: std::sync::Arc<reflect::WaterSurface>,
+    /// The polished floors' upward faces in world space (the scene's `floors`).
+    floors: std::sync::Arc<reflect::WaterSurface>,
 }
 
 impl ZoneGeometry {
@@ -2264,7 +2396,22 @@ impl ZoneGeometry {
             (!t.is_empty()).then(|| bump_keys.iter().position(|k| *k == t)).flatten()
         };
         let mut bumps: Vec<(u32, u32, Vec<u8>)> = Vec::new();
+        // Reflecting floors (render/reflect.rs): a listed texture's strength, by its name past the 8-byte prefix.
+        let floor_of = |texture: &str| -> Option<f32> {
+            let t = texture.get(8..)?.trim_end_matches([' ', '\0']);
+            scene.floors.iter().find(|(n, _)| n == t).map(|f| f.1)
+        };
+        let mut floor_faces: Vec<([Vec3; 3], f32)> = Vec::new();
         let mut bump_used: HashMap<usize, usize> = HashMap::new();
+        let mut surface: Vec<crate::surface::Slopes> = Vec::new();
+        let mut surface_used: HashMap<&str, usize> = HashMap::new();
+        let mut surface_of = |texture: &str| -> Option<usize> {
+            let (key, s) = scene.surface.get_key_value(texture)?;
+            Some(*surface_used.entry(key.as_str()).or_insert_with(|| {
+                surface.push(s.clone());
+                surface.len() - 1
+            }))
+        };
         for mesh in &scene.meshes {
             let Some(mut mats) = by_mesh.remove(mesh.name.as_str()) else { continue };
             // Normal placements first, then the mirrored ones (culled the other way).
@@ -2308,6 +2455,37 @@ impl ZoneGeometry {
                 let at = m.transform_point3(c);
                 spheres.push([at.x, at.y, at.z, h.length() * k]);
             }
+            // FUN_1017a... placement +0xd6 = 2 for a '#' name: FUN_1017c9c0 draws it with stage 0's ADDRESSU / ADDRESSV
+            // CLAMP and no alpha test (vertex flag bit 2).
+            let clamp_uv = (mesh.name.starts_with('#') as u32) << 2;
+            // A listed floor's upward faces in world space, from each placement drawn at full detail (or always),
+            // not a door part or a voyage's world. Only the listed textures' triangles are walked.
+            for model in mesh.models.iter().filter(|_| animate) {
+                let Some(strength) = floor_of(&model.texture) else { continue };
+                let indices = if model.strip { strip_to_list(&model.indices) } else { model.indices.clone() };
+                for inst in matrices[start as usize..]
+                    .iter()
+                    .filter(|i| i.band[0] <= 0.0 && i.band[2] == 0.0 && i.band[3] == 0.0)
+                {
+                    let m = Mat4::from_cols_array_2d(&inst.model);
+                    for t in indices.as_chunks::<3>().0 {
+                        let Some(v) = t.iter().map(|&k| model.vertices.get(k as usize)).collect::<Option<Vec<_>>>()
+                        else {
+                            continue;
+                        };
+                        if reflect::faces_up(&m, [v[0].normal, v[1].normal, v[2].normal]) {
+                            floor_faces.push((
+                                v.iter()
+                                    .map(|c| m.transform_point3(Vec3::from(c.pos)))
+                                    .collect::<Vec<_>>()
+                                    .try_into()
+                                    .unwrap(),
+                                strength,
+                            ));
+                        }
+                    }
+                }
+            }
             for (mi, model) in mesh.models.iter().enumerate() {
                 let indices = if model.strip { strip_to_list(&model.indices) } else { model.indices.clone() };
                 if indices.is_empty() || model.vertices.is_empty() {
@@ -2333,7 +2511,8 @@ impl ZoneGeometry {
                             let t = corner_tangent(&a, &b, &c);
                             deltas.push([t.x, t.y, t.z, 0.0]);
                             let [bb, g, r, al] = a.color.to_le_bytes();
-                            let flags = (model.blending & 0x1000 != 0) as u32 | 2 | (deltas.len() as u32) << 8;
+                            let flags =
+                                (model.blending & 0x1000 != 0) as u32 | 2 | clamp_uv | (deltas.len() as u32) << 8;
                             all_indices.push((all_verts.len() as i32 - base_vertex) as u16);
                             all_verts.push(GpuVertex {
                                 pos: a.pos,
@@ -2355,6 +2534,7 @@ impl ZoneGeometry {
                         mode: mesh.name.starts_with('_') as u8 | ((model.blending & 0x8000 != 0) as u8) << 1,
                         args: [u32::MAX; 2],
                         bump: Some(bi),
+                        surface: None,
                     });
                     continue;
                 }
@@ -2363,7 +2543,7 @@ impl ZoneGeometry {
                     .iter()
                     .map(|v| {
                         let [b, g, r, a] = v.color.to_le_bytes();
-                        let mut flags = (model.blending & 0x1000 != 0) as u32;
+                        let mut flags = (model.blending & 0x1000 != 0) as u32 | clamp_uv;
                         if sways && v.delta != [0.0; 3] && deltas.len() < 0xff_ffff {
                             deltas.push([v.delta[0], v.delta[1], v.delta[2], 0.0]);
                             flags |= (deltas.len() as u32) << 8;
@@ -2387,6 +2567,7 @@ impl ZoneGeometry {
                     mode: mesh.name.starts_with('_') as u8 | ((model.blending & 0x8000 != 0) as u8) << 1,
                     args: [u32::MAX; 2],
                     bump: None,
+                    surface: surface_of(&model.texture),
                 });
             }
         }
@@ -2440,6 +2621,13 @@ impl ZoneGeometry {
             sway_insts,
             sway_curves,
             bumps,
+            surface,
+            surface_names: (!scene.surface_tried).then(|| scene.textures.iter().map(|t| t.name.clone()).collect()),
+            water: std::sync::Arc::new(match (&scene.collision, animate) {
+                (Some(c), true) => reflect::WaterSurface::build(c),
+                _ => Default::default(),
+            }),
+            floors: std::sync::Arc::new(reflect::WaterSurface::from_faces(floor_faces)),
         }
     }
 
@@ -2579,6 +2767,7 @@ impl ZoneRenderer {
             gpu.queue.put(&deltas, 0, bytemuck::cast_slice(&geo.deltas));
         }
         let lamp_shadow = lampshadow::LampShadows::new(gpu, &p.sil_layout, color_format);
+        let clamp_sampler = clamp_sampler(device);
         let globals = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("globals"),
             layout: &p.globals_layout,
@@ -2589,6 +2778,7 @@ impl ZoneRenderer {
                 wgpu::BindGroupEntry { binding: 3, resource: parts_gpu.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 4, resource: deltas.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 5, resource: lamp_shadow.uniform.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(&clamp_sampler) },
             ],
         });
         let sampler = mip_sampler(device);
@@ -2674,6 +2864,19 @@ impl ZoneRenderer {
                 view_bind_group(gpu, &p.texture_layout, &sampler, &view)
             })
             .collect();
+        // Surface Detail's pack (surface.rs), loaded only with the setting on: one small RG8 texture per texture.
+        if !geo.surface.is_empty() {
+            log::info!(
+                "surface detail: {} pack textures on {} draws",
+                geo.surface.len(),
+                geo.draws.iter().filter(|d| d.surface.is_some()).count()
+            );
+        }
+        let surface_groups: Vec<wgpu::BindGroup> = geo
+            .surface
+            .iter()
+            .map(|(w, h, rg)| view_bind_group(gpu, &p.texture_layout, &sampler, &upload_slopes(gpu, *w, *h, rg)))
+            .collect();
         if sway.is_some() {
             log::info!(
                 "environment animation: {} instances, {} vertex deltas, curves per tag {:?}",
@@ -2685,8 +2888,13 @@ impl ZoneRenderer {
         Self {
             sway,
             bump_groups,
+            surface_groups,
+            surface_names: geo.surface_names.clone(),
+            scenery_surface: p.scenery_surface,
+            scenery_surface_furn: p.scenery_surface_furn,
             bump_mode: true,
             smooth_lights: false,
+            surface_detail: 0,
             light_boost: [0.0; 4],
             scenery_bump: p.scenery_bump,
             scenery: p.scenery,
@@ -2740,7 +2948,11 @@ impl ZoneRenderer {
             lamp_depth_pipeline: p.lamp_depth_pipeline,
             sun_shadow: None,
             ssao: None,
+            water: geo.water.clone(),
+            floors: geo.floors.clone(),
+            reflections: None,
             lamp_shadow,
+            clamp_sampler,
             lamp_shadows: Vec::new(),
             shadow_level: 1.0,
             shadow_soft: 1.0,
@@ -2791,6 +3003,7 @@ impl ZoneRenderer {
             areas,
             deltas_gpu: deltas,
             portrait_globals: Vec::new(),
+            mirror_globals: Vec::new(),
             door_parts: geo.door_parts.clone(),
             door_bases: geo.door_bases.clone(),
             parts: vec![PartGpu::default(); PARTS],
@@ -3067,6 +3280,7 @@ impl ZoneRenderer {
                 texture: texture(d.texture),
                 instances: d.instances.clone(),
                 mirrored: d.mirrored.clone(),
+                surface: None,
                 ..*d
             })
             .collect();
@@ -3152,6 +3366,7 @@ impl ZoneRenderer {
                     texture: texture(d.texture),
                     instances: d.instances.clone(),
                     mirrored: d.mirrored.clone(),
+                    surface: None,
                     ..*d
                 })
                 .collect();
@@ -3930,7 +4145,12 @@ impl ZoneRenderer {
             area_info: [0.0; 4],
             voyage: self.voyage.to_cols_array_2d(),
             two: [[0.0; 4]; 4],
-            modes: [self.bump_mode as u32 as f32, self.smooth_lights as u32 as f32, 0.0, 0.0],
+            modes: [
+                self.bump_mode as u32 as f32,
+                self.smooth_lights as u32 as f32,
+                [0.0, 1.0, 2.5][self.surface_detail.min(2) as usize],
+                0.0,
+            ],
             boost: self.light_boost,
         };
         let mut clear = self.fog_color;
@@ -4418,6 +4638,7 @@ impl ZoneRenderer {
                     wgpu::BindGroupEntry { binding: 3, resource: self.parts_gpu.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 4, resource: self.deltas_gpu.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 5, resource: self.lamp_shadow.uniform.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(&self.clamp_sampler) },
                 ],
             });
             self.portrait_globals.push((buf, group));
@@ -4660,6 +4881,166 @@ impl ZoneRenderer {
         self.ssao.get_or_insert_with(|| ssao::Ssao::new(gpu, format)).resize(gpu, size);
     }
 
+    /// Water reflections (ours) on or off; made at the first use in a zone with water.
+    pub fn prepare_reflections(&mut self, gpu: &Gpu, on: bool, floors: bool) {
+        if !on || (self.water.is_empty() && (!floors || self.floors.is_empty())) {
+            self.reflections = None;
+            return;
+        }
+        let r = self.reflections.get_or_insert_with(|| {
+            reflect::Reflections::new(gpu, self.color_format, self.water.clone(), self.floors.clone())
+        });
+        r.floors = floors;
+    }
+
+    /// Water reflections over `color` (the scene, after the actors; `color_tex` its texture when it can be copied).
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_reflections(
+        &mut self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        color: &wgpu::TextureView,
+        color_tex: Option<&wgpu::Texture>,
+        depth: &wgpu::TextureView,
+        camera: &Camera,
+        aspect: f32,
+        actors: &[&ActorGpu],
+    ) {
+        let Some(mut r) = self.reflections.take() else { return };
+        let mirrored = self.mirror_actors(gpu, encoder, &mut r, color_tex, camera, aspect, actors);
+        let (u, _) = self.frame_uniforms(camera, aspect);
+        let params = reflect::Params {
+            view_proj: u.view_proj,
+            eye: u.eye,
+            forward: (camera.target - camera.eye).normalize_or_zero().extend(0.0).to_array(),
+            info: [u.sky_info[0], self.encode_gamma as u32 as f32, self.now / 60.0, 0.0],
+            clear: u.clear,
+            fog_color: u.fog_color,
+            fog: [u.fog[0], u.fog[1], NEAR, FAR],
+            sky_colors: u.sky_colors,
+            sky_stops: u.sky_stops,
+            mirror_heights: [reflect::NO_PLANE; 4],
+        };
+        r.draw(gpu, encoder, color, color_tex, depth, params, self.encode_gamma, mirrored);
+        self.reflections = Some(r);
+    }
+
+    /// Characters mirrored in the reflecting plane under their feet (ours, render/reflect.rs): those within
+    /// reflect::MIRROR_REACH of the eye over a plane (`PlaneGrid::under`, one cell lookup each), at most
+    /// reflect::MIRROR_PLANES planes a frame taken nearest character first, each plane's drawn again through its
+    /// mirrored camera into its own half-size layer, which only surfaces at that height read. Fading characters and
+    /// shine overlays are left out (a solid reflection of a fading character would show more than the character).
+    /// Linear apart from sorting the few characters in reach; nothing is drawn when none stands over a plane. The
+    /// layers' heights when any holds this frame's.
+    #[allow(clippy::too_many_arguments)]
+    fn mirror_actors(
+        &mut self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        r: &mut reflect::Reflections,
+        color_tex: Option<&wgpu::Texture>,
+        camera: &Camera,
+        aspect: f32,
+        actors: &[&ActorGpu],
+    ) -> Option<[f32; 4]> {
+        let (Some(t), Some((_, pose_group, _))) = (color_tex, &self.pose_gpu) else { return None };
+        let done = gpu.mips_done();
+        let reach = reflect::MIRROR_REACH * reflect::MIRROR_REACH;
+        let mut near: Vec<(f32, &ActorGpu)> = actors
+            .iter()
+            .copied()
+            .filter(|a| {
+                a.mips <= done
+                    && a.refract.is_none()
+                    && a.alpha >= 1.0
+                    && a.skin.as_ref().is_some_and(|s| s.frame == self.pose_frame)
+            })
+            .map(|a| (a.origin.distance_squared(camera.eye), a))
+            .filter(|(d, _)| *d < reach)
+            .collect();
+        near.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+        let mut planes: Vec<(f32, Vec<&ActorGpu>)> = Vec::new();
+        for (_, a) in near {
+            let Some(h) = r.planes.under(a.origin, r.floors) else { continue };
+            if let Some(p) = planes.iter_mut().find(|p| (p.0 - h).abs() < 0.1) {
+                p.1.push(a);
+            } else if planes.len() < reflect::MIRROR_PLANES {
+                planes.push((h, vec![a]));
+            }
+        }
+        if planes.is_empty() {
+            return None;
+        }
+        while self.mirror_globals.len() < planes.len() {
+            let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("mirror uniforms"),
+                size: std::mem::size_of::<Uniforms>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("mirror globals"),
+                layout: &self.globals_layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: self.lights.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: self.areas.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 3, resource: self.parts_gpu.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 4, resource: self.deltas_gpu.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 5, resource: self.lamp_shadow.uniform.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(&self.clamp_sampler) },
+                ],
+            });
+            self.mirror_globals.push((buf, group));
+        }
+        let (mut u, _) = self.frame_uniforms(camera, aspect);
+        let vp = Mat4::from_cols_array_2d(&u.view_proj);
+        for (k, (h, _)) in planes.iter().enumerate() {
+            u.view_proj = (vp * reflect::mirror(*h)).to_cols_array_2d();
+            gpu.queue.put(&self.mirror_globals[k].0, 0, bytemuck::bytes_of(&u));
+        }
+        let (colours, depth) = r.layer(gpu, [t.width(), t.height()], self.color_format);
+        let mut heights = [reflect::NO_PLANE; 4];
+        for (k, (h, list)) in planes.iter().enumerate() {
+            heights[k] = *h;
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("mirrored actors"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &colours[k],
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.skin_pipeline);
+            pass.set_bind_group(0, &self.mirror_globals[k].1, &[]);
+            for a in list {
+                let Some(skin) = a.skin.as_ref() else { continue };
+                pass.set_bind_group(2, pose_group, &[skin.offset]);
+                pass.set_vertex_buffer(0, skin.vertices.slice(..));
+                for (tex, range, wep) in &a.draws {
+                    if *wep != NO_WEP && a.hidden_weps & (1 << wep) != 0 {
+                        continue;
+                    }
+                    pass.set_bind_group(1, &a.textures[*tex], &[]);
+                    pass.draw(range.clone(), 0..1);
+                }
+            }
+        }
+        Some(heights)
+    }
+
     /// Real character shadows (ours) on or off with a `size` map; made at the first use or a size change. render draws
     /// them only with a lit sun or moon.
     pub fn prepare_sun_shadow(&mut self, gpu: &Gpu, on: bool, size: u32) {
@@ -4671,6 +5052,33 @@ impl ZoneRenderer {
         if self.sun_shadow.as_ref().is_none_or(|s| s.size != size) {
             self.sun_shadow = Some(sunshadow::SunShadow::new(gpu, &self.sil_layout, self.color_format, *feet, size));
         }
+    }
+
+    /// With Surface Detail on and the pack not looked for when the zone loaded, the scene's texture names to look it
+    /// up for (once; the caller loads it off the frame and hands it to `attach_surface`).
+    pub fn surface_request(&mut self) -> Option<Vec<String>> {
+        if self.surface_detail == 0 {
+            return None;
+        }
+        self.surface_names.take()
+    }
+
+    /// Surface Detail's pack for this zone, loaded after it went up (`surface_request`; `names` the texture names it
+    /// gave): the pack's slopes on the draws whose texture has one and no retail bump map.
+    pub fn attach_surface(&mut self, gpu: &Gpu, pack: &HashMap<String, crate::surface::Slopes>, names: &[String]) {
+        let mut index: HashMap<&str, usize> = HashMap::new();
+        for d in self.draws.iter_mut().filter(|d| d.bump.is_none() && d.surface.is_none()) {
+            let Some(name) = d.texture.checked_sub(1).and_then(|t| names.get(t)) else { continue };
+            let Some(slopes) = pack.get(name) else { continue };
+            let k = *index.entry(name.as_str()).or_insert_with(|| {
+                let (w, h, rg) = slopes;
+                let view = upload_slopes(gpu, *w, *h, rg);
+                self.surface_groups.push(view_bind_group(gpu, &self.texture_layout, &self.sampler, &view));
+                self.surface_groups.len() - 1
+            });
+            d.surface = Some(k);
+        }
+        log::info!("surface detail: {} pack textures attached", index.len());
     }
 
     /// The faded actors' offscreen target at the scene target's size (`scene`: the texture render draws into), in the
@@ -4891,24 +5299,34 @@ impl ZoneRenderer {
             *bound = d.texture;
         }
         let bump = d.bump.filter(|_| mode == 0).and_then(|b| self.bump_groups.get(b));
-        if let Some(g) = bump {
+        // Surface Detail's pack: only while the setting is on (the slopes are loaded only then, but it can be
+        // switched off mid-zone).
+        let surface =
+            d.surface.filter(|_| bump.is_none() && self.surface_detail > 0).and_then(|s| self.surface_groups.get(s));
+        if let Some(g) = bump.or(surface) {
             pass.set_bind_group(2, g, &[]);
         }
         for (k, (c, range)) in runs.clone().into_iter().enumerate() {
             if !live(k) {
                 continue;
             }
-            let want = if bump.is_some() {
-                8 + c
-            } else if furn {
-                16 + c
-            } else {
-                c
+            let want = match (bump.is_some(), surface.is_some(), furn) {
+                (true, _, _) => 8 + c,
+                (_, true, true) => 32 + c,
+                (_, true, false) => 24 + c,
+                (_, false, true) => 16 + c,
+                _ => c,
             };
             if *pipe != want {
-                let normal =
-                    if furn { &self.scenery_furn[mode as usize - 2][c] } else { &self.scenery[mode as usize][c] };
-                pass.set_pipeline(self.wire(c).unwrap_or(if bump.is_some() { &self.scenery_bump[c] } else { normal }));
+                let m = mode as usize;
+                let chosen = match (bump.is_some(), surface.is_some(), furn) {
+                    (true, _, _) => &self.scenery_bump[c],
+                    (_, true, true) => &self.scenery_surface_furn[m - 2][c],
+                    (_, true, false) => &self.scenery_surface[m][c],
+                    (_, false, true) => &self.scenery_furn[m - 2][c],
+                    _ => &self.scenery[m][c],
+                };
+                pass.set_pipeline(self.wire(c).unwrap_or(chosen));
                 *pipe = want;
             }
             match culled {
@@ -5231,6 +5649,9 @@ mod faded_tests {
             list_base: 0,
             sway: Default::default(),
             bumps: vec![],
+            surface: Default::default(),
+            surface_tried: false,
+            floors: vec![],
         };
         let format = wgpu::TextureFormat::Rgba8Unorm;
         let mut r = super::ZoneRenderer::new(&gpu, &scene, format);

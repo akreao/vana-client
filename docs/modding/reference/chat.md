@@ -78,7 +78,7 @@ text's line height (keeping its proportions), in both UIs' logs and in the class
 
 **Errors**
 
-- `"<path>": outside the mod's folder` for a path with `..`, starting with `/`, or containing `:`.
+- `"<path>": outside the mod's folder` for a path with `..`, `"<path>": not a relative path` for one containing `:`, `"<path>": a link, which could lead outside the mod's folder` for a symbolic link. A leading `/` counts from the mod's folder.
 - `<path>: <reason>` when the file cannot be read, and `<path>: <reason> (a PNG)` when it is not a PNG.
 - "bundled mods carry no image files" for a mod built into the client.
 - "too many chat icons" once 4096 icons are registered (all mods together).

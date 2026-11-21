@@ -31,6 +31,12 @@ use std::sync::Arc;
 pub type Ref = (usize, usize);
 
 /// What the effect system asks of the world's actors (CXiActor vtable +0x1c4, +0x1ec, FUN_100cc440).
+/// Retail's frame at 30 fps, and the most ticks FUN_10014cf0 gives a frame (FUN_10011a00).
+pub const RETAIL_FRAME: f32 = 2.0;
+const MAX_FRAME_TICKS: f32 = 20.0;
+/// Our ticks are summed f32 frame times: a retail frame ends within this of its last tick.
+const WALK_EPS: f32 = 1e-3;
+
 pub trait Actors {
     /// Placement: rotation and translation (model space faces +x).
     fn matrix(&self, id: u32) -> Option<Mat4>;
@@ -80,6 +86,22 @@ pub trait Actors {
     /// The actor's bones have been posed (before that its points are the skeleton's rest pose).
     fn posed(&self, _id: u32) -> bool {
         true
+    }
+    /// The actor of the entity this one faces (entity +0x1f8, the 0x00D / 0x00E face target; FUN_10098360), for
+    /// attach modes 0x16..0x1b.
+    fn face_target(&self, _id: u32) -> Option<u32> {
+        None
+    }
+    /// The actor's heading (vtable +0x1c0's y) where its frame also carries a ground tilt; None = read it off the
+    /// frame.
+    fn yaw(&self, _id: u32) -> Option<f32> {
+        None
+    }
+
+    /// A skeleton actor before its first pose (model +0x30 bit 4 clear: FUN_1002c2d0 sets it in the actor's update once
+    /// every skeleton of the model is computed): its bone frames (vtable +0x1d0) are the identity.
+    fn never_posed(&self, _id: u32) -> bool {
+        false
     }
     /// Hidden actors (+0xb2 bit 1) get no attached effects.
     fn hidden(&self, id: u32) -> bool;
@@ -479,6 +501,24 @@ type RunKey = (u32, (u8, u32), u32);
 /// start serial), its serial.
 fn run_key(born: u32, mode: u8, started: u32, serial: u32) -> RunKey {
     (born, if matches!(mode, 0 | 0xe | 0xf | 0x14) { (0, started) } else { (1, !started) }, serial)
+}
+
+/// Element update ops 0x33 / 0x46 (0x1004b604): a linked clone's matrix. Euler(element rotation), then for 0x33 the
+/// element frame's rotation (none when it has no frame matrix), for 0x46 the inverse view rotation (DAT_104568fc +
+/// 0x294, the rigid inverse of the view FUN_10015120 stores; translation dropped) so the clone faces the camera; the
+/// translation is the element's world position (FUN_10044c40).
+pub fn clone_follow(face_camera: bool, rot: Vec3, world: Vec3, frame: Option<Mat4>, view: Mat4) -> Mat4 {
+    let mut m = math::euler(rot);
+    if face_camera {
+        let mut r = view;
+        r.w_axis = glam::Vec4::W;
+        m = math::then(m, r.transpose());
+    } else if let Some(mut fm) = frame {
+        fm.w_axis = glam::Vec4::W;
+        m = math::then(m, fm);
+    }
+    m.w_axis = world.extend(1.0);
+    m
 }
 
 /// A word range of an element for the GPU this frame.
@@ -1005,6 +1045,8 @@ pub struct Effects {
     stepping: Vec<usize>,
     dolls: Vec<tasks::Doll>,
     pending: Vec<tasks::Pending>,
+    /// Furniture actors whose model file is still to come (tasks.rs on_furniture): actor, file.
+    furn_starts: Vec<(u32, u32)>,
     /// FUN_1008c480: the wanted sub-animation while an `init` start (on_init) takes its first step.
     sub_now: Option<(u32, u8)>,
     /// Actor +0xa0: the cast 4cc stored by FUN_10083d60.
@@ -1020,9 +1062,23 @@ pub struct Effects {
     models: HashMap<u32, Vec<u32>>,
     /// Actors whose model is hidden (+0xb2 bit 1, FUN_10085a50 ran).
     hidden_actors: HashSet<u32>,
-    /// DAT_1065cb18 (the time of day in 1/60 Vana'diel seconds) and DAT_1065cb0c (its change this frame), for op 0x52.
+    /// DAT_1065cb18 (the time of day in 1/60 Vana'diel seconds) and DAT_1065cb0c (its change over the task walk's
+    /// retail frame), for op 0x52; `vana_acc` gathers the change until the next walk.
     vana_now: i32,
     vana_dt: f32,
+    vana_acc: f32,
+    /// The task walk's retail frame. Retail walks the tasks once a frame and each takes the frame's ticks, +0xeb0 =
+    /// FUN_10014cf0 (FUN_10069f90): whole ticks, 2 at 30 fps, up to 20; a new task's first step takes them too
+    /// (FUN_100748c0 runs the whole update). Ours walks once a retail frame at any rate: at the first tick of ours in
+    /// it, with its ticks (`walk_ticks`); `walk_owed` is what of them our ticks have not reached yet (at most 0: the
+    /// next tick starts a new one).
+    walk_ticks: f32,
+    walk_owed: f32,
+    /// This retail frame's walk is still to run: a task started now has taken its first step and the walk passes it
+    /// (once a frame).
+    walk_pending: bool,
+    /// The walk is running: a task started inside it is passed by it only from a later slot.
+    walking: bool,
     vana_seen: bool,
     /// Action contexts of looping tasks that restarted: retail drops them without the release, so their rest never
     /// prints.
@@ -1160,10 +1216,9 @@ pub struct Effects {
     pub model_spawns: Vec<(u32, u32, u32, u32)>,
     pub model_places: Vec<(u32, Vec3, Vec3, Vec3, u32)>,
     pub model_drops: Vec<u32>,
-    /// Scheduler ops 0xc0 / 0xc3 (an area's `@ini`): the zone's clock override (+0x1c8, FUN_10182c40: the lighting's
-    /// time while online) and its sun / moon yaw in degrees (+0x1cc, FUN_10180700); reset with each zone.
-    pub zone_clock: Option<u32>,
-    pub zone_yaw: i16,
+    /// The zone object's fixed sky time and sun tilt (W+0x1c8 / +0x1cc): cleared at every scene load and area swap,
+    /// set by scheduler ops 0xc0 / 0xc3 (the zone's or an event area's `@ini`).
+    sky: crate::dat::weather::Sky,
     /// Scheduler op 0xb4: (actor, the plate's lift in y, ticks) for client/mod.rs.
     pub plate_lifts: Vec<(u32, f32, f32)>,
     /// Op 0xab: actor1's entity +0x130 bit 4 (its motion bases reset at each model creation).
@@ -1261,6 +1316,7 @@ impl Effects {
             stepping: Vec::new(),
             dolls: Vec::new(),
             pending: Vec::new(),
+            furn_starts: Vec::new(),
             sub_now: None,
             casting: HashMap::new(),
             sched_cache: HashMap::new(),
@@ -1272,6 +1328,11 @@ impl Effects {
             hidden_actors: HashSet::new(),
             vana_now: 0,
             vana_dt: 0.0,
+            vana_acc: 0.0,
+            walk_ticks: RETAIL_FRAME,
+            walk_owed: 0.0,
+            walk_pending: true,
+            walking: false,
             vana_seen: false,
             leaked: Vec::new(),
             models: HashMap::new(),
@@ -1347,8 +1408,7 @@ impl Effects {
             model_spawns: Vec::new(),
             model_places: Vec::new(),
             model_drops: Vec::new(),
-            zone_clock: None,
-            zone_yaw: 0,
+            sky: Default::default(),
             plate_lifts: Vec::new(),
             base_resets: Vec::new(),
             death_picks: Vec::new(),
@@ -1408,7 +1468,11 @@ impl Effects {
 
     /// A new zone: the old zone's instances go, and its auto-start world generators start (FUN_10046d30).
     /// Returns the library's registry index, for [`Effects::switch_zone`].
-    pub fn load_zone(&mut self, lib: Library) -> usize {
+    pub fn load_zone(&mut self, mut lib: Library) -> usize {
+        // FUN_1003fee0's colour pass runs only when FUN_10072fd0 prepares the file during the zone load; a file
+        // already resident (an effect file loaded before as the zone's DAT) is a cache hit there and keeps its
+        // colours, so a registered library is kept as it is.
+        lib.mark_zone_load();
         // A zone come back to keeps its library: another copy (and its meshes and textures on the GPU) per visit grew
         // for the whole session. Its caches are the same either way.
         let l = self.reg.lib_of(lib.file_id).unwrap_or_else(|| self.reg.add(lib));
@@ -1447,7 +1511,7 @@ impl Effects {
             self.wading.clear();
             self.foot_folder.clear();
             self.sub_lib = None;
-            (self.zone_clock, self.zone_yaw) = (None, 0);
+            self.sky = Default::default();
             self.zone_lib = Some(l);
             self.reg.zone = Some(l);
             self.start_zone(l);
@@ -1473,6 +1537,7 @@ impl Effects {
         self.trails_dirty = true;
         self.dolls.clear();
         self.pending.clear();
+        self.furn_starts.clear();
         self.models.clear();
         self.shine.clear();
         self.shine_drives.clear();
@@ -1481,7 +1546,7 @@ impl Effects {
         self.hidden_actors.clear();
         self.zone_lib = Some(l);
         self.reg.zone = Some(l);
-        (self.zone_clock, self.zone_yaw) = (None, 0);
+        self.sky = Default::default();
         // FUN_100361d0: the zone reset forgets the stream.
         self.stream_fade = None;
         for s in self.sounds.iter_mut() {
@@ -1521,12 +1586,28 @@ impl Effects {
         // FUN_10073430's link pass: the zone's self-starting schedulers, `weat` ones too (the weather that follows
         // replaces those).
         self.start_auto(l, None);
+        // FUN_1018b500: FUN_1018b620 clears the sky fixes before the parse, and after it the zone object starts the
+        // file's `@ini` scheduler on no actors (vtable +0x18 FUN_1018b770: FUN_10072290 type 7 from the file's root,
+        // FUN_10056c70), stepped at once inside the load, so its ops stand before the first light frame. Five files
+        // have one: Escha - Zi'Tah, Escha - Ru'Aun and Reisenjima Sanctorium fix the time (op 0xc0), Reisenjima
+        // and Reisenjima Henge tilt the sun (op 0xc3).
+        self.sky = Default::default();
+        if let Some(n) = self.reg.libs[l].find_global(kind::SCHEDULER, u32::from_le_bytes(*b"@ini")) {
+            let t = self.spawn_task((l, n), sched::Who::None, sched::Who::None, None, 1.0, None);
+            _ = self.run_new(t, &NoActors);
+        }
+    }
+
+    /// The zone's fixed sky time and sun tilt (scheduler ops 0xc0 / 0xc3), for the light and the weather keys.
+    pub fn sky(&self) -> crate::dat::weather::Sky {
+        self.sky
     }
 
     /// A sub-area DAT (an interior) loaded beside the zone: the old one's generators go and its auto-start world
     /// generators start, as a zone's do *(inf: the chunk loader starts them the same way)*. A file loaded before is
     /// reused.
-    pub fn load_sub_area(&mut self, lib: Library) {
+    pub fn load_sub_area(&mut self, mut lib: Library) {
+        lib.mark_zone_load();
         self.drop_sub_area();
         let l = self.reg.lib_of(lib.file_id).unwrap_or_else(|| self.reg.add(lib));
         self.sub_lib = Some(l);
@@ -1555,7 +1636,10 @@ impl Effects {
         for node in starts {
             self.start((l, node), Owner::SubArea);
         }
-        // Parsed again at each load, so its self-starting schedulers start again.
+        // Parsed again at each load, so its self-starting schedulers start again. Its environments take the zone's
+        // weather tag at once (FUN_101873a0 -> FUN_101874f0) and would switch their own `weat` folder's schedulers
+        // and generators as the zone's do, but no sub-area file has that folder (census
+        // dat::sched::census::sub_area_weat_census: 0 of 259).
         self.start_auto(l, None);
     }
 
@@ -2071,14 +2155,23 @@ impl Effects {
         // its change since the last frame.
         let now =
             ((f.dayfrac as f64 * tasks::VANA_DAY as f64).round() as i64).rem_euclid(tasks::VANA_DAY as i64) as i32;
-        self.vana_dt = if self.vana_seen { (now - self.vana_now).rem_euclid(tasks::VANA_DAY) as f32 } else { 0.0 };
+        self.vana_acc += if self.vana_seen { (now - self.vana_now).rem_euclid(tasks::VANA_DAY) as f32 } else { 0.0 };
         (self.vana_now, self.vana_seen) = (now, true);
+        // A new retail frame when our ticks have reached the last one's end: its whole ticks, our surplus carried.
+        let walk = self.walk_owed <= WALK_EPS;
+        if walk {
+            let n = (dt - self.walk_owed).floor().clamp(RETAIL_FRAME, MAX_FRAME_TICKS);
+            (self.walk_ticks, self.walk_owed) = (n, self.walk_owed + n);
+            self.vana_dt = std::mem::take(&mut self.vana_acc);
+        }
+        self.walk_owed -= dt;
+        self.walk_pending = walk;
         self.weather_step(f.seconds);
         self.poll_loads();
         self.model_generators(actors);
         self.run_equip(actors);
         self.run_pending(f, actors);
-        self.step_tasks(f, actors);
+        self.step_tasks(f, walk, actors);
         self.step_drives(f, actors);
         self.step_trails(f, actors);
         // Op 0xbf: the push starts when its delay has counted down (its task's destructor).
@@ -2100,10 +2193,10 @@ impl Effects {
         self.lives_done = true;
         self.step_models(f, actors);
         self.step_decals(actors);
-        let voyage = self.voyage;
+        let (voyage, sky) = (self.voyage, self.sky);
         for i in 0..self.insts.len() {
             let Some(inst) = self.insts[i].as_mut().filter(|x| !x.held) else { continue };
-            attach(inst, f, voyage);
+            attach(inst, f, voyage, sky);
             // Generator op 0x11: follow the actors every frame.
             if let Some(word) = inst.streams[0].iter().find(|o| o.code == 0x11).map(|o| o.u32(1))
                 && !matches!(inst.mode, 0 | 0xe | 0xf)
@@ -2117,7 +2210,7 @@ impl Effects {
                 self.spin(i, op, f, actors);
             }
             self.ground_frame(i, actors);
-            let driven = self.drive(i, f);
+            let runs = self.drive(i, f);
             let Some(inst) = self.insts[i].as_ref() else { continue };
             // An element's clone runs inside that element's update (ops 0x25 / 0x33 / 0x46: FUN_1004a980 0x1004b5d0,
             // 0x1004b604 -> FUN_100496f0); a generator's own task runs before the elements (buckets 8 / 9).
@@ -2125,10 +2218,20 @@ impl Effects {
             let (m, a, b, wgt, ss, ms) =
                 (inst.matrix, inst.scale_a, inst.scale_b, inst.weather, inst.size_scaled, inst.mslot);
             self.put_slot(ms, m, a, b, wgt, ss);
-            if driven {
-                self.in_elem = in_elem;
-                self.update_instance(i, f, actors);
-                self.in_elem = false;
+            for (place, run) in runs {
+                if let Some((m, a)) = place
+                    && let Some(x) = self.insts[i].as_mut()
+                {
+                    x.matrix = Some(m);
+                    x.scale_a = a;
+                    let (b, wgt, ss, ms) = (x.scale_b, x.weather, x.size_scaled, x.mslot);
+                    self.put_slot(ms, Some(m), a, b, wgt, ss);
+                }
+                if run {
+                    let was = std::mem::replace(&mut self.in_elem, in_elem);
+                    self.update_instance(i, f, actors);
+                    self.in_elem = was;
+                }
             }
         }
         // The walk reaches bucket 0xb after the generators' tasks: what they made this frame runs its first update
@@ -2154,53 +2257,49 @@ impl Effects {
                 self.kill(i);
             }
         }
+        // A task started before the next tick starts the next retail frame with it.
+        self.walk_pending = self.walk_owed <= WALK_EPS;
     }
 
-    /// Whether instance `i` runs this frame: its task always; an element's clone while the element lives and its
-    /// update stream has op 0x25 (emit every frame, life != 0), or 0x33 / 0x46 (the clone follows the element:
-    /// its rotation, scale and world position, 0x46 also turned to the camera; it runs while either life is not 0).
+    /// How instance `i` runs this frame (FUN_1004a980, the element update stream): its task once; an element's
+    /// clone (+0x164) once per op 0x25 / 0x33 / 0x46 in the element's update stream, in stream order. Each entry is
+    /// the placement to apply first (ops 0x33 / 0x46) and whether the clone then runs (FUN_100496f0):
+    /// - 0x25 (0x1004b5d0): runs while the element's life (+0x110) is not 0; no placement.
+    /// - 0x33 / 0x46 (0x1004b604): matrix = Euler(element rotation +0xe0), for 0x33 through the element's frame
+    ///   rotation (FUN_100473f0: its borrowed frame, else its generator's attach matrix; skipped when it has none),
+    ///   for 0x46 through the inverse view rotation (FUN_10015240, DAT_104568fc + 0x294) instead; translation the
+    ///   element's world position (FUN_10044c40); clone +0x78 = the element generator's +0x78 x the element's scale
+    ///   (+0xec; +0x84 untouched). Runs while the element's or the clone's life (+0xd0) is not 0.
+    ///
     /// The clone of a dead element stops.
-    fn drive(&mut self, i: usize, f: &Frame) -> bool {
-        let Some(e) = self.insts[i].as_ref().and_then(|x| x.driven) else { return true };
+    fn drive(&mut self, i: usize, f: &Frame) -> Vec<(Option<(Mat4, Vec3)>, bool)> {
+        let Some(e) = self.insts[i].as_ref().and_then(|x| x.driven) else { return vec![(None, true)] };
         let elem = self.elems.get(e as usize).and_then(|c| c.as_ref()).filter(|c| c.child == Some(i));
         let Some(c) = elem else {
             if let Some(x) = self.insts[i].as_mut() {
                 x.stopping = true;
             }
-            return false;
+            return Vec::new();
         };
-        let (life, back, owner) = (c.life, c.back, self.insts.get(c.inst).and_then(|x| x.as_ref()).map(|x| x.src));
-        let pf = self.parent_frame(c);
-        let Some(owner) = owner else { return false };
-        let has = |reg: &Registry, code: u8| reg.update_op_slot(owner, code).is_some();
-        let follow = if has(&self.reg, 0x46) {
-            Some(true)
-        } else if has(&self.reg, 0x33) {
-            Some(false)
-        } else {
-            None
-        };
-        if let (Some(cam), Some(b)) = (follow, back)
-            && let Some(x) = self.insts[i].as_mut()
-        {
-            // 0x1004b604 (0x33): euler(rot) x the element's parent frame rotation (FUN_100473f0: its snapshot or the
-            // generator's matrix, translation cleared), then the world position; scale A = the owner's x the element's.
-            let mut m = math::euler(b.rot);
-            if cam {
-                // 0x1004b6e8 (0x46): the camera object's +0x294 (FUN_10015240), the inverse of its LookAt view
-                // (FUN_10015120 -> FUN_100283c0), translation cleared: the view rotation's inverse.
-                m = math::then(m, f.view_rot.transpose());
-            } else if let Some(mut p) = pf.as_ref().and_then(|p| p.matrix) {
-                p.w_axis = glam::Vec4::W;
-                m = math::then(m, p);
+        let (life, back) = (c.life, c.back);
+        let Some(owner) = self.insts.get(c.inst).and_then(|x| x.as_ref()) else { return Vec::new() };
+        let (src, owner_scale) = (owner.src, owner.scale_a);
+        let frame = self.parent_frame(c).and_then(|p| p.matrix);
+        let Some(g) = self.reg.libs[src.0].generator(src.1) else { return Vec::new() };
+        let ops: Vec<u8> = g.streams[2].iter().map(|o| o.code).filter(|c| matches!(c, 0x25 | 0x33 | 0x46)).collect();
+        let clone_life = self.insts[i].as_ref().map_or(0.0, |x| x.life);
+        let mut runs = Vec::with_capacity(ops.len());
+        for code in ops {
+            if code == 0x25 {
+                runs.push((None, life != 0.0));
+                continue;
             }
-            m.w_axis = b.world.extend(1.0);
-            x.matrix = Some(m);
-            x.scale_a = pf.as_ref().map_or(Vec3::ONE, |p| p.scale_a) * b.scale;
-            // Run only while the element's life or the clone's (+0xd0) is not 0: a held element stops it.
-            return life != 0.0 || x.life != 0.0;
+            // Placement needs the element's read-back position, rotation and scale.
+            let Some(b) = back else { continue };
+            let m = clone_follow(code == 0x46, b.rot, b.world, frame, f.view);
+            runs.push((Some((m, owner_scale * b.scale)), life != 0.0 || clone_life != 0.0));
         }
-        has(&self.reg, 0x25) && life != 0.0
+        runs
     }
 
     /// FUN_10048740 for one instance.
@@ -2587,12 +2686,14 @@ impl Effects {
         for ch in s.children {
             match ch {
                 emit::Child::Clone { src, op } => {
-                    // Ops 0x53 / 0x6a: the clone's matrix is the element's rotation (through the emitter's
-                    // rotation, and the camera's for 0x6a) at the element's world position, its scales the
-                    // element's; 0x44 leaves the clone's placement.
-                    let (emitter, size, actors) = self.insts[inst]
-                        .as_ref()
-                        .map_or((None, Vec3::ONE, [sched::Who::None; 2]), |x| (x.matrix, x.scale_b, x.actors));
+                    // Ops 0x53 / 0x6a (FUN_1004e8d0 0x1004eef5): the clone's matrix is the element's rotation
+                    // through its frame's rotation (FUN_100473f0: the borrowed frame, else the emitter's attach
+                    // matrix) and the camera's c10 for 0x6a, at the element's world position; +0x78 the element's
+                    // scale, +0x84 its frame's scale B (FUN_10047490). 0x44 leaves the clone's placement.
+                    let pf = self.elems[e as usize].as_ref().and_then(|c| self.parent_frame(c));
+                    let actors = self.insts[inst].as_ref().map_or([sched::Who::None; 2], |x| x.actors);
+                    let emitter = pf.as_ref().and_then(|p| p.matrix);
+                    let size = pf.as_ref().map_or(Vec3::ONE, |p| p.scale_b);
                     // 0x1004ee4a: +0x64 (the damage number) only from a parent that is a clone itself.
                     let dam = self.insts[inst].as_ref().filter(|x| x.clone).and_then(|x| x.dam.clone());
                     if let Some(ci) = self.start(src, Owner::Element(e as usize)) {
@@ -2625,6 +2726,13 @@ impl Effects {
                         }
                         if let Some(c) = self.elems[e as usize].as_mut() {
                             c.child = Some(ci);
+                        }
+                        // Its slot now, before it runs: a clone it emits at once reads this frame through it
+                        // (FUN_100473f0 reads the generator's +0xa4 directly in retail).
+                        if let Some(x) = self.insts[ci].as_ref() {
+                            let (m, a, b, wgt, ss, ms) =
+                                (x.matrix, x.scale_a, x.scale_b, x.weather, x.size_scaled, x.mslot);
+                            self.put_slot(ms, m, a, b, wgt, ss);
                         }
                         self.update_instance(ci, f, acts);
                     }
@@ -3406,27 +3514,27 @@ fn roofed(g: &crate::dat::generator::Generator) -> bool {
 }
 
 /// FUN_10052eb0 / FUN_1003afd0 for the modes the zone uses; actor modes come with the battle triggers.
-fn attach(inst: &mut Instance, f: &Frame, voyage: Mat4) {
+fn attach(inst: &mut Instance, f: &Frame, voyage: Mat4, sky: crate::dat::weather::Sky) {
     match inst.mode {
         // FUN_10052eb0 returns at once for mode 0: the matrix stays (an element sub-clone's, set at its spawn).
         0 => {}
-        // Sun / moon (FUN_10180700): a = day fraction x 2pi; moon dir (sin a, cos a, 0), the sun opposite;
-        // placed 1000 / 900 units from the eye against the direction *(inf: the rotation of DAT_105ec978 is
-        // left out)*; FUN_1003be10 0xe / 0xf turn that point by the voyage matrix's rotation, eye included.
-        0xe | 0xf => inst.matrix = Some(Mat4::from_translation(sky_point(inst.mode == 0xe, f.dayfrac, f.eye, voyage))),
+        // Sun / moon: the zone object's +0xb4 / +0xd4 (FUN_1003be10 0xe / 0xf through FUN_10186e90 /
+        // FUN_10186eb0), which FUN_10187720 sets each frame from the light's own directions: the fixed sky time
+        // when the zone has one, and the zone's tilt. FUN_1003be10 turns the point by the voyage matrix's
+        // rotation, eye included *(inf: the rotation of DAT_105ec978 is left out)*.
+        0xe | 0xf => {
+            let minute = sky.minute(f.dayfrac * 1440.0);
+            inst.matrix = Some(Mat4::from_translation(sky_point(inst.mode == 0xe, minute, sky.tilt, f.eye, voyage)));
+        }
         _ => {}
     }
 }
 
-/// The sun's (or the moon's) place: 1000 (900) units from the eye against its direction, turned by V's rotation.
-fn sky_point(sun: bool, dayfrac: f32, eye: Vec3, voyage: Mat4) -> Vec3 {
-    use std::f32::consts::PI;
-    let a = dayfrac * 2.0 * PI;
-    let (dir, d) = if sun {
-        (Vec3::new((a + PI).sin(), (a + PI).cos(), 0.0), 1000.0)
-    } else {
-        (Vec3::new(a.sin(), a.cos(), 0.0), 900.0)
-    };
+/// The sun's (or the moon's) place: 1000 (900) units from the eye against its direction (FUN_10187720, 0x10329cd8 /
+/// 0x1032a3d8), turned by V's rotation.
+fn sky_point(sun: bool, minute: f32, tilt: i16, eye: Vec3, voyage: Mat4) -> Vec3 {
+    let (s, m) = crate::dat::weather::sun_moon_tilted(minute, tilt);
+    let (dir, d) = if sun { (s, 1000.0) } else { (m, 900.0) };
     voyage.transform_vector3(eye - dir * d)
 }
 
@@ -3445,6 +3553,35 @@ mod tests {
         let mut sorted = walk;
         sorted.sort_by_key(|&(b, m, st, se)| std::cmp::Reverse(run_key(b, m, st, se)));
         assert_eq!(sorted, walk);
+    }
+
+    /// Op 0x46: the clone's axes come out as the view's (it faces the camera), at the element's world position.
+    #[test]
+    fn clone_follow_faces_camera() {
+        let view = Mat4::from_rotation_x(0.4)
+            * Mat4::from_rotation_y(-1.1)
+            * Mat4::from_translation(Vec3::new(4.0, -3.0, 9.0));
+        let world = Vec3::new(1.0, 2.0, 3.0);
+        let m = clone_follow(true, Vec3::ZERO, world, Some(Mat4::from_rotation_y(1.0)), view);
+        for v in [Vec3::X, Vec3::Y, Vec3::Z] {
+            assert!(view.transform_vector3(m.transform_vector3(v)).abs_diff_eq(v, 1e-5));
+        }
+        assert_eq!(m.w_axis.truncate(), world);
+    }
+
+    /// Op 0x33: Euler(rotation) then the frame's rotation; the frame's translation is dropped.
+    #[test]
+    fn clone_follow_frame_rotation() {
+        let frame =
+            Mat4::from_translation(Vec3::new(50.0, 0.0, 0.0)) * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let rot = Vec3::new(0.0, 0.0, 0.3);
+        let m = clone_follow(false, rot, Vec3::ONE, Some(frame), Mat4::IDENTITY);
+        let want = Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2) * math::euler(rot);
+        assert!(m.transform_vector3(Vec3::X).abs_diff_eq(want.transform_vector3(Vec3::X), 1e-5));
+        assert_eq!(m.w_axis.truncate(), Vec3::ONE);
+        // No frame matrix: the element's rotation alone.
+        let m = clone_follow(false, rot, Vec3::ONE, None, Mat4::IDENTITY);
+        assert!(m.transform_vector3(Vec3::X).abs_diff_eq(math::euler(rot).transform_vector3(Vec3::X), 1e-5));
     }
 
     /// The ordering table (FUN_100553c0): farther first, equal clamped keys as inserted (after-images, then the

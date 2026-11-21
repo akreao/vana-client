@@ -1,5 +1,5 @@
 name = "Bag Manager"
-version = "1.0.2"
+version = "1.0.4"
 description = "Moves items between your bags by command: fetch and stow by name, gather the gear your Gearshift file names, tidy the rest away (the organizer and porter add-ons)."
 permissions = ["actions"]
 

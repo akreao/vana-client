@@ -249,10 +249,22 @@ pub struct Config {
     pub shadow_map: u32,
     /// Ambient occlusion on the scenery (render/ssao.rs). Not a retail option.
     pub ssao: bool,
+    /// Reflections on water (render/reflect.rs). Not a retail option.
+    pub reflections: bool,
+    /// With `reflections`, polished floors reflect too (render/reflect.rs). Not a retail option.
+    pub reflect_floors: bool,
+    /// Surface Detail (render zone.wgsl `detail_normal`): relief from each scenery texture's own shading on the sun's
+    /// light, 0 off, 1 subtle, 2 strong. Not a retail option.
+    pub surface_detail: u32,
     /// The Game Master window (ours, client/gm.rs): its request (c2s 0x1F0) goes out at a zone-in only while this is
     /// on and only to a private server. No Settings row: only a server with its GM extension can use it, so it is set
     /// in config.json by hand.
     pub gm_window: bool,
+    /// Packet capture (ours, net/capture.rs): the map server's traffic each way to `<data dir>/captures`. No Settings
+    /// row; set in config.json by hand, or run with VANA_CAPTURE=1.
+    pub packet_capture: bool,
+    /// Developer tools (ours): the Packets window (/packets, modern UI). No Settings row; set in config.json by hand.
+    pub dev_tools: bool,
     /// The client language PlayOnline would hand the game (retail DAT_10457bd8 +8, dat::lang): "ja", "en", "de" or
     /// "fr". Only the auto-translate dictionary (its file, word keys and compares) and German's quotation marks follow
     /// it so far; every other text of the client stays English. No Settings row; set in config.json by hand.
@@ -338,8 +350,11 @@ pub struct Config {
     pub modern_recent: std::collections::BTreeMap<String, Vec<String>>,
     /// The modern UI's mode presets (client/modern/modes.rs).
     pub modern_modes: ModernModes,
-    /// Favourites by character, in the strip's order (client/favs.rs), and whether the strip shows (/favs).
+    /// Favourites by character, in the strip's order (client/favs.rs), and whether the strip shows (/favs). This is
+    /// the active list; modern_favourite_loadouts keeps each main/sub job combination's saved list.
     pub modern_favourites: std::collections::BTreeMap<String, Vec<String>>,
+    /// Favourites by character, then by "main/sub" job ids (client/favs.rs), so a job change restores that job's list.
+    pub modern_favourite_loadouts: std::collections::BTreeMap<String, std::collections::BTreeMap<String, Vec<String>>>,
     pub modern_fav_strip: bool,
     /// How fast a mouse drag turns the camera, in % of the old fixed speed (ours; the controller is not touched).
     pub mouse_camera_speed: u32,
@@ -604,6 +619,8 @@ impl Default for Config {
             party_tp: true,
             window_opacity: Default::default(),
             gm_window: false,
+            packet_capture: false,
+            dev_tools: false,
             language: "en".into(),
             notes_seen: env!("CARGO_PKG_VERSION").into(),
             lamp_lights: true,
@@ -611,6 +628,9 @@ impl Default for Config {
             actor_shadows: 0,
             shadow_map: 2048,
             ssao: false,
+            reflections: false,
+            reflect_floors: false,
+            surface_detail: 0,
             timers_dock: 0,
             timers_out: true,
             timers_folded: 0,
@@ -639,6 +659,7 @@ impl Default for Config {
             modern_recent: Default::default(),
             modern_modes: Default::default(),
             modern_favourites: Default::default(),
+            modern_favourite_loadouts: Default::default(),
             modern_fav_strip: true,
             mouse_camera_speed: 100,
             gamepad: true,
@@ -1093,6 +1114,16 @@ mod tests {
         c.remember_login();
         let out = written(&c);
         assert!(kept(&serde_json::from_str(text).unwrap(), &out), "{out}");
+    }
+
+    #[test]
+    fn favourite_loadouts_round_trip() {
+        let mut c = Config::default();
+        c.modern_favourite_loadouts
+            .insert("Steven".into(), [("1/3".to_string(), vec!["m:1".to_string()])].into_iter().collect());
+        let out = written(&c);
+        let back: Config = serde_json::from_value(out).unwrap();
+        assert_eq!(back.modern_favourite_loadouts, c.modern_favourite_loadouts);
     }
 
     /// The real config (when there is one) loses nothing through a load and a save (read only).

@@ -469,8 +469,8 @@ fn exp_bar(p: &Panels, id: &str, r: Rect, e: &ExpView) {
         return;
     };
     let a = p.vis(id);
-    // The frame's line is its top 3 points.
-    let mid = r.min.y + EXP_CAP + 1.5;
+    // The frame's line is its top 3 points (the panel's rect is the frame's; the cap strip is over it).
+    let mid = r.min.y + 1.5;
     let bar = Rect::from_min_max(pos2(r.min.x + 30.0, mid - EXP_H / 2.0), pos2(r.max.x - 30.0, mid + EXP_H / 2.0));
     let painter = p.over(id);
     let k = bar.height() / empty.size.y;
@@ -1155,11 +1155,8 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         .collect();
     let mut picked =
         party_panel(p, "party", title, &party, &pets, small, super::super::resttick::shown(w), exp.as_ref());
-    // The frame's top, under the experience bar's strip.
-    let frame = p
-        .this
-        .get("party")
-        .map(|r| Rect::from_min_max(pos2(r.min.x, r.min.y + if exp.is_some() { EXP_CAP } else { 0.0 }), r.max));
+    // The frame's top (the panel's rect is the frame's; the experience bar straddles its line).
+    let frame = p.this.get("party").copied();
     // FUN_102041d0: while the pool holds items, retail's chest (fontshp 0x7a) on the party window's top edge near its
     // left end.
     if super::super::treasure::count(w) > 0

@@ -1,5 +1,6 @@
-<!-- dll-build: 30261102_0 -->
 ## Zone 0x11e: the battlefield sidebar and map overlay (2026-11-17)
+
+<!-- dll-build: 30261102_0 -->
 
 Follow-up to "Zone-in: the handler walk's c2s 0x0DB, 0x112 and 0x05A; s2c 0x072": the readers of s2c 0x072's two
 blocks and the c2s 0x112 kind 2 send. All of them are gated to zone 0x11e, which has no area name in this client.

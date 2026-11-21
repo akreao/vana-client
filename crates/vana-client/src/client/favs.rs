@@ -1,7 +1,8 @@
 //! Favourites (not retail; the modern UI's plan, docs/modern-ui.md "Favourites"): spells, abilities and items starred
-//! in their lists (a click on a row's star, or Ctrl+F on the cursor's row or the search's hit), kept per character in
-//! config `modern_favourites` with the list search's keys (listsearch::key_of: "m:" spell, "a:" ability, "i:" item).
-//! Favourites rank first in the list search, and the modern layer's favourites strip runs them as a macro line would
+//! in their lists (a click on a row's star, or Ctrl+F on the cursor's row or the search's hit), kept per character and
+//! main/sub job in config `modern_favourites` / `modern_favourite_loadouts` with the list search's keys (listsearch::key_of:
+//! "m:" spell, "a:" ability, "i:" item). Favourites rank first in the list search, and the modern layer's favourites
+//! strip runs them as a macro line would
 //! (/ma, /ja, /ws, /pet, /item), so every check and the target prompt stay retail's.
 
 use super::World;
@@ -187,9 +188,89 @@ pub fn command(w: &mut World, arg: Option<&str>) {
     w.fav_save = true;
 }
 
+/// The saved-favourites key for a main/sub job pair ("main/sub"; sub 0 is a main job alone).
+pub(super) fn job_key(main: u8, sub: u8) -> Option<String> {
+    (main != 0).then(|| format!("{main}/{sub}"))
+}
+
+fn spells_ready(w: &World) -> bool {
+    w.actions.is_some() && w.stats.is_some() && !w.spells_known.is_empty()
+}
+
+fn commands_ready(w: &World) -> bool {
+    w.commands_known.len() >= 0xe0 && w.fav_commands_fresh
+}
+
+fn known_ready(w: &World) -> bool {
+    spells_ready(w) && commands_ready(w)
+}
+
+fn ability_known(w: &World, id: u16) -> bool {
+    if !(0x200..0x400).contains(&id) || !commands_ready(w) {
+        return true;
+    }
+    let bit = (id - 0x200) as usize;
+    w.commands_known.get(64 + bit / 8).is_some_and(|b| b & (1 << (bit % 8)) != 0)
+}
+
+/// Whether a favourite still fits the current jobs: items always do; spells and job abilities only when learned.
+fn available(w: &World, f: Fav) -> bool {
+    match f {
+        Fav::Item(_) => true,
+        Fav::Ability(id) => ability_known(w, id),
+        Fav::Spell(id) => {
+            let (Some(acts), Some(st)) = (w.actions.as_ref(), w.stats.as_ref()) else { return true };
+            w.spells_known.is_empty() || (super::textcmd::spell_learned(w, id) && acts.can_cast(id, st.main, st.sub, 0))
+        }
+    }
+}
+
+/// Drop favourites the current jobs can't use, without borrowing `World` twice.
+fn prune(w: &mut World) -> bool {
+    let mut favourites = std::mem::take(&mut w.favourites);
+    let before = favourites.len();
+    favourites.retain(|k| Fav::parse(k).is_some_and(|f| available(w, f)));
+    w.favourites = favourites;
+    w.favourites.len() != before
+}
+
+/// Switch the active favourites to the current main/sub job's saved loadout, seeding a new one from what still fits.
+pub(super) fn sync_jobs(w: &mut World) {
+    let Some(key) = w.stats.as_ref().and_then(|s| job_key(s.main.0, s.sub.0)) else { return };
+    if w.fav_loadout.as_deref() == Some(key.as_str()) {
+        return;
+    }
+    if let Some(old) = w.fav_loadout.replace(key.clone()) {
+        w.fav_loadouts.insert(old, w.favourites.clone());
+    }
+    if let Some(saved) = w.fav_loadouts.get(&key) {
+        w.favourites = saved.clone();
+        w.fav_provisional = false;
+    } else {
+        // The command bits may still be the old job's; wait for the next 0x0AC before pruning abilities.
+        w.fav_commands_fresh = false;
+        prune(w);
+        w.fav_provisional = true;
+    }
+    w.fav_save = true;
+}
+
+/// A seeded loadout is provisional until the learned bits and the spell job data have arrived; drop what they rule out.
+pub(super) fn refresh(w: &mut World) {
+    if !w.fav_provisional {
+        return;
+    }
+    if prune(w) {
+        w.fav_save = true;
+    }
+    if known_ready(w) {
+        w.fav_provisional = false;
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Fav, tag};
+    use super::{Fav, job_key, tag};
 
     #[test]
     fn keys() {
@@ -198,6 +279,13 @@ mod tests {
         }
         assert_eq!(Fav::parse("q:1:2"), None);
         assert_eq!(Fav::parse("m:x"), None);
+    }
+
+    #[test]
+    fn job_keys() {
+        assert_eq!(job_key(1, 0).as_deref(), Some("1/0"));
+        assert_eq!(job_key(1, 3).as_deref(), Some("1/3"));
+        assert_eq!(job_key(0, 1), None);
     }
 
     #[test]

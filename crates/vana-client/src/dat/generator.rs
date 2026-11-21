@@ -372,10 +372,13 @@ impl D3m {
         if d.len() < 8 {
             bail!("d3m: {} bytes", d.len());
         }
-        let format = d[0] & 0xf;
+        let mut format = d[0] & 0xf;
         let (n, m, tris) = (d[4] as usize, d[5] as usize, u16::from_le_bytes([d[6], d[7]]) as usize);
         let counts: Vec<u16> =
             (0..n).map(|k| d.get(8 + 2 * k..10 + 2 * k).map_or(0, |b| u16::from_le_bytes([b[0], b[1]]))).collect();
+        if (format == 5 || format == 6) && Self::probe_fails(d, n, m, tris, &counts) {
+            format = 7;
+        }
         let table = if (5..=7).contains(&format) {
             if format == 7 && n == 0 {
                 8
@@ -412,6 +415,30 @@ impl D3m {
             .collect();
         let radius = (u16::from_le_bytes([d[0], d[1]]) >> 4) as f32;
         Ok(Self { format, textures, per_texture: counts, untextured_tail: m != 0, vertices, radius })
+    }
+
+    /// The layout probe FUN_1003fee0 (first use, format 5 / 6): with no textures, the first three vertices at the
+    /// format-5/6 offset must have |normal| in [0.1, 2.0] (D3DX length; a NaN length passes, as the x87 compares do)
+    /// and a finite position and uv (FUN_1006ca20: _fpclass of the float widened to double, so only NaN and infinity
+    /// fail); with textures, the runs' triangle counts must not sum past 3N. A failure makes it format 7, whose
+    /// vertices start right after the header when there are no textures (FUN_1003fcf0). A vertex past the end of the
+    /// data fails *(ours: retail reads whatever follows)*.
+    fn probe_fails(d: &[u8], n: usize, m: usize, tris: usize, counts: &[u16]) -> bool {
+        if n != 0 {
+            return counts.iter().map(|&c| c as usize).sum::<usize>() > 3 * tris;
+        }
+        let first = if m & 3 != 0 { 8 + (m & !3) * 2 + 6 } else { 8 + m * 2 };
+        let f = |o: usize| d.get(o..o + 4).map(|b| f32::from_le_bytes(b.try_into().unwrap()));
+        (0..3).any(|k| {
+            let o = first + 36 * k;
+            let (Some(x), Some(y), Some(z), Some(nx), Some(ny), Some(nz), Some(u), Some(v)) =
+                (f(o), f(o + 4), f(o + 8), f(o + 12), f(o + 16), f(o + 20), f(o + 28), f(o + 32))
+            else {
+                return true;
+            };
+            let len = (nx * nx + ny * ny + nz * nz).sqrt();
+            len > 2.0 || len < 0.1 || ![x, y, z, u, v].iter().all(|c| c.is_finite())
+        })
     }
 }
 
@@ -467,6 +494,245 @@ mod tests {
         }
     }
 
+    /// FUN_1003fee0 on the two meshes it changes (d3m_probe_census): DAT 148 `2cor` (vertex 1's normal is 13.55
+    /// long) and DAT 170 `ike2` (vertex 0's is 0.099996) are format 6 by their header and read as format 7, six bytes
+    /// early, as retail does; NaN normals (DAT 3559 `md`) pass (needs the game's files).
+    #[test]
+    fn d3m_format7_probe() {
+        let cases: [(u32, &str, u8); 3] = [(148, "2cor", 7), (170, "ike2", 7), (3559, "md  ", 6)];
+        for (id, name, want) in cases {
+            let Some(file) = read(id) else { return };
+            let tree = Tree::build(&file).unwrap();
+            let i = tree.of_kind(kind::D3M).find(|&i| tree.nodes[i].name == fourcc(name)).unwrap();
+            let d = &file[tree.nodes[i].data.clone()];
+            assert_eq!((d[0] & 0xf, D3m::parse(d).unwrap().format), (6, want), "DAT {id} {name}");
+        }
+    }
+
+    /// FUN_1003fee0 census over every DAT (by hand: `cargo test --release d3m_probe_census -- --ignored
+    /// --nocapture`): the format-5/6 meshes the probe turns into format 7. 2 of 74,033 in this install.
+    #[test]
+    #[ignore]
+    fn d3m_probe_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let (mut total, mut switched) = (0, 0);
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            for i in tree.of_kind(kind::D3M) {
+                let d = &file[tree.nodes[i].data.clone()];
+                if d.len() < 8 || !matches!(d[0] & 0xf, 5 | 6) {
+                    continue;
+                }
+                total += 1;
+                if D3m::parse(d).is_ok_and(|m| m.format == 7) {
+                    switched += 1;
+                    let name = String::from_utf8_lossy(&tree.nodes[i].name).to_string();
+                    println!("DAT {id} {name:?} A {} B {} N {}", d[4], d[5], u16::from_le_bytes([d[6], d[7]]));
+                }
+            }
+        }
+        println!("{switched} of {total} format-5/6 meshes switch to format 7");
+    }
+
+    /// Attach census for gaps item 129 over every DAT (by hand: `cargo test --release attach_spec_census -- --ignored
+    /// --nocapture`): generators by attach mode, the linked-target modes 0x16..0x1b, op 0x7b's offsets with their
+    /// modes and points, the spin ops 0x0e..0x10, the camera modes 7 / 8 and point 0x33.
+    #[test]
+    #[ignore]
+    fn attach_spec_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let mut modes: std::collections::BTreeMap<u8, usize> = Default::default();
+        let mut linked: std::collections::BTreeMap<u8, std::collections::BTreeSet<u32>> = Default::default();
+        let mut spins: std::collections::BTreeMap<u8, usize> = Default::default();
+        let mut spin_files = std::collections::BTreeSet::new();
+        let (mut offs, mut unused, mut special) = (Vec::new(), 0, Vec::new());
+        let (mut eye, mut eye_files) = (0, std::collections::BTreeSet::new());
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            for node in tree.of_kind(kind::GENERATOR).collect::<Vec<_>>() {
+                let Ok(g) = Generator::parse(&tree, node, &file) else { continue };
+                let mode = g.attach_mode();
+                *modes.entry(mode).or_default() += 1;
+                let w = g.attach;
+                let (pc, pt) = ((((w >> 18) & 1) << 6) | ((w >> 4) & 0x3f), (w >> 10) & 0x3f);
+                if (0x16..=0x1b).contains(&mode) {
+                    linked.entry(mode).or_default().insert(id);
+                }
+                if g.streams[stream::GENERATOR].iter().any(|o| matches!(o.code, 0x0e..=0x10)) {
+                    *spins.entry(mode).or_default() += 1;
+                    spin_files.insert(id);
+                }
+                let uses = |k: u32| match mode {
+                    1 | 5 | 7 | 9 | 0xb | 0x18 => pc == k,
+                    2 | 4 | 8 | 0xa | 0xc | 0x17 => pt == k,
+                    0 | 0xe | 0xf | 0x13..=0x15 => false,
+                    _ => pc == k || pt == k,
+                };
+                if uses(0x33) {
+                    eye += 1;
+                    eye_files.insert(id);
+                }
+                let Some(o) = g.streams[stream::EMISSION].iter().find(|o| o.code == 0x7b) else { continue };
+                if !g.offsets {
+                    continue;
+                }
+                let two = matches!(mode, 3 | 6 | 0xd | 0x10 | 0x11 | 0x12 | 0x16..=0x1b);
+                if !two {
+                    unused += 1;
+                    continue;
+                }
+                let (a, b) = ([o.f32(1), o.f32(2), o.f32(3)], [o.f32(4), o.f32(5), o.f32(6)]);
+                let line = format!("DAT {id} {} mode {mode:#x} pc {pc:#x} pt {pt:#x} A {a:?} B {b:?}", trim(g.name));
+                if (0x30..=0x35).contains(&pc) && a != [0.0; 3] || (0x30..=0x35).contains(&pt) && b != [0.0; 3] {
+                    special.push(line.clone());
+                }
+                offs.push(line);
+            }
+        }
+        println!("generators by attach mode: {modes:x?}");
+        println!("modes 0x16..0x1b: {linked:?}");
+        println!("spin ops 0x0e..0x10 by mode: {spins:x?} in {} files", spin_files.len());
+        println!("point 0x33 (nearest the eye): {eye} generators in {} files", eye_files.len());
+        println!("op 0x7b offsets in a two-point mode: {}; set in another mode (never read): {unused}", offs.len());
+        for l in &offs {
+            println!("  {l}");
+        }
+        println!("offsets on a special point 0x30..0x35: {}", special.len());
+        for l in &special {
+            println!("  {l}");
+        }
+    }
+
+    /// View-matrix census for gaps item 133 over every DAT (by hand: `cargo test --release view_sel_census --
+    /// --ignored --nocapture`): the elements whose op-1 flags 0x2000 / 0x4000 pick the camera's d10 / d50 / c10
+    /// (FUN_10045c50), by selector, element kind and the flags that change what the matrix does (1 billboard, 4
+    /// camera-relative, 8 no matrix, 0x1c0 orientation, 0x20000 parent offset).
+    #[test]
+    #[ignore]
+    fn view_sel_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let mut rows: std::collections::BTreeMap<
+            (u32, u8, u32),
+            (usize, std::collections::BTreeSet<u32>, Vec<String>),
+        > = Default::default();
+        let mut all = 0usize;
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            for node in tree.of_kind(kind::GENERATOR).collect::<Vec<_>>() {
+                let Ok(g) = Generator::parse(&tree, node, &file) else { continue };
+                let Some(t) = g.template() else { continue };
+                all += 1;
+                let (k, flags) = (t.byte(0x21), t.u32(1));
+                let sel = flags >> 13 & 3;
+                if sel == 0 {
+                    continue;
+                }
+                let e = rows.entry((sel, k, flags & 0x201cd)).or_default();
+                e.0 += 1;
+                e.1.insert(id);
+                if e.2.len() < 5 {
+                    e.2.push(format!("{id} {} mode {:#x}", trim(g.name), g.attach_mode()));
+                }
+            }
+        }
+        println!("{all} generators with a template");
+        for ((sel, k, f), (n, files, eg)) in &rows {
+            println!("sel {sel} kind {k:#04x} flags {f:#07x}: {n} in {} files, e.g. {}", files.len(), eg.join(", "));
+        }
+    }
+
+    /// Ground projection census for gaps item 126 over every DAT (by hand: `cargo test --release ground_proj_census
+    /// -- --ignored --nocapture`): the D3m + 0x200000 generators, their op 0x43 blends, the lit ones (flag 16), the
+    /// MMB byte (@0x28 -> +0x179), where each mesh name resolves in its own file, and the meshes named 'hi17' / 'asi1'
+    /// (the two names that resolve outside their generators' files).
+    #[test]
+    #[ignore]
+    fn ground_proj_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let (mut total, mut files, mut d3a) = (0, std::collections::BTreeSet::new(), 0);
+        let mut blends: std::collections::BTreeMap<String, usize> = Default::default();
+        let mut found: std::collections::BTreeMap<&str, usize> = Default::default();
+        let mut outside: std::collections::BTreeMap<String, Vec<u32>> = Default::default();
+        let mut hi17: Vec<String> = Vec::new();
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            for (i, n) in tree.nodes.iter().enumerate() {
+                if n.name == fourcc("hi17") && matches!(n.kind, kind::D3M | kind::MMB) && n.data.len() > 64
+                    || n.name == fourcc("asi1") && matches!(n.kind, kind::D3M | kind::MMB)
+                {
+                    let d = &file[n.data.clone()];
+                    hi17.push(format!(
+                        "DAT {id} {} kind {:#x} {} bytes, path {:?}",
+                        n.name(),
+                        n.kind,
+                        d.len(),
+                        tree.path(i).iter().map(|p| trim(*p)).collect::<Vec<_>>()
+                    ));
+                }
+            }
+            for node in tree.of_kind(kind::GENERATOR).collect::<Vec<_>>() {
+                let Ok(g) = Generator::parse(&tree, node, &file) else { continue };
+                let Some(t) = g.template() else { continue };
+                let (k, flags) = (t.byte(0x21), t.u32(1));
+                if flags & 0x20_0000 == 0 {
+                    continue;
+                }
+                if matches!(k, 0x0e | 0x21) {
+                    d3a += 1;
+                    println!("D3a + 0x200000: DAT {id} {}", trim(g.name));
+                }
+                if !matches!(k, 0x0b | 0x0c | 0x1f) {
+                    continue;
+                }
+                total += 1;
+                files.insert(id);
+                let name = fourcc_u32(t.u32(3));
+                let ops43: Vec<u32> =
+                    g.streams[stream::EMISSION].iter().filter(|o| o.code == 0x43).map(|o| o.u32(1)).collect();
+                *blends.entry(format!("{ops43:x?}")).or_default() += 1;
+                let (d3m, mmb) = (tree.find(node, kind::D3M, name), tree.find(node, kind::MMB, name));
+                let at = match (d3m, mmb) {
+                    (Some(_), Some(_)) => "both",
+                    (Some(_), None) => "d3m",
+                    (None, Some(_)) => "mmb",
+                    (None, None) => "outside",
+                };
+                *found.entry(at).or_default() += 1;
+                if d3m.is_none() {
+                    outside.entry(format!("{} ({at})", trim(name))).or_default().push(id);
+                }
+                let has_normals = d3m.map(|m| file[tree.nodes[m].data.clone()][0] & 0xf);
+                if flags & 0x1_0000 != 0 || t.byte(0x28) != 0 || flags & 0x1000 != 0 || ops43.len() != 1 {
+                    println!(
+                        "DAT {id} {} mesh {} ({at}, format {has_normals:?}): flags {flags:#x}, byte 0x28 {}, op 0x43 {ops43:x?}, gen flags {:#x}, attach {}",
+                        trim(g.name),
+                        trim(name),
+                        t.byte(0x28),
+                        g.flags,
+                        g.attach_mode(),
+                    );
+                }
+            }
+        }
+        println!("{total} D3m ground projections in {} files; {d3a} D3a", files.len());
+        println!("op 0x43: {blends:?}");
+        println!("mesh found in the file: {found:?}");
+        for (n, f) in &outside {
+            println!("  {n}: DATs {f:?}");
+        }
+        println!("'hi17' / 'asi1' meshes (MMB stubs of 64 bytes left out):");
+        for h in &hi17 {
+            println!("  {h}");
+        }
+    }
+
     /// Zone 232 (DAT 332) effe/sea sea1: world, auto-start, one persistent element; op 1 names 'sea1',
     /// which is no D3m but the MMB in the same folder; op 0x63 binds keyframe 'seen'.
     #[test]
@@ -503,6 +769,143 @@ mod tests {
         assert_eq!(k.keys.len(), 6);
         assert!((k.linear(0.5) - 1.172).abs() < 1e-3 && (k.linear(0.0) - 0.703).abs() < 1e-3);
         assert!((k.linear(0.275) - (0.703 + (1.172 - 0.703) * 0.5)).abs() < 1e-3);
+    }
+
+    /// Bone-frame generators (attach mode 9 / 0xa) with op 0x11 or the spin ops 0x0e..0x10 in their update stream,
+    /// and whether their file's schedulers make dolls (ops 0x15 / 0x16 / 0x22 / 0x23), the only way such a generator
+    /// can end up on a doll (by hand: `cargo test --release mode9_doll_census -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn mode9_doll_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let (mut gens, mut follow, mut spin, mut files) = (0, 0, 0, std::collections::BTreeSet::new());
+        let mut doll_files: Vec<String> = Vec::new();
+        let mut words: std::collections::BTreeMap<(u32, u32), usize> = Default::default();
+        let mut looping: std::collections::BTreeMap<bool, usize> = Default::default();
+        let mut loop_files = std::collections::BTreeSet::new();
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            let mut hits: Vec<String> = Vec::new();
+            for node in tree.of_kind(kind::GENERATOR).collect::<Vec<_>>() {
+                let Ok(g) = Generator::parse(&tree, node, &file) else { continue };
+                if !matches!(g.attach_mode(), 9 | 0xa) {
+                    continue;
+                }
+                gens += 1;
+                let ops = &g.streams[stream::GENERATOR];
+                let (f, s) = (ops.iter().any(|o| o.code == 0x11), ops.iter().any(|o| matches!(o.code, 0x0e..=0x10)));
+                follow += f as usize;
+                spin += s as usize;
+                for o in ops.iter().filter(|o| o.code == 0x11) {
+                    *words.entry((o.u32(1) & 3, (o.u32(1) >> 2) & 0xff)).or_default() += 1;
+                }
+                if g.flags & 0x1000 != 0 {
+                    *looping.entry(f).or_default() += 1;
+                    if !f {
+                        loop_files.insert(id);
+                    }
+                }
+                if f || s {
+                    files.insert(id);
+                    hits.push(format!(
+                        "{}{}{}",
+                        trim(g.name),
+                        if f { " 0x11" } else { "" },
+                        if s { " spin" } else { "" }
+                    ));
+                }
+            }
+            if hits.is_empty() {
+                continue;
+            }
+            let dolls: Vec<String> = tree
+                .of_kind(kind::SCHEDULER)
+                .filter_map(|n| {
+                    let ops = crate::dat::sched::ops(&file[tree.nodes[n].data.clone()]);
+                    let d: Vec<String> = ops
+                        .iter()
+                        .filter(|o| matches!(o.code, 0x15 | 0x16 | 0x22 | 0x23))
+                        .map(|o| format!("{:#x}", o.code))
+                        .collect();
+                    (!d.is_empty()).then(|| format!("{} {}", trim(tree.nodes[n].name), d.join(" ")))
+                })
+                .collect();
+            if !dolls.is_empty() {
+                doll_files.push(format!(
+                    "DAT {id}: gens [{}], doll schedulers [{}]",
+                    hits.join(", "),
+                    dolls.join(", ")
+                ));
+            }
+        }
+        println!(
+            "{gens} mode 9 / 0xa generators: {follow} with op 0x11, {spin} with a spin op, in {} files",
+            files.len()
+        );
+        println!("op 0x11 words (bits, k) -> generators: {words:?}");
+        println!("looping (0x1000) ones by op 0x11: {looping:?}; without it in DATs {loop_files:?}");
+        println!("{} of those files make dolls:", doll_files.len());
+        for d in &doll_files {
+            println!("  {d}");
+        }
+    }
+
+    /// Generators whose update stream has op 0x64 (the turn about a slot's centre): the emission and update ops with
+    /// their slots, to see which op fills op 0x64's slot (by hand: `cargo test --release update_64_census -- --ignored
+    /// --nocapture`).
+    #[test]
+    #[ignore]
+    fn update_64_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let mut sigs: std::collections::BTreeMap<String, (usize, Vec<String>)> = Default::default();
+        let mut fillers: std::collections::BTreeMap<String, usize> = Default::default();
+        let mut total = 0;
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            for node in tree.of_kind(kind::GENERATOR).collect::<Vec<_>>() {
+                let Ok(g) = Generator::parse(&tree, node, &file) else { continue };
+                let upd = &g.streams[stream::ELEMENT];
+                let Some(o64) = upd.iter().find(|o| o.code == 0x64) else { continue };
+                total += 1;
+                let show =
+                    |ops: &[Op]| ops.iter().map(|o| format!("{:02x}@{}", o.code, o.slot)).collect::<Vec<_>>().join(" ");
+                let same: Vec<String> = g.streams[stream::EMISSION]
+                    .iter()
+                    .filter(|o| o.slot == o64.slot)
+                    .map(|o| format!("{:02x}", o.code))
+                    .collect();
+                let near: Vec<String> = g.streams[stream::EMISSION]
+                    .iter()
+                    .filter(|o| o.slot != 0 && o.slot < o64.slot && o64.slot < o.slot + 8)
+                    .map(|o| format!("{:02x}@{}", o.code, o.slot))
+                    .collect();
+                *fillers.entry(format!("same [{}] below [{}]", same.join(" "), near.join(" "))).or_default() += 1;
+                let sig = format!(
+                    "emit [{}] update [{}] 0x64 slot {} factors {:?}",
+                    show(&g.streams[stream::EMISSION]),
+                    show(upd),
+                    o64.slot,
+                    [o64.f32(1), o64.f32(2), o64.f32(3)]
+                );
+                let e = sigs.entry(sig).or_default();
+                e.0 += 1;
+                if e.1.len() < 4 {
+                    let path: Vec<String> = tree.path(node).into_iter().map(trim).collect();
+                    e.1.push(format!("{id} {}/{}", path.join("/"), trim(g.name)));
+                }
+            }
+        }
+        println!("{total} generators with update op 0x64");
+        for (f, n) in &fillers {
+            println!("emission ops on its slot: {f} x{n}");
+        }
+        for (sig, (n, eg)) in &sigs {
+            println!("x{n} {sig}\n    {}", eg.join(", "));
+        }
     }
 
     /// Prints a file's generators: attach word and mode (by hand: `cargo test --release gen_attach -- --ignored

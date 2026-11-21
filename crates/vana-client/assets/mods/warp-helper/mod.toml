@@ -1,5 +1,5 @@
 name = "Warp Helper"
-version = "1.0.3"
+version = "1.0.4"
 description = "Answers the Home Point, Survival Guide and Waypoint menus by name, and warps home with the Warp spell or a warp item (the warp add-ons)."
 permissions = ["actions"]
 

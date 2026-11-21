@@ -11,5 +11,5 @@ Issue lenonk/vana-client#171. Bindings read from Steven's FFXiMain.dll (30261102
   Key Assignment's k2 row 8, rewritten from config 0x72 (default 0x0c). Compact record 35 = {key 0x0c, rule 7 (any
   modifiers), states 4, bits 2}, and pad bit 2 is 0x18's: on Compact 1 / 2 the main row's '-' fires it too.
 - So on a Full keyboard the bare main-row '-' opens nothing. egui maps both minus keys to Key::Minus; the app notes
-  which one the last press was (window, gamepad menu slot, mods' keys), and test drives count as the
-  numpad's. Ctrl + '-' is taken by egui's zoom before the game sees it (ours, unchanged).
+  which one the last press was (window, gamepad menu slot, mods' keys), and a middle click (`middle_release`) and test
+  drives count as the numpad's. Ctrl + '-' is taken by egui's zoom before the game sees it (ours, unchanged).

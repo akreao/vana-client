@@ -66,6 +66,13 @@ pub fn auto_start(data: &[u8]) -> bool {
     (loops(data) || main.iter().any(|o| o.code == 0x52)) && !main.iter().any(|o| o.code == 0xa2)
 }
 
+/// FUN_100c46b0: started by a furniture actor on itself when its file comes in: marked as self-starting (FUN_10056e50:
+/// an end loop or an op 0x52) and holding the op 0xa2 that keeps the parse from starting it.
+pub fn furniture_start(data: &[u8]) -> bool {
+    let main = ops(data);
+    (loops(data) || main.iter().any(|o| o.code == 0x52)) && main.iter().any(|o| o.code == 0xa2)
+}
+
 /// FUN_10056ae0: max(start + dur) over the main stream, op 0 included (it overwrites the header's length).
 #[cfg(test)]
 pub fn span(data: &[u8]) -> i32 {
@@ -223,5 +230,262 @@ mod tests {
         let mut m = matching(names.iter().map(|s| s.as_str()), "ati?");
         m.sort();
         assert_eq!(m, ["ati0", "ati1", "ati2"]);
+    }
+}
+
+#[cfg(test)]
+mod census {
+    use super::*;
+    use crate::dat::generator::{Tree, kind};
+
+    /// Every self-starting scheduler's first step (the ops FUN_10057e10 runs when FUN_10056b80 steps the new task
+    /// inside the load: each op up to and including the first with a wait, or an op 0x52), split by whether it sits
+    /// under a `weat` folder (by hand: `cargo test --release auto_first_step_census -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn auto_first_step_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let mut seqs: std::collections::BTreeMap<(bool, String), (usize, Vec<String>)> = Default::default();
+        let mut tags: std::collections::BTreeMap<String, usize> = Default::default();
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            for n in tree.of_kind(kind::SCHEDULER).collect::<Vec<_>>() {
+                let data = &file[tree.nodes[n].data.clone()];
+                if !auto_start(data) {
+                    continue;
+                }
+                let path: Vec<String> = tree.path(n).into_iter().map(trim).collect();
+                let weat = path.iter().position(|p| p == "weat");
+                if let Some(w) = weat {
+                    *tags.entry(path.get(w + 1).cloned().unwrap_or_default()).or_default() += 1;
+                }
+                let mut seq = Vec::new();
+                for o in ops(data) {
+                    let name = o.name().unwrap_or("").to_string();
+                    seq.push(match o.code {
+                        0x01 | 0x52 => format!("{:02x}", o.code),
+                        _ => format!("{:02x}:{}", o.code, name.len().min(4).min(usize::from(name.is_ascii()) * 4)),
+                    });
+                    if o.code == 0x52 || o.wait != 0 {
+                        break;
+                    }
+                }
+                let e = seqs.entry((weat.is_some(), seq.join(" "))).or_default();
+                e.0 += 1;
+                if e.1.len() < 6 {
+                    e.1.push(format!("{id} {}/{}", path.join("/"), trim(tree.nodes[n].name)));
+                }
+            }
+        }
+        println!("weat tags: {tags:?}");
+        for ((weat, seq), (count, eg)) in &seqs {
+            println!("{} [{seq}] x{count}: {}", if *weat { "weat" } else { "zone" }, eg.join(", "));
+        }
+    }
+    /// The sub-area files the zones' RID records name ('m' / 'M', FUN_101779b0) and what sits under their `weat`
+    /// folders: tag folders, looping (0x1000) generators, self-starting schedulers, sounds (by hand: `cargo test
+    /// --release sub_area_weat_census -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn sub_area_weat_census() {
+        use crate::dat::generator::Generator;
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let mut subs: std::collections::BTreeMap<u32, Vec<u32>> = Default::default();
+        for zone in (0..300).chain(1000..1300) {
+            let Ok(file) = index.read(crate::dat::zone::file_id(zone)) else { continue };
+            let Ok(list) = crate::dat::chunks(&file) else { continue };
+            for c in list.iter().filter(|c| c.kind == 0x36) {
+                for r in crate::dat::zone::parse_rid(c.data).iter().filter(|r| r.is_sub_area()) {
+                    let e = subs.entry(r.param).or_default();
+                    if !e.contains(&zone) {
+                        e.push(zone);
+                    }
+                }
+            }
+        }
+        println!("{} sub-area ids named", subs.len());
+        let (mut with, mut without, mut missing) = (0, 0, 0);
+        for (id, zones) in &subs {
+            let Ok(file) = index.read(crate::dat::zone::file_id(*id)) else {
+                missing += 1;
+                continue;
+            };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            let weat: Vec<usize> = tree.of_kind(kind::FOLDER).filter(|&n| tree.nodes[n].name == *b"weat").collect();
+            if weat.is_empty() {
+                without += 1;
+                continue;
+            }
+            with += 1;
+            let under = |n: usize| tree.path(n).iter().any(|p| p == b"weat");
+            let mut tags: Vec<String> = tree
+                .of_kind(kind::FOLDER)
+                .filter(|&n| tree.nodes[n].parent.is_some_and(|p| weat.contains(&p)))
+                .map(|n| trim(tree.nodes[n].name))
+                .collect();
+            tags.sort();
+            let gens: Vec<Generator> = tree
+                .of_kind(kind::GENERATOR)
+                .filter(|&n| under(n))
+                .filter_map(|n| Generator::parse(&tree, n, &file).ok())
+                .collect();
+            let looping = gens.iter().filter(|g| g.flags & 0x1000 != 0).count();
+            let scheds: Vec<usize> = tree.of_kind(kind::SCHEDULER).filter(|&n| under(n)).collect();
+            let auto = scheds.iter().filter(|&&n| auto_start(&file[tree.nodes[n].data.clone()])).count();
+            let sounds = tree.of_kind(0x3d).filter(|&n| under(n)).count();
+            let top: Vec<String> = tree
+                .of_kind(kind::FOLDER)
+                .filter(|&n| tree.nodes[n].parent.is_some_and(|p| tree.nodes[p].parent.is_none()))
+                .map(|n| trim(tree.nodes[n].name))
+                .collect();
+            println!(
+                "sub {id} (zones {zones:?}) top {top:?} weat x{}: tags {tags:?}; {} generators ({looping} looping), {} schedulers ({auto} auto), {sounds} sounds",
+                weat.len(),
+                gens.len(),
+                scheds.len()
+            );
+        }
+        println!("{with} with a weat folder, {without} without, {missing} files missing");
+    }
+    /// The schedulers the furniture actor starts on itself (FUN_100c46b0: an end loop or an op 0x52, and an op 0xa2):
+    /// file, path, ops with their waits and names (by hand: `cargo test --release furniture_auto_census -- --ignored
+    /// --nocapture`).
+    #[test]
+    #[ignore]
+    fn furniture_auto_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let (mut n, mut files) = (0, std::collections::BTreeSet::new());
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            for node in tree.of_kind(kind::SCHEDULER).collect::<Vec<_>>() {
+                let data = &file[tree.nodes[node].data.clone()];
+                if !furniture_start(data) {
+                    continue;
+                }
+                n += 1;
+                files.insert(id);
+                let path: Vec<String> = tree.path(node).into_iter().map(trim).collect();
+                let seq: Vec<String> = ops(data)
+                    .iter()
+                    .map(|o| match o.code {
+                        0x52 => {
+                            let u = |k: usize| u32::from_le_bytes(o.raw[k..k + 4].try_into().unwrap());
+                            let hm = |v: u32| format!("{:02}:{:02}", v / 216000, v % 216000 / 3600);
+                            format!(
+                                "52[{}-{} P{}m tol {}m w{}]",
+                                hm(u(8)),
+                                hm(u(0xc)),
+                                u(0x10) / 3600,
+                                u(0x14) / 3600,
+                                o.wait
+                            )
+                        }
+                        0x01 | 0xa2 => format!("{:02x}", o.code),
+                        _ => format!("{:02x}:{} w{}", o.code, o.name().unwrap_or("?"), o.wait),
+                    })
+                    .collect();
+                println!(
+                    "{id} {}/{} loop {}: {}",
+                    path.join("/"),
+                    trim(tree.nodes[node].name),
+                    loops(data),
+                    seq.join(" ")
+                );
+            }
+        }
+        println!("{n} schedulers in {} files: {files:?}", files.len());
+    }
+    /// The zone-lighting scheduler ops across every DAT: 0x82 / 0x83 (the lighting override task, FUN_10057fb0
+    /// 0x10059273 / 0x10059181), 0xc0 (fixed sky time, 0x10058079) and 0xc3 (sun / moon tilt, 0x1005809b), with the
+    /// weather ops 0x7b..0x7d for scale, and a histogram of every op code (by hand: `cargo test --release
+    /// light_op_census -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn light_op_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let mut hist: std::collections::BTreeMap<u8, (usize, std::collections::BTreeSet<u32>)> = Default::default();
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            for node in tree.of_kind(kind::SCHEDULER).collect::<Vec<_>>() {
+                let data = &file[tree.nodes[node].data.clone()];
+                if &tree.nodes[node].name == b"@ini" {
+                    let path: Vec<String> = tree.path(node).into_iter().map(trim).collect();
+                    let seq: Vec<String> = ops(data)
+                        .iter()
+                        .map(|o| {
+                            let hex: Vec<String> =
+                                o.raw[8.min(o.raw.len())..].iter().map(|b| format!("{b:02x}")).collect();
+                            format!("{:02x} w{} {}", o.code, o.wait, hex.join(""))
+                        })
+                        .collect();
+                    println!("@ini {id} {} loop {}: {}", path.join("/"), loops(data), seq.join(" | "));
+                }
+                for o in ops(data) {
+                    let e = hist.entry(o.code).or_default();
+                    e.0 += 1;
+                    e.1.insert(id);
+                    if matches!(o.code, 0x82 | 0x83 | 0xc0 | 0xc3 | 0x7c | 0x7d) {
+                        let path: Vec<String> = tree.path(node).into_iter().map(trim).collect();
+                        let hex: Vec<String> = o.raw.iter().map(|b| format!("{b:02x}")).collect();
+                        println!(
+                            "{id} {}/{} op {:02x}: {}",
+                            path.join("/"),
+                            trim(tree.nodes[node].name),
+                            o.code,
+                            hex.join("")
+                        );
+                    }
+                }
+            }
+        }
+        for (code, (n, files)) in &hist {
+            let eg: Vec<u32> = files.iter().take(8).copied().collect();
+            println!("op {code:02x}: {n} in {} files, e.g. {eg:?}", files.len());
+        }
+    }
+    /// The disengage schedulers the entity state machine starts by name (FUN_1008b460 states 3 / 6 / 0x11: `bntg`,
+    /// `klbt`, `hwat`) and the `waot` it waits on: every file that holds one, by op sequence (by hand: `cargo test
+    /// --release disengage_sched_census -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn disengage_sched_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let mut seqs: std::collections::BTreeMap<(String, String), (usize, Vec<String>)> = Default::default();
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            for node in tree.of_kind(kind::SCHEDULER).collect::<Vec<_>>() {
+                let name = trim(tree.nodes[node].name);
+                if !matches!(name.as_str(), "bntg" | "klbt" | "hwat" | "waot") {
+                    continue;
+                }
+                let data = &file[tree.nodes[node].data.clone()];
+                let seq: Vec<String> = ops(data)
+                    .iter()
+                    .map(|o| {
+                        let hex: Vec<String> = o.raw[6.min(o.raw.len())..].iter().map(|b| format!("{b:02x}")).collect();
+                        format!("{:02x} w{} {}", o.code, o.wait, hex.join(""))
+                    })
+                    .collect();
+                let key = format!("len {} loop {}: {}", length(data), loops(data), seq.join(" | "));
+                let e = seqs.entry((name, key)).or_default();
+                e.0 += 1;
+                if e.1.len() < 8 {
+                    let path: Vec<String> = tree.path(node).into_iter().map(trim).collect();
+                    e.1.push(format!("{id} {}", path.join("/")));
+                }
+            }
+        }
+        for ((name, seq), (count, eg)) in &seqs {
+            println!("{name} x{count} [{seq}]: {}", eg.join(", "));
+        }
     }
 }

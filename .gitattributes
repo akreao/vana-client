@@ -1,3 +1,7 @@
+# Entries are only ever appended, so a local merge can keep both sides.
+# (GitHub's merge button ignores this; new entries go in docs/modlog/ instead.)
+MODLOG.md merge=union
+
 # The standard mods' files are listed in catalogue/mods.json by the SHA-256 and size of their working-tree bytes
 # (standard_mods_listed), and the client downloads the committed bytes from GitHub: checked out as committed (LF),
 # never converted to CRLF (Windows with core.autocrlf), so both describe the same bytes.

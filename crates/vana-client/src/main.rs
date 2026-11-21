@@ -49,6 +49,7 @@ mod net;
 mod render;
 mod secret;
 mod sounddump;
+mod surface;
 mod texpack;
 mod uishot;
 mod voice;
@@ -111,6 +112,28 @@ enum Cmd {
         file: Option<String>,
         #[arg(long)]
         to: Option<PathBuf>,
+    },
+    /// Read a packet capture (config `packet_capture` or VANA_CAPTURE=1 writes them to the data folder's
+    /// captures/): its sub-packets, then a count of each id each way and of the datagram forms.
+    Capture {
+        file: PathBuf,
+        /// Only these ids, hex (0x08F,0c5).
+        #[arg(long, value_delimiter = ',')]
+        id: Vec<String>,
+        /// Only "in" (server to client) or "out".
+        #[arg(long)]
+        dir: Option<String>,
+        #[arg(long)]
+        zone: Option<u16>,
+        /// Only sub-packets holding these bytes, hex (1e09).
+        #[arg(long)]
+        find: Option<String>,
+        /// Print each sub-packet's bytes.
+        #[arg(long)]
+        hex: bool,
+        /// Also write the kept lines to this file, to share a smaller capture.
+        #[arg(long)]
+        save: Option<PathBuf>,
     },
     /// Trust a server's new TLS certificate: forget what is pinned for HOST (every port, or --port), so the next
     /// connection pins the certificate it is sent. With --fingerprint and --port, pin that key's SHA-256 instead.
@@ -319,6 +342,18 @@ enum Cmd {
         /// Image keys (one per line, first column) whose files are rebuilt even when already built.
         #[arg(long)]
         redo: Option<PathBuf>,
+    },
+    /// Surface Detail's height pack (surface.rs): every zone texture, read through the enabled mods, as a height PNG
+    /// under `out`/surface/<zone>/. Install `out` as a mod.
+    TexHeights {
+        #[arg(long)]
+        out: PathBuf,
+        /// Only these zones (comma separated).
+        #[arg(long, value_delimiter = ',')]
+        zones: Option<Vec<u32>>,
+        /// Rewrite PNGs that already exist (hand edits are kept otherwise).
+        #[arg(long)]
+        redo: bool,
     },
     /// Install a pack archive into `root` as Settings > Mods does, to check a pack before publishing it.
     ModInstall {
@@ -643,6 +678,9 @@ enum Cmd {
         /// Ours: the Mods window (a Look Changer sample on its Commands, a form filled in).
         #[arg(long)]
         mods: bool,
+        /// Ours: the Packets window with sample records.
+        #[arg(long)]
+        packets: bool,
         /// The favourites strip and starred list rows.
         #[arg(long)]
         favs: bool,
@@ -1014,6 +1052,7 @@ fn zone_in(cfg: &config::Config, m: &net::lobby::MapLogin, account: &str, stay: 
     use std::time::Instant;
 
     let codec = net::map::compress::Codec::from_ffximain(&std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir()))?)?;
+    net::capture::set(cfg.packet_capture);
     let addr = std::net::SocketAddr::from((m.map.0, m.map.1));
     let mut map = MapSession::connect(addr, &m.key, codec)?.or_key(m.old_key);
     // The zone server learns of us a moment after the lobby replies, so retry like the client does.
@@ -1297,6 +1336,28 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
+        Cmd::Capture { file, id, dir, zone, find, hex, save } => {
+            use anyhow::Context as _;
+            let ids = id
+                .iter()
+                .map(|s| u16::from_str_radix(s.trim().trim_start_matches("0x"), 16))
+                .collect::<Result<Vec<_>, _>>()
+                .context("--id takes hex ids")?;
+            let dir = match dir.as_deref() {
+                None => None,
+                Some("in") => Some(net::capture::Dir::In),
+                Some("out") => Some(net::capture::Dir::Out),
+                Some(d) => anyhow::bail!("--dir is in or out, not {d}"),
+            };
+            let find = hex::decode(find.unwrap_or_default()).context("--find takes hex bytes")?;
+            let filter = net::capture::Filter { ids, dir, zone, find };
+            let records = net::capture::load(&file)?;
+            print!("{}", net::capture::report(&records, &filter, hex));
+            if let Some(path) = save {
+                net::capture::save(&path, records.iter().filter(|r| filter.keeps(r)))?;
+            }
+            Ok(())
+        }
         Cmd::TrustServer { host, port, fingerprint } => {
             let store = config::known_servers_path();
             for line in net::tls::trust(&store, &host, port, fingerprint.as_deref())? {
@@ -1424,6 +1485,7 @@ fn main() -> Result<()> {
             gm,
             controller,
             mods,
+            packets,
         } => {
             let list = font.is_some();
             client::modern_shot(
@@ -1449,6 +1511,7 @@ fn main() -> Result<()> {
                     gm,
                     controller,
                     mods,
+                    packets,
                 },
             )
         }
@@ -1598,16 +1661,29 @@ fn main() -> Result<()> {
                 scene.bumps = dat::bump::parse(&index.read(dat::bump::file_id(zone)).unwrap_or_default());
                 println!("{} bump maps", scene.bumps.len());
             }
+            // FFXI_SURFACE_DETAIL=1 or 2: Settings' Surface Detail (ours), with the enabled mods' height pack.
+            let detail: u32 = std::env::var("FFXI_SURFACE_DETAIL").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+            if detail > 0 {
+                let names: Vec<String> = scene.textures.iter().map(|t| t.name.clone()).collect();
+                // FFXI_SURFACE_PACK: a pack folder (tex-heights' `out`) tried before the enabled mods.
+                let mut mods: Vec<PathBuf> =
+                    std::env::var_os("FFXI_SURFACE_PACK").map(PathBuf::from).into_iter().collect();
+                mods.extend(config::enabled_mod_dirs());
+                scene.surface = surface::load(zone, &names, &mods);
+                println!("{} surface detail pack textures", scene.surface.len());
+            }
+            let sky = dat::weather::Sky::of_zone_file(&file);
             let lighting = match hour {
                 Some(h) => {
-                    // A scene with no weather data takes retail's default env (as the client).
+                    // The zone's `@ini` may fix the sky time or tilt the sun (Escha, Reisenjima).
+                    let m = sky.minute(h * 60.0);
                     let w = dat::weather::ZoneWeather::parse(&file)
                         .ok()
-                        .filter(|w| w.at(&weather, h * 60.0).is_some())
+                        .filter(|w| w.at(&weather, m).is_some())
                         .unwrap_or_else(dat::weather::ZoneWeather::retail_default);
-                    let env = w.at(&weather, h * 60.0).ok_or_else(|| anyhow::anyhow!("zone {zone} has no env"))?;
-                    println!("weather {weather} at {h:.2} h: {env:?}");
-                    Some(dat::weather::Lighting::from_env(&env, h * 60.0))
+                    let env = w.at(&weather, m).ok_or_else(|| anyhow::anyhow!("zone {zone} has no env"))?;
+                    println!("weather {weather} at {:.2} h, tilt {}: {env:?}", m / 60.0, sky.tilt);
+                    Some(dat::weather::Lighting::from_env_k(&env, m, sky.tilt, 1.0))
                 }
                 None => None,
             };
@@ -1664,6 +1740,7 @@ fn main() -> Result<()> {
                 r.bump_mode = bump;
                 // FFXI_SMOOTH_LIGHTS: Settings' Light Shading Smooth (ours) in place of retail's per-vertex lights.
                 r.smooth_lights = std::env::var_os("FFXI_SMOOTH_LIGHTS").is_some();
+                r.surface_detail = detail.min(2);
                 if let Some(v) = voyage_v {
                     r.voyage = v;
                 }
@@ -1692,12 +1769,12 @@ fn main() -> Result<()> {
                 }
                 // Area lighting at the same hour and weather, the sub-area's areas first.
                 if let Some(h) = hour.filter(|_| std::env::var_os("FFXI_NO_AREAS").is_none()) {
-                    let env =
-                        |k: &u32| weathers.iter().find_map(|w| w.areas.get(k)).and_then(|a| a.at(&weather, h * 60.0));
+                    let m = sky.minute(h * 60.0);
+                    let env = |k: &u32| weathers.iter().find_map(|w| w.areas.get(k)).and_then(|a| a.at(&weather, m));
                     let lights = r
                         .area_keys()
                         .iter()
-                        .map(|k| env(k).map(|e| dat::weather::Lighting::from_env(&e, h * 60.0)))
+                        .map(|k| env(k).map(|e| dat::weather::Lighting::from_env_k(&e, m, sky.tilt, 1.0)))
                         .collect();
                     println!(
                         "areas {:?}",
@@ -2306,6 +2383,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::TexPack { manifest, upscaled, out, redo } => texpack::pack(&manifest, &upscaled, &out, redo.as_deref()),
+        Cmd::TexHeights { out, zones, redo } => surface::pack(&out, zones.as_deref(), redo),
         Cmd::TexSlim { pack, out } => texpack::slim(&pack, &out),
         Cmd::ModInstall { archive, root } => {
             let pack = modpack::pack_of(&archive)?;
@@ -3924,6 +4002,8 @@ fn fx_shot(
         render::effects::fits(gpu)?;
         let eg = eg.get_or_insert_with(|| render::effects::EffectsGpu::new(gpu, wgpu::TextureFormat::Rgba8Unorm));
         eg.set_lights(&zr.lights);
+        // Lit elements (op-1 flag 16), as the client sets them with no gamma boost.
+        eg.set_light(l.map(|l| (l.dir, l.diffuse, l.ambient)));
         fx.reg.light_keys = zr.light_keys.clone();
         let view = cam.view();
         let mut view_rot = view;

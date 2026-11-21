@@ -1,5 +1,5 @@
-<!-- dll-build: 30261102_0 -->
 ## Actors are drawn at the actor update's eased place, and turn along it (2026-11-18)
+<!-- dll-build: 30261102_0 -->
 
 - Report: with B held (Compact 2) the body turned toward the stick roughly, with single frames where it swung sideways
   and back; retail turns a little more each frame.

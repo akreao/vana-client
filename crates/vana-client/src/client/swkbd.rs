@@ -158,6 +158,7 @@ fn press(w: &mut World, c: u16) {
             cfg.cam_keys = w.cam_keys;
             cfg.anon = w.self_flags & 1 << 5 != 0;
             cfg.recall(w.cursor_recall(super::configui::CONFIGWI_MENU));
+            cfg.recall_modern(&w.cursor_mem);
             w.config = Some(cfg);
         }
         // SHIFT: the page's [5]; one that names itself buzzes.

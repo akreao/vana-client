@@ -1,5 +1,6 @@
-<!-- dll-build: 30261102_0 -->
 ## Zone-in: the handler walk's c2s 0x0DB, 0x112 and 0x05A; s2c 0x072 (2026-11-17)
+
+<!-- dll-build: 30261102_0 -->
 
 - Retail captures (7 sessions, 62 zone-ins, client 30261102_0): after c2s 0x00C, 0x061, 0x118, 0x11B, 0x053, 0x0E0
   and 0x00F, every zone-in sends c2s 0x0DB kind 1 (mask 0x02), 0x112 kind 0 (`00 00 00 00`) and 0x05A (no body), in

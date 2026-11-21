@@ -22,21 +22,25 @@ pub enum Mode {
 pub const MODES: [(Mode, &str); 3] =
     [(Mode::Exploration, "Exploration"), (Mode::Combat, "Combat"), (Mode::Management, "Management")];
 
-/// The panels a mode may hide (panel id, name). Windows the player opens are never hidden.
-pub const PANELS: [(&str, &str); 13] = [
+/// The panels a mode may hide (panel id, name). Windows the player opens are never hidden; nor the chat window or
+/// the command menu (both needed in every mode), nor the transient pending chip and event / objective bars.
+pub const PANELS: [(&str, &str); 16] = [
     ("status", "Status icons"),
     ("party", "Party"),
     ("alliance1", "Alliance 1"),
     ("alliance2", "Alliance 2"),
     ("target", "Target"),
+    ("focus", "Focus target"),
     ("where", "Location"),
     ("cast", "Cast bar"),
     ("minimap", "Minimap"),
+    ("widescan", "Wide Scan"),
     ("timers_recasts", "Recasts"),
     ("timers_buffs", "Buffs"),
     ("timers_debuffs", "Debuffs"),
     ("regime", "Training"),
     ("skillchains", "Skillchains"),
+    ("favourites", "Favourites"),
 ];
 
 /// How long Combat holds after disengaging (a pull's pause between targets keeps the combat layout).

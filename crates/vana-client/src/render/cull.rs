@@ -698,14 +698,18 @@ mod tests {
         let zeros = vec![0u8; 4096];
         let [lights, areas, parts, deltas] = [(); 4].map(|_| buf(&zeros, wgpu::BufferUsages::STORAGE));
         let lamp = buf(&zeros, wgpu::BufferUsages::UNIFORM);
+        let clamp = crate::render::clamp_sampler(device);
+        let mut entries = [&uniforms, &lights, &areas, &parts, &deltas, &lamp]
+            .iter()
+            .enumerate()
+            .map(|(k, b)| wgpu::BindGroupEntry { binding: k as u32, resource: b.as_entire_binding() })
+            .collect::<Vec<_>>();
+        // Binding 6: the '#' placements' clamped sampler (custom).
+        entries.push(wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(&clamp) });
         let globals = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &p.globals_layout,
-            entries: &[&uniforms, &lights, &areas, &parts, &deltas, &lamp]
-                .iter()
-                .enumerate()
-                .map(|(k, b)| wgpu::BindGroupEntry { binding: k as u32, resource: b.as_entire_binding() })
-                .collect::<Vec<_>>(),
+            entries: &entries,
         });
         let c = Cull::new(&gpu, Some(layout), &data, &instances).expect("a GPU culling");
         let read = device.create_buffer(&wgpu::BufferDescriptor {

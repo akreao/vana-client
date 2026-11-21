@@ -543,6 +543,70 @@ impl Effects {
         });
     }
 
+    /// FUN_100c4410 -> FUN_100c46b0: a furniture actor takes its model file. Every scheduler of the file that is marked
+    /// self-starting and holds op 0xa2 (dat::sched::furniture_start: clocks, bells, chimes, music boxes on their
+    /// Vana'diel time windows) starts on (actor, actor), stepped at once; here when the file is in.
+    pub fn on_furniture(&mut self, actor: u32, file: u32) {
+        self.furn_starts.push((actor, file));
+    }
+
+    /// The furniture actor goes: its waiting start, the tasks on_furniture started on it with their copies, and the
+    /// generator clones those started on it, a finished copy's too (the actor's links delete them all, FUN_10082b10:
+    /// FUN_10057cf0 the tasks, FUN_10054380 the clones; a template instance is only unlinked).
+    pub fn stop_furniture(&mut self, actor: u32) {
+        let who = Who::Actor(actor);
+        self.furn_starts.retain(|f| f.0 != actor);
+        let (mut gone, mut libs) = (Vec::new(), Vec::new());
+        for t in self.tasks.iter_mut() {
+            if let Some(x) = t.as_ref().filter(|t| t.a1 == who && t.ops.iter().any(|o| o.code == 0xa2)) {
+                gone.push(x.uid);
+                libs.push(x.res.0);
+                *t = None;
+            }
+        }
+        let live: Vec<u64> = self.tasks.iter().flatten().map(|t| t.uid).collect();
+        for i in 0..self.insts.len() {
+            let linked = self.insts[i].as_ref().is_some_and(|x| {
+                x.actors.contains(&who)
+                    && match x.owner {
+                        super::Owner::Task(u) => gone.contains(&u) || (libs.contains(&x.src.0) && !live.contains(&u)),
+                        _ => false,
+                    }
+            });
+            if !linked {
+                continue;
+            }
+            // A generator run as its own template only forgets the actor and runs on, as in forget_actor.
+            if self.insts[i].as_ref().is_some_and(|x| x.clone) {
+                self.kill(i);
+            } else if let Some(x) = self.insts[i].as_mut() {
+                x.actors.iter_mut().filter(|a| **a == who).for_each(|a| *a = Who::None);
+            }
+        }
+    }
+
+    fn run_furniture(&mut self, actors: &dyn Actors) {
+        for (actor, file) in std::mem::take(&mut self.furn_starts) {
+            let Some(l) = self.lib_for(file) else {
+                if !self.failed.contains(&file) {
+                    self.furn_starts.push((actor, file));
+                }
+                continue;
+            };
+            let lib = &self.reg.libs[l];
+            let nodes: Vec<usize> = lib
+                .tree
+                .of_kind(kind::SCHEDULER)
+                .filter(|&n| crate::dat::sched::furniture_start(lib.data(n)))
+                .collect();
+            let who = Who::Actor(actor);
+            for n in nodes {
+                let ti = self.spawn_task((l, n), who, who, None, 1.0, None);
+                _ = self.run_new(ti, actors);
+            }
+        }
+    }
+
     /// FUN_10083650: a scheduler `name` waiting or running on the actor (as actor1).
     pub fn actor_scheduler_running(&self, actor: u32, name: u32) -> bool {
         let who = Who::Actor(actor);
@@ -563,6 +627,7 @@ impl Effects {
                 t.a1 == who && u32::from_le_bytes(self.reg.libs[t.res.0].tree.nodes[t.res.1].name) == name
             });
             if hit {
+                // Its hold tasks are its children and go with it (`task_holds` drops them at the next tick).
                 self.tasks[i] = None;
             }
         }
@@ -584,6 +649,7 @@ impl Effects {
             }
         };
         self.pending.retain(|p| p.actor != Some(id));
+        self.furn_starts.retain(|f| f.0 != id);
         self.equip.remove(&id);
         self.equip_calls.retain(|c| c.0 != id);
         self.wading.remove(&id);
@@ -698,6 +764,7 @@ impl Effects {
 
     /// Starts waiting for files, when they are in.
     pub(super) fn run_pending(&mut self, f: &Frame, actors: &dyn Actors) {
+        self.run_furniture(actors);
         let list = std::mem::take(&mut self.pending);
         for mut p in list {
             p.age += f.dt;
@@ -988,7 +1055,8 @@ impl Effects {
 
     /// Every task one frame on (the CMoSchedularTask update): countdown -= ticks; ops run while it is <= 0, each
     /// adding its wait x speed.
-    pub(super) fn step_tasks(&mut self, f: &Frame, actors: &dyn Actors) {
+    /// The task walk (once a retail frame, `walk`, with its ticks) and what the tasks own (every tick of ours).
+    pub(super) fn step_tasks(&mut self, f: &Frame, walk: bool, actors: &dyn Actors) {
         for d in self.dolls.iter_mut().filter(|d| d.unposed && actors.posed(d.of)) {
             d.points = (0..DOLL_POINTS).map(|k| actors.point(d.of, k)).collect();
             d.unposed = false;
@@ -998,6 +1066,16 @@ impl Effects {
                 d.points.get(0x2b).copied().flatten()
             );
         }
+        if walk {
+            self.walking = true;
+            self.walk(&Frame { dt: self.walk_ticks, ..*f }, actors);
+            (self.walking, self.walk_pending) = (false, false);
+        }
+        self.after_tasks(f, actors);
+    }
+
+    /// FUN_10073910's walk over the tasks, one retail frame (`f.dt` its ticks).
+    fn walk(&mut self, f: &Frame, actors: &dyn Actors) {
         let mut i = 0;
         while i < self.tasks.len() {
             let Some(mut t) = self.tasks[i].take() else {
@@ -1009,6 +1087,40 @@ impl Effects {
                 i += 1;
                 continue;
             }
+            // FUN_10057e10: +0x145 is tested first, and deletes the task (its destructor FUN_100574a0 lets the parent
+            // that waits on it go, FUN_10074a50, and ends its action). The parent sits after it in retail's list
+            // (FUN_10075120 links a scheduler before the task that started it), so it runs in this frame too.
+            if t.dying {
+                let parent = t.parent.filter(|&p| p < i && self.tasks[p].as_ref().is_some_and(|pt| pt.waiting));
+                t.done = true;
+                self.settle(t, i);
+                if let Some(p) = parent {
+                    self.step_slot(p, f, actors);
+                }
+                i += 1;
+                continue;
+            }
+            // The update after the end op: the countdown is 0 and no op is left, FUN_10057c20 finds no loop, +0x145.
+            if t.ended {
+                t.dying = true;
+                self.tasks[i] = Some(t);
+                i += 1;
+                continue;
+            }
+            self.tasks[i] = Some(t);
+            self.step_slot(i, f, actors);
+            i += 1;
+        }
+    }
+
+    /// One task's update in the frame's walk.
+    fn step_slot(&mut self, i: usize, f: &Frame, actors: &dyn Actors) {
+        let Some(mut t) = self.tasks.get_mut(i).and_then(|t| t.take()) else { return };
+        {
+            if t.paused > 0 {
+                self.tasks[i] = Some(t);
+                return;
+            }
             // FUN_10057c20 a frame after the end op, then FUN_100573e0(res, 0, 0): speed 1.0, the action wrapper and the
             // parent link dropped (the action never prints its rest; a calling parent waits for ever); no op runs.
             if std::mem::take(&mut t.restart) {
@@ -1017,8 +1129,7 @@ impl Effects {
                     self.leaked.push(a);
                 }
                 self.tasks[i] = Some(t);
-                i += 1;
-                continue;
+                return;
             }
             self.stepping.push(i);
             if !t.waiting {
@@ -1027,8 +1138,11 @@ impl Effects {
             self.run_ready(i, &mut t, actors);
             self.settle(t, i);
             self.stepping.pop();
-            i += 1;
         }
+    }
+
+    /// What a scheduler owns, after the frame's walk.
+    fn after_tasks(&mut self, f: &Frame, actors: &dyn Actors) {
         let live: Vec<u64> = self.tasks.iter().flatten().map(|t| t.uid).collect();
         self.step_shine(f.dt, &live);
         self.step_wep_timers(f.dt, &live);
@@ -1178,7 +1292,7 @@ impl Effects {
     /// True when the step ended on a file retry.
     fn run_steps(&mut self, i: usize, t: &mut Task, actors: &dyn Actors) -> bool {
         let mut guard = 0;
-        while !t.done && !t.waiting && t.countdown <= 0.0 && guard < 512 {
+        while !t.done && !t.ended && !t.waiting && t.countdown <= 0.0 && guard < 512 {
             guard += 1;
             if t.ip >= t.ops.len() || t.stop_at == Some(t.ip) {
                 // FUN_10057c20: op 0x73's children and end-stream loops start over (the step after).
@@ -1186,7 +1300,13 @@ impl Effects {
                     t.restart = true;
                     break;
                 }
-                t.done = true;
+                // The end op only clears +0x88: the task lives two more updates (`ended`, then `dying`). A clone
+                // that reaches its block's end is deleted by that op.
+                if t.stop_at.is_some() {
+                    t.done = true;
+                } else {
+                    t.ended = true;
+                }
                 break;
             }
             let op = t.ops[t.ip].clone();
@@ -1249,16 +1369,23 @@ impl Effects {
 
     /// FUN_10055c00 / FUN_10055cc0 -> FUN_10073910: a task an op creates takes its first step at once (vtable +0x20), before
     /// the op after its creator's (efon's efkl kills the old orbs before the new ones start). True when it already ended.
-    fn run_new(&mut self, i: usize, actors: &dyn Actors) -> bool {
+    pub(super) fn run_new(&mut self, i: usize, actors: &dyn Actors) -> bool {
         let Some(mut t) = self.tasks[i].take() else { return true };
         let outer = self.stepping.first().copied();
         self.stepping.push(i);
         // Inside an `init`'s first step a task stepped at once sees its wanted sub-animation too (kept over a file
         // retry); one that steps later (ops 0x30, 0x5c, 0x76 / 0x77, 0x84) sees the model's.
         t.init_sub = t.init_sub.or(self.sub_now);
+        // The first step is the whole update (FUN_100748c0 -> vt+0x20 = FUN_10057e10): the retail frame's ticks
+        // (+0xeb0) come off before the first op, so the wait after it is already one frame down.
+        if !t.waiting {
+            t.countdown -= if t.vana { self.vana_dt } else { self.walk_ticks };
+        }
         self.run_ready(i, &mut t, actors);
-        // Once a frame: the frame's step is still to come for a start before it or a slot past its running task.
-        t.stepped = outer.is_none_or(|o| i > o);
+        // Once a frame: the walk passes it in the frame it started in, if that walk is still to reach it. Inside the
+        // walk that is a slot past its running task; outside it, any slot while the frame's walk is still to come
+        // (a start, or its children, before the walk), none after it.
+        t.stepped = if self.walking { outer.is_some_and(|o| i > o) } else { self.walk_pending };
         let done = t.done;
         self.settle(t, i);
         self.stepping.pop();
@@ -1321,7 +1448,10 @@ impl Effects {
             // every drive on that actor goes first. Over a fast-forward it starts `seq_over` ticks in.
             0x26 | 0x27 => {
                 let on = if op.code == 0x26 { t.a1 } else { t.a2 };
-                let (Some(id), Some(r)) = (on.id(), scope(self, kind::VTX)) else { return Flow::Next };
+                let Some(id) = on.id() else { return Flow::Next };
+                // The actor's drives go before the path is looked at (the loop at 0x1005ca07, then FUN_1004e3b0).
+                self.drives.retain(|d| d.actor != id);
+                let Some(r) = scope(self, kind::VTX) else { return Flow::Next };
                 let Some(segs) = drive::path(self.reg.libs[r.0].data(r.1)) else { return Flow::Next };
                 // A curve above 6 is a KeyFrame's 4cc, sampled linearly *(inf: no ship file has one)*.
                 let curve = op.u32_at(0x14);
@@ -1332,7 +1462,6 @@ impl Effects {
                 } else {
                     None
                 };
-                self.drives.retain(|d| d.actor != id);
                 self.drives.push(drive::Drive::new(id, t.uid, segs, &op.raw, t.speed, self.seq_over, key));
                 Flow::Next
             }
@@ -1550,19 +1679,19 @@ impl Effects {
                 }
             }
             0x15 | 0x22 => {
-                t.a1 = self.doll(t.a1, 0, op.code == 0x22, actors, t.uid);
+                t.a1 = self.doll(t.a1, op.code == 0x22, actors);
                 Flow::Next
             }
             0x16 | 0x23 => {
-                t.a2 = self.doll(t.a2, 1, op.code == 0x23, actors, t.uid);
+                t.a2 = self.doll(t.a2, op.code == 0x23, actors);
                 Flow::Next
             }
             0x17 => {
-                t.a1 = self.undoll(t.a1, 0, t.uid);
+                t.a1 = self.doll_of(t.a1);
                 Flow::Next
             }
             0x18 => {
-                t.a2 = self.undoll(t.a2, 1, t.uid);
+                t.a2 = self.doll_of(t.a2);
                 Flow::Next
             }
             0x31 => {
@@ -2149,13 +2278,19 @@ impl Effects {
                 }
                 Flow::Next
             }
-            // FUN_1018bc40 on the weather manager's +0x1c8 (wrapped to 360 days) / +0x1cc = i16 @8.
+            // Case 0xc0 (0x10058079): the zone object's fixed sky time W+0x1c8 = u32 @8 (FUN_1018bc40, a signed
+            // compare: above 360 days it wraps, negative means none), which the light (FUN_10187720) and the weather
+            // keys (FUN_10189c60) read instead of the clock while it is not negative. Op 0x52's windows and the
+            // element curves keep the clock.
             0xc0 => {
-                self.zone_clock = Some(op.u32_at(8) % 0x6f3c_9000);
+                self.sky.set_time(op.u32_at(8));
                 Flow::Next
             }
+            // Case 0xc3 (0x1005809b): the sun's tilt W+0x1cc = i16 @8 (degrees). The case has no break and runs on
+            // into case 0x1b (0x100580ab), which looks for an actor named by the same bytes (FUN_100841a0); the two
+            // in the data (36 = "$") name none, so nothing follows.
             0xc3 => {
-                self.zone_yaw = op.u16_at(8) as i16;
+                self.sky.tilt = op.u16_at(8) as i16;
                 Flow::Next
             }
             0xc1 => {
@@ -2837,7 +2972,15 @@ impl Effects {
             String::from_utf8_lossy(&self.reg.libs[t.res.0].tree.nodes[t.res.1].name),
             if ended { "ended".to_string() } else { format!("op {} in {:.0}", t.ip, t.countdown) }
         );
-        t.stepped = true;
+        // FUN_10056b20: one that did not end inside the skip takes its update at once (FUN_100748c0).
+        if !ended && !t.restart {
+            if !t.waiting {
+                t.countdown -= if t.vana { self.vana_dt } else { self.walk_ticks };
+            }
+            self.run_ready(i, &mut t, actors);
+            ended = t.done;
+        }
+        t.stepped = self.walk_pending;
         t.done = ended;
         self.settle(t, i);
         self.stepping.pop();
@@ -2947,7 +3090,11 @@ impl Effects {
     }
 
     /// FUN_10056a50 / FUN_1018a7a0: every self-starting scheduler of library `l` (under folder `under` when given) starts
-    /// on no actors, speed 1.0 (retail steps it at once inside the load; ours at the next tick).
+    /// on no actors, speed 1.0 (retail steps it at once inside the load; ours at the next tick). The zone's `weat`
+    /// ones never reach that tick: retail builds the weather object in the same zone-in call as the parse
+    /// (FUN_10094190: FUN_1018b3a0, then FUN_101874f0), which ends them, and so does the set_weather that follows every
+    /// load here. Their one step inside the parse shows nothing: all 232 open with op 0x52 alone (census
+    /// dat::sched::census::auto_first_step_census), whose copy dies with them.
     pub(super) fn start_auto(&mut self, l: usize, under: Option<usize>) {
         let tree = &self.reg.libs[l].tree;
         let inside = |mut i: usize, f: usize| loop {
@@ -2976,14 +3123,18 @@ impl Effects {
     pub(super) fn kill_tasks(&mut self, r: Ref, pair: Option<(Who, Who)>) {
         for t in self.tasks.iter_mut() {
             if t.as_ref().is_some_and(|t| t.res == r && pair.is_none_or(|(a, b)| t.a1 == a && t.a2 == b)) {
+                // Its hold tasks are its children and go with it (`task_holds`).
                 *t = None;
             }
         }
     }
 
-    /// FUN_100abea0: a doll where the actor in slot `slot` (0 actor1, 1 actor2) stands now; FUN_10062d50 moves the
-    /// clones this task started (clone +0xf0 == the task) to it in that slot, others stay on the actor.
-    fn doll(&mut self, w: Who, slot: usize, follow: bool, actors: &dyn Actors, uid: u64) -> Who {
+    /// FUN_100abea0: a doll where the actor stands now, which the task's slot takes (FUN_10062830 / FUN_10062880).
+    /// The clones the task already started stay on the actor: FUN_10062d50, called just before, walks the actor's
+    /// list for CMoGeneratorClones whose +0xf0 is the task, and nothing in the DLL ever stores there (the clone's
+    /// constructor FUN_100536c0 zeroes it; op 0x02 puts the task at +0x64, FUN_1005e0f0), so it moves none. Only what
+    /// the task starts from here on attaches to the doll.
+    fn doll(&mut self, w: Who, follow: bool, actors: &dyn Actors) -> Who {
         let Who::Actor(id) = w else { return w };
         let Some(m) = actors.matrix(id) else { return w };
         let d = Who::Doll(self.dolls.len());
@@ -2996,33 +3147,15 @@ impl Effects {
         }
         let points = (0..DOLL_POINTS).map(|k| if unposed { None } else { actors.point(id, k) }).collect();
         self.dolls.push(Doll { of: id, matrix: m, follow, points, unposed });
-        self.move_clones(w, d, uid, slot);
         d
     }
 
-    /// Ops 0x17 / 0x18: back to the actor, with the clones of this task.
-    fn undoll(&mut self, w: Who, slot: usize, uid: u64) -> Who {
-        let back = self.doll_of(w);
-        if back != w {
-            self.move_clones(w, back, uid, slot);
-        }
-        back
-    }
-
-    /// The actor a doll stands for.
+    /// The actor a doll stands for (ops 0x17 / 0x18 put it back in the task's slot; the clones started on the doll
+    /// stay on it, as FUN_10062d50 matches none).
     pub(super) fn doll_of(&self, w: Who) -> Who {
         match w {
             Who::Doll(k) => self.dolls.get(k).map_or(w, |d| Who::Actor(d.of)),
             _ => w,
-        }
-    }
-
-    /// Only the one slot's handle moves (FUN_10062d50 walks the actor's actor1 list +0x68 or actor2 list +0x6c).
-    fn move_clones(&mut self, from: Who, to: Who, uid: u64, slot: usize) {
-        for x in self.insts.iter_mut().flatten().filter(|x| x.owner == Owner::Task(uid)) {
-            if x.actors[slot] == from {
-                x.actors[slot] = to;
-            }
         }
     }
 
@@ -3061,16 +3194,23 @@ impl Effects {
             }
             _ => actors.point(id, k),
         };
-        // Op 0x7b's offset turns with the actor (TransformCoord by its yaw).
-        let off = m.transform_vector3(off);
-        let world = |k: u16| local(k).map(|p| m.transform_point3(p) + off);
+        // Op 0x7b's offset turns by the actor's yaw alone (FUN_1003ba20: RotationY of vtable +0x1c0's y, then
+        // TransformCoord), not by its ground tilt.
+        let yaw = match w {
+            Who::Actor(id) => actors.yaw(id),
+            _ => None,
+        }
+        .unwrap_or_else(|| (-m.x_axis.z).atan2(m.x_axis.x));
+        let off = Mat4::from_rotation_y(yaw).transform_vector3(off);
+        let bare = |k: u16| local(k).map(|p| m.transform_point3(p));
+        let world = |k: u16| bare(k).map(|p| p + off);
         let nearest = |to: Vec3| {
             (0xd..=0x14u16).filter_map(world).min_by(|a, b| a.distance_squared(to).total_cmp(&b.distance_squared(to)))
         };
         let p = match k {
-            // From 1 above to 6 below; retail's miss is (0, 0, 0), ours keeps the position (our collision is not
-            // retail's everywhere).
-            0x30 => world(0).and_then(|p| actors.ground_hit(p - Vec3::Y, p + Vec3::Y * 6.0)),
+            // From 1 above to 6 below point 0, without op 0x7b's offset (the case never adds it); retail's miss is
+            // (0, 0, 0), ours keeps the position (our collision is not retail's everywhere).
+            0x30 => bare(0).and_then(|p| actors.ground_hit(p - Vec3::Y, p + Vec3::Y * 6.0)),
             0x31 | 0x32 => self.who_matrix(other, actors).and_then(|(_, o)| nearest(o.w_axis.truncate())),
             0x33 => eye.and_then(nearest),
             0x34 => actors.foot(id),
@@ -3101,6 +3241,19 @@ impl Effects {
         f: Option<&Frame>,
         actors: &dyn Actors,
     ) -> Option<(Option<Mat4>, Vec3, Vec3, f32)> {
+        self.attach_matrix_into(i, f, actors, self.insts[i].as_ref()?.matrix)
+    }
+
+    /// [`Self::attach_matrix`] built into `out`, the matrix FUN_1003be10 is handed: the generator's own (+0xa4) from
+    /// FUN_10053e60 (the start, the spin ops), a math pool scratch from op 0x11 (FUN_10053c80). Only a doll's bone
+    /// frame reads what is there (FUN_10082180 multiplies it, every other path writes it whole).
+    fn attach_matrix_into(
+        &self,
+        i: usize,
+        f: Option<&Frame>,
+        actors: &dyn Actors,
+        out: Option<Mat4>,
+    ) -> Option<(Option<Mat4>, Vec3, Vec3, f32)> {
         let x = self.insts[i].as_ref()?;
         let g = self.reg.libs[x.src.0].generator(x.src.1)?;
         let w = x.attach;
@@ -3117,7 +3270,7 @@ impl Effects {
             }
             _ => (Vec3::ZERO, Vec3::ZERO),
         };
-        let (m, dist) = self.attach_frame(x.mode, w, x.actors, (off_a, off_b), x.matrix, f, actors)?;
+        let (m, dist) = self.attach_frame(x.mode, w, x.actors, (off_a, off_b), out, f, actors)?;
         // Scale A from bits 20..23 (1-4 caster, 5-8 target), scale B from byte 3 low nibble.
         let size = |src: u32, blend: f32| -> Vec3 {
             let who = match src & 0xf {
@@ -3161,6 +3314,12 @@ impl Effects {
         if attach_missing(mode, [a1, a2]) {
             return Some((Some(Mat4::IDENTITY), 0.0));
         }
+        // Modes 0x16..0x1b: the target is the caster's face target when that has an actor (FUN_100845e0 ->
+        // FUN_10098360: entity +0x1f8, the 0x00D / 0x00E face target), else the target. Only 0x1a is in the data.
+        let a2 = match a1 {
+            Who::Actor(id) if (0x16..=0x1b).contains(&mode) => actors.face_target(id).map_or(a2, Who::Actor),
+            _ => a2,
+        };
         let pc = ((((w >> 18) & 1) << 6) | ((w >> 4) & 0x3f)) as u16;
         let pt = ((w >> 10) & 0x3f) as u16;
         let rot = |m: Mat4| Mat4::from_cols(m.x_axis, m.y_axis, m.z_axis, glam::Vec4::W);
@@ -3191,9 +3350,11 @@ impl Effects {
         let p2 = |k: u16| self.who_point(a2, k, a1, eye, off_b, actors);
         let mut dist = 0.0;
         // FUN_1003bd90 remaps points 0x36..0x3c, then vtable +0x1d0: a skeleton's point frame Rx Ry Rz T(offset) on
-        // its drawn bone, whose rows carry the actor size (FUN_100d49d0 -> FUN_1002a900); a doll's (FUN_10082180) is
-        // the generator's last matrix moved by the doll's position: no rotation, the point ignored, so a rebuild adds
-        // the position again (as decompiled).
+        // its drawn bone, whose rows carry the actor size (FUN_100d49d0 -> FUN_1002a900), and the identity until the
+        // skeleton's first pose (FUN_1002c520 runs only with model +0x30 bit 4, set by FUN_1002c2d0 in the actor's
+        // update); a doll's (FUN_10082180) is the matrix it is handed (`last`) moved by the doll's position: no
+        // rotation, the point ignored, nothing reset, so a rebuild into the generator's own matrix adds the position
+        // again (as decompiled).
         let remap = |k: u16| match k {
             0x36 => 0x7e,
             0x37 => 0x7f,
@@ -3201,6 +3362,7 @@ impl Effects {
             _ => k,
         };
         let bone_frame = |w: Who, k: u16| match w {
+            Who::Actor(id) if actors.never_posed(id) => Some(Mat4::IDENTITY),
             Who::Actor(id) => {
                 let f = actors.matrix(id)? * actors.point_frame(id, remap(k))?;
                 let s = actors.scale(id);
@@ -3358,10 +3520,15 @@ impl Effects {
         x.dist = d;
     }
 
-    /// Generator op 0x11 (FUN_10052cd0): the attach matrix again, lerped by k = ((op[1] >> 2) & 0xff) / 255 —
-    /// bit 0 the translation, bit 1 the rotation rows.
+    /// Generator op 0x11 (FUN_10053c80 [2019 FUN_10052cd0]): the attach matrix again, lerped by
+    /// k = ((op[1] >> 2) & 0xff) / 255 — bit 0 the translation, bit 1 the rotation rows.
     pub(super) fn follow(&mut self, i: usize, word: u32, f: &Frame, actors: &dyn Actors) {
-        let Some((Some(m), a, b, d)) = self.attach_matrix(i, Some(f), actors) else { return };
+        // The target is built in a math pool scratch, not in the generator's matrix. A doll's bone frame (modes 9 /
+        // 0xa) multiplies what the last user of that slot left there by T(its position), so retail's target is not
+        // defined; the scratch is taken as the identity here *(inf)*: the doll's position, no rotation.
+        let Some((Some(m), a, b, d)) = self.attach_matrix_into(i, Some(f), actors, Some(Mat4::IDENTITY)) else {
+            return;
+        };
         let Some(x) = self.insts[i].as_mut() else { return };
         // FUN_10052cd0 runs once per pass at retail's 2 ticks a frame: the same pull per 2 ticks at any frame rate.
         let k = 1.0 - (1.0 - ((word >> 2) & 0xff) as f32 / 255.0).powf(f.dt / 2.0);
@@ -3747,6 +3914,85 @@ mod tests {
         }
     }
 
+    /// A tilted stand-in at x 5: yaw 0.7 under a 0.3 pitch, every point 1 above its origin, the ground 3 below a
+    /// ray's start. A third actor (id 7) stands at z 9, and HUME faces it when `face` is set.
+    struct Tilted {
+        face: bool,
+    }
+
+    impl Actors for Tilted {
+        fn matrix(&self, id: u32) -> Option<Mat4> {
+            Some(match id {
+                7 => Mat4::from_translation(Vec3::new(0.0, 0.0, 9.0)),
+                _ => {
+                    // Pitched about the world X after the yaw, as the client's plain_frame tilts.
+                    Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0))
+                        * Mat4::from_rotation_x(0.3)
+                        * Mat4::from_rotation_y(0.7)
+                }
+            })
+        }
+        fn point(&self, _: u32, _: u16) -> Option<Vec3> {
+            Some(Vec3::new(0.0, -1.0, 0.0))
+        }
+        fn scale(&self, _: u32) -> f32 {
+            1.0
+        }
+        fn files(&self, _: u32) -> (Vec<u32>, Vec<u32>) {
+            (Vec::new(), Vec::new())
+        }
+        fn hidden(&self, _: u32) -> bool {
+            false
+        }
+        fn models(&self) -> Vec<(u32, Vec<u32>)> {
+            Vec::new()
+        }
+        fn ground_hit(&self, from: Vec3, _: Vec3) -> Option<Vec3> {
+            Some(from + Vec3::Y * 3.0)
+        }
+        fn face_target(&self, id: u32) -> Option<u32> {
+            (self.face && id == HUME).then_some(7)
+        }
+        fn yaw(&self, id: u32) -> Option<f32> {
+            (id != 7).then_some(0.7)
+        }
+    }
+
+    /// FUN_1003ba20: op 0x7b's offset turns by the actor's yaw only, and point 0x30 (the ground under point 0) does
+    /// not take it.
+    #[test]
+    fn point_offset_yaw_only() {
+        let fx = Effects::new();
+        let a = Tilted { face: false };
+        let off = Vec3::new(1.0, -2.0, 0.5);
+        let m = a.matrix(HUME).unwrap();
+        let p0 = m.transform_point3(Vec3::new(0.0, -1.0, 0.0));
+        let (_, p) = fx.who_point(Who::Actor(HUME), 5, Who::None, None, off, &a).unwrap();
+        let want = p0 + Mat4::from_rotation_y(0.7).transform_vector3(off);
+        assert!(p.abs_diff_eq(want, 1e-5), "{p} != {want}");
+        let (_, g) = fx.who_point(Who::Actor(HUME), 0x30, Who::None, None, off, &a).unwrap();
+        let want = p0 - Vec3::Y + Vec3::Y * 3.0;
+        assert!(g.abs_diff_eq(want, 1e-5), "{g} != {want}");
+    }
+
+    /// Modes 0x16..0x1b (FUN_100845e0): the target is the caster's face target when it has one. 101739's mode 0x1a
+    /// generator then points from the caster at actor 7, not at the task's target.
+    #[test]
+    fn attach_linked_target() {
+        // Only a missing game install skips; with the files a failed start fails the test.
+        if crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()).is_err() {
+            return;
+        }
+        let (plain, _) = attached(101739, 0x1a, None, &Tilted { face: false }).expect("101739's mode 0x1a generator");
+        let (linked, _) = attached(101739, 0x1a, None, &Tilted { face: true }).expect("101739's mode 0x1a generator");
+        // Without a face target both points sit on the same stand-in pose: no length to aim along.
+        assert!(!plain.abs_diff_eq(linked, 1e-5), "{plain}");
+        let from = linked.w_axis.truncate();
+        let to = Tilted { face: true }.matrix(7).unwrap().transform_point3(Vec3::new(0.0, -1.0, 0.0));
+        let dir = (to - from).normalize();
+        assert!(linked.x_axis.truncate().normalize().abs_diff_eq(dir, 1e-3), "{linked} / {dir}");
+    }
+
     /// Op 0x7a (86913's layout): the orc stands at the Hume's point + (2, 0, 0), facing back, for dur ticks.
     #[test]
     fn pin_holds_actor1() {
@@ -3824,8 +4070,8 @@ mod tests {
             1.0,
         )));
         let f = Frame {
-            dt: 1.0,
-            seconds: 1.0 / 60.0,
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
             dayfrac: 0.5,
             view: Mat4::IDENTITY,
             view_rot: Mat4::IDENTITY,
@@ -3848,9 +4094,178 @@ mod tests {
                 end = Some(tick);
             }
         }
-        // The first frame's tick counts too: 15 apart from tick 14, then 0x32's 215 once.
-        assert_eq!(came, [14, 29, 44], "records");
-        assert_eq!(end, Some(259));
+        // Retail frames of 2 ticks, the first frame's ticks counting too: 15 ticks apart from tick 14 (frames 7, 14
+        // and 22, ticks 14..16, 28..30, 44..46), then 0x32's 215 once (frame 129, ticks 258..260).
+        assert_eq!(came, [7, 14, 22], "records");
+        assert_eq!(end, Some(129));
+    }
+
+    /// The task walk runs once a retail frame at any rate of ours (FUN_10069f90: +0xeb0, whole ticks, at least 2):
+    /// op 0x32's records come up in the same retail frames at 30, 60, 120, 144 and 300 fps, and the task ends in the
+    /// same one.
+    #[test]
+    fn record_loop_same_frames_at_any_rate() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let run = |dt: f32| {
+            let mut fx = Effects::new();
+            fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
+            let rec = |id| ActionTarget { id, results: vec![ActionResult::default()] };
+            let targets = vec![rec(HUME), rec(ORC), rec(HUME)];
+            let ctx = Rc::new(RefCell::new(ActionCtx {
+                action: Action { actor: HUME, category: 4, arg: 0, info: 0, targets, seq: 0 },
+                cur: 0,
+                swing: None,
+                printed: vec![false; 3],
+                client_swing: false,
+                last: 0,
+            }));
+            let ops = vec![sop(0x31, 0, 0, 0), sop(0x01, 15, 0, 0), sop(0x32, 215, 0, 0), sop(0x00, 0, 0, 0)];
+            let res = (fx.reg.global.unwrap(), 0);
+            let task = Task::new(res, Rc::new(ops), Who::Actor(HUME), Who::Actor(HUME), Some(ctx.clone()), 1.0);
+            fx.tasks.push(Some(task));
+            let f = Frame {
+                dt,
+                seconds: dt / 60.0,
+                dayfrac: 0.5,
+                view: Mat4::IDENTITY,
+                view_rot: Mat4::IDENTITY,
+                eye: Vec3::ZERO,
+                draw_distance: 2000.0,
+                area_light: Vec3::ONE,
+                focal: 350.0,
+                moon_phase: 0,
+                weekday: 0,
+            };
+            // The retail frame (ticks 2k..2k+2) each change falls in: the ticks before the tick of ours that saw it.
+            let (mut came, mut end) = (Vec::new(), None);
+            for n in 0..(600.0 / dt) as u32 {
+                let before = ctx.borrow().cur;
+                fx.tick(&f, &Two);
+                let frame = (n as f64 * dt as f64 / 2.0 + 1e-3).floor() as u32;
+                if ctx.borrow().cur != before {
+                    came.push(frame);
+                }
+                if end.is_none() && fx.tasks.iter().flatten().next().is_none() {
+                    end = Some(frame);
+                }
+            }
+            (came, end)
+        };
+        let at30 = run(2.0);
+        assert_eq!(at30, (vec![7, 14, 22], Some(129)));
+        for dt in [1.0, 0.5, 60.0 / 144.0, 0.2] {
+            assert_eq!(run(dt), at30, "{dt} ticks a frame");
+        }
+    }
+
+    #[test]
+    fn pending_scheduler_child_steps_on_the_next_retail_walk() {
+        let parent = u32::from_le_bytes(*b"prnt");
+        let child = u32::from_le_bytes(*b"chld");
+        let mut dat = Vec::new();
+        let schedulers =
+            [(parent, vec![sop(0x3b, 0, 0, child)]), (child, vec![sop(0x01, 3, 0, 0), sop(0x67, 0, 0, 0)])];
+        for (name, ops) in schedulers {
+            let mut chunk = vec![0; 0x30];
+            chunk[..4].copy_from_slice(&name.to_le_bytes());
+            chunk[0x24..0x28].copy_from_slice(&0x30u32.to_le_bytes());
+            for op in ops {
+                chunk.extend(op.raw);
+            }
+            chunk.resize(chunk.len().next_multiple_of(16), 0);
+            let header = ((chunk.len() as u32 / 16) << 7) | u32::from(kind::SCHEDULER);
+            chunk[4..8].copy_from_slice(&header.to_le_bytes());
+            dat.extend(chunk);
+        }
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::ZERO,
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        for start_tick in 0..=1 {
+            let mut fx = Effects::new();
+            fx.reg.add(Library::load(1, dat.clone()).unwrap());
+            for tick in 0..=1 {
+                if tick == start_tick {
+                    fx.on_event_scheduler(1, parent, Who::None, Who::None);
+                }
+                fx.tick(&f, &Two);
+                if tick >= start_tick {
+                    assert!(fx.tasks[0].as_ref().unwrap().waiting);
+                    assert_eq!(fx.tasks[1].as_ref().unwrap().countdown, 1.0);
+                }
+            }
+            fx.tick(&f, &Two);
+            assert!(fx.tasks[1].is_none(), "child still live after the next walk (started at tick {start_tick})");
+            assert!(!fx.tasks[0].as_ref().unwrap().waiting);
+        }
+    }
+
+    /// A task started before its frame's walk starts a child in an earlier slot (op 0x5f freed it, as efon's efkl
+    /// does before the new orbs): the walk still passes the child, which took this frame's ticks in its first step.
+    #[test]
+    fn child_in_earlier_slot_before_the_walk_is_passed() {
+        let name = |n: &[u8; 4]| u32::from_le_bytes(*n);
+        let (old, parent, child) = (name(b"oldt"), name(b"prnt"), name(b"chld"));
+        let mut dat = Vec::new();
+        let schedulers = [
+            (old, vec![sop(0x01, 100, 0, 0), sop(0x00, 0, 0, 0)]),
+            (parent, vec![sop(0x5f, 0, 0, old), sop(0x3b, 0, 0, child)]),
+            (child, vec![sop(0x01, 3, 0, 0), sop(0x67, 0, 0, 0)]),
+        ];
+        for (name, ops) in schedulers {
+            let mut chunk = vec![0; 0x30];
+            chunk[..4].copy_from_slice(&name.to_le_bytes());
+            chunk[0x24..0x28].copy_from_slice(&0x30u32.to_le_bytes());
+            for op in ops {
+                chunk.extend(op.raw);
+            }
+            chunk.resize(chunk.len().next_multiple_of(16), 0);
+            let header = ((chunk.len() as u32 / 16) << 7) | u32::from(kind::SCHEDULER);
+            chunk[4..8].copy_from_slice(&header.to_le_bytes());
+            dat.extend(chunk);
+        }
+        let f = Frame {
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::ZERO,
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        let mut fx = Effects::new();
+        fx.reg.add(Library::load(1, dat).unwrap());
+        fx.on_event_scheduler(1, old, Who::None, Who::None);
+        fx.tick(&f, &Two);
+        // Started at the next tick's start (the file is in), before its walk: its first step frees the old task's slot
+        // and starts the child there; the child's first step takes 2 of its wait's 3 and the walk passes it.
+        fx.on_event_scheduler(1, parent, Who::None, Who::None);
+        let at = |fx: &Effects, n: u32| {
+            let named = |t: &Task| fx.reg.libs[t.res.0].tree.nodes[t.res.1].name == n.to_le_bytes();
+            fx.tasks.iter().position(|t| t.as_ref().is_some_and(named))
+        };
+        let o = at(&fx, old).unwrap();
+        fx.tick(&f, &Two);
+        let (c, p) = (at(&fx, child).unwrap(), at(&fx, parent).unwrap());
+        assert!(c == o && c < p && at(&fx, old).is_none(), "old {o}, child {c}, parent {p}");
+        assert_eq!(fx.tasks[c].as_ref().unwrap().countdown, 1.0);
+        // The next walk ends the wait.
+        fx.tick(&f, &Two);
+        assert!(at(&fx, child).is_none());
     }
 
     /// Op 0x2e (dur 30): the root holds while its counter is not below 0, so the restart comes on the 31st frame;
@@ -3935,10 +4350,11 @@ mod tests {
         )));
     }
 
+    /// One retail frame (2 ticks): the task walk runs once a retail frame.
     fn color_tick(fx: &mut Effects) -> Vec<crate::fx::ColorOp> {
         let f = Frame {
-            dt: 1.0,
-            seconds: 1.0 / 60.0,
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
             dayfrac: 0.5,
             view: Mat4::IDENTITY,
             view_rot: Mat4::IDENTITY,
@@ -4017,8 +4433,8 @@ mod tests {
         let (Ok(zone), Ok(dat0)) = (index.read(110), index.read(0)) else { return };
         let index = std::sync::Arc::new(index);
         let f = Frame {
-            dt: 1.0,
-            seconds: 1.0 / 60.0,
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
             dayfrac: 0.5,
             view: Mat4::IDENTITY,
             view_rot: Mat4::IDENTITY,
@@ -4248,9 +4664,10 @@ mod tests {
         }
     }
 
-    /// A doll goes with the actor it stands for, and the clones on it with the doll. Weapon skill file 35595's `main`
-    /// starts g000 (endless, flag 0x1000) on the pair, dolls actor2 (op 0x23), and its `st44` stops g000 on the
-    /// undolled pair, which misses it: it glows on until the target despawns. Only actor2 moved to the doll.
+    /// A doll takes none of the clones its task already started (FUN_10062d50 matches clone +0xf0, which nothing
+    /// sets), and goes with the actor it stands for, the clones on it with it. Weapon skill file 35595's `main`
+    /// starts g000 (endless, flag 0x1000) on the pair and then dolls actor2 (op 0x23): g000 stays on the target,
+    /// where `st44`'s stop finds it, and the generators started after the op sit on the doll.
     #[test]
     fn despawn_takes_its_dolls() {
         let cfg = crate::config::Config::load();
@@ -4280,17 +4697,27 @@ mod tests {
             weekday: 0,
         };
         fx.on_event_scheduler(35595, u32::from_le_bytes(*b"main"), Who::Actor(HUME), Who::Actor(ORC));
-        for _ in 0..400 {
+        let of_lib = |fx: &Effects| -> Vec<([u8; 4], [Who; 2])> {
+            fx.insts.iter().flatten().filter(|x| x.src.0 == lib).map(|x| (x.name, x.actors)).collect()
+        };
+        for _ in 0..100 {
             fx.tick(&f, &Skilled);
         }
-        let left: Vec<_> = fx.insts.iter().flatten().filter(|x| x.src.0 == lib).map(|x| (x.name, x.actors)).collect();
-        assert!(
-            left.len() == 1
-                && &left[0].0 == b"g000"
-                && left[0].1[0] == Who::Actor(HUME)
-                && matches!(left[0].1[1], Who::Doll(_)),
-            "{left:?}"
-        );
+        // g000, started before the doll op, is still on the actor; what came after it is on the doll.
+        let now = of_lib(&fx);
+        assert!(now.iter().any(|x| &x.0 == b"g000" && x.1 == [Who::Actor(HUME), Who::Actor(ORC)]), "{now:?}");
+        assert!(now.iter().any(|x| x.1[0] == Who::Actor(HUME) && matches!(x.1[1], Who::Doll(_))), "{now:?}");
+        assert!(now.iter().all(|x| &x.0 == b"g000" || matches!(x.1[1], Who::Doll(_))), "{now:?}");
+        for _ in 0..300 {
+            fx.tick(&f, &Skilled);
+        }
+        // `st44` found g000 on the pair and stopped it; the rest ran out.
+        assert!(of_lib(&fx).is_empty(), "{:?}", of_lib(&fx));
+        fx.on_event_scheduler(35595, u32::from_le_bytes(*b"main"), Who::Actor(HUME), Who::Actor(ORC));
+        for _ in 0..100 {
+            fx.tick(&f, &Skilled);
+        }
+        assert!(of_lib(&fx).iter().any(|x| matches!(x.1[1], Who::Doll(_))));
         fx.forget_actor(ORC);
         assert!(fx.insts.iter().flatten().all(|x| x.src.0 != lib));
     }
@@ -4441,6 +4868,85 @@ mod tests {
         assert!(m.abs_diff_eq(want, 1e-5), "{m} != {want}");
     }
 
+    /// A skeleton before its first pose (model +0x30 bit 4 clear): FUN_100d49d0 leaves the identity, the world origin.
+    #[test]
+    fn attach_never_posed_identity() {
+        struct Fresh;
+        impl Actors for Fresh {
+            fn matrix(&self, id: u32) -> Option<Mat4> {
+                Skel.matrix(id)
+            }
+            fn point(&self, id: u32, k: u16) -> Option<Vec3> {
+                Skel.point(id, k)
+            }
+            fn scale(&self, id: u32) -> f32 {
+                Skel.scale(id)
+            }
+            fn files(&self, _: u32) -> (Vec<u32>, Vec<u32>) {
+                (Vec::new(), Vec::new())
+            }
+            fn hidden(&self, _: u32) -> bool {
+                false
+            }
+            fn models(&self) -> Vec<(u32, Vec<u32>)> {
+                Vec::new()
+            }
+            fn point_frame(&self, id: u32, k: u16) -> Option<Mat4> {
+                Skel.point_frame(id, k)
+            }
+            fn never_posed(&self, _: u32) -> bool {
+                true
+            }
+        }
+        let Some((m, _)) = attached(87053, 9, Some(0x36), &Fresh) else { return };
+        assert_eq!(m, Mat4::IDENTITY);
+    }
+
+    /// Op 0x11 on a doll in mode 9 (FUN_10053c80 -> FUN_10082180): the target is a scratch moved by the doll's
+    /// position, not the generator's own matrix, so following does not add the position again every frame.
+    #[test]
+    fn doll_follow_stays() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let mut fx = Effects::new();
+        let lib = Library::load(87053, index.read(87053).unwrap()).unwrap();
+        let (node, word) = lib
+            .gens
+            .iter()
+            .filter(|g| g.attach_mode() == 9)
+            .find_map(|g| g.streams[0].iter().find(|o| o.code == 0x11).map(|o| (g.node, o.u32(1))))
+            .expect("a mode 9 generator with op 0x11");
+        let l = fx.reg.add(lib);
+        let i = fx.start((l, node), super::super::Owner::Zone).unwrap();
+        let at = Vec3::new(-100.0, 0.0, -10.0);
+        fx.dolls.push(Doll {
+            of: HUME,
+            matrix: Mat4::from_translation(at),
+            follow: false,
+            points: Vec::new(),
+            unposed: false,
+        });
+        fx.insts[i].as_mut().unwrap().actors = [Who::Doll(0), Who::Actor(ORC)];
+        fx.attach_now(i, &Skel);
+        let f = Frame {
+            dt: 2.0,
+            seconds: 1.0 / 30.0,
+            dayfrac: 0.5,
+            view: Mat4::IDENTITY,
+            view_rot: Mat4::IDENTITY,
+            eye: Vec3::new(0.0, -2.0, -10.0),
+            draw_distance: 2000.0,
+            area_light: Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        for _ in 0..10 {
+            fx.follow(i, word, &f, &Skel);
+            let m = fx.insts[i].as_ref().unwrap().matrix.unwrap();
+            assert!(m.abs_diff_eq(Mat4::from_translation(at), 1e-4), "{m}");
+        }
+    }
+
     /// Mode 0x14 (56775 alex): the voyage matrix, identity off a ship's voyage.
     #[test]
     fn attach_voyage_identity() {
@@ -4490,8 +4996,8 @@ mod tests {
         fx.set_index(index.clone());
         fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
         let f = Frame {
-            dt: 1.0,
-            seconds: 1.0 / 60.0,
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
             dayfrac: 0.5,
             view: Mat4::IDENTITY,
             view_rot: Mat4::IDENTITY,
@@ -4789,8 +5295,8 @@ mod tests {
         };
         fx.on_action(&a, Some("ati0".into()));
         let f = Frame {
-            dt: 1.0,
-            seconds: 1.0 / 60.0,
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
             dayfrac: 0.5,
             view: Mat4::IDENTITY,
             view_rot: Mat4::IDENTITY,
@@ -4817,9 +5323,11 @@ mod tests {
                 }
             }
         }
-        // dada at 40 in Hume ati0; damg and its spark 5 ticks later (MODLOG "Effect schedulers").
+        // dada at 40 in Hume ati0; damg and its spark 5 ticks later (MODLOG "Effect schedulers"). Each scheduler on
+        // the way takes the frame's 2 ticks in the step that starts it (FUN_100748c0 runs the whole update), so three
+        // waits are each one frame short: 45 - 6 = 39 ticks, reached in frame 20 (ticks 40..42).
         for g in ["g010", "g011", "g012", "g013"] {
-            assert!(started.iter().any(|s| s.1 == g && s.0 == 45), "{g}: {started:?}");
+            assert!(started.iter().any(|s| s.1 == g && s.0 == 20), "{g}: {started:?}");
         }
         // The orc hits back: orc ati0 dada at 36, then chit on the orc plays DAT 0 hit2 at the Hume (a doll).
         let a = Action {
@@ -5172,15 +5680,15 @@ mod tests {
     }
 
     /// 0x100a8db0: Combo's skill file goes when its `main` (waits summing to 140 ticks) ends, once; a second Combo at
-    /// frame 60 keeps it until that one's `main` ends too.
+    /// frame 30 (tick 60) keeps it until that one's `main` ends too.
     #[test]
     fn skill_files_dropped_at_main_end() {
         let cfg = crate::config::Config::load();
         let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
         let index = std::sync::Arc::new(index);
         let f = Frame {
-            dt: 1.0,
-            seconds: 1.0 / 60.0,
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
             dayfrac: 0.5,
             view: Mat4::IDENTITY,
             view_rot: Mat4::IDENTITY,
@@ -5225,10 +5733,12 @@ mod tests {
             }
             done
         };
+        // Frames of 2 ticks, the start frame counting: 140 ticks end in frame 70 (99 for the second), the task goes two
+        // frames after its end op.
         let once = run(None);
-        assert!(once.len() == 1 && (139..=142).contains(&once[0]), "{once:?}");
-        let twice = run(Some(60));
-        assert!(twice.len() == 1 && (199..=202).contains(&twice[0]), "{twice:?}");
+        assert_eq!(once, [72]);
+        let twice = run(Some(30));
+        assert_eq!(twice, [101]);
     }
 
     /// A Mithra with Nightmare Scythe's file (37131) on her motion list.
@@ -5318,61 +5828,74 @@ mod tests {
         assert!(checked > 0, "no disc clone alive past frame 130");
     }
 
-    /// Nightmare Scythe's `g000` (endless, flag 0x1000) outlives its stop (`st44` runs on the undolled pair) until the
-    /// skill file is freed at `main`'s end: then nothing from 37131 is left.
+    /// Nightmare Scythe (skill file 37131): a freed skill file (FUN_100d44b0(caster, 6) at `main`'s end) takes its live
+    /// clones and tasks with it. Its endless `g000` does not outlive the skill: its `st44` stop ends it, as the doll ops
+    /// move no clones (FUN_10062d50 matches a clone +0xf0 nothing sets), so it stays on the pair the stop names.
     #[test]
     fn released_skill_file_takes_its_clones() {
         let cfg = crate::config::Config::load();
         let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
         let index = std::sync::Arc::new(index);
-        let mut fx = Effects::new();
-        fx.set_index(index.clone());
-        fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
-        fx.preload(&[8392, 37131]);
-        while [8392, 37131].iter().any(|f| fx.reg.lib_of(*f).is_none()) {
-            fx.poll_loads();
-            std::thread::sleep(std::time::Duration::from_millis(5));
+        let start = || {
+            let mut fx = Effects::new();
+            fx.set_index(index.clone());
+            fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
+            fx.preload(&[8392, 37131]);
+            while [8392, 37131].iter().any(|f| fx.reg.lib_of(*f).is_none()) {
+                fx.poll_loads();
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let lib = fx.reg.lib_of(37131).unwrap();
+            let f = Frame {
+                dt: 1.0,
+                seconds: 1.0 / 60.0,
+                dayfrac: 0.5,
+                view: Mat4::IDENTITY,
+                view_rot: Mat4::IDENTITY,
+                eye: Vec3::new(0.0, -2.0, -10.0),
+                draw_distance: 2000.0,
+                area_light: Vec3::ONE,
+                focal: 350.0,
+                moon_phase: 0,
+                weekday: 0,
+            };
+            let a = Action {
+                actor: HUME,
+                category: 3,
+                arg: 99,
+                info: 0,
+                targets: vec![ActionTarget {
+                    id: ORC,
+                    results: vec![ActionResult { animation: 64, message: 185, value: 40, ..Default::default() }],
+                }],
+                seq: 0,
+            };
+            fx.on_action(&a, None);
+            (fx, lib, f)
+        };
+        let live = |fx: &Effects, lib: usize| {
+            fx.insts.iter().flatten().filter(|x| x.src.0 == lib).map(|x| x.name).collect::<Vec<_>>()
+        };
+        // Freed mid-skill: what is alive goes, and the file's tasks with it.
+        let (mut fx, lib, f) = start();
+        for _ in 0..150 {
+            fx.tick(&f, &MithraWs);
         }
-        let lib = fx.reg.lib_of(37131).unwrap();
-        let f = Frame {
-            dt: 1.0,
-            seconds: 1.0 / 60.0,
-            dayfrac: 0.5,
-            view: Mat4::IDENTITY,
-            view_rot: Mat4::IDENTITY,
-            eye: Vec3::new(0.0, -2.0, -10.0),
-            draw_distance: 2000.0,
-            area_light: Vec3::ONE,
-            focal: 350.0,
-            moon_phase: 0,
-            weekday: 0,
-        };
-        let a = Action {
-            actor: HUME,
-            category: 3,
-            arg: 99,
-            info: 0,
-            targets: vec![ActionTarget {
-                id: ORC,
-                results: vec![ActionResult { animation: 64, message: 185, value: 40, ..Default::default() }],
-            }],
-            seq: 0,
-        };
-        fx.on_action(&a, None);
-        let mut done = None;
-        for frame in 1..=400 {
+        assert!(!live(&fx, lib).is_empty(), "nothing from 37131 alive at frame 150");
+        fx.release_file(37131);
+        assert!(live(&fx, lib).is_empty() && fx.tasks.iter().flatten().all(|t| t.res.0 != lib));
+        // Run to `main`'s end: the sphere has gone by then.
+        let (mut fx, lib, f) = start();
+        let mut done = false;
+        for _ in 1..=400 {
             fx.tick(&f, &MithraWs);
             if fx.skill_files_done.drain(..).any(|c| c == HUME) {
-                done = Some(frame);
+                done = true;
                 break;
             }
         }
-        assert!(done.is_some(), "main never ended");
-        let live =
-            |fx: &Effects| fx.insts.iter().flatten().filter(|x| x.src.0 == lib).map(|x| x.name).collect::<Vec<_>>();
-        assert!(live(&fx).contains(b"g000"), "{:?}", live(&fx));
-        fx.release_file(37131);
-        assert!(live(&fx).is_empty() && fx.tasks.iter().flatten().all(|t| t.res.0 != lib));
+        assert!(done, "main never ended");
+        assert!(!live(&fx, lib).contains(b"g000"), "{:?}", live(&fx, lib));
     }
 }
 
@@ -5419,8 +5942,8 @@ mod skillchain_tests {
         fx.set_index(index.clone());
         fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
         let f = Frame {
-            dt: 1.0,
-            seconds: 1.0 / 60.0,
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
             dayfrac: 0.5,
             view: Mat4::IDENTITY,
             view_rot: Mat4::IDENTITY,
@@ -5439,14 +5962,13 @@ mod skillchain_tests {
         assert_eq!(holds, [(task.uid, 1, HOLD_REACT)]);
         assert_eq!(task.a2, Who::None);
         // Another actor's `klbt` does it: the kill is by resource.
+        // Its first step takes this frame's 2 ticks, four frames make 10: the kill is in the fifth.
         fx.on_scheduler_alone(2, name(b"klbt"));
-        for _ in 0..8 {
+        for _ in 0..4 {
             fx.tick(&f, &Pair);
         }
         assert!(fx.actor_scheduler_running(1, name(b"bntg")) && fx.held.contains_key(&1));
-        for _ in 0..6 {
-            fx.tick(&f, &Pair);
-        }
+        fx.tick(&f, &Pair);
         assert!(!fx.actor_scheduler_running(1, name(b"bntg")));
         fx.tick(&f, &Pair);
         assert!(!fx.held.contains_key(&1));
@@ -5731,10 +6253,11 @@ mod auto_tests {
             .unwrap()
     }
 
+    /// One retail frame (2 ticks, 30 fps): the task walk runs once a retail frame.
     fn frame(dayfrac: f32) -> Frame {
         Frame {
-            dt: 1.0,
-            seconds: 1.0 / 60.0,
+            dt: 2.0,
+            seconds: 2.0 / 60.0,
             dayfrac,
             view: Mat4::IDENTITY,
             view_rot: Mat4::IDENTITY,
@@ -5745,6 +6268,42 @@ mod auto_tests {
             moon_phase: 0,
             weekday: 0,
         }
+    }
+
+    /// FUN_1018b500: the load runs the zone file's `@ini` at once. Escha - Zi'Tah (83923) fixes the sky at 10:00,
+    /// Reisenjima Sanctorium (83928) at 14:00, Reisenjima (83926) tilts the sun 36 degrees; the next load clears
+    /// both, and the sun generator's point follows them.
+    #[test]
+    fn zone_ini_sky() {
+        use crate::dat::weather::Sky;
+        let Some(index) = index() else { return };
+        let mut fx = Effects::new();
+        for (file, want) in [
+            (83923, Sky { time: Some(10 * 216000), tilt: 0 }),
+            (83926, Sky { time: None, tilt: 36 }),
+            (83928, Sky { time: Some(14 * 216000), tilt: 0 }),
+            (crate::dat::zone::file_id(230), Sky::default()),
+        ] {
+            let Ok(bytes) = index.read(file) else { return };
+            assert_eq!(Sky::of_zone_file(&bytes), want, "{file}");
+            fx.load_zone(Library::load(file, bytes).unwrap());
+            assert_eq!(fx.sky(), want, "{file}");
+            // The task reached its end in its one step (it is deleted two updates on).
+            let ini = |t: &&Task| fx.reg.libs[t.res.0].tree.nodes[t.res.1].name == fourcc("@ini");
+            assert!(fx.tasks.iter().flatten().filter(ini).all(|t| t.ended));
+        }
+        // FUN_10187720's sun point at a 06:00 clock: on +x; at a fixed 10:00 it stands 60 degrees up; tilted 36
+        // degrees at noon it leans toward -z.
+        let eye = Vec3::new(0.0, -2.0, -10.0);
+        let at = |sky: Sky, clock: f32| {
+            super::super::sky_point(true, sky.minute(clock), sky.tilt, eye, Mat4::IDENTITY) - eye
+        };
+        let near = |a: Vec3, b: Vec3| (a - b).abs().max_element() < 0.1;
+        assert!(near(at(Sky::default(), 360.0), Vec3::new(1000.0, 0.0, 0.0)));
+        let fixed = at(Sky { time: Some(10 * 216000), tilt: 0 }, 360.0);
+        assert!(near(fixed, Vec3::new(500.0, -866.0, 0.0)), "{fixed}");
+        let tilted = at(Sky { time: None, tilt: 36 }, 720.0);
+        assert!(near(tilted, Vec3::new(0.0, -809.0, -587.8)), "{tilted}");
     }
 
     /// FUN_10056e10 / e80 / ae0 on the data: the end loops, the windows, op 0xa2's exception.
@@ -5808,7 +6367,8 @@ mod auto_tests {
         assert_eq!(fx.tasks.iter().flatten().count(), 6);
     }
 
-    /// DAT 103 `s_pa/effe/nami/lop0` (waits 90, an end loop): it starts over every 91 ticks, one frame after its end.
+    /// DAT 103 `s_pa/effe/nami/lop0` (waits 90, an end loop): it starts over every 92 ticks, one retail frame (2 ticks)
+    /// after its end: every 46th frame.
     #[test]
     fn end_loop_period() {
         let Some(index) = index() else { return };
@@ -5828,7 +6388,7 @@ mod auto_tests {
             prev = ip;
         }
         let ticks: Vec<i32> = starts.iter().map(|s| s.0).collect();
-        assert_eq!(ticks, [1, 92, 183], "{starts:?}");
+        assert_eq!(ticks, [1, 47, 93, 139, 185], "{starts:?}");
     }
 
     /// FUN_1018a7a0 on DAT 103: the tag folder's schedulers replace the `weat` ones; no scheduler in `clod`; a
@@ -5861,7 +6421,8 @@ mod auto_tests {
     }
 
     /// DAT 62870 `m_ev/bels/s002` at 10:01:00 (inside 10:01..11:00, period 5 min): one copy at once with op 0x52's
-    /// wait (80) as its countdown, stepped in the same tick; the source sleeps 18000 units (to 10:06).
+    /// wait (80) as its countdown, stepped in the same frame (78 after the frame's 2 ticks); the source sleeps 18000
+    /// units (to 10:06).
     #[test]
     fn clone_inherits_wait() {
         let Some(index) = index() else { return };
@@ -5877,7 +6438,49 @@ mod auto_tests {
         assert_eq!(tasks.len(), 2);
         let (src, copy) = if tasks[0].vana { (tasks[0], tasks[1]) } else { (tasks[1], tasks[0]) };
         assert_eq!(src.countdown, 18000.0);
-        assert!(!copy.vana && (79.0..=80.0).contains(&copy.countdown), "{}", copy.countdown);
+        assert!(!copy.vana && copy.countdown == 78.0, "{}", copy.countdown);
+    }
+
+    /// FUN_100c46b0 on the clock (DAT 62933 `m_ev/toke`: `st00` / `st12`, op 0xa2 and a two-minute window at 00:00 /
+    /// 12:00): the parse starts neither; the furniture actor starts both on itself, and at 12:00 `st12` strikes (a copy
+    /// runs its ops); the actor's end takes them all.
+    #[test]
+    fn furniture_clock_strikes() {
+        let Some(index) = index() else { return };
+        if index.read(62933).is_err() {
+            return;
+        }
+        const CLOCK: u32 = 0x0400_03ff;
+        let who = Who::Actor(CLOCK);
+        let run = |dayfrac: f32| {
+            let mut fx = Effects::new();
+            fx.set_index(index.clone());
+            fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
+            while !fx.libs_ready(&[62933]) {
+                fx.poll_loads();
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            assert_eq!(fx.tasks.iter().flatten().count(), 0, "the parse starts no op-0xa2 scheduler");
+            fx.on_furniture(CLOCK, 62933);
+            let clock = Ship { file: 62933, pos: Default::default(), rot: Default::default() };
+            fx.tick(&frame(dayfrac), &clock);
+            fx
+        };
+        // The strike's first generator, on the clock.
+        let struck = |fx: &Effects| fx.insts.iter().flatten().filter(|x| x.name == *b"8075").count();
+        let on_clock = |fx: &Effects| fx.tasks.iter().flatten().filter(|t| t.a1 == who && t.a2 == who).count();
+        let waiting = |fx: &Effects| fx.tasks.iter().flatten().filter(|t| t.vana).count();
+        let mut fx = run(0.5);
+        assert_eq!((on_clock(&fx), waiting(&fx)), (3, 2), "st00 and st12 wait, a copy of st12 strikes");
+        assert_eq!(struck(&fx), 1);
+        let l = fx.reg.lib_of(62933).unwrap();
+        let st12 = (l, sched(&fx.reg.libs[l], &["m_ev", "toke"], "st12"));
+        assert_eq!(fx.tasks.iter().flatten().filter(|t| t.res == st12).count(), 2);
+        fx.stop_furniture(CLOCK);
+        assert_eq!((fx.tasks.iter().flatten().count(), struck(&fx)), (0, 0), "the strike goes with the clock");
+        let fx = run(11.0 / 24.0);
+        assert_eq!((on_clock(&fx), waiting(&fx)), (2, 2), "no strike at 11:00");
+        assert_eq!(struck(&fx), 0);
     }
 
     /// A ship (client/ships.rs in small): the drives' poses move it; the heading target eases 1/8 a tick.
@@ -5921,6 +6524,18 @@ mod auto_tests {
     /// Ship file `file`'s `seq` run at 30 fps (2-tick frames), caught up by `skip`: the position and the heading target
     /// after each frame (index = ticks / 2).
     fn sail(file: u32, seq: &[u8; 4], skip: f32, frames: usize, start: Vec3) -> Option<Vec<(Vec3, Vec3)>> {
+        sail_probe(file, seq, skip, frames, start, &mut |_, _| {})
+    }
+
+    /// `sail`, with a look at the effects after each frame.
+    fn sail_probe(
+        file: u32,
+        seq: &[u8; 4],
+        skip: f32,
+        frames: usize,
+        start: Vec3,
+        probe: &mut dyn FnMut(&Effects, usize),
+    ) -> Option<Vec<(Vec3, Vec3)>> {
         let index = std::sync::Arc::new(crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()).ok()?);
         let mut fx = Effects::new();
         fx.set_index(index.clone());
@@ -5951,8 +6566,9 @@ mod auto_tests {
         fx.start_sequence(SHIP, file, u32::from_le_bytes(*seq), skip);
         let mut target = Vec3::ZERO;
         let mut out = Vec::new();
-        for _ in 0..frames {
+        for k in 0..frames {
             fx.tick(&f, &ship);
+            probe(&fx, k);
             if let Some(p) = fx.actor_poses.get(&SHIP).copied() {
                 if let Some(at) = p.pos {
                     ship.pos.set(at);
@@ -5980,44 +6596,93 @@ mod auto_tests {
     }
 
     /// Selbina's arrival (file 31008 `seq0`; MODLOG "Ship actors"): `path` backward from the staging point, its
-    /// heading following the course, then `pat2` sideways into the berth.
+    /// heading following the course, then `pat2` sideways into the berth. Frame k is sequence time 2 (k + 1): the
+    /// sequence and its first drive both take the frame's ticks in the frame they start. `pat2` starts in the frame
+    /// the clock reaches 1800 (k 899) and takes that frame's ticks too, so it runs 2 ticks ahead of the clock.
     #[test]
     fn selbina_arrival() {
         let Some(run) = sail(31008, b"seq0", 0.0, 1201, Vec3::new(9.294, 0.0, -69.775)) else { return };
-        let at = |t: usize| run[t / 2];
-        assert!(near(at(0).0, [-401.468, 0.0, -123.873]), "t 0: {}", at(0).0);
+        let at = |t: usize| run[t / 2 - 1];
+        // The first frame is already 2 ticks out of the staging point (-401.468, 0, -123.873).
+        assert!(at(2).0.distance(Vec3::new(-401.468, 0.0, -123.873)) < 1.0 && at(2).0.x > -401.468);
         assert!(near(at(300).0, [-295.153, 0.0, -116.229]), "t 300: {}", at(300).0);
         assert!((at(300).1.y - -0.0980).abs() < 0.002, "t 300 yaw {}", at(300).1.y);
+        assert!(near(at(1798).0, [9.295, 0.0, -100.0]), "t 1798: {}", at(1798).0);
         assert!(near(at(1800).0, [9.295, 0.0, -100.0]), "t 1800: {}", at(1800).0);
-        assert!(near(at(2100).0, [9.295, 0.0, -84.887]), "t 2100: {}", at(2100).0);
+        assert!(near(at(2098).0, [9.295, 0.0, -84.887]), "t 2098: {}", at(2098).0);
         assert!(near(at(2398).0, [9.295, 0.0, -69.775]), "t 2398: {}", at(2398).0);
     }
 
-    /// 3.3: zoning in 1500 ticks into the arrival: `path` has 300 ticks left, so the boat starts near the berth.
+    /// 3.3: zoning in 1500 ticks into the arrival: `path` has 300 ticks left less the first frame's 2, so the boat
+    /// starts near the berth (t 1500 is (-4.737, 0, -100)).
     #[test]
     fn selbina_arrival_caught_up() {
         let Some(run) = sail(31008, b"seq0", 1500.0, 160, Vec3::new(9.294, 0.0, -69.775)) else { return };
-        assert!(near(run[0].0, [-4.737, 0.0, -100.0]), "t 1500: {}", run[0].0);
-        assert!(near(run[150].0, [9.295, 0.0, -100.0]), "t 1800: {}", run[150].0);
+        assert!(near(run[0].0, [-4.552, 0.0, -100.0]), "t 1502: {}", run[0].0);
+        assert!(near(run[149].0, [9.295, 0.0, -100.0]), "t 1800: {}", run[149].0);
     }
 
     /// 3.7: Port Jeuno's San d'Oria berth (file 31010 `seq0`): down from the sky, nose down.
     #[test]
     fn jeuno_descent() {
         let Some(run) = sail(31010, b"seq0", 0.0, 801, Vec3::new(-68.0, 10.45, 117.0)) else { return };
-        let (p, r) = run[100];
+        let (p, r) = run[99];
         assert!(near(p, [-254.825, -25.673, 356.751]), "t 200: {p}");
         assert!((r.y - 0.5498).abs() < 0.002 && (r.z - 0.1880).abs() < 0.002, "t 200 rot {r}");
-        assert!(near(run[799].0, [-68.0, 10.45, 117.0]), "t 1598: {}", run[799].0);
+        assert!(near(run[798].0, [-68.0, 10.45, 117.0]), "t 1598: {}", run[798].0);
+        assert!(near(run[800].0, [-68.0, 10.45, 117.0]), "after: {}", run[800].0);
     }
 
-    /// 3.7: the pirate ship's leaving (file 31017 `seq1`) ends offshore, its heading never set. The scheduler's end
-    /// takes the drive at 0 ticks left before its last step (3.8), and `come` runs back on a sine: 1.75 short.
+    /// Port Jeuno's Kazham berth, leaving (file 31010 `seq7`): `ptv2` (backward, 2040 ticks from 900, made in the
+    /// frame the clock reaches 900 with that frame's ticks off) has its last running frame at k 1468 and ends in the
+    /// next, 60 ticks before its sequence. The end's point at u = 1.0 (the path's far end, where `ptv2` began) never
+    /// reaches the model (FUN_100a57f0 takes the position back from +0x34): the ship stays where it stopped.
+    #[test]
+    fn jeuno_leaving_drive_end() {
+        let mut driving = Vec::new();
+        let Some(run) = sail_probe(31010, b"seq7", 0.0, 1520, Vec3::new(-4.0, 10.45, 117.0), &mut |fx, _| {
+            driving.push(fx.driving(SHIP));
+        }) else {
+            return;
+        };
+        assert!(driving[1468] && !driving[1469], "ptv2's last frame");
+        let stop = run[1468].0;
+        assert!(run[450].0.distance(stop) > 100.0, "ptv2 starts far from its end: {} .. {stop}", run[450].0);
+        for k in 1469..1520 {
+            assert_eq!((run[k].0, run[k].1), (stop, run[1468].1), "frame {k}");
+        }
+    }
+
+    /// FUN_10057e10 on file 31011 `seq0` (one backward drive of 2700 ticks, then the end op): the end op runs in the
+    /// frame the clock reaches 2700 (k 1349) and only clears +0x88; the update after sets +0x145 (FUN_10057c20: no
+    /// loop in the end stream); the one after that deletes the task. The drive (its child) has its last running
+    /// frame at k 1349, on the berth end of the path, and ends by itself at k 1350.
+    #[test]
+    fn sequence_dies_two_frames_after_its_end() {
+        let mut seen = Vec::new();
+        let Some(run) = sail_probe(31011, b"seq0", 0.0, 1360, Vec3::ZERO, &mut |fx, _| {
+            let t = fx.tasks.iter().flatten().find(|t| t.seq);
+            seen.push((t.map(|t| (t.ended, t.dying)), fx.driving(SHIP)));
+        }) else {
+            return;
+        };
+        assert_eq!(seen[1348], (Some((false, false)), true));
+        assert_eq!(seen[1349], (Some((true, false)), true));
+        assert_eq!(seen[1350], (Some((true, true)), false));
+        assert_eq!(seen[1351], (None, false));
+        assert!(run[1348].0 != run[1349].0 && run[1349].0 == run[1359].0, "{:?}", &run[1347..1352]);
+        assert!(run[0].0.distance(run[1349].0) > 100.0, "the path's far end: {}", run[0].0);
+    }
+
+    /// 3.7: the pirate ship's leaving (file 31017 `seq1`) ends offshore, its heading never set. `come` starts in the
+    /// frame the clock reaches 1200 (k 599) and has its 1800 ticks by k 1498: the path's end, one frame before the
+    /// sequence's own (its last ops sit at 2998 and 2999).
     #[test]
     fn pirate_away() {
         let Some(run) = sail(31017, b"seq1", 0.0, 1600, Vec3::new(-30.0, 0.0, 0.0)) else { return };
+        assert!(near(run[1497].0, [-149.895, 0.0, -998.255]), "t 2996: {}", run[1497].0);
         let (p, r) = run[1599];
-        assert!(near(p, [-149.895, 0.0, -998.255]), "t 3198: {p}");
+        assert!(near(p, [-150.0, 0.0, -1000.0]), "end: {p}");
         assert_eq!(r, Vec3::ZERO);
     }
 }

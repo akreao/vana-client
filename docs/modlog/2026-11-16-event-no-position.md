@@ -1,5 +1,6 @@
-<!-- dll-build: 30261006_0 -->
 ## No c2s 0x015 under the control lock: the airship berth doors (2026-11-16)
+
+<!-- dll-build: 30261006_0 -->
 
 - Report: on retail, Port Jeuno's departures door for Windurst (`_6ue`, event 39) played the walk through the door and
   then left us where the event started. LSB lets us through.

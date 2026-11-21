@@ -51,6 +51,8 @@ pub enum Owner {
     Primer,
     /// The GM call form (faqmain), scrolled in pixels.
     Faq,
+    /// The block list (blklist).
+    BlockList,
 }
 
 /// A focused list's bar as drawn this frame: x, y, height (8 wide), and its (total, visible, top).
@@ -207,6 +209,7 @@ fn dispatch(w: &mut World, owner: Owner, m: Msg, bar: (usize, usize, usize)) -> 
         Owner::Auction => super::auction::bar(w, m),
         Owner::Primer => super::primer::bar(w, m),
         Owner::Faq => super::faqmain::bar(w, m, bar),
+        Owner::BlockList => super::blklist::bar(w, m),
         Owner::Points => {
             super::merits::bar(w, m)
                 || super::jobpoints::bar(w, m)

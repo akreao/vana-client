@@ -685,6 +685,11 @@ pub(super) fn run_unfiltered(w: &mut World, line: &str, mode: Mode) {
         w.uimodes_open = !w.uimodes_open;
         return;
     }
+    // Ours (a developer tool, config dev_tools): /packets opens or closes the Packets window (modern UI).
+    if first.eq_ignore_ascii_case("/packets") && w.packets.enabled && w.modern {
+        w.packets.toggle();
+        return;
+    }
     // Ours (not retail; modern favourites): /favs [on | off] shows or hides the favourites strip.
     if first.eq_ignore_ascii_case("/favs") && w.modern {
         super::favs::command(w, line.split_whitespace().nth(1));
@@ -950,7 +955,9 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
         }
         // /bank2 (FUN_1007e440): without Safe 2 (s2c 0x067 @0x27 bit 0) group 7 0xa8, counted as done.
         // FUN_1007e490 / FUN_1007e560 (/mailbox, /deliverybox, /sendpost): one's Mog House, not visiting (0xbc),
-        // the status gate, the job-change cooldown, the moogle home (0x48); then c2s 0x04D PostOpen / DeliOpen.
+        // the status gate, the job-change cooldown, the window manager busy (FUN_10160c80: +0xae, set while leaving the
+        // house after the exit prompt or the mogdoor pick, 0x101d5f90 / FUN_101d6540), the moogle home (0x48); then
+        // c2s 0x04D PostOpen / DeliOpen.
         id::LASTSYNTH => {
             let a: Vec<&str> = args.iter().map(String::as_str).collect();
             super::synth::lastsynth(w, &a)
@@ -966,7 +973,7 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             if !status_gate(w, 0x44) {
                 return Ok(());
             }
-            if super::moogle::job_cooling(w) {
+            if super::moogle::job_cooling(w) || w.leaving_room {
                 return Err(());
             }
             if !w.zone.is_some_and(super::items::moogle_zone) {
@@ -1021,7 +1028,8 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             if !status_gate(w, 0x44) {
                 return Ok(());
             }
-            // Ours: refused while gardening already (as read a second /garden would break the camera).
+            // Gardening already: every gardening window (bankmenu, inventor, plnt1..6, comyn) has registry flag
+            // 0x20000, so retail's UI_FREE gate (main_open in status_gate) refuses it; this covers the frames with none.
             if super::moogle::job_cooling(w) || w.layout.is_some() || w.remodel.is_some() || w.garden.is_some() {
                 return Err(());
             }

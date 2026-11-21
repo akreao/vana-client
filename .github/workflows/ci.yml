@@ -1,4 +1,4 @@
-# Build, clippy and tests on Linux and Windows for every push to master and every pull request.
+# Build, clippy and tests on Linux and Windows for every push to custom and every pull request.
 # No separate `cargo build`: nothing used its binary, and it cost a full release compile of the crate (4 to 6 min on
 # Windows). Clippy --all-targets type-checks the normal build, and cargo test compiles and links its test binaries in
 # the ci-test profile (release with epaint's debug asserts; Cargo.toml), out in target/ci-test.
@@ -9,7 +9,7 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [custom]
   pull_request:
 
 concurrency:
