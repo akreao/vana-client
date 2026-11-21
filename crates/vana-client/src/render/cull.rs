@@ -646,6 +646,10 @@ mod tests {
     /// here, around the one behind the eye), and the run's draws take that range.
     #[test]
     fn cpu_cull_copies_visible_spans() {
+        // FFXI_NO_CPU_CULL turns the culling off (CpuCull::new None): nothing to check.
+        if std::env::var_os("FFXI_NO_CPU_CULL").is_some() {
+            return;
+        }
         let Ok(gpu) = Gpu::headless() else { return };
         let insts: Vec<Instance> = [10.0, -10.0, 20.0, 30.0, -5.0]
             .iter()
