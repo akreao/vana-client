@@ -33,8 +33,19 @@ pub const INDOOR_STRENGTH: f32 = STRENGTH;
 const FADE_START: f32 = 3.0;
 const FADE_END: f32 = 7.0;
 
-/// The format of the map's companion target: per texel, the feet height (world y) of the caster nearest the sun.
-pub const FEET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
+/// The formats the map's companion target can take, best first: per texel, the feet height (world y) of the caster
+/// nearest the sun. R32Float isn't renderable on every GL driver (wgpu's GL backend wants
+/// `GL_EXT_color_buffer_float` listed, which Mesa's core profiles leave out); R16Float is close enough for the fade
+/// (`FADE_START` / `FADE_END` are metres).
+const FEET_FORMATS: [wgpu::TextureFormat; 2] = [wgpu::TextureFormat::R32Float, wgpu::TextureFormat::R16Float];
+
+/// The feet target's format on this adapter, or None when it can render to none of them (no character shadows).
+pub fn feet_format(adapter: &wgpu::Adapter) -> Option<wgpu::TextureFormat> {
+    FEET_FORMATS.into_iter().find(|&f| {
+        let u = adapter.get_texture_format_features(f).allowed_usages;
+        u.contains(wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING)
+    })
+}
 
 const WGSL: &str = r#"
 struct U {
@@ -49,8 +60,8 @@ struct U {
     misc: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> u: U;
-@group(0) @binding(1) var scene_depth: texture_depth_2d;
-@group(0) @binding(2) var map: texture_depth_2d;
+@group(0) @binding(1) var scene_depth: texture_2d<f32>;
+@group(0) @binding(2) var map: texture_2d<f32>;
 @group(0) @binding(3) var cmp: sampler_comparison;
 @group(0) @binding(4) var feet: texture_2d<f32>;
 
@@ -65,7 +76,7 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
 
 @fragment fn fs(i: VOut) -> @location(0) vec4<f32> {
     let px = vec2<i32>(clamp(i.pos.xy, vec2<f32>(0.0), vec2<f32>(textureDimensions(scene_depth)) - 1.0));
-    let d = textureLoad(scene_depth, px, 0);
+    let d = textureLoad(scene_depth, px, 0).x;
     let ndc = vec4<f32>(i.uv.x * 2.0 - 1.0, 1.0 - i.uv.y * 2.0, d, 1.0);
     let h = u.inv_view_proj * ndc;
     let world = h.xyz / h.w;
@@ -93,7 +104,7 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
             for (var k = 0; k < 4; k++) {
                 let o = vec2<f32>(f32(k & 1), f32(k >> 1u));
                 let t = vec2<i32>(clamp(b + o, vec2<f32>(0.0), dim - 1.0));
-                let caster = textureLoad(map, t, 0);
+                let caster = textureLoad(map, t, 0).x;
                 let drop = world.y - textureLoad(feet, t, 0).x;
                 c[k] = select(0.0, 1.0 - smoothstep(u.misc.z, u.misc.w, drop), lp.z > caster);
             }
@@ -190,7 +201,7 @@ pub struct SunShadow {
     /// The receive pass's group, by the depth, the map and the feet it binds.
     group: super::BindCache<[wgpu::TextureView; 3]>,
     pub map: wgpu::TextureView,
-    /// Beside the map: each texel's caster's feet height (FEET_FORMAT), written by the same pass.
+    /// Beside the map: each texel's caster's feet height (feet_format), written by the same pass.
     pub feet: wgpu::TextureView,
     /// The map's size in texels.
     pub size: u32,
@@ -204,8 +215,14 @@ pub struct SunShadow {
 }
 
 impl SunShadow {
-    /// `format`: the scene's colour format (the plain view the world draws through).
-    pub fn new(gpu: &Gpu, sil_layout: &wgpu::BindGroupLayout, format: wgpu::TextureFormat, size: u32) -> Self {
+    /// `format`: the scene's colour format (the plain view the world draws through); `feet`: feet_format's.
+    pub fn new(
+        gpu: &Gpu,
+        sil_layout: &wgpu::BindGroupLayout,
+        format: wgpu::TextureFormat,
+        feet: wgpu::TextureFormat,
+        size: u32,
+    ) -> Self {
         let device = &gpu.device;
         let map = device
             .create_texture(&wgpu::TextureDescriptor {
@@ -226,7 +243,7 @@ impl SunShadow {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: FEET_FORMAT,
+                format: feet,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             })
@@ -253,7 +270,7 @@ impl SunShadow {
             binding,
             visibility: wgpu::ShaderStages::FRAGMENT,
             ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Depth,
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
                 view_dimension: wgpu::TextureViewDimension::D2,
                 multisampled: false,
             },
@@ -488,7 +505,7 @@ mod tests {
                 count: None,
             }],
         });
-        let sh = SunShadow::new(&gpu, &silly, format, 1024);
+        let sh = SunShadow::new(&gpu, &silly, format, feet_format(&gpu.adapter).expect("a feet format"), 1024);
         let n = 16u32;
         // y is down: the eye 10 above the floor at y = 0, looking down.
         let cam =

@@ -286,7 +286,7 @@ impl DistIter {
                 buf_entry(5, cs, rw, false),
                 buf_entry(6, cs, rw, false),
                 tex_entry(8, wgpu::TextureSampleType::Float { filterable: false }),
-                tex_entry(9, wgpu::TextureSampleType::Depth),
+                tex_entry(9, wgpu::TextureSampleType::Float { filterable: false }),
                 buf_entry(10, cs, rw, false),
             ],
         });
@@ -684,7 +684,7 @@ impl EffectsGpu {
                     binding: 10,
                     visibility: cs,
                     ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -746,7 +746,7 @@ impl EffectsGpu {
                     binding: 7,
                     visibility: wgpu::ShaderStages::FRAGMENT | cs,
                     ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -844,7 +844,7 @@ impl EffectsGpu {
                     binding: 4,
                     visibility: cs,
                     ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },

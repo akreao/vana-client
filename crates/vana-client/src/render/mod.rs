@@ -57,6 +57,8 @@ pub struct PipeCache {
     anim: std::sync::OnceLock<(wgpu::ComputePipeline, wgpu::BindGroupLayout)>,
     cloth: std::sync::OnceLock<(wgpu::ComputePipeline, wgpu::ComputePipeline, wgpu::BindGroupLayout)>,
     zone: std::sync::Mutex<HashMap<wgpu::TextureFormat, ZonePipes>>,
+    /// The sun shadow's feet target format here (sunshadow::feet_format; None: no character shadows).
+    feet: Option<wgpu::TextureFormat>,
 }
 
 impl PipeCache {
@@ -74,8 +76,38 @@ impl PipeCache {
 
     pub fn zone(&self, format: wgpu::TextureFormat) -> ZonePipes {
         let mut z = self.zone.lock().unwrap_or_else(|e| e.into_inner());
-        z.entry(format).or_insert_with(|| ZonePipes::new(&self.device, format)).clone()
+        z.entry(format).or_insert_with(|| ZonePipes::new(&self.device, format, self.feet)).clone()
     }
+}
+
+/// The device limits to ask for: WebGPU's defaults with the effects update's 9 storage buffers per stage (desktop GPUs
+/// allow far more), lowered to whatever the adapter can't meet. A GLES device (a Raspberry Pi's V3D has 15
+/// inter-stage variables, the default is 16) then still opens, and each pipeline is checked against what it really has.
+fn wanted_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
+    wgpu::Limits {
+        max_storage_buffers_per_shader_stage: adapter.max_storage_buffers_per_shader_stage.min(16),
+        ..Default::default()
+    }
+    .or_worse_values_from(adapter)
+}
+
+/// What the client's pipelines need of `limits` and it lacks, one line each: the effects update binds 9 storage
+/// buffers in one stage (render/effects.rs) and zone.wgsl's widest vertex output has 13 locations.
+fn short_limits(limits: &wgpu::Limits) -> Vec<String> {
+    let mut out = Vec::new();
+    if limits.max_storage_buffers_per_shader_stage < 9 {
+        out.push(format!(
+            "{} storage buffers per shader stage, the effects need 9",
+            limits.max_storage_buffers_per_shader_stage
+        ));
+    }
+    if limits.max_inter_stage_shader_variables < 13 {
+        out.push(format!(
+            "{} inter-stage shader variables, the scenery needs 13",
+            limits.max_inter_stage_shader_variables
+        ));
+    }
+    out
 }
 
 /// The GPUs that can draw to `surface` (or any, headless), by name.
@@ -168,11 +200,11 @@ impl Gpu {
             std::sync::atomic::Ordering::Relaxed,
         );
         set_uncompressed(uncompressed());
-        // The effects update pass binds 9 storage buffers (the default limit is 8; desktop GPUs allow far more).
-        let required_limits = wgpu::Limits {
-            max_storage_buffers_per_shader_stage: adapter.limits().max_storage_buffers_per_shader_stage.min(16),
-            ..Default::default()
-        };
+        let required_limits = wanted_limits(&adapter.limits());
+        log::info!("device limits {required_limits:?}");
+        for short in short_limits(&required_limits) {
+            log::error!("this GPU's limits are below what the client needs: {short}");
+        }
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             required_features,
             required_limits,
@@ -184,7 +216,11 @@ impl Gpu {
             anim: Default::default(),
             cloth: Default::default(),
             zone: Default::default(),
+            feet: sunshadow::feet_format(&adapter),
         });
+        if pipes.feet.is_none() {
+            log::warn!("no renderable float format for the sun shadow map; Character Shadows stay off on this GPU");
+        }
         Ok(Self { instance, adapter, device, queue, mips: Default::default(), uploads: Default::default(), pipes })
     }
 
@@ -489,9 +525,8 @@ pub struct ZoneRenderer {
     sil_pipeline: wgpu::RenderPipeline,
     shadows: Option<shadow::Shadows>,
     /// Real character shadows (render/sunshadow.rs; prepare_sun_shadow), and whether render drew them this frame
-    /// (the client then leaves retail's out).
-    sun_depth_pipeline: wgpu::RenderPipeline,
-    sun_depth_lamped_pipeline: wgpu::RenderPipeline,
+    /// (the client then leaves retail's out). Their depth pipelines: ZonePipes::sun_depth.
+    sun_depth: Option<(wgpu::TextureFormat, [wgpu::RenderPipeline; 2])>,
     lamp_depth_pipeline: wgpu::RenderPipeline,
     sun_shadow: Option<sunshadow::SunShadow>,
     /// Ambient occlusion on the scenery (render/ssao.rs; prepare_ssao).
@@ -1110,9 +1145,8 @@ pub struct ZonePipes {
     sil_layout: wgpu::BindGroupLayout,
     sil_pipeline: wgpu::RenderPipeline,
     /// Real character shadows (render/sunshadow.rs, render/lampshadow.rs): the actors' depth from the sun (with
-    /// their feet heights) and from a lamp.
-    sun_depth_pipeline: wgpu::RenderPipeline,
-    sun_depth_lamped_pipeline: wgpu::RenderPipeline,
+    /// their feet heights, in the format given; plain and lamp lit; None where no feet format renders) and from a lamp.
+    sun_depth: Option<(wgpu::TextureFormat, [wgpu::RenderPipeline; 2])>,
     lamp_depth_pipeline: wgpu::RenderPipeline,
     /// The scenery's frustum culling (render/cull.rs): its group 3 layout, the visibility and compaction passes.
     cull_layout: wgpu::BindGroupLayout,
@@ -1120,7 +1154,7 @@ pub struct ZonePipes {
 }
 
 impl ZonePipes {
-    fn new(device: &wgpu::Device, color_format: wgpu::TextureFormat) -> Self {
+    fn new(device: &wgpu::Device, color_format: wgpu::TextureFormat, feet: Option<wgpu::TextureFormat>) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("zone"),
             source: wgpu::ShaderSource::Wgsl(include_str!("zone.wgsl").into()),
@@ -1500,13 +1534,10 @@ impl ZonePipes {
         });
         // Real character shadows (ours): the actors' depth from the sun or a lamp through the light matrix at group 3,
         // both sides, textures ignored as the silhouette's. The sun's also writes each caster's feet height
-        // (sunshadow::FEET_FORMAT), which its shadow fades against.
-        let shadow_depth = |label: &str, feet: bool, entry: &str| {
-            let targets = [Some(wgpu::ColorTargetState {
-                format: sunshadow::FEET_FORMAT,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })];
+        // (sunshadow::feet_format), which its shadow fades against.
+        let shadow_depth = |label: &str, feet: Option<wgpu::TextureFormat>, entry: &str| {
+            let targets =
+                [feet.map(|format| wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })];
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1534,7 +1565,7 @@ impl ZonePipes {
                     bias: wgpu::DepthBiasState { constant: 2, slope_scale: 2.0, clamp: 0.0 },
                 }),
                 multisample: Default::default(),
-                fragment: feet.then(|| wgpu::FragmentState {
+                fragment: feet.is_some().then(|| wgpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_sun_feet"),
                     compilation_options: Default::default(),
@@ -1544,9 +1575,16 @@ impl ZonePipes {
                 cache: None,
             })
         };
-        let sun_depth_pipeline = shadow_depth("sun shadow depth", true, "vs_skinned_sun");
-        let sun_depth_lamped_pipeline = shadow_depth("sun shadow depth (lamp lit)", true, "vs_skinned_sun_lamped");
-        let lamp_depth_pipeline = shadow_depth("lamp shadow depth", false, "vs_skinned_silhouette");
+        let sun_depth = feet.map(|f| {
+            (
+                f,
+                [
+                    shadow_depth("sun shadow depth", Some(f), "vs_skinned_sun"),
+                    shadow_depth("sun shadow depth (lamp lit)", Some(f), "vs_skinned_sun_lamped"),
+                ],
+            )
+        });
+        let lamp_depth_pipeline = shadow_depth("lamp shadow depth", None, "vs_skinned_silhouette");
         // The shine overlay (FUN_10024e10's second pass): additive (SRCALPHA / ONE), z tested (as drawn) but not written.
         let shine_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("shine"),
@@ -1915,8 +1953,7 @@ impl ZonePipes {
             skin_solid_pipeline,
             faded_pipeline,
             faded_clear_pipeline,
-            sun_depth_pipeline,
-            sun_depth_lamped_pipeline,
+            sun_depth,
             lamp_depth_pipeline,
             color_format,
             line_pipeline,
@@ -2625,8 +2662,7 @@ impl ZoneRenderer {
             sil_layout: p.sil_layout,
             sil_pipeline: p.sil_pipeline,
             shadows: None,
-            sun_depth_pipeline: p.sun_depth_pipeline,
-            sun_depth_lamped_pipeline: p.sun_depth_lamped_pipeline,
+            sun_depth: p.sun_depth,
             lamp_depth_pipeline: p.lamp_depth_pipeline,
             sun_shadow: None,
             ssao: None,
@@ -3888,11 +3924,11 @@ impl ZoneRenderer {
         }
         // Real character shadows (render/sunshadow.rs): the actors' depth from the zone's sun, laid on the scenery
         // below after all the scenery (the blended too) and before the actors.
-        let sun = match (&self.sun_shadow, self.sun_shadow_light(camera.target), &self.pose_gpu) {
-            (Some(s), Some((m, d, st)), Some((_, group, _))) => Some((s, m, d, st, group)),
+        let sun = match (&self.sun_shadow, self.sun_shadow_light(camera.target), &self.pose_gpu, &self.sun_depth) {
+            (Some(s), Some((m, d, st)), Some((_, group, _)), Some(_)) => Some((s, m, d, st, group)),
             _ => None,
         };
-        if let Some((s, m, _, _, group)) = &sun {
+        if let (Some((s, m, _, _, group)), Some((_, [sun_pipe, lamped_pipe]))) = (&sun, &self.sun_depth) {
             s.set_light(gpu, *m);
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("sun shadow depth"),
@@ -3914,12 +3950,12 @@ impl ZoneRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.sun_depth_pipeline);
+            pass.set_pipeline(sun_pipe);
             pass.set_bind_group(0, &self.globals, &[]);
             pass.set_bind_group(3, &s.matrix_group, &[0]);
             self.draw_actor_depth(&mut pass, actors, group, done, Depth::Sun);
             // Those a lamp map takes in leave the sun's map on the GPU, where the lights' live state is.
-            pass.set_pipeline(&self.sun_depth_lamped_pipeline);
+            pass.set_pipeline(lamped_pipe);
             self.draw_actor_depth(&mut pass, actors, group, done, Depth::SunLamped);
         }
         // Lamp shadows (render/lampshadow.rs): each shadowed lamp's characters into its layer; its receive pass reads them.
@@ -4503,10 +4539,12 @@ impl ZoneRenderer {
     /// them only with a lit sun or moon.
     pub fn prepare_sun_shadow(&mut self, gpu: &Gpu, on: bool, size: u32) {
         let size = if sunshadow::MAP_SIZES.contains(&size) { size } else { sunshadow::MAP_SIZE };
-        if !on {
+        let Some((feet, _)) = self.sun_depth.as_ref().filter(|_| on) else {
             self.sun_shadow = None;
-        } else if self.sun_shadow.as_ref().is_none_or(|s| s.size != size) {
-            self.sun_shadow = Some(sunshadow::SunShadow::new(gpu, &self.sil_layout, self.color_format, size));
+            return;
+        };
+        if self.sun_shadow.as_ref().is_none_or(|s| s.size != size) {
+            self.sun_shadow = Some(sunshadow::SunShadow::new(gpu, &self.sil_layout, self.color_format, *feet, size));
         }
     }
 
@@ -5105,5 +5143,41 @@ mod boost_tests {
         assert_eq!(super::boosted(Vec3::splat(0.5), [0.0; 4]), Vec3::splat(0.5));
         // 0xa0 / 255 -> trunc(0.627 x 128) = 80 bytes: 80 / 255, not 160 / 255.
         assert_eq!(crate::fx::elem::ambient_ref(Vec3::splat(160.0 / 255.0)).x * 255.0, 80.0);
+    }
+}
+
+#[cfg(test)]
+mod limits_tests {
+    /// A desktop adapter gets what the client always asked for (the defaults, 16 storage buffers); a GLES one (the
+    /// Pi's 15 inter-stage variables, 4096 textures, 16 KiB uniforms) gets its own values, never more than it has.
+    #[test]
+    fn wanted_limits_clamp_to_the_adapter() {
+        let desktop = wgpu::Limits { max_storage_buffers_per_shader_stage: 1_000_000, ..wgpu::Limits::unlimited() };
+        assert_eq!(
+            super::wanted_limits(&desktop),
+            wgpu::Limits { max_storage_buffers_per_shader_stage: 16, ..Default::default() }
+        );
+        let pi = wgpu::Limits {
+            max_inter_stage_shader_variables: 15,
+            max_texture_dimension_2d: 4096,
+            max_uniform_buffer_binding_size: 16384,
+            max_storage_buffers_per_shader_stage: 12,
+            ..wgpu::Limits::downlevel_defaults()
+        };
+        let got = super::wanted_limits(&pi);
+        assert!(got.check_limits(&pi));
+        assert_eq!(got.max_inter_stage_shader_variables, 15);
+        assert_eq!(got.max_storage_buffers_per_shader_stage, 12);
+        assert!(super::short_limits(&got).is_empty());
+    }
+
+    #[test]
+    fn short_limits_name_what_is_missing() {
+        let mali = wgpu::Limits { max_storage_buffers_per_shader_stage: 8, ..wgpu::Limits::downlevel_defaults() };
+        let short = super::short_limits(&mali);
+        assert_eq!(short.len(), 1, "{short:?}");
+        assert!(short[0].starts_with("8 storage buffers"));
+        let desktop = wgpu::Limits { max_storage_buffers_per_shader_stage: 16, ..Default::default() };
+        assert!(super::short_limits(&super::wanted_limits(&desktop)).is_empty());
     }
 }
