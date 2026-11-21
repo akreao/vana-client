@@ -854,19 +854,29 @@ struct CullArg {
     base_vertex: u32,
     pad: u32,
 }
-@group(3) @binding(0) var<storage, read> cull_runs: array<CullRun>;
+// Word 0: where the argument bases (CullArg, 4 words each) start, word 1: where the runs' argument slots start; the
+// runs (CullRun, 8 words each) from word 4 (render/cull.rs CullData::tables).
+@group(3) @binding(0) var<storage, read> cull_tables: array<u32>;
 // Per instance: its mesh's box centre, then half extents (model space).
 @group(3) @binding(1) var<storage, read> cull_bounds: array<vec4<f32>>;
 // Instances as the vertex buffer holds them, 28 words each (render::Instance).
 @group(3) @binding(2) var<storage, read> cull_src: array<u32>;
 @group(3) @binding(3) var<storage, read_write> cull_dst: array<u32>;
-@group(3) @binding(4) var<storage, read> cull_run_args: array<u32>;
-@group(3) @binding(5) var<storage, read> cull_arg_base: array<CullArg>;
 // DrawIndexedIndirect arguments, 5 words each.
-@group(3) @binding(6) var<storage, read_write> cull_args: array<u32>;
-@group(3) @binding(7) var<storage, read_write> cull_vis: array<u32>;
+@group(3) @binding(4) var<storage, read_write> cull_args: array<u32>;
+@group(3) @binding(5) var<storage, read_write> cull_vis: array<u32>;
 // Word 0: a camera list is in force (FUN_1017b510); then a bit per instance that may draw.
-@group(3) @binding(8) var<storage, read> cull_mask: array<u32>;
+@group(3) @binding(6) var<storage, read> cull_mask: array<u32>;
+
+fn cull_run(r: u32) -> CullRun {
+    let b = 4u + r * 8u;
+    return CullRun(cull_tables[b], cull_tables[b + 1u], cull_tables[b + 2u], cull_tables[b + 3u], cull_tables[b + 4u], 0u, 0u, 0u);
+}
+
+fn cull_arg_base(slot: u32) -> CullArg {
+    let b = cull_tables[0] + slot * 4u;
+    return CullArg(cull_tables[b], cull_tables[b + 1u], cull_tables[b + 2u], 0u);
+}
 
 const INST_WORDS: u32 = 28u;
 
@@ -950,7 +960,7 @@ var<workgroup> cull_base: u32;
 // ones before it.
 @compute @workgroup_size(64)
 fn cs_cull_compact(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) lid: u32) {
-    let run = cull_runs[wg.x];
+    let run = cull_run(wg.x);
     if (lid == 0u) {
         cull_base = 0u;
     }
@@ -985,8 +995,8 @@ fn cs_cull_compact(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocati
     }
     let n = workgroupUniformLoad(&cull_base);
     for (var a = lid; a < run.args_count; a += 64u) {
-        let slot = cull_run_args[run.args_start + a];
-        let b = cull_arg_base[slot];
+        let slot = cull_tables[cull_tables[1] + run.args_start + a];
+        let b = cull_arg_base(slot);
         let o = slot * 5u;
         cull_args[o] = b.index_count;
         cull_args[o + 1u] = n;

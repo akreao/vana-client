@@ -71,6 +71,22 @@ pub struct CullData {
 }
 
 impl CullData {
+    /// The compaction pass's read-only tables in one buffer (one storage buffer fewer each, for GPUs that allow 8):
+    /// word 0 where the argument bases start, word 1 where the runs' argument slots start, then from word 4 the runs
+    /// (8 words each), the argument bases (4 each) and the slots.
+    fn tables(&self) -> Vec<u32> {
+        let runs: &[u32] = bytemuck::cast_slice(&self.runs);
+        let args: &[u32] = bytemuck::cast_slice(&self.args);
+        let mut t = Vec::with_capacity(4 + runs.len() + args.len() + self.run_args.len());
+        t.extend([0, 0, 0, 0]);
+        t.extend_from_slice(runs);
+        t[0] = t.len() as u32;
+        t.extend_from_slice(args);
+        t[1] = t.len() as u32;
+        t.extend_from_slice(&self.run_args);
+        t
+    }
+
     /// `bounds`: each instance's box; `draws`: each draw's sub-draws (instance range, index count, first index, base
     /// vertex). Returns each sub-draw's argument slot.
     pub fn build(
@@ -211,12 +227,14 @@ pub struct Cull {
 impl Cull {
     /// None without indirect draws that start past instance 0, with nothing to draw, or with FFXI_NO_CULL set (a
     /// check against the unculled scene).
-    pub fn new(gpu: &Gpu, layout: &wgpu::BindGroupLayout, data: &CullData, instances: &wgpu::Buffer) -> Option<Self> {
-        if !gpu.device.features().contains(wgpu::Features::INDIRECT_FIRST_INSTANCE)
-            || data.runs.is_empty()
-            || data.bounds.is_empty()
-            || std::env::var_os("FFXI_NO_CULL").is_some()
-        {
+    pub fn new(
+        gpu: &Gpu,
+        layout: Option<&wgpu::BindGroupLayout>,
+        data: &CullData,
+        instances: &wgpu::Buffer,
+    ) -> Option<Self> {
+        let layout = layout?;
+        if data.runs.is_empty() || data.bounds.is_empty() || std::env::var_os("FFXI_NO_CULL").is_some() {
             return None;
         }
         let device = &gpu.device;
@@ -239,10 +257,8 @@ impl Cull {
             })
         };
         let storage = wgpu::BufferUsages::STORAGE;
-        let runs = with("cull runs", bytemuck::cast_slice(&data.runs), storage);
+        let tables = with("cull tables", bytemuck::cast_slice(&data.tables()), storage);
         let bounds = with("cull bounds", bytemuck::cast_slice(&data.bounds), storage);
-        let run_args = with("cull run args", bytemuck::cast_slice(&data.run_args), storage);
-        let arg_base = with("cull arg base", bytemuck::cast_slice(&data.args), storage);
         let out = empty("culled instances", data.out_len as u64 * INSTANCE_BYTES, storage | wgpu::BufferUsages::VERTEX);
         let args = empty(
             "cull args",
@@ -254,7 +270,7 @@ impl Cull {
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("cull"),
             layout,
-            entries: &[&runs, &bounds, instances, &out, &run_args, &arg_base, &args, &vis, &mask]
+            entries: &[&tables, &bounds, instances, &out, &args, &vis, &mask]
                 .iter()
                 .enumerate()
                 .map(|(k, b)| wgpu::BindGroupEntry { binding: k as u32, resource: b.as_entire_binding() })
@@ -355,7 +371,18 @@ impl Cull {
     }
 }
 
-/// The bind group layout of group 3: runs, bounds, source instances, culled instances, run args, arg bases, args,
+/// The storage buffers the culling passes bind in the compute stage: group 3's seven and the globals' door parts.
+/// Mali's GLES and Vulkan drivers allow 8.
+pub const STORAGE_NEEDED: u32 = 8;
+
+/// Whether the GPU culling can run on `device`: indirect draws that start past instance 0 (wgpu never offers them on
+/// GLES) and the storage buffers. Without it the scenery is culled on the CPU (CpuCull) and the passes aren't built.
+pub fn on_gpu(device: &wgpu::Device) -> bool {
+    device.features().contains(wgpu::Features::INDIRECT_FIRST_INSTANCE)
+        && device.limits().max_storage_buffers_per_shader_stage >= STORAGE_NEEDED
+}
+
+/// The bind group layout of group 3: the tables (CullData::tables), bounds, source instances, culled instances, args,
 /// visibility, the camera list's mask.
 pub fn layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     let entry = |binding: u32, read_only: bool| wgpu::BindGroupLayoutEntry {
@@ -375,11 +402,9 @@ pub fn layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             entry(1, true),
             entry(2, true),
             entry(3, false),
-            entry(4, true),
-            entry(5, true),
-            entry(6, false),
-            entry(7, false),
-            entry(8, true),
+            entry(4, false),
+            entry(5, false),
+            entry(6, true),
         ],
     })
 }
@@ -607,6 +632,35 @@ fn visible(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The compaction pass's merged tables (one storage buffer for three): each run's fields, each argument base and
+    /// each run's slots where zone.wgsl cull_run / cull_arg_base / the slot lookup read them.
+    #[test]
+    fn tables_put_each_record_where_the_shader_reads_it() {
+        let insts: Vec<Instance> = (0..6).map(|k| at(Vec3::new(k as f32, 0.0, 5.0), [0.0; 4])).collect();
+        let bounds = vec![[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]; 6];
+        let draws = [vec![(0..4, 30, 6, -2), (4..6, 12, 0, 7)], vec![(0..4, 9, 90, 3)]];
+        let (data, slots) = CullData::build(bounds, &insts, &draws);
+        let t = data.tables();
+        let (arg_at, slot_at) = (t[0] as usize, t[1] as usize);
+        assert_eq!(arg_at, 4 + 8 * data.runs.len());
+        assert_eq!(slot_at, arg_at + 4 * data.args.len());
+        assert_eq!(t.len(), slot_at + data.run_args.len());
+        for (r, run) in data.runs.iter().enumerate() {
+            let w = &t[4 + 8 * r..4 + 8 * r + 5];
+            assert_eq!(w, [run.inst_start, run.inst_end, run.out_start, run.args_start, run.args_count]);
+            for a in 0..run.args_count {
+                let slot = t[slot_at + (run.args_start + a) as usize];
+                assert_eq!(data.arg_run[slot as usize], r as u32);
+            }
+        }
+        for (subs, got) in draws.iter().zip(&slots) {
+            for (&(_, count, first, base), &slot) in subs.iter().zip(got) {
+                let b = &t[arg_at + 4 * slot as usize..][..3];
+                assert_eq!(b, [count, first, base as u32]);
+            }
+        }
+    }
 
     fn at(pos: Vec3, band: [f32; 4]) -> Instance {
         Instance { model: Mat4::from_translation(pos).to_cols_array_2d(), lights: [0; 4], area: [0; 4], band }
