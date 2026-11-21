@@ -72,6 +72,8 @@ fn gl_source(src: &str) -> String {
             }
         }
     }
+    // Found in call order; a load inside another closes first.
+    at.sort_unstable();
     let mut out = String::with_capacity(src.len() + 2 * at.len());
     let mut last = 0;
     for p in at {
@@ -358,14 +360,16 @@ mod tests {
                    let b = textureLoad(scene, p, 0).rgb;\n\
                    let c = f(textureLoad( depth , q, 0), textureLoad(depth_x, q, 0));\n\
                    let d = textureLoad(scene, vec2<i32>(textureLoad(depth, q, 0) * 4.0), 0);\n\
-                   let e = textureLoad (/* a */ depth // b\n , q, 0); // textureLoad(depth, q, 0)";
+                   let e = textureLoad (/* a */ depth // b\n , q, 0); // textureLoad(depth, q, 0)\n\
+                   let f = textureLoad(depth, p + vec2<i32>(i32(textureLoad(depth, p, 0)), 0), 0);";
         assert_eq!(
             gl_source(src),
             "let a = textureLoad(depth, p + vec2<i32>(1, 0), 0).x;\n\
              let b = textureLoad(scene, p, 0).rgb;\n\
              let c = f(textureLoad( depth , q, 0).x, textureLoad(depth_x, q, 0));\n\
              let d = textureLoad(scene, vec2<i32>(textureLoad(depth, q, 0).x * 4.0), 0);\n\
-             let e = textureLoad (/* a */ depth // b\n , q, 0).x; // textureLoad(depth, q, 0)"
+             let e = textureLoad (/* a */ depth // b\n , q, 0).x; // textureLoad(depth, q, 0)\n\
+             let f = textureLoad(depth, p + vec2<i32>(i32(textureLoad(depth, p, 0).x), 0), 0).x;"
         );
     }
 

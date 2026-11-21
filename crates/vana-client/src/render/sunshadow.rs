@@ -491,10 +491,14 @@ mod tests {
     #[test]
     fn receive_darkens_shadowed_floor() {
         let Ok(gpu) = Gpu::headless() else { return };
-        // Every feet format this adapter renders (R16Float, the GL fallback, as well as R32Float).
-        for feet in FEET_FORMATS.into_iter().filter(|&f| {
-            gpu.adapter.get_texture_format_features(f).allowed_usages.contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
-        }) {
+        // Every feet format this adapter renders (R16Float, the GL fallback, as well as R32Float); with none,
+        // feet_format says so and the sun shadows stay off (ZonePipes::sun_depth None).
+        let renders = |f: wgpu::TextureFormat| {
+            let u = gpu.adapter.get_texture_format_features(f).allowed_usages;
+            u.contains(wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING)
+        };
+        assert_eq!(feet_format(&gpu.adapter), FEET_FORMATS.into_iter().find(|&f| renders(f)));
+        for feet in FEET_FORMATS.into_iter().filter(|&f| renders(f)) {
             let format = wgpu::TextureFormat::Rgba8Unorm;
             let silly = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: None,

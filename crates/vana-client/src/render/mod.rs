@@ -223,13 +223,14 @@ impl Gpu {
         };
         let required_limits = wanted_limits(&adapter_limits);
         log::info!("device limits {required_limits:?}");
-        // Below what the pipelines need, the device would open and the first such pipeline panic: say why instead
-        // (FFXI_LOW_LIMITS goes on, to find those pipelines).
-        for line in &short_limits(&required_limits) {
+        // Below what the world's pipelines need, the game's device would open and the first such pipeline panic: the
+        // game (a surface) stops here and says why. Headless tools (UI shots and the like) and FFXI_LOW_LIMITS, which
+        // looks for those pipelines, go on with the errors logged.
+        let short = short_limits(&required_limits);
+        for line in &short {
             log::error!("below what the client needs: {line}");
         }
-        let short = short_limits(&required_limits);
-        if !short.is_empty() && std::env::var_os("FFXI_LOW_LIMITS").is_none() {
+        if !short.is_empty() && surface.is_some() && std::env::var_os("FFXI_LOW_LIMITS").is_none() {
             anyhow::bail!("{} ({:?}) can't run the client: {}", info.name, info.backend, short.join("; "));
         }
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
