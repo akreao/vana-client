@@ -80,6 +80,14 @@ impl PipeCache {
     }
 }
 
+/// FFXI_LOW_LIMITS's limits: a GLES 3.1 Mali / V3D class device.
+const LOW_LIMITS: wgpu::Limits = wgpu::Limits {
+    max_storage_buffers_per_shader_stage: 8,
+    max_texture_dimension_1d: 4096,
+    max_texture_dimension_2d: 4096,
+    ..wgpu::Limits::downlevel_defaults()
+};
+
 /// The device limits to ask for: WebGPU's defaults with the effects update's 9 storage buffers per stage (desktop GPUs
 /// allow far more), lowered to whatever the adapter can't meet. A GLES device (a Raspberry Pi's V3D has 15
 /// inter-stage variables, the default is 16) then still opens, and each pipeline is checked against what it really has.
@@ -92,7 +100,8 @@ fn wanted_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
 }
 
 /// What the client's pipelines need of `limits` and it lacks, one line each: the effects update binds 9 storage
-/// buffers in one stage (render/effects.rs) and zone.wgsl's widest vertex output has 13 locations.
+/// buffers in one stage (render/effects.rs), zone.wgsl's widest vertex output has 13 locations and the mip
+/// generator's solve pass runs 256 invocations in x (render/mipgen.rs).
 fn short_limits(limits: &wgpu::Limits) -> Vec<String> {
     let mut out = Vec::new();
     if limits.max_storage_buffers_per_shader_stage < 9 {
@@ -105,6 +114,12 @@ fn short_limits(limits: &wgpu::Limits) -> Vec<String> {
         out.push(format!(
             "{} inter-stage shader variables, the scenery needs 13",
             limits.max_inter_stage_shader_variables
+        ));
+    }
+    if limits.max_compute_invocations_per_workgroup < 256 || limits.max_compute_workgroup_size_x < 256 {
+        out.push(format!(
+            "{} compute invocations per workgroup ({} in x), the mip generator needs 256",
+            limits.max_compute_invocations_per_workgroup, limits.max_compute_workgroup_size_x
         ));
     }
     out
@@ -200,10 +215,22 @@ impl Gpu {
             std::sync::atomic::Ordering::Relaxed,
         );
         set_uncompressed(uncompressed());
-        let required_limits = wanted_limits(&adapter.limits());
+        // FFXI_LOW_LIMITS (tests): the limits of a GLES 3.1 Mali-class part (8 storage buffers per stage, 15
+        // inter-stage variables, 4096 textures, 16 KiB uniform buffers) wherever the adapter has more.
+        let adapter_limits = match std::env::var_os("FFXI_LOW_LIMITS") {
+            Some(_) => adapter.limits().or_worse_values_from(&LOW_LIMITS),
+            None => adapter.limits(),
+        };
+        let required_limits = wanted_limits(&adapter_limits);
         log::info!("device limits {required_limits:?}");
-        for short in short_limits(&required_limits) {
-            log::error!("this GPU's limits are below what the client needs: {short}");
+        // Below what the pipelines need, the device would open and the first such pipeline panic: say why instead
+        // (FFXI_LOW_LIMITS goes on, to find those pipelines).
+        for line in &short_limits(&required_limits) {
+            log::error!("below what the client needs: {line}");
+        }
+        let short = short_limits(&required_limits);
+        if !short.is_empty() && std::env::var_os("FFXI_LOW_LIMITS").is_none() {
+            anyhow::bail!("{} ({:?}) can't run the client: {}", info.name, info.backend, short.join("; "));
         }
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             required_features,
@@ -5177,6 +5204,16 @@ mod limits_tests {
         let short = super::short_limits(&mali);
         assert_eq!(short.len(), 1, "{short:?}");
         assert!(short[0].starts_with("8 storage buffers"));
+        // Panfrost on Midgard: 128 invocations.
+        let midgard = wgpu::Limits {
+            max_storage_buffers_per_shader_stage: 16,
+            max_compute_invocations_per_workgroup: 128,
+            max_compute_workgroup_size_x: 128,
+            ..wgpu::Limits::downlevel_defaults()
+        };
+        let short = super::short_limits(&midgard);
+        assert_eq!(short.len(), 1, "{short:?}");
+        assert!(short[0].starts_with("128 compute invocations"));
         let desktop = wgpu::Limits { max_storage_buffers_per_shader_stage: 16, ..Default::default() };
         assert!(super::short_limits(&super::wanted_limits(&desktop)).is_empty());
     }

@@ -491,113 +491,118 @@ mod tests {
     #[test]
     fn receive_darkens_shadowed_floor() {
         let Ok(gpu) = Gpu::headless() else { return };
-        let format = wgpu::TextureFormat::Rgba8Unorm;
-        let silly = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: None,
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: true,
-                    min_binding_size: wgpu::BufferSize::new(64),
-                },
-                count: None,
-            }],
-        });
-        let sh = SunShadow::new(&gpu, &silly, format, feet_format(&gpu.adapter).expect("a feet format"), 1024);
-        let n = 16u32;
-        // y is down: the eye 10 above the floor at y = 0, looking down.
-        let cam =
-            crate::render::Camera { eye: Vec3::new(0.0, -10.0, 0.0), target: Vec3::ZERO, up: Vec3::Z, fov_y: 0.8 };
-        let vp = cam.view_proj(1.0);
-        let floor_z = vp.project_point3(Vec3::ZERO).z;
-        let sun = Vec3::Y;
-        let light = light_matrix(sun, Vec3::ZERO, MAP_SIZE).unwrap();
-        let depth = crate::render::depth_view(&gpu.device, n, n);
-        let color = gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: None,
-            size: wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let cv = color.create_view(&Default::default());
-        // The floor's depth in the map: a caster just above it shadows, one far above does not.
-        let floor_lz = light.project_point3(Vec3::ZERO).z;
-        let run = |map_depth: f32, feet_y: f32| {
-            let mut enc = gpu.device.create_command_encoder(&Default::default());
-            {
-                let _p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: None,
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &cv,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.8, g: 0.8, b: 0.8, a: 1.0 }),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &depth,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(floor_z),
-                            store: wgpu::StoreOp::Store,
+        // Every feet format this adapter renders (R16Float, the GL fallback, as well as R32Float).
+        for feet in FEET_FORMATS.into_iter().filter(|&f| {
+            gpu.adapter.get_texture_format_features(f).allowed_usages.contains(wgpu::TextureUsages::RENDER_ATTACHMENT)
+        }) {
+            let format = wgpu::TextureFormat::Rgba8Unorm;
+            let silly = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: None,
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(64),
+                    },
+                    count: None,
+                }],
+            });
+            let sh = SunShadow::new(&gpu, &silly, format, feet, 1024);
+            let n = 16u32;
+            // y is down: the eye 10 above the floor at y = 0, looking down.
+            let cam =
+                crate::render::Camera { eye: Vec3::new(0.0, -10.0, 0.0), target: Vec3::ZERO, up: Vec3::Z, fov_y: 0.8 };
+            let vp = cam.view_proj(1.0);
+            let floor_z = vp.project_point3(Vec3::ZERO).z;
+            let sun = Vec3::Y;
+            let light = light_matrix(sun, Vec3::ZERO, MAP_SIZE).unwrap();
+            let depth = crate::render::depth_view(&gpu.device, n, n);
+            let color = gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let cv = color.create_view(&Default::default());
+            // The floor's depth in the map: a caster just above it shadows, one far above does not.
+            let floor_lz = light.project_point3(Vec3::ZERO).z;
+            let run = |map_depth: f32, feet_y: f32| {
+                let mut enc = gpu.device.create_command_encoder(&Default::default());
+                {
+                    let _p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: None,
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &cv,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.8, g: 0.8, b: 0.8, a: 1.0 }),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: &depth,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(floor_z),
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
                         }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-            }
-            {
-                let _p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: None,
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &sh.feet,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color { r: feet_y as f64, g: 0.0, b: 0.0, a: 1.0 }),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &sh.map,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(map_depth),
-                            store: wgpu::StoreOp::Store,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                }
+                {
+                    let _p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: None,
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &sh.feet,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color { r: feet_y as f64, g: 0.0, b: 0.0, a: 1.0 }),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: &sh.map,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(map_depth),
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
                         }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                }
+                sh.receive(&gpu, &mut enc, &cv, &depth, vp, light, sun, STRENGTH, cam.eye, 1.0);
+                gpu.queue.submit([enc.finish()]);
+                read(&gpu, &color, n, n)
+            };
+            let lit = (0.8f32 * 255.0).round() as i32;
+            let dark = (0.8 * (1.0 - STRENGTH) * 255.0).round() as i32;
+            for p in run(1.0, 0.0).as_chunks::<4>().0 {
+                assert!((p[0] as i32 - lit).abs() <= 2, "unshadowed {p:?}");
             }
-            sh.receive(&gpu, &mut enc, &cv, &depth, vp, light, sun, STRENGTH, cam.eye, 1.0);
-            gpu.queue.submit([enc.finish()]);
-            read(&gpu, &color, n, n)
-        };
-        let lit = (0.8f32 * 255.0).round() as i32;
-        let dark = (0.8 * (1.0 - STRENGTH) * 255.0).round() as i32;
-        for p in run(1.0, 0.0).as_chunks::<4>().0 {
-            assert!((p[0] as i32 - lit).abs() <= 2, "unshadowed {p:?}");
-        }
-        for p in run(floor_lz - 1.0 / DEPTH, 0.0).as_chunks::<4>().0 {
-            assert!((p[0] as i32 - dark).abs() <= 3, "shadowed {p:?} want {dark}");
-        }
-        // y is down: feet 20 above the floor.
-        for p in run(floor_lz - 20.0 / DEPTH, -20.0).as_chunks::<4>().0 {
-            assert!((p[0] as i32 - lit).abs() <= 2, "caster far above {p:?}");
-        }
-        for p in run(floor_lz - 20.0 / DEPTH, -1.0).as_chunks::<4>().0 {
-            assert!((p[0] as i32 - dark).abs() <= 3, "caster a step above {p:?} want {dark}");
+            for p in run(floor_lz - 1.0 / DEPTH, 0.0).as_chunks::<4>().0 {
+                assert!((p[0] as i32 - dark).abs() <= 3, "shadowed {p:?} want {dark}");
+            }
+            // y is down: feet 20 above the floor.
+            for p in run(floor_lz - 20.0 / DEPTH, -20.0).as_chunks::<4>().0 {
+                assert!((p[0] as i32 - lit).abs() <= 2, "caster far above {p:?}");
+            }
+            for p in run(floor_lz - 20.0 / DEPTH, -1.0).as_chunks::<4>().0 {
+                assert!((p[0] as i32 - dark).abs() <= 3, "caster a step above {p:?} want {dark} ({feet:?})");
+            }
         }
     }
 }

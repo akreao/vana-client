@@ -45,45 +45,84 @@ struct Post { size: vec2<f32>, time: f32, pad: f32, p: array<vec4<f32>, 4> };
 );
 
 /// A mod's source for `HEADER_GL`: every `textureLoad(depth, ...)` becomes `textureLoad(depth, ...).x`, the f32 a
-/// `texture_depth_2d` load gives.
+/// `texture_depth_2d` load gives. Read as WGSL tokens, so spaces and comments anywhere in the call don't hide it.
 fn gl_source(src: &str) -> String {
-    let mut out = String::with_capacity(src.len() + 16);
-    let mut rest = src;
-    while let Some(at) = rest.find("textureLoad(") {
-        let (before, call) = rest.split_at(at);
-        out.push_str(before);
-        let args = call["textureLoad(".len()..].trim_start();
-        let ident_end = args.find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(args.len());
-        let is_depth = &args[..ident_end] == "depth" && args[ident_end..].trim_start().starts_with(',');
-        // The call's closing parenthesis.
-        let mut level = 0usize;
-        let mut end = None;
-        for (i, c) in call.char_indices() {
-            match c {
-                '(' => level += 1,
-                ')' => {
+    let toks = wgsl_tokens(src);
+    let text = |k: usize| toks.get(k).map(|&(a, b)| &src[a..b]);
+    let mut at = Vec::new();
+    for k in 0..toks.len() {
+        if text(k) != Some("textureLoad") || text(k + 1) != Some("(") || text(k + 2) != Some("depth") {
+            continue;
+        }
+        if text(k + 3) != Some(",") {
+            continue;
+        }
+        let mut level = 0i32;
+        for j in k + 1..toks.len() {
+            match text(j) {
+                Some("(") => level += 1,
+                Some(")") => {
                     level -= 1;
                     if level == 0 {
-                        end = Some(i + 1);
+                        at.push(toks[j].1);
                         break;
                     }
                 }
                 _ => {}
             }
         }
-        let Some(end) = end else {
-            out.push_str(call);
-            return out;
-        };
-        out.push_str("textureLoad(");
-        out.push_str(&gl_source(&call["textureLoad(".len()..end - 1]));
-        out.push(')');
-        if is_depth {
-            out.push_str(".x");
-        }
-        rest = &call[end..];
     }
-    out.push_str(rest);
+    let mut out = String::with_capacity(src.len() + 2 * at.len());
+    let mut last = 0;
+    for p in at {
+        out.push_str(&src[last..p]);
+        out.push_str(".x");
+        last = p;
+    }
+    out.push_str(&src[last..]);
+    out
+}
+
+/// WGSL's tokens as byte ranges: identifiers and numbers whole, every other character alone; whitespace, line comments
+/// and (nesting) block comments left out.
+fn wgsl_tokens(src: &str) -> Vec<(usize, usize)> {
+    let b = src.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i..].starts_with(b"//") {
+            i = b[i..].iter().position(|&c| c == b'\n').map_or(b.len(), |n| i + n);
+        } else if b[i..].starts_with(b"/*") {
+            let mut depth = 0;
+            while i < b.len() {
+                if b[i..].starts_with(b"/*") {
+                    depth += 1;
+                    i += 2;
+                } else if b[i..].starts_with(b"*/") {
+                    depth -= 1;
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+        } else if b[i].is_ascii_whitespace() {
+            i += 1;
+        } else if b[i].is_ascii_alphanumeric() || b[i] == b'_' {
+            let start = i;
+            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
+                i += 1;
+            }
+            out.push((start, i));
+        } else {
+            // One character (a multi-byte one whole).
+            let n = src[i..].chars().next().map_or(1, char::len_utf8);
+            out.push((i, i + n));
+            i += n;
+        }
+    }
     out
 }
 
@@ -318,13 +357,15 @@ mod tests {
         let src = "let a = textureLoad(depth, p + vec2<i32>(1, 0), 0);\n\
                    let b = textureLoad(scene, p, 0).rgb;\n\
                    let c = f(textureLoad( depth , q, 0), textureLoad(depth_x, q, 0));\n\
-                   let d = textureLoad(scene, vec2<i32>(textureLoad(depth, q, 0) * 4.0), 0);";
+                   let d = textureLoad(scene, vec2<i32>(textureLoad(depth, q, 0) * 4.0), 0);\n\
+                   let e = textureLoad (/* a */ depth // b\n , q, 0); // textureLoad(depth, q, 0)";
         assert_eq!(
             gl_source(src),
             "let a = textureLoad(depth, p + vec2<i32>(1, 0), 0).x;\n\
              let b = textureLoad(scene, p, 0).rgb;\n\
              let c = f(textureLoad( depth , q, 0).x, textureLoad(depth_x, q, 0));\n\
-             let d = textureLoad(scene, vec2<i32>(textureLoad(depth, q, 0).x * 4.0), 0);"
+             let d = textureLoad(scene, vec2<i32>(textureLoad(depth, q, 0).x * 4.0), 0);\n\
+             let e = textureLoad (/* a */ depth // b\n , q, 0).x; // textureLoad(depth, q, 0)"
         );
     }
 
