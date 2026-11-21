@@ -18,7 +18,7 @@ seen on Mesa llvmpipe (GL 4.6) and zink.
 - The device asked for WebGPU's default limits, which GLES parts don't all meet (a Raspberry Pi's V3D has 15
   inter-stage variables against 16; it failed on its Vulkan driver too). The defaults are now lowered to the
   adapter's own where it has less (`wanted_limits`); a desktop GPU asks for exactly what it did before. Start-up logs
-  the limits and stops, naming the GPU and what it lacks, when one is below the client's needs (9 storage buffers in
+  the limits and the game stops, naming the GPU and what it lacks (headless tools log it), when one is below the client's needs (9 storage buffers in
   one stage for the effects update, 13 inter-stage variables in zone.wgsl, 256 compute invocations for the mip
   generator), instead of a pipeline panic later. `FFXI_LOW_LIMITS` (tests) caps the limits at a GLES 3.1 Mali / V3D
   class device's and goes on past that check.
