@@ -662,6 +662,76 @@ mod tests {
         }
     }
 
+    /// The GPU culling's passes reading the merged tables: two draws sharing a run and a third in its own run get
+    /// their own index count, first index and base vertex, their run's visible count and its first culled instance.
+    #[test]
+    fn gpu_cull_writes_each_draws_arguments() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        if !on_gpu(&gpu.device) {
+            return;
+        }
+        let device = &gpu.device;
+        let p = gpu.pipes.zone(wgpu::TextureFormat::Rgba8Unorm);
+        let (layout, pipes) = p.cull.as_ref().expect("the culling passes");
+        let insts: Vec<Instance> =
+            [10.0, -10.0, 20.0, 30.0, -5.0, 15.0].iter().map(|&z| at(Vec3::new(0.0, 0.0, z), [0.0; 4])).collect();
+        let bounds = vec![[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]; insts.len()];
+        let draws = [vec![(0..5, 30, 6, -2), (0..5, 12, 0, 7)], vec![(5..6, 9, 90, 3)]];
+        let (data, slots) = CullData::build(bounds, &insts, &draws);
+        let buf = |bytes: &[u8], usage: wgpu::BufferUsages| {
+            let b = device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: bytes.len() as u64,
+                usage: usage | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            gpu.queue.put(&b, 0, bytes);
+            b
+        };
+        let instances = buf(bytemuck::cast_slice(&insts), wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX);
+        let cam = crate::render::Camera { eye: Vec3::ZERO, target: Vec3::Z, up: Vec3::NEG_Y, fov_y: 0.8 };
+        let mut u = crate::render::Uniforms::zeroed();
+        u.view_proj = cam.view_proj(1.0).to_cols_array_2d();
+        u.voyage = Mat4::IDENTITY.to_cols_array_2d();
+        u.area_info = [0.0, 0.0, 100.0, 1.0];
+        let uniforms = buf(bytemuck::bytes_of(&u), wgpu::BufferUsages::UNIFORM);
+        let zeros = vec![0u8; 4096];
+        let [lights, areas, parts, deltas] = [(); 4].map(|_| buf(&zeros, wgpu::BufferUsages::STORAGE));
+        let lamp = buf(&zeros, wgpu::BufferUsages::UNIFORM);
+        let globals = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &p.globals_layout,
+            entries: &[&uniforms, &lights, &areas, &parts, &deltas, &lamp]
+                .iter()
+                .enumerate()
+                .map(|(k, b)| wgpu::BindGroupEntry { binding: k as u32, resource: b.as_entire_binding() })
+                .collect::<Vec<_>>(),
+        });
+        let c = Cull::new(&gpu, Some(layout), &data, &instances).expect("a GPU culling");
+        let read = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: c.args.size(),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = device.create_command_encoder(&Default::default());
+        c.run(&mut enc, &globals, pipes);
+        enc.copy_buffer_to_buffer(&c.args, 0, &read, 0, c.args.size());
+        gpu.queue.submit([enc.finish()]);
+        read.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        let _ = device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None });
+        let words: Vec<u32> = bytemuck::pod_collect_to_vec(&read.slice(..).get_mapped_range().expect("mapped"));
+        // Run 0..5 keeps the instances at z 10, 20 and 30 (copied from 0); run 5..6 keeps its one (copied from 5).
+        let want = [
+            (slots[0][0], [30, 3, 6, -2i32 as u32, 0]),
+            (slots[0][1], [12, 3, 0, 7, 0]),
+            (slots[1][0], [9, 1, 90, 3, 5]),
+        ];
+        for (slot, args) in want {
+            assert_eq!(words[slot as usize * 5..][..5], args, "slot {slot}");
+        }
+    }
+
     fn at(pos: Vec3, band: [f32; 4]) -> Instance {
         Instance { model: Mat4::from_translation(pos).to_cols_array_2d(), lights: [0; 4], area: [0; 4], band }
     }
