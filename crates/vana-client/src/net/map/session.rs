@@ -678,9 +678,11 @@ mod tests {
     fn captured_both_ways() {
         use crate::net::capture::{self, Dir, Kind};
         let dir = std::env::temp_dir().join(format!("vana-capture-session-{}", std::process::id()));
-        let _held = capture::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _scope = capture::test_scope();
         let _ = std::fs::remove_dir_all(&dir);
         capture::test_capture(Some(dir.clone()));
+        // A parallel map session can receive the same sequence before ours does.
+        std::thread::spawn(|| capture::datagram(false, MIN_DATAGRAM, 1, 0, Some(0))).join().unwrap();
         let key = [7u8; 20];
         let server = UdpSocket::bind("127.0.0.1:0").unwrap();
         let mut s = MapSession::connect(server.local_addr().unwrap(), &key, long_codec()).unwrap();
