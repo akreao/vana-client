@@ -80,6 +80,30 @@ impl PipeCache {
     }
 }
 
+/// How much the first start trusts the GPU with (Config::low_spec_defaults).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GpuClass {
+    Capable,
+    /// The GL / GLES backend (no Vulkan, DX12 or Metal driver: old iGPUs, a Raspberry Pi's GL, ARM handhelds) or a
+    /// GPU without BC textures (every desktop GPU has them; mobile and SBC GPUs don't).
+    LowSpec,
+    /// A software rasterizer (llvmpipe, WARP).
+    Software,
+}
+
+impl GpuClass {
+    /// `features`: the adapter's, not the device's (BC is left off the device on GL).
+    pub fn of(info: &wgpu::AdapterInfo, features: wgpu::Features) -> Self {
+        if info.device_type == wgpu::DeviceType::Cpu {
+            Self::Software
+        } else if info.backend == wgpu::Backend::Gl || !features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
+            Self::LowSpec
+        } else {
+            Self::Capable
+        }
+    }
+}
+
 /// FFXI_LOW_LIMITS's limits: a GLES 3.1 Mali / V3D class device.
 const LOW_LIMITS: wgpu::Limits = wgpu::Limits {
     max_storage_buffers_per_shader_stage: 8,

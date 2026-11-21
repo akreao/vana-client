@@ -21323,18 +21323,32 @@ impl ApplicationHandler for App {
         self.gpus = crate::render::adapter_names(&instance, Some(&surface));
         let gpu = Gpu::with_adapter(instance, Some(&surface), &self.cfg.gpu).expect("opening the GPU");
         let size = window.inner_size();
-        // A software adapter (a VM without a GPU): the first time, the scene draws at half the window's size.
-        if gpu.adapter.get_info().device_type == wgpu::DeviceType::Cpu && !self.cfg.software_gpu_seen {
-            self.cfg.software_gpu_seen = true;
-            if !self.cfg.tool.contains_key("0003") && !self.cfg.tool.contains_key("0004") {
-                self.cfg.set_tool("0003", (size.width / 2).max(320));
-                self.cfg.set_tool("0004", (size.height / 2).max(240));
-                log::info!("software GPU: background set to {}x{}", self.cfg.tool("0003"), self.cfg.tool("0004"));
-            }
-            // Anisotropic filtering costs a software rasterizer the most per texel.
-            if self.cfg.anisotropy == Config::default().anisotropy {
-                self.cfg.anisotropy = 1;
-                crate::render::ANISOTROPY.store(1, std::sync::atomic::Ordering::Relaxed);
+        // A low-spec GPU (GL / GLES, no BC textures, a software rasterizer): the first time, the settings still at
+        // their defaults take cheaper values (Config::low_spec_defaults).
+        let class = crate::render::GpuClass::of(&gpu.adapter.get_info(), gpu.adapter.features());
+        if class != crate::render::GpuClass::Capable && !self.cfg.low_spec_seen {
+            self.cfg.low_spec_seen = true;
+            // Builds before this halved the background and set anisotropy 1 for a software rasterizer once
+            // (software_gpu_seen): what the player made of those two stays.
+            let legacy = class == crate::render::GpuClass::Software && self.cfg.software_gpu_seen;
+            self.cfg.software_gpu_seen |= class == crate::render::GpuClass::Software;
+            // The game window's size, not the installer's (bootstrap opens a fixed one; the configured window follows
+            // when setup is done, window_dirty, in the mode set here). Wayland has no current monitor for a window
+            // not yet shown: the one picked for it then.
+            let game = if bootstrap { self.cfg.window_size() } else { [size.width, size.height] };
+            let screen = window.current_monitor().or_else(|| monitor.clone());
+            let was_mode = self.cfg.window_mode();
+            let changes = self.cfg.low_spec_defaults(
+                class,
+                game,
+                screen.as_ref().map(|m| [m.size().width, m.size().height]),
+                legacy,
+            );
+            log::info!("low-spec GPU ({class:?}), first start: {}", changes.join(", "));
+            crate::render::ANISOTROPY.store(self.cfg.anisotropy, std::sync::atomic::Ordering::Relaxed);
+            self.frame_limit = self.cfg.frame_limit();
+            if self.cfg.window_mode() == 3 && was_mode != 3 && !bootstrap && !self.drive.driven() {
+                window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(screen)));
             }
             if let Err(e) = self.cfg.save() {
                 log::warn!("saving the config: {e}");
