@@ -17,7 +17,7 @@ struct Params {
 };
 
 @group(0) @binding(0) var<uniform> u: Params;
-@group(0) @binding(1) var depth: texture_depth_2d;
+@group(0) @binding(1) var depth: texture_2d<f32>;
 @group(0) @binding(2) var scene: texture_2d<f32>;
 // The mirrored characters (render/reflect.rs, ZoneRenderer::mirror_actors) at half size, transparent elsewhere: drawn
 // through the camera mirrored in the plane under their feet, so on a reflecting surface they sit where their
@@ -148,7 +148,7 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
     let size = vec2<f32>(textureDimensions(depth));
     // The depth test, against the scene (water draws no depth): hidden behind scenery or an actor.
     let px = vec2<i32>(i.pos.xy);
-    let d = textureLoad(depth, px, 0);
+    let d = textureLoad(depth, px, 0).x;
     if (i.floor > 0.0) {
         return floor_reflection(i, d, size);
     }
@@ -237,7 +237,7 @@ fn march(p: vec3<f32>, r: vec3<f32>, reach: f32, size: vec2<f32>, j: f32) -> f32
         }
         let w = 1.0 / mix(iw0, iw1, f);
         let w_prev = 1.0 / mix(iw0, iw1, prev);
-        let d = w - linear(textureLoad(depth, vec2<i32>(px), 0));
+        let d = w - linear(textureLoad(depth, vec2<i32>(px), 0).x);
         if (d > 0.0 && d < min(abs(w - w_prev) + 0.1, THICK) + 0.01 * w) {
             hit = f;
             break;
@@ -253,7 +253,7 @@ fn march(p: vec3<f32>, r: vec3<f32>, reach: f32, size: vec2<f32>, j: f32) -> f32
         let m = 0.5 * (lo + hi);
         let w = 1.0 / mix(iw0, iw1, m);
         let px = clamp(mix(s0, s1, m), vec2<f32>(0.0), size - 1.0);
-        if (w > linear(textureLoad(depth, vec2<i32>(px), 0))) {
+        if (w > linear(textureLoad(depth, vec2<i32>(px), 0).x)) {
             hi = m;
         } else {
             lo = m;

@@ -318,7 +318,7 @@ impl Reflections {
                     },
                     count: None,
                 },
-                tex(1, wgpu::TextureSampleType::Depth),
+                tex(1, wgpu::TextureSampleType::Float { filterable: false }),
                 tex(2, wgpu::TextureSampleType::Float { filterable: false }),
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
