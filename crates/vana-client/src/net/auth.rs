@@ -48,6 +48,9 @@ pub enum Reply {
         /// next time.
         trust_token: Option<String>,
         lobby_key: Option<tls::Fingerprint>,
+        /// The game data version the server expects (LSB's login.CLIENT_VER, "client_ver"), when it says; retail's
+        /// loader and older servers have no such key.
+        server_version: Option<String>,
     },
     AccountCreated,
     PasswordChanged,
@@ -65,11 +68,12 @@ impl std::fmt::Debug for Reply {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let hidden = |on: bool| if on { "<hidden>" } else { "none" };
         match self {
-            Reply::LoggedIn { account_id, trust_token, lobby_key, .. } => f
+            Reply::LoggedIn { account_id, trust_token, lobby_key, server_version, .. } => f
                 .debug_struct("LoggedIn")
                 .field("account_id", account_id)
                 .field("trust_token", &hidden(trust_token.is_some()))
                 .field("lobby_key", lobby_key)
+                .field("server_version", server_version)
                 .finish_non_exhaustive(),
             Reply::AccountCreated => f.write_str("AccountCreated"),
             Reply::PasswordChanged => f.write_str("PasswordChanged"),
@@ -194,6 +198,11 @@ fn remember(path: &Path, server: &str, v: [u8; 3]) {
     }
 }
 
+/// The game data version a login reply names (LSB's "client_ver"); none when the key is missing or blank.
+fn server_version(reply: &Value) -> Option<String> {
+    reply["client_ver"].as_str().map(str::trim).filter(|v| !v.is_empty()).map(str::to_string)
+}
+
 /// The reply, and the key of the certificate the server sent.
 fn exchange(host: &str, port: u16, body: &Value) -> Result<(Value, Option<tls::Fingerprint>)> {
     let mut stream = tls::connect(host, port).with_context(|| format!("connecting to {host}:{port}"))?;
@@ -249,6 +258,7 @@ pub fn send(host: &str, port: u16, command: Command, req: &Request) -> Result<Re
                 session_hash: bytes.try_into().map_err(|_| anyhow::anyhow!("session hash is not 16 bytes"))?,
                 trust_token: reply["trust_token"].as_str().filter(|t| !t.is_empty()).map(str::to_string),
                 lobby_key: lobby_key(version, key)?,
+                server_version: server_version(&reply),
             }
         }
         0x03 => Reply::AccountCreated,
@@ -324,6 +334,16 @@ mod reply_tests {
         assert_eq!(lobby_key([3, 0, 0], Some(k)).unwrap(), Some(k));
         assert_eq!(lobby_key([2, 2, 0], Some(k)).unwrap(), None);
         assert!(lobby_key([3, 1, 0], None).is_err());
+    }
+
+    #[test]
+    fn server_version_is_optional() {
+        let with = read_reply(&mut &br#"{"result": 1, "client_ver": "30261102_0"}"#[..]).unwrap();
+        assert_eq!(server_version(&with).as_deref(), Some("30261102_0"));
+        let without = read_reply(&mut &br#"{"result": 1}"#[..]).unwrap();
+        assert_eq!(server_version(&without), None);
+        let blank = read_reply(&mut &br#"{"result": 1, "client_ver": " "}"#[..]).unwrap();
+        assert_eq!(server_version(&blank), None);
     }
 
     #[test]

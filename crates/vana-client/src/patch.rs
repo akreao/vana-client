@@ -763,6 +763,19 @@ pub fn applied_version_cached(root: &Path) -> Option<String> {
     v
 }
 
+/// The notice for game data newer than the server's: `server` is the version the server expects (its auth reply's
+/// "client_ver"), `ours` the version patched here. None when ours is not newer, or either is not a version.
+pub fn newer_than_server(server: &str, ours: &str) -> Option<String> {
+    (version_key(ours)? > version_key(server)?).then(|| {
+        format!(
+            "This server expects game data version {}, but this client is patched to {}. Some items, text or events \
+             may not match the server.",
+            server.trim(),
+            ours.trim()
+        )
+    })
+}
+
 /// A client version as a sortable key: "30261102_0" is (30261102, 0); None for any other shape.
 pub fn version_key(v: &str) -> Option<(u64, u64)> {
     let (date, n) = v.trim().split_once('_')?;
@@ -1410,6 +1423,17 @@ mod tests {
         std::fs::remove_file(crate::dat::own_ffximain(&root)).unwrap();
         assert!(!code_lags(&root));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn newer_data_than_server_is_noticed() {
+        assert!(newer_than_server("30261102_0", "30261120_0").is_some_and(|t| t.contains("30261102_0")));
+        assert!(newer_than_server("30261102_0", "30261102_1").is_some());
+        assert_eq!(newer_than_server("30261102_0", "30261102_0"), None);
+        assert_eq!(newer_than_server("30261120_0", "30261102_0"), None);
+        // Not versions: say nothing.
+        assert_eq!(newer_than_server("", "30261102_0"), None);
+        assert_eq!(newer_than_server("30261102_0", "custom"), None);
     }
 
     #[test]

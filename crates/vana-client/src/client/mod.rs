@@ -245,6 +245,8 @@ struct TrustReply {
     server: String,
     username: String,
     token: Option<String>,
+    /// The game data version the login server expects, when it said (auth::Reply::LoggedIn).
+    server_version: Option<String>,
 }
 
 enum Task {
@@ -9037,6 +9039,10 @@ pub struct App {
     backdrop: Option<Backdrop>,
     /// A failed log-in run's popup over its backdrop; OK goes back to the title menu (FUN_10241200's -1).
     lobby_popup: Option<String>,
+    /// Game data newer than the server expects: the notice for the chat log once the character is in.
+    data_notice: Option<String>,
+    /// The (server, its version, ours) already noticed, so each shows once a run.
+    data_noticed: HashSet<(String, String, String)>,
     /// The lobby is left once the popups are answered: a run's -2 (FFXI-3115 after a failed refresh) or FFXI-3331.
     leave_lobby: bool,
     /// A rename the lobby refused with 0x139 / 0x142: the name and the code, shown again without asking
@@ -9388,6 +9394,8 @@ impl App {
             login_error: None,
             backdrop: None,
             lobby_popup: None,
+            data_notice: None,
+            data_noticed: HashSet::new(),
             leave_lobby: false,
             rename_refused: None,
             trust_for: Default::default(),
@@ -10116,7 +10124,12 @@ impl App {
             .unwrap_or_default();
         let ask = cfg.trust_computer && (token.is_empty() || !otp.trim().is_empty());
         self.spawn(move || {
-            let mut trust = TrustReply { server: cfg.server.clone(), username: cfg.username.clone(), token: None };
+            let mut trust = TrustReply {
+                server: cfg.server.clone(),
+                username: cfg.username.clone(),
+                token: None,
+                server_version: None,
+            };
             let result = (|| {
                 let req = Request {
                     username: &cfg.username,
@@ -10126,12 +10139,13 @@ impl App {
                     trust_this_computer: ask,
                     ..Default::default()
                 };
-                let Reply::LoggedIn { account_id, session_hash, lobby_key, trust_token } =
+                let Reply::LoggedIn { account_id, session_hash, lobby_key, trust_token, server_version } =
                     auth::send(&cfg.server, cfg.auth_port, Command::Login, &req)?
                 else {
                     anyhow::bail!("unexpected reply from the login server");
                 };
                 trust.token = trust_token;
+                trust.server_version = server_version;
                 let session = crate::net::lobby::Session::Lsb { account_id, hash: session_hash, lobby_key };
                 let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())).unwrap_or_default();
                 // Region 5: not the Japanese client (FUN_1023e610).
@@ -10153,6 +10167,18 @@ impl App {
             })();
             entry_done(&watch, Task::LoggedIn(result, Some(trust)))
         });
+    }
+
+    /// The login server's expected data version against the version patched here (the configured lobby version when
+    /// nothing was patched): a newer client gets one notice for this server and these versions.
+    fn note_server_data(&mut self, server: &str, server_version: &str) {
+        let ours = crate::patch::applied_version_cached(&self.cfg.ffxi_dir())
+            .unwrap_or_else(|| self.cfg.client_version.clone());
+        let Some(text) = crate::patch::newer_than_server(server_version, &ours) else { return };
+        log::warn!("{server}: {text}");
+        if self.data_noticed.insert((server.to_string(), server_version.trim().to_string(), ours.trim().to_string())) {
+            self.data_notice = Some(text);
+        }
     }
 
     /// An account window request with the form's account and password (client/twofa.rs); `new_password` for
@@ -10178,6 +10204,11 @@ impl App {
         if let Task::LoggedIn(result, trust) = &mut task
             && let Some(t) = trust.take()
         {
+            if result.is_ok()
+                && let Some(server) = &t.server_version
+            {
+                self.note_server_data(&t.server, server);
+            }
             let turned_down = result
                 .as_ref()
                 .err()
@@ -11083,6 +11114,10 @@ impl App {
                             if self.cfg.modern_ui {
                                 w.chat
                                     .restore(&crate::config::chat_history_path(&w.name), "------ last session ------");
+                            }
+                            // Not retail: the login server expects older game data than this client's.
+                            if let Some(text) = self.data_notice.take() {
+                                w.chat.push_colour(text, YELLOW);
                             }
                         }
                         if let Ok((index, _)) = self.game_data() {
