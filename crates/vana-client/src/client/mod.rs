@@ -243,6 +243,64 @@ impl Task {
 
 /// The server and account a login was sent for, and the new trust token it brought (Trust this computer), whether or
 /// not the lobby step after it worked.
+/// The server-data notice (client/mod.rs note_server_data): one login's pending notice, keyed by (server, server
+/// version, ours), and the keys already shown in the chat log this run.
+#[derive(Default)]
+struct DataNotice {
+    pending: Option<((String, String, String), String)>,
+    shown: HashSet<(String, String, String)>,
+}
+
+impl DataNotice {
+    /// A new login: the last one's notice, not delivered (Back from the title menu), goes with it.
+    fn new_login(&mut self) {
+        self.pending = None;
+    }
+
+    /// This login's notice, unless its key was already shown.
+    fn offer(&mut self, key: (String, String, String), text: String) {
+        if !self.shown.contains(&key) {
+            self.pending = Some((key, text));
+        }
+    }
+
+    /// The notice for the chat log as the character comes in; its key counts as shown from now on.
+    fn deliver(&mut self) -> Option<String> {
+        let (key, text) = self.pending.take()?;
+        self.shown.insert(key).then_some(text)
+    }
+}
+
+#[cfg(test)]
+mod data_notice_tests {
+    use super::DataNotice;
+
+    fn key(server: &str) -> (String, String, String) {
+        (server.into(), "30261006_0".into(), "30261102_0".into())
+    }
+
+    #[test]
+    fn shown_once_and_dropped_by_the_next_login() {
+        let mut n = DataNotice::default();
+        n.new_login();
+        n.offer(key("a"), "old data".into());
+        assert_eq!(n.deliver().as_deref(), Some("old data"));
+        // The same server and versions again: nothing.
+        n.new_login();
+        n.offer(key("a"), "old data".into());
+        assert_eq!(n.deliver(), None);
+        // Backed out before the world: the next login (no version, or a matching one) shows nothing.
+        n.new_login();
+        n.offer(key("b"), "b data".into());
+        n.new_login();
+        assert_eq!(n.deliver(), None);
+        // Not shown, so a later login to b still gets it.
+        n.new_login();
+        n.offer(key("b"), "b data".into());
+        assert_eq!(n.deliver().as_deref(), Some("b data"));
+    }
+}
+
 struct TrustReply {
     server: String,
     username: String,
@@ -9133,10 +9191,8 @@ pub struct App {
     backdrop: Option<Backdrop>,
     /// A failed log-in run's popup over its backdrop; OK goes back to the title menu (FUN_10241200's -1).
     lobby_popup: Option<String>,
-    /// Game data newer than the server expects: the notice for the chat log once the character is in.
-    data_notice: Option<String>,
-    /// The (server, its version, ours) already noticed, so each shows once a run.
-    data_noticed: HashSet<(String, String, String)>,
+    /// Game data newer than the server expects: the notice for the chat log (not retail).
+    data_notice: DataNotice,
     /// The lobby is left once the popups are answered: a run's -2 (FFXI-3115 after a failed refresh) or FFXI-3331.
     leave_lobby: bool,
     /// A rename the lobby refused with 0x139 / 0x142: the name and the code, shown again without asking
@@ -9489,8 +9545,7 @@ impl App {
             login_error: None,
             backdrop: None,
             lobby_popup: None,
-            data_notice: None,
-            data_noticed: HashSet::new(),
+            data_notice: DataNotice::default(),
             leave_lobby: false,
             rename_refused: None,
             trust_for: Default::default(),
@@ -10117,6 +10172,8 @@ impl App {
 
     /// Signing in through PlayOnline (net/pol), then FFXiMain's -net 3 lobby path.
     fn login_playonline(&mut self, pol_password: String, password: String, otp: String) {
+        // A notice belongs to the login that brought it.
+        self.data_notice.new_login();
         self.cfg.pol_id = self.cfg.pol_id.trim().to_ascii_uppercase();
         self.cfg.server = self.cfg.server.trim().to_string();
         self.cfg.username = self.cfg.username.trim().to_string();
@@ -10180,6 +10237,8 @@ impl App {
     }
 
     fn login(&mut self, password: String, otp: String, create: bool) {
+        // A notice belongs to the login that brought it (Back from the title menu leaves it behind).
+        self.data_notice.new_login();
         // A stray space makes a different account (" lenon" vs "lenon"), so never send one.
         self.cfg.server = self.cfg.server.trim().to_string();
         self.cfg.username = self.cfg.username.trim().to_string();
@@ -10271,9 +10330,7 @@ impl App {
             .unwrap_or_else(|| self.cfg.client_version.clone());
         let Some(text) = crate::patch::newer_than_server(server_version, &ours) else { return };
         log::warn!("{server}: {text}");
-        if self.data_noticed.insert((server.to_string(), server_version.trim().to_string(), ours.trim().to_string())) {
-            self.data_notice = Some(text);
-        }
+        self.data_notice.offer((server.to_string(), server_version.trim().to_string(), ours.trim().to_string()), text);
     }
 
     /// An account window request with the form's account and password (client/twofa.rs); `new_password` for
@@ -11229,7 +11286,7 @@ impl App {
                                     .restore(&crate::config::chat_history_path(&w.name), "------ last session ------");
                             }
                             // Not retail: the login server expects older game data than this client's.
-                            if let Some(text) = self.data_notice.take() {
+                            if let Some(text) = self.data_notice.deliver() {
                                 w.chat.push_colour(text, YELLOW);
                             }
                         }

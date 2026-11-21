@@ -773,7 +773,9 @@ pub fn applied_version_cached(root: &Path) -> Option<String> {
 /// The notice for game data newer than the server's: `server` is the version the server expects (its auth reply's
 /// "client_ver"), `ours` the version patched here. None when ours is not newer, or either is not a version.
 pub fn newer_than_server(server: &str, ours: &str) -> Option<String> {
-    (version_key(ours)? > version_key(server)?).then(|| {
+    // Only a full YYYYMMDD_N on both sides: anything shorter is not a game data version.
+    let full = |v: &str| version_key(v).filter(|k| (10_000_000..100_000_000).contains(&k.0));
+    (full(ours)? > full(server)?).then(|| {
         format!(
             "This server expects game data version {}, but this client is patched to {}. Some items, text or events \
              may not match the server.",
@@ -1454,6 +1456,8 @@ mod tests {
         // Not versions: say nothing.
         assert_eq!(newer_than_server("", "30261102_0"), None);
         assert_eq!(newer_than_server("30261102_0", "custom"), None);
+        assert_eq!(newer_than_server("1_0", "30261102_0"), None);
+        assert_eq!(newer_than_server("3026110_0", "30261102_0"), None);
     }
 
     #[test]
