@@ -429,7 +429,8 @@ impl CpuCull {
         let out = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("culled instances (CPU)"),
             size: (data.out_len as u64 * INSTANCE_BYTES).max(16),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            // COPY_SRC: read back by the tests.
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         log::info!(
@@ -639,5 +640,45 @@ mod tests {
         let near = at(Vec3::new(0.0, 0.0, 3.0), [0.0; 4]);
         assert!(!visible(0, &near, &zone, &view, &planes, Some(&mask)));
         assert!(visible(0, &at(Vec3::new(0.0, 0.0, 10.0), [0.0; 4]), &zone, &view, &planes, Some(&mask)));
+    }
+
+    /// The copies: the visible instances of a run land in `out` in order, from the GPU's instance buffer (two spans
+    /// here, around the one behind the eye), and the run's draws take that range.
+    #[test]
+    fn cpu_cull_copies_visible_spans() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        let insts: Vec<Instance> = [10.0, -10.0, 20.0, 30.0, -5.0]
+            .iter()
+            .enumerate()
+            .map(|(k, &z)| Instance { area: [k as u32, 0, 0, 0], ..at(Vec3::new(0.0, 0.0, z), [0.0; 4]) })
+            .collect();
+        let bounds = vec![[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]; insts.len()];
+        let (data, slots) = CullData::build(bounds, &insts, &[vec![(0..5, 3, 0, 0)]]);
+        let c = CpuCull::new(&gpu, &data, bytemuck::cast_slice(&insts)).expect("a CPU culling");
+        let src = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 5 * INSTANCE_BYTES,
+            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        gpu.queue.put(&src, 0, bytemuck::cast_slice(&insts));
+        let cam = crate::render::Camera { eye: Vec3::ZERO, target: Vec3::Z, up: Vec3::NEG_Y, fov_y: 0.8 };
+        let view = View { view_proj: cam.view_proj(1.0), eye: Vec3::ZERO, voyage: Mat4::IDENTITY, clip: [100.0, 1.0] };
+        let read = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 3 * INSTANCE_BYTES,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = gpu.device.create_command_encoder(&Default::default());
+        let placed = c.run(&mut enc, &src, &view, &[true]);
+        enc.copy_buffer_to_buffer(&c.out, 0, &read, 0, 3 * INSTANCE_BYTES);
+        gpu.queue.submit([enc.finish()]);
+        read.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        let _ = gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None });
+        let got: Vec<Instance> = bytemuck::pod_collect_to_vec(&read.slice(..).get_mapped_range().expect("mapped"));
+        assert_eq!(placed[c.run_of(slots[0][0])], 0..3);
+        assert_eq!(got.iter().map(|i| i.area[0]).collect::<Vec<_>>(), [0, 2, 3]);
+        assert_eq!(c.drawn(), 3);
     }
 }

@@ -3,8 +3,9 @@
 Not retail (ours replaces retail's CPU walk of the MZB tree, FUN_1017c8b0, with GPU culling). The GPU culling needs
 indirect draws that start past instance 0 (`INDIRECT_FIRST_INSTANCE`), which wgpu never offers on GLES (Raspberry Pi,
 Mali / Adreno handhelds, ANGLE) and only on desktop GL 4.2 with `ARB_shader_draw_parameters`. Without it every
-instance of every run was drawn, and the draw distance, LOD bands and camera lists that only the culling applies were
-lost (a difference from retail on those GPUs, not only a cost).
+instance of every run was submitted (vs_main collapses the out-of-band LOD levels, but they still cost their vertex
+work), and the draw distance and camera lists that only the culling applies were lost (a difference from retail on
+those GPUs, not only a cost).
 
 - `cull::CpuCull` runs zone.wgsl `cull_visible` on the CPU, the same rules in the same order: camera list, draw
   distance to the origin (D, own times K, a door group's both), LOD band, the mesh box against the frustum and the far
