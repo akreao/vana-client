@@ -12020,9 +12020,17 @@ impl App {
                     world.map = None;
                     world.scan = Default::default();
                     // LSB re-sends every container after c2s 0x00C and empties the temporary items and the recycle
-                    // bin on zoning, so slots kept from the last zone would go stale (retail's reset: inferred).
-                    world.inv =
-                        items::Inventory { sizes: world.inv.sizes, sizes2: world.inv.sizes2, ..Default::default() };
+                    // bin on zoning, so slots kept from the last zone would go stale (retail's reset: inferred). The
+                    // view stays (a sorted list stays sorted): a slot refilled with its item keeps its row, one with
+                    // another item goes last (FUN_1021c210), and slots the resend leaves empty go at the settle.
+                    world.inv = items::Inventory {
+                        sizes: world.inv.sizes,
+                        sizes2: world.inv.sizes2,
+                        order: std::mem::take(&mut world.inv.order),
+                        viewed_ids: std::mem::take(&mut world.inv.viewed_ids),
+                        view_changed: world.inv.view_changed,
+                        ..Default::default()
+                    };
                     // FUN_10093720: DAT_10487ef5 = 0.
                     world.weather_forced = false;
                     // The resend refills the emptied view: Auto-sort's free-slot count starts again once it settles.
@@ -12736,6 +12744,9 @@ impl App {
                         world.inv_flags |= 0x0020_0800;
                     }
                     world.inv_loaded = loaded;
+                    if state == 1 {
+                        world.inv.prune_order(loaded);
+                    }
                     if state == 1 && loaded & 1 << items::INVENTORY != 0 && world.inv_free.is_none() {
                         world.inv_free = Some(items::free_slots(world, items::INVENTORY));
                     }
@@ -12749,10 +12760,10 @@ impl App {
                     if matches!(container, 1..=7 | 9) {
                         world.inv_flags |= 0x0020_0000;
                     }
-                    // A slot newly filled in a container kept sorted sorts it once the burst is over.
-                    let fresh = id != 0 && !world.inv.order.get(&container).is_some_and(|o| o.contains(&index));
-                    world.inv.set(container, index, id, count);
-                    // Retail's Auto-sort (config 0x9a) already sorts the inventory on a new slot.
+                    // A slot newly filled (or refilled with another item) in a container kept sorted sorts it once
+                    // the burst is over.
+                    let fresh = world.inv.set(container, index, id, count);
+                    // Retail's Auto-sort (config 0x9a) already sorts the inventory on a new row, the login load too.
                     let retail = container == items::INVENTORY && world.game.get(0x9a) != 0;
                     if fresh && container < 32 && world.auto_sort >> container & 1 != 0 && !retail {
                         world.sort_due = (world.sort_due.0 | 1 << container, items::SORT_DELAY);
