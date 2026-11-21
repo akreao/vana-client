@@ -774,7 +774,11 @@ pub fn applied_version_cached(root: &Path) -> Option<String> {
 /// "client_ver"), `ours` the version patched here. None when ours is not newer, or either is not a version.
 pub fn newer_than_server(server: &str, ours: &str) -> Option<String> {
     // Only a full YYYYMMDD_N on both sides: anything shorter is not a game data version.
-    let full = |v: &str| version_key(v).filter(|k| (10_000_000..100_000_000).contains(&k.0));
+    let full = |v: &str| {
+        let (date, n) = v.trim().split_once('_')?;
+        let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+        (date.len() == 8 && digits(date) && digits(n)).then(|| version_key(v)).flatten()
+    };
     (full(ours)? > full(server)?).then(|| {
         format!(
             "This server expects game data version {}, but this client is patched to {}. Some items, text or events \
@@ -1458,6 +1462,8 @@ mod tests {
         assert_eq!(newer_than_server("30261102_0", "custom"), None);
         assert_eq!(newer_than_server("1_0", "30261102_0"), None);
         assert_eq!(newer_than_server("3026110_0", "30261102_0"), None);
+        assert_eq!(newer_than_server("+30261006_0", "30261102_0"), None);
+        assert_eq!(newer_than_server("30261006_+0", "30261102_0"), None);
     }
 
     #[test]
