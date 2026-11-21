@@ -28,8 +28,10 @@ struct Params {
 @group(0) @binding(0) var<uniform> p: Params;
 @group(0) @binding(1) var<storage, read_write> el: array<u32>;
 @group(0) @binding(2) var<storage, read> ops: array<u32>;
-@group(0) @binding(3) var<storage, read> keys: array<vec2<f32>>;
-@group(0) @binding(4) var<storage, read> key_desc: array<vec2<u32>>;
+// The keyframe tables in one buffer (render/effects.rs key_words): entry 0's x the number of curves n, entries 1..=n
+// each curve's (start, count), its keys (time, value as f32 bits) from entry n + 1 on, a curve's start counted from
+// entry 0.
+@group(0) @binding(3) var<storage, read> keytab: array<vec2<u32>>;
 @group(0) @binding(5) var<storage, read> slots: array<u32>;
 @group(0) @binding(6) var<storage, read_write> outs: array<f32>;
 @group(0) @binding(7) var<storage, read_write> back: array<u32>;
@@ -37,7 +39,7 @@ struct Params {
 // The zone's point-light table (render/mod.rs LIGHTS x two vec4s).
 @group(0) @binding(9) var<storage, read_write> lights: array<vec4<f32>>;
 // This frame's scene depth (drawn before the update pass), for op 0x53.
-@group(0) @binding(10) var scene_depth: texture_depth_2d;
+@group(0) @binding(10) var scene_depth: texture_2d<f32>;
 
 // FUN_10044f10: the element's view-space position (+0x188) as the transform places it: camera-relative (flags bit 2)
 // elements are view_rot x pos (bit 3 too: pos itself), flag 0x20000 the parent's translation in view space plus pos
@@ -84,7 +86,7 @@ fn occlusion_hits(c: vec3<f32>, half: f32) -> u32 {
     for (var y = 0u; y < 16u; y = y + 1u) {
         for (var x = 0u; x < 16u; x = x + 1u) {
             let s = p0 + (vec2<f32>(f32(x), f32(y)) + 0.5) / 16.0 * (p1 - p0);
-            if (z <= textureLoad(scene_depth, vec2<i32>(min(s, dims - 1.0)), 0)) { hits = hits + 1u; }
+            if (z <= textureLoad(scene_depth, vec2<i32>(min(s, dims - 1.0)), 0).x) { hits = hits + 1u; }
         }
     }
     return hits;
@@ -160,22 +162,26 @@ fn key_sample(id: u32, x_in: f32, eased: bool) -> f32 {
     return key_ov(id, x_in, eased, false, 0.0);
 }
 
+fn key_at(i: u32) -> vec2<f32> {
+    return bitcast<vec2<f32>>(keytab[i]);
+}
+
 // FUN_10053520 / FUN_10053740: the same with the first key's value replaced by v0 when `ov`.
 fn key_ov(id: u32, x_in: f32, eased: bool, ov: bool, v0: f32) -> f32 {
-    if (id == NONE || id >= arrayLength(&key_desc)) { return 0.0; }
-    let d = key_desc[id];
+    if (id == NONE || id >= keytab[0].x) { return 0.0; }
+    let d = keytab[1u + id];
     if (d.y == 0u) { return 0.0; }
-    if (d.y == 1u) { return select(keys[d.x].y, v0, ov); }
+    if (d.y == 1u) { return select(key_at(d.x).y, v0, ov); }
     var x = x_in;
     if (!eased) { x = clamp(x, 0.0, 1.0); }
     var i = 0u;
     loop {
-        if (i + 2u >= d.y || x <= keys[d.x + i + 1u].x) { break; }
+        if (i + 2u >= d.y || x <= key_at(d.x + i + 1u).x) { break; }
         i = i + 1u;
     }
-    var a = keys[d.x + i];
+    var a = key_at(d.x + i);
     if (ov && i == 0u) { a.y = v0; }
-    let c = keys[d.x + i + 1u];
+    let c = key_at(d.x + i + 1u);
     if (c.x == a.x) { return c.y; }
     let f = (x - a.x) / (c.x - a.x);
     if (!eased) { return a.y + (c.y - a.y) * f; }
@@ -1041,7 +1047,7 @@ struct Draw {
 @group(0) @binding(4) var<storage, read> sverts: array<u32>;
 @group(0) @binding(5) var<storage, read> sframes: array<vec2<u32>>;
 @group(0) @binding(6) var<storage, read> mdata: array<u32>;
-@group(0) @binding(7) var scene_depth: texture_depth_2d;
+@group(0) @binding(7) var scene_depth: texture_2d<f32>;
 @group(1) @binding(0) var tex: texture_2d<f32>;
 @group(1) @binding(1) var samp: sampler;
 @group(2) @binding(0) var spec2d: texture_2d<f32>;
@@ -2015,7 +2021,7 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
     // Ours: a glow or light volume (flag 27) fades out within a yalm of the scenery behind it, so it no longer cuts
     // straight into walls and pillars. The scene depth is NDC z of the plain projection (near d.clip.x, far d.clip.y).
     if (d.fog.w > 0.5 && (flags & 0x8000000u) != 0u) {
-        let z = textureLoad(scene_depth, vec2<i32>(i.clip.xy), 0);
+        let z = textureLoad(scene_depth, vec2<i32>(i.clip.xy), 0).x;
         let k = d.clip.y / (d.clip.x - d.clip.y);
         let scene = d.clip.x * k / (z + k);
         a = a * sat(scene - i.depth);
@@ -2043,7 +2049,7 @@ struct DistJob { e: u32, pad0: u32, pad1: u32, pad2: u32 };
 @group(1) @binding(8) var dsrc: texture_2d<f32>;
 // Per element: the geometry the repeats share (dist_region; DIST_GEO vec4s).
 @group(1) @binding(10) var<storage, read_write> dgeo: array<vec4<f32>>;
-@group(1) @binding(9) var dsrc_depth: texture_depth_2d;
+@group(1) @binding(9) var dsrc_depth: texture_2d<f32>;
 
 fn srgb_dec(c: f32) -> f32 {
     if (c <= 0.04045) { return c / 12.92; }
@@ -2250,7 +2256,7 @@ fn dist_load(@builtin(global_invocation_id) g: vec3<u32>) {
     if (p.x >= r.z || p.y >= r.w) { return; }
     let i = u32(p.y * i32(d.clip.z) + p.x);
     dscene[i] = pack4x8unorm(textureLoad(dsrc, p, 0));
-    ddepth[i] = textureLoad(dsrc_depth, p, 0);
+    ddepth[i] = textureLoad(dsrc_depth, p, 0).x;
 }
 
 // vs_dist_copy / fs_dist_copy: the tips at (P - min) k + 0.5 in the copy, the scene at (P - 0.5) / (W, H) under each
@@ -2310,7 +2316,7 @@ fn dist_fan(@builtin(global_invocation_id) g: vec3<u32>) {
         if (d.fog.z > 0.5) { rgb = pow(rgb, vec3<f32>(2.2)); }
         let flags = dels[e * E_WORDS + E_FLAGS];
         if (d.fog.w > 0.5 && (flags & 0x8000000u) != 0u) {
-            let sz = textureLoad(scene_depth, px, 0);
+            let sz = textureLoad(scene_depth, px, 0).x;
             let k = d.clip.y / (d.clip.x - d.clip.y);
             a = a * sat(d.clip.x * k / (sz + k) - uvd.z);
         }

@@ -58,6 +58,8 @@ pub struct PipeCache {
     anim: std::sync::OnceLock<(wgpu::ComputePipeline, wgpu::BindGroupLayout)>,
     cloth: std::sync::OnceLock<(wgpu::ComputePipeline, wgpu::ComputePipeline, wgpu::BindGroupLayout)>,
     zone: std::sync::Mutex<HashMap<wgpu::TextureFormat, ZonePipes>>,
+    /// The sun shadow's feet target format here (sunshadow::feet_format; None: no character shadows).
+    feet: Option<wgpu::TextureFormat>,
 }
 
 impl PipeCache {
@@ -75,8 +77,78 @@ impl PipeCache {
 
     pub fn zone(&self, format: wgpu::TextureFormat) -> ZonePipes {
         let mut z = self.zone.lock().unwrap_or_else(|e| e.into_inner());
-        z.entry(format).or_insert_with(|| ZonePipes::new(&self.device, format)).clone()
+        z.entry(format).or_insert_with(|| ZonePipes::new(&self.device, format, self.feet)).clone()
     }
+}
+
+/// How much the first start trusts the GPU with (Config::low_spec_defaults).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GpuClass {
+    Capable,
+    /// The GL / GLES backend (no Vulkan, DX12 or Metal driver: old iGPUs, a Raspberry Pi's GL, ARM handhelds) or a
+    /// GPU without BC textures (every desktop GPU has them; mobile and SBC GPUs don't).
+    LowSpec,
+    /// A software rasterizer (llvmpipe, WARP).
+    Software,
+}
+
+impl GpuClass {
+    /// `features`: the adapter's, not the device's (BC is left off the device on GL).
+    pub fn of(info: &wgpu::AdapterInfo, features: wgpu::Features) -> Self {
+        if info.device_type == wgpu::DeviceType::Cpu {
+            Self::Software
+        } else if info.backend == wgpu::Backend::Gl || !features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
+            Self::LowSpec
+        } else {
+            Self::Capable
+        }
+    }
+}
+
+/// FFXI_LOW_LIMITS's limits: a GLES 3.1 Mali / V3D class device.
+const LOW_LIMITS: wgpu::Limits = wgpu::Limits {
+    max_storage_buffers_per_shader_stage: 8,
+    max_texture_dimension_1d: 4096,
+    max_texture_dimension_2d: 4096,
+    ..wgpu::Limits::downlevel_defaults()
+};
+
+/// The device limits to ask for: WebGPU's defaults with up to 16 storage buffers per stage (the GPU culling binds 8 in
+/// compute, the effects update 8; desktop GPUs allow far more), lowered to whatever the adapter can't meet. A GLES device (a Raspberry Pi's V3D has 15
+/// inter-stage variables, the default is 16) then still opens, and each pipeline is checked against what it really has.
+fn wanted_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
+    wgpu::Limits {
+        max_storage_buffers_per_shader_stage: adapter.max_storage_buffers_per_shader_stage.min(16),
+        ..Default::default()
+    }
+    .or_worse_values_from(adapter)
+}
+
+/// What the client's pipelines need of `limits` and it lacks, one line each: the effects update binds 8 storage
+/// buffers in one stage (render/effects.rs), zone.wgsl's widest vertex output has 13 locations and the mip
+/// generator's solve pass runs 256 invocations in x (render/mipgen.rs).
+fn short_limits(limits: &wgpu::Limits) -> Vec<String> {
+    let mut out = Vec::new();
+    if limits.max_storage_buffers_per_shader_stage < effects::STORAGE_NEEDED {
+        out.push(format!(
+            "{} storage buffers per shader stage, the effects need {}",
+            limits.max_storage_buffers_per_shader_stage,
+            effects::STORAGE_NEEDED
+        ));
+    }
+    if limits.max_inter_stage_shader_variables < 13 {
+        out.push(format!(
+            "{} inter-stage shader variables, the scenery needs 13",
+            limits.max_inter_stage_shader_variables
+        ));
+    }
+    if limits.max_compute_invocations_per_workgroup < 256 || limits.max_compute_workgroup_size_x < 256 {
+        out.push(format!(
+            "{} compute invocations per workgroup ({} in x), the mip generator needs 256",
+            limits.max_compute_invocations_per_workgroup, limits.max_compute_workgroup_size_x
+        ));
+    }
+    out
 }
 
 /// The GPUs that can draw to `surface` (or any, headless), by name.
@@ -169,11 +241,24 @@ impl Gpu {
             std::sync::atomic::Ordering::Relaxed,
         );
         set_uncompressed(uncompressed());
-        // The effects update pass binds 9 storage buffers (the default limit is 8; desktop GPUs allow far more).
-        let required_limits = wgpu::Limits {
-            max_storage_buffers_per_shader_stage: adapter.limits().max_storage_buffers_per_shader_stage.min(16),
-            ..Default::default()
+        // FFXI_LOW_LIMITS (tests): the limits of a GLES 3.1 Mali-class part (8 storage buffers per stage, 15
+        // inter-stage variables, 4096 textures, 16 KiB uniform buffers) wherever the adapter has more.
+        let adapter_limits = match std::env::var_os("FFXI_LOW_LIMITS") {
+            Some(_) => adapter.limits().or_worse_values_from(&LOW_LIMITS),
+            None => adapter.limits(),
         };
+        let required_limits = wanted_limits(&adapter_limits);
+        log::info!("device limits {required_limits:?}");
+        // Below what the world's pipelines need, the game's device would open and the first such pipeline panic: the
+        // game (a surface) stops here and says why. Headless tools (UI shots and the like) and FFXI_LOW_LIMITS, which
+        // looks for those pipelines, go on with the errors logged.
+        let short = short_limits(&required_limits);
+        for line in &short {
+            log::error!("below what the client needs: {line}");
+        }
+        if !short.is_empty() && surface.is_some() && std::env::var_os("FFXI_LOW_LIMITS").is_none() {
+            anyhow::bail!("{} ({:?}) can't run the client: {}", info.name, info.backend, short.join("; "));
+        }
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             required_features,
             required_limits,
@@ -185,7 +270,13 @@ impl Gpu {
             anim: Default::default(),
             cloth: Default::default(),
             zone: Default::default(),
+            feet: sunshadow::feet_format(&adapter),
         });
+        if pipes.feet.is_none() {
+            log::warn!(
+                "no renderable float format for the sun shadow map: no sun or moon shadows on this GPU (lamp shadows, depth only, still draw)"
+            );
+        }
         Ok(Self { instance, adapter, device, queue, mips: Default::default(), uploads: Default::default(), pipes })
     }
 
@@ -386,6 +477,14 @@ impl Draw {
     }
 }
 
+/// How a scenery draw's instances were culled this frame: on the GPU (its culled instances' indirect arguments, and
+/// the runs that may show), or on the CPU (each run's instances in its `out`).
+#[derive(Clone, Copy)]
+enum Culled<'a> {
+    Gpu(&'a cull::Cull, &'a wgpu::Buffer, &'a [bool]),
+    Cpu(&'a cull::CpuCull, &'a [std::ops::Range<u32>]),
+}
+
 /// The scene projection's near plane. Near is retail's 0.1 (FUN_100146e0): the eye keeps only 0.17 off the
 /// floor, and a deeper near plane cut into slopes beside it.
 pub const NEAR: f32 = 0.1;
@@ -465,8 +564,10 @@ pub struct ZoneRenderer {
     pub light_boost: [f32; 4],
     /// The zone's scenery culled on the GPU (render/cull.rs) when the device draws indirectly, and its passes.
     cull: Option<cull::Cull>,
-    cull_pipes: [wgpu::ComputePipeline; 2],
-    cull_layout: wgpu::BindGroupLayout,
+    /// Culled on the CPU where the GPU's can't run (render/cull.rs CpuCull).
+    cpu_cull: Option<cull::CpuCull>,
+    /// The GPU culling's group 3 layout and passes (None where it can't run, cull::on_gpu).
+    cull_gpu: Option<(wgpu::BindGroupLayout, [wgpu::ComputePipeline; 2])>,
     /// Ours (the Lamp Lights setting): each zone instance's light slots and world sphere, the light slots
     /// written over them now (instance -> slots), and lamps waiting for the streamed geometry (set_lamps).
     inst_lights: Vec<[u32; 4]>,
@@ -501,9 +602,8 @@ pub struct ZoneRenderer {
     sil_pipeline: wgpu::RenderPipeline,
     shadows: Option<shadow::Shadows>,
     /// Real character shadows (render/sunshadow.rs; prepare_sun_shadow), and whether render drew them this frame
-    /// (the client then leaves retail's out).
-    sun_depth_pipeline: wgpu::RenderPipeline,
-    sun_depth_lamped_pipeline: wgpu::RenderPipeline,
+    /// (the client then leaves retail's out). Their depth pipelines: ZonePipes::sun_depth.
+    sun_depth: Option<(wgpu::TextureFormat, [wgpu::RenderPipeline; 2])>,
     lamp_depth_pipeline: wgpu::RenderPipeline,
     sun_shadow: Option<sunshadow::SunShadow>,
     /// Ambient occlusion on the scenery (render/ssao.rs; prepare_ssao).
@@ -627,6 +727,8 @@ struct SubGeometry {
     instances: wgpu::Buffer,
     /// Culled as the zone's scenery is (render/cull.rs).
     cull: Option<cull::Cull>,
+    /// Culled on the CPU where the GPU's can't run (render/cull.rs CpuCull).
+    cpu_cull: Option<cull::CpuCull>,
     draws: Vec<Draw>,
     tex_base: usize,
     link: u32,
@@ -1206,17 +1308,16 @@ pub struct ZonePipes {
     sil_layout: wgpu::BindGroupLayout,
     sil_pipeline: wgpu::RenderPipeline,
     /// Real character shadows (render/sunshadow.rs, render/lampshadow.rs): the actors' depth from the sun (with
-    /// their feet heights) and from a lamp.
-    sun_depth_pipeline: wgpu::RenderPipeline,
-    sun_depth_lamped_pipeline: wgpu::RenderPipeline,
+    /// their feet heights, in the format given; plain and lamp lit; None where no feet format renders) and from a lamp.
+    sun_depth: Option<(wgpu::TextureFormat, [wgpu::RenderPipeline; 2])>,
     lamp_depth_pipeline: wgpu::RenderPipeline,
-    /// The scenery's frustum culling (render/cull.rs): its group 3 layout, the visibility and compaction passes.
-    cull_layout: wgpu::BindGroupLayout,
-    cull: [wgpu::ComputePipeline; 2],
+    /// The scenery's frustum culling (render/cull.rs): its group 3 layout, the visibility and compaction passes; None
+    /// where it can't run (cull::on_gpu: GLES, or too few storage buffers), which culls on the CPU instead.
+    cull: Option<(wgpu::BindGroupLayout, [wgpu::ComputePipeline; 2])>,
 }
 
 impl ZonePipes {
-    fn new(device: &wgpu::Device, color_format: wgpu::TextureFormat) -> Self {
+    fn new(device: &wgpu::Device, color_format: wgpu::TextureFormat, feet: Option<wgpu::TextureFormat>) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("zone"),
             source: wgpu::ShaderSource::Wgsl(include_str!("zone.wgsl").into()),
@@ -1621,13 +1722,10 @@ impl ZonePipes {
         });
         // Real character shadows (ours): the actors' depth from the sun or a lamp through the light matrix at group 3,
         // both sides, textures ignored as the silhouette's. The sun's also writes each caster's feet height
-        // (sunshadow::FEET_FORMAT), which its shadow fades against.
-        let shadow_depth = |label: &str, feet: bool, entry: &str| {
-            let targets = [Some(wgpu::ColorTargetState {
-                format: sunshadow::FEET_FORMAT,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })];
+        // (sunshadow::feet_format), which its shadow fades against.
+        let shadow_depth = |label: &str, feet: Option<wgpu::TextureFormat>, entry: &str| {
+            let targets =
+                [feet.map(|format| wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })];
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1655,7 +1753,7 @@ impl ZonePipes {
                     bias: wgpu::DepthBiasState { constant: 2, slope_scale: 2.0, clamp: 0.0 },
                 }),
                 multisample: Default::default(),
-                fragment: feet.then(|| wgpu::FragmentState {
+                fragment: feet.is_some().then(|| wgpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_sun_feet"),
                     compilation_options: Default::default(),
@@ -1665,9 +1763,16 @@ impl ZonePipes {
                 cache: None,
             })
         };
-        let sun_depth_pipeline = shadow_depth("sun shadow depth", true, "vs_skinned_sun");
-        let sun_depth_lamped_pipeline = shadow_depth("sun shadow depth (lamp lit)", true, "vs_skinned_sun_lamped");
-        let lamp_depth_pipeline = shadow_depth("lamp shadow depth", false, "vs_skinned_silhouette");
+        let sun_depth = feet.map(|f| {
+            (
+                f,
+                [
+                    shadow_depth("sun shadow depth", Some(f), "vs_skinned_sun"),
+                    shadow_depth("sun shadow depth (lamp lit)", Some(f), "vs_skinned_sun_lamped"),
+                ],
+            )
+        });
+        let lamp_depth_pipeline = shadow_depth("lamp shadow depth", None, "vs_skinned_silhouette");
         // The shine overlay (FUN_10024e10's second pass): additive (SRCALPHA / ONE), z tested (as drawn) but not written.
         let shine_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("shine"),
@@ -2001,23 +2106,25 @@ impl ZonePipes {
                 })
             });
         // Culling binds the globals (camera, voyage, door parts) at group 0 and its buffers at group 3.
-        let cull_layout = cull::layout(device);
-        let cull_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("cull"),
-            bind_group_layouts: &[Some(&globals_layout), None, None, Some(&cull_layout)],
-            immediate_size: 0,
+        let cull = cull::on_gpu(device).then(|| {
+            let cull_layout = cull::layout(device);
+            let cull_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("cull"),
+                bind_group_layouts: &[Some(&globals_layout), None, None, Some(&cull_layout)],
+                immediate_size: 0,
+            });
+            let make_cull = |entry: &str| {
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some(entry),
+                    layout: Some(&cull_pl),
+                    module: &shader,
+                    entry_point: Some(entry),
+                    compilation_options: Default::default(),
+                    cache: None,
+                })
+            };
+            (cull_layout, [make_cull("cs_cull_vis"), make_cull("cs_cull_compact")])
         });
-        let make_cull = |entry: &str| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
-                layout: Some(&cull_pl),
-                module: &shader,
-                entry_point: Some(entry),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        };
-        let cull = [make_cull("cs_cull_vis"), make_cull("cs_cull_compact")];
         Self {
             globals_layout,
             texture_layout,
@@ -2038,15 +2145,13 @@ impl ZonePipes {
             skin_solid_pipeline,
             faded_pipeline,
             faded_clear_pipeline,
-            sun_depth_pipeline,
-            sun_depth_lamped_pipeline,
+            sun_depth,
             lamp_depth_pipeline,
             color_format,
             line_pipeline,
             world_pipelines,
             sil_layout,
             sil_pipeline,
-            cull_layout,
             cull,
         }
     }
@@ -2733,8 +2838,14 @@ impl ZoneRenderer {
             })
         };
         // The culling reads the instances as storage.
-        let instances = buffer("instances", m, wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE);
-        let cull = cull::Cull::new(gpu, &p.cull_layout, &geo.cull, &instances);
+        // COPY_SRC: the CPU culling copies the visible ones out.
+        let instances = buffer(
+            "instances",
+            m,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        );
+        let cull = cull::Cull::new(gpu, p.cull.as_ref().map(|c| &c.0), &geo.cull, &instances);
+        let cpu_cull = cull.is_none().then(|| cull::CpuCull::new(gpu, &geo.cull, geo.parts()[2])).flatten();
         let sway = sway::Sway::new(gpu, &geo.sway_insts, &geo.sway_curves, &instances);
         // Config 0017: the normal maps, uploaded at once (few and small).
         if !geo.bumps.is_empty() {
@@ -2806,8 +2917,8 @@ impl ZoneRenderer {
             magenta,
             instances,
             cull,
-            cull_pipes: p.cull,
-            cull_layout: p.cull_layout,
+            cpu_cull,
+            cull_gpu: p.cull,
             inst_lights: geo.matrices.iter().map(|m| m.lights).collect(),
             spheres: geo.spheres.clone(),
             lamp_patch: HashMap::new(),
@@ -2833,8 +2944,7 @@ impl ZoneRenderer {
             sil_layout: p.sil_layout,
             sil_pipeline: p.sil_pipeline,
             shadows: None,
-            sun_depth_pipeline: p.sun_depth_pipeline,
-            sun_depth_lamped_pipeline: p.sun_depth_lamped_pipeline,
+            sun_depth: p.sun_depth,
             lamp_depth_pipeline: p.lamp_depth_pipeline,
             sun_shadow: None,
             ssao: None,
@@ -2984,8 +3094,10 @@ impl ZoneRenderer {
                 self.camera_lists.get(&list).map(|l| (0..base).chain(l.iter().copied()).collect());
             l.set_list(whole.as_deref());
         }
-        let Some(c) = self.cull.as_mut() else { return };
-        match self.camera_lists.get(&list) {
+        if self.cull.is_none() && self.cpu_cull.is_none() {
+            return;
+        }
+        let mask = match self.camera_lists.get(&list) {
             Some(l) => {
                 let listed: std::collections::HashSet<u32> = l.iter().copied().collect();
                 let variant = |p: u32| self.variants.get(p as usize).copied().flatten();
@@ -3005,9 +3117,16 @@ impl ZoneRenderer {
                         .collect(),
                     None => Vec::new(),
                 };
-                c.set_mask(gpu, Some((&allowed, &beyond, far.unwrap_or(0.0))));
+                Some((allowed, beyond, far.unwrap_or(0.0)))
             }
-            None => c.set_mask(gpu, None),
+            None => None,
+        };
+        let mask = mask.as_ref().map(|(a, b, r)| (a.as_slice(), b.as_slice(), *r));
+        if let Some(c) = self.cull.as_mut() {
+            c.set_mask(gpu, mask);
+        }
+        if let Some(c) = &self.cpu_cull {
+            c.set_mask(mask);
         }
     }
 
@@ -3037,7 +3156,10 @@ impl ZoneRenderer {
         if let Some(sub) = &mut self.sub {
             let snext = lamp_slots(&sub.inst_lights, &sub.spheres, &lamps);
             let put = |i: u32, l: &[u32; 4]| {
-                gpu.queue.put(&sub.instances, i as u64 * INSTANCE_BYTES + 64, bytemuck::cast_slice(l))
+                gpu.queue.put(&sub.instances, i as u64 * INSTANCE_BYTES + 64, bytemuck::cast_slice(l));
+                if let Some(c) = &sub.cpu_cull {
+                    c.patch(i as u64 * INSTANCE_BYTES + 64, bytemuck::cast_slice(l));
+                }
             };
             for (&i, l) in snext.iter().filter(|(i, l)| sub.lamp_patch.get(i) != Some(*l)) {
                 put(i, l);
@@ -3057,7 +3179,10 @@ impl ZoneRenderer {
         );
         self.lamps_last = lamps;
         let put = |i: u32, l: &[u32; 4]| {
-            gpu.queue.put(&self.instances, i as u64 * INSTANCE_BYTES + 64, bytemuck::cast_slice(l))
+            gpu.queue.put(&self.instances, i as u64 * INSTANCE_BYTES + 64, bytemuck::cast_slice(l));
+            if let Some(c) = &self.cpu_cull {
+                c.patch(i as u64 * INSTANCE_BYTES + 64, bytemuck::cast_slice(l));
+            }
         };
         for (&i, l) in &next {
             if self.lamp_patch.get(&i) != Some(l)
@@ -3105,6 +3230,9 @@ impl ZoneRenderer {
         }
         for (i, v) in &writes {
             gpu.queue.put(&self.instances, *i as u64 * INSTANCE_BYTES + 64, bytemuck::cast_slice(v));
+            if let Some(c) = &self.cpu_cull {
+                c.patch(*i as u64 * INSTANCE_BYTES + 64, bytemuck::cast_slice(v));
+            }
         }
         if let Some(l) = &mut self.leak {
             l.written.extend(writes);
@@ -3156,13 +3284,19 @@ impl ZoneRenderer {
                 ..*d
             })
             .collect();
-        let instances = buffer("sub-area instances", m, wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE);
-        let cull = cull::Cull::new(gpu, &self.cull_layout, &geo.cull, &instances);
+        let instances = buffer(
+            "sub-area instances",
+            m,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        );
+        let cull = cull::Cull::new(gpu, self.cull_gpu.as_ref().map(|c| &c.0), &geo.cull, &instances);
+        let cpu_cull = cull.is_none().then(|| cull::CpuCull::new(gpu, &geo.cull, m)).flatten();
         self.sub = Some(SubGeometry {
             vertices: buffer("sub-area vertices", v, wgpu::BufferUsages::VERTEX),
             indices: buffer("sub-area indices", i, wgpu::BufferUsages::INDEX),
             instances,
             cull,
+            cpu_cull,
             draws,
             tex_base,
             link,
@@ -3242,6 +3376,7 @@ impl ZoneRenderer {
                 instances: buffer("furniture instances", bytemuck::cast_slice(&inst), wgpu::BufferUsages::VERTEX),
                 // A few pieces that layout mode moves: drawn unculled.
                 cull: None,
+                cpu_cull: None,
                 draws,
                 tex_base,
                 link: 0,
@@ -3485,6 +3620,9 @@ impl ZoneRenderer {
         for (i, _, inst) in self.links.iter().filter(|x| x.1 == 999) {
             let v = if shown { *inst } else { Instance::zeroed() };
             gpu.queue.put(&self.instances, *i as u64 * INSTANCE_BYTES, bytemuck::bytes_of(&v));
+            if let Some(c) = &self.cpu_cull {
+                c.patch(*i as u64 * INSTANCE_BYTES, bytemuck::bytes_of(&v));
+            }
         }
         self.link999_off = !shown;
     }
@@ -3499,6 +3637,9 @@ impl ZoneRenderer {
                 let lights = self.lamp_patch.get(i).copied().unwrap_or(inst.lights);
                 let v = if *l == link { Instance::zeroed() } else { Instance { lights, ..*inst } };
                 gpu.queue.put(&self.instances, *i as u64 * INSTANCE_BYTES, bytemuck::bytes_of(&v));
+                if let Some(c) = &self.cpu_cull {
+                    c.patch(*i as u64 * INSTANCE_BYTES, bytemuck::bytes_of(&v));
+                }
             }
         }
         self.hidden = link;
@@ -4100,19 +4241,37 @@ impl ZoneRenderer {
             s.run(gpu, encoder);
         }
         // The scenery this camera sees (render/cull.rs), from the uniforms just written.
-        if let Some(c) = &self.cull {
-            c.run(encoder, &self.globals, &self.cull_pipes);
+        if let Some((_, pipes)) = &self.cull_gpu {
+            if let Some(c) = &self.cull {
+                c.run(encoder, &self.globals, pipes);
+            }
+            if let Some(c) = self.sub.as_ref().filter(|s| s.shown).and_then(|s| s.cull.as_ref()) {
+                c.run(encoder, &self.globals, pipes);
+            }
         }
-        if let Some(c) = self.sub.as_ref().filter(|s| s.shown).and_then(|s| s.cull.as_ref()) {
-            c.run(encoder, &self.globals, &self.cull_pipes);
-        }
+        // Without it (GLES), the CPU's (render/cull.rs CpuCull) through the same uniforms.
+        let view = cull::View {
+            view_proj: Mat4::from_cols_array_2d(&u.view_proj),
+            eye: camera.eye,
+            voyage: Mat4::from_cols_array_2d(&u.voyage),
+            clip: self.clip,
+        };
+        let vp_now = Mat4::from_cols_array_2d(&u.view_proj);
+        let mut cpu = |c: &cull::CpuCull, src: &wgpu::Buffer| {
+            c.run(encoder, src, &view, &c.runs_shown(vp_now, camera.eye, self.clip))
+        };
+        let placed = self.cpu_cull.as_ref().map(|c| cpu(c, &self.instances)).unwrap_or_default();
+        let sub_placed = match self.sub.as_ref().filter(|s| s.shown) {
+            Some(SubGeometry { cpu_cull: Some(c), instances, .. }) => cpu(c, instances),
+            _ => Vec::new(),
+        };
         // Real character shadows (render/sunshadow.rs): the actors' depth from the zone's sun, laid on the scenery
         // below after all the scenery (the blended too) and before the actors.
-        let sun = match (&self.sun_shadow, self.sun_shadow_light(camera.target), &self.pose_gpu) {
-            (Some(s), Some((m, d, st)), Some((_, group, _))) => Some((s, m, d, st, group)),
+        let sun = match (&self.sun_shadow, self.sun_shadow_light(camera.target), &self.pose_gpu, &self.sun_depth) {
+            (Some(s), Some((m, d, st)), Some((_, group, _)), Some(_)) => Some((s, m, d, st, group)),
             _ => None,
         };
-        if let Some((s, m, _, _, group)) = &sun {
+        if let (Some((s, m, _, _, group)), Some((_, [sun_pipe, lamped_pipe]))) = (&sun, &self.sun_depth) {
             s.set_light(gpu, *m);
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("sun shadow depth"),
@@ -4134,12 +4293,12 @@ impl ZoneRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.sun_depth_pipeline);
+            pass.set_pipeline(sun_pipe);
             pass.set_bind_group(0, &self.globals, &[]);
             pass.set_bind_group(3, &s.matrix_group, &[0]);
             self.draw_actor_depth(&mut pass, actors, group, done, Depth::Sun);
             // Those a lamp map takes in leave the sun's map on the GPU, where the lights' live state is.
-            pass.set_pipeline(&self.sun_depth_lamped_pipeline);
+            pass.set_pipeline(lamped_pipe);
             self.draw_actor_depth(&mut pass, actors, group, done, Depth::SunLamped);
         }
         // Lamp shadows (render/lampshadow.rs): each shadowed lamp's characters into its layer; its receive pass reads them.
@@ -4201,9 +4360,10 @@ impl ZoneRenderer {
         }
         // The zone's scenery draws from its culled instances when it is culled, only runs that may show.
         let shown = self.cull.as_ref().map(|c| c.runs_shown(vp, camera.eye, self.clip)).unwrap_or_default();
-        let (zone_inst, zone_args) = match &self.cull {
-            Some(c) => (&c.out, Some((c, &c.args, shown.as_slice()))),
-            None => (&self.instances, None),
+        let (zone_inst, zone_args) = match (&self.cull, &self.cpu_cull) {
+            (Some(c), _) => (&c.out, Some(Culled::Gpu(c, &c.args, shown.as_slice()))),
+            (None, Some(c)) => (&c.out, Some(Culled::Cpu(c, placed.as_slice()))),
+            (None, None) => (&self.instances, None),
         };
         let sub_shown = self
             .sub
@@ -4264,9 +4424,10 @@ impl ZoneRenderer {
                 self.draw_scenery(&mut pass, d, mode, &mut bound, &mut pipe, zone_args);
             }
             if let Some(s) = self.sub.as_ref().filter(|s| s.shown) {
-                let (inst, args) = match &s.cull {
-                    Some(c) => (&c.out, Some((c, &c.args, sub_shown.as_slice()))),
-                    None => (&s.instances, None),
+                let (inst, args) = match (&s.cull, &s.cpu_cull) {
+                    (Some(c), _) => (&c.out, Some(Culled::Gpu(c, &c.args, sub_shown.as_slice()))),
+                    (None, Some(c)) => (&c.out, Some(Culled::Cpu(c, sub_placed.as_slice()))),
+                    (None, None) => (&s.instances, None),
                 };
                 pass.set_vertex_buffer(1, inst.slice(..));
                 pass.set_vertex_buffer(0, s.vertices.slice(..));
@@ -4884,10 +5045,12 @@ impl ZoneRenderer {
     /// them only with a lit sun or moon.
     pub fn prepare_sun_shadow(&mut self, gpu: &Gpu, on: bool, size: u32) {
         let size = if sunshadow::MAP_SIZES.contains(&size) { size } else { sunshadow::MAP_SIZE };
-        if !on {
+        let Some((feet, _)) = self.sun_depth.as_ref().filter(|_| on) else {
             self.sun_shadow = None;
-        } else if self.sun_shadow.as_ref().is_none_or(|s| s.size != size) {
-            self.sun_shadow = Some(sunshadow::SunShadow::new(gpu, &self.sil_layout, self.color_format, size));
+            return;
+        };
+        if self.sun_shadow.as_ref().is_none_or(|s| s.size != size) {
+            self.sun_shadow = Some(sunshadow::SunShadow::new(gpu, &self.sil_layout, self.color_format, *feet, size));
         }
     }
 
@@ -5102,7 +5265,7 @@ impl ZoneRenderer {
         mode: u8,
         bound: &mut usize,
         pipe: &mut usize,
-        culled: Option<(&cull::Cull, &wgpu::Buffer, &[bool])>,
+        culled: Option<Culled>,
     ) {
         self.draw_scenery_pipes(pass, d, mode, bound, pipe, culled, false)
     }
@@ -5115,12 +5278,19 @@ impl ZoneRenderer {
         mode: u8,
         bound: &mut usize,
         pipe: &mut usize,
-        culled: Option<(&cull::Cull, &wgpu::Buffer, &[bool])>,
+        culled: Option<Culled>,
         furn: bool,
     ) {
         let furn = furn && mode >= 2;
         let runs = d.runs();
-        let live = |k: usize| !runs[k].1.is_empty() && culled.is_none_or(|(c, _, shown)| shown[c.run_of(d.args[k])]);
+        let live = |k: usize| {
+            !runs[k].1.is_empty()
+                && match culled {
+                    None => true,
+                    Some(Culled::Gpu(c, _, shown)) => shown[c.run_of(d.args[k])],
+                    Some(Culled::Cpu(c, placed)) => !placed[c.run_of(d.args[k])].is_empty(),
+                }
+        };
         if !live(0) && !live(1) {
             return;
         }
@@ -5160,7 +5330,12 @@ impl ZoneRenderer {
                 *pipe = want;
             }
             match culled {
-                Some((_, a, _)) => pass.draw_indexed_indirect(a, d.args[k] as u64 * 20),
+                Some(Culled::Gpu(_, a, _)) => pass.draw_indexed_indirect(a, d.args[k] as u64 * 20),
+                Some(Culled::Cpu(c, placed)) => pass.draw_indexed(
+                    d.first_index..d.first_index + d.index_count,
+                    d.base_vertex,
+                    placed[c.run_of(d.args[k])].clone(),
+                ),
                 None => pass.draw_indexed(d.first_index..d.first_index + d.index_count, d.base_vertex, range),
             }
         }
@@ -5215,7 +5390,7 @@ pub fn render_pngs_lit(
     height: u32,
     setup: &dyn Fn(&Gpu, &mut ZoneRenderer) -> Vec<ActorGpu>,
 ) -> Result<usize> {
-    render_pngs_post(scene, frames, width, height, setup, &mut |_, _, _, _, _, _, _| {})
+    render_pngs_post(scene, frames, width, height, setup, &mut |_, _, _, _, _, _, _| Ok(()))
 }
 
 /// Draws over the scene in each frame (after the zone pass, same targets): gpu, encoder, colour, depth, camera,
@@ -5228,7 +5403,8 @@ pub type PostDraw<'a> = dyn FnMut(
         &Camera,
         Option<&crate::dat::weather::Lighting>,
         &mut ZoneRenderer,
-    ) + 'a;
+    ) -> Result<()>
+    + 'a;
 
 /// As render_pngs_lit, with `post` drawing over each frame.
 pub fn render_pngs_post(
@@ -5332,6 +5508,9 @@ pub fn render_pngs_post(
             let (live, all, inst) = c.stats(&gpu);
             println!("cull: {live} of {all} indirect draws have an instance; {inst} instances drawn");
         }
+        if let Some(c) = &renderer.cpu_cull {
+            println!("cull (CPU): {} instances drawn", c.drawn());
+        }
     }
     for (camera, path, lighting) in frames {
         renderer.lighting = *lighting;
@@ -5354,7 +5533,8 @@ pub fn render_pngs_post(
             width as f32 / height as f32,
             &actor_refs,
         );
-        post(&gpu, &mut encoder, (&view, &target), &depth, camera, lighting.as_ref(), &mut renderer);
+        // An error (a GPU short of what the pass needs) stops before the frame is written over an older one.
+        post(&gpu, &mut encoder, (&view, &target), &depth, camera, lighting.as_ref(), &mut renderer)?;
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &target,
@@ -5526,5 +5706,54 @@ mod boost_tests {
         assert_eq!(super::boosted(Vec3::splat(0.5), [0.0; 4]), Vec3::splat(0.5));
         // 0xa0 / 255 -> trunc(0.627 x 128) = 80 bytes: 80 / 255, not 160 / 255.
         assert_eq!(crate::fx::elem::ambient_ref(Vec3::splat(160.0 / 255.0)).x * 255.0, 80.0);
+    }
+}
+
+#[cfg(test)]
+mod limits_tests {
+    /// A desktop adapter gets what the client always asked for (the defaults, 16 storage buffers); a GLES one (the
+    /// Pi's 15 inter-stage variables, 4096 textures, 16 KiB uniforms) gets its own values, never more than it has.
+    #[test]
+    fn wanted_limits_clamp_to_the_adapter() {
+        let desktop = wgpu::Limits { max_storage_buffers_per_shader_stage: 1_000_000, ..wgpu::Limits::unlimited() };
+        assert_eq!(
+            super::wanted_limits(&desktop),
+            wgpu::Limits { max_storage_buffers_per_shader_stage: 16, ..Default::default() }
+        );
+        let pi = wgpu::Limits {
+            max_inter_stage_shader_variables: 15,
+            max_texture_dimension_2d: 4096,
+            max_uniform_buffer_binding_size: 16384,
+            max_storage_buffers_per_shader_stage: 12,
+            ..wgpu::Limits::downlevel_defaults()
+        };
+        let got = super::wanted_limits(&pi);
+        assert!(got.check_limits(&pi));
+        assert_eq!(got.max_inter_stage_shader_variables, 15);
+        assert_eq!(got.max_storage_buffers_per_shader_stage, 12);
+        assert!(super::short_limits(&got).is_empty());
+    }
+
+    #[test]
+    fn short_limits_name_what_is_missing() {
+        // Mali's 8 storage buffers are enough; GLES 3.1's guaranteed 4 are not.
+        let mali = wgpu::Limits { max_storage_buffers_per_shader_stage: 8, ..wgpu::Limits::downlevel_defaults() };
+        assert!(super::short_limits(&mali).is_empty());
+        let four = wgpu::Limits { max_storage_buffers_per_shader_stage: 4, ..wgpu::Limits::downlevel_defaults() };
+        let short = super::short_limits(&four);
+        assert_eq!(short.len(), 1, "{short:?}");
+        assert!(short[0].starts_with("4 storage buffers"));
+        // Panfrost on Midgard: 128 invocations.
+        let midgard = wgpu::Limits {
+            max_storage_buffers_per_shader_stage: 16,
+            max_compute_invocations_per_workgroup: 128,
+            max_compute_workgroup_size_x: 128,
+            ..wgpu::Limits::downlevel_defaults()
+        };
+        let short = super::short_limits(&midgard);
+        assert_eq!(short.len(), 1, "{short:?}");
+        assert!(short[0].starts_with("128 compute invocations"));
+        let desktop = wgpu::Limits { max_storage_buffers_per_shader_stage: 16, ..Default::default() };
+        assert!(super::short_limits(&super::wanted_limits(&desktop)).is_empty());
     }
 }

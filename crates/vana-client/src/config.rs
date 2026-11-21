@@ -265,6 +265,10 @@ pub struct Config {
     pub packet_capture: bool,
     /// Developer tools (ours): the Packets window (/packets, modern UI). No Settings row; set in config.json by hand.
     pub dev_tools: bool,
+    /// The client language PlayOnline would hand the game (retail DAT_10457bd8 +8, dat::lang): "ja", "en", "de" or
+    /// "fr". Only the auto-translate dictionary (its file, word keys and compares) and German's quotation marks follow
+    /// it so far; every other text of the client stays English. No Settings row; set in config.json by hand.
+    pub language: String,
     /// The version whose change notes were last shown (client/notes.rs): a newer client shows the notes since. A
     /// config from before the notes has none, so its first newer build shows that build's.
     #[serde(default)]
@@ -309,8 +313,12 @@ pub struct Config {
     pub monitor: String,
     /// The graphics adapter by name (empty = the high-performance one); read at start-up. Not retail.
     pub gpu: String,
-    /// Set once a software adapter (WARP, llvmpipe) was first seen and the background was halved for it. Not retail.
+    /// Set once a software adapter was first seen, by builds before `low_spec_seen` (kept so their configs load).
+    /// Not retail.
     pub software_gpu_seen: bool,
+    /// Set once a low-spec GPU (GL / GLES, no BC textures, software) was first seen and `low_spec_defaults` ran.
+    /// Not retail.
+    pub low_spec_seen: bool,
     /// No config file was there to load: the UI sizes are picked from the screen once its window opens
     /// (client/screen.rs).
     #[serde(skip)]
@@ -613,6 +621,7 @@ impl Default for Config {
             gm_window: false,
             packet_capture: false,
             dev_tools: false,
+            language: "en".into(),
             notes_seen: env!("CARGO_PKG_VERSION").into(),
             lamp_lights: true,
             smooth_lights: false,
@@ -670,6 +679,7 @@ impl Default for Config {
             monitor: String::new(),
             gpu: String::new(),
             software_gpu_seen: false,
+            low_spec_seen: false,
             first_start: false,
             game: Default::default(),
         }
@@ -708,6 +718,8 @@ impl Config {
         }
         c.modern_modes.split_timers();
         c.follow_applied_version();
+        // The process's language, as retail's global (an unknown value stays English).
+        crate::dat::lang::set(crate::dat::items::Lang::parse(&c.language).unwrap_or(crate::dat::items::Lang::En));
         c
     }
 
@@ -829,6 +841,74 @@ impl Config {
         }
     }
 
+    /// The first start on a low-spec GPU (render::GpuClass): each setting still at its default takes the cheaper
+    /// value, the changes as log lines. `window`: the window's size; `monitor`: its screen's, when known.
+    /// - bump mapping 0017 off: FFXiMain's own default; per-pixel lighting is the costliest fill on these GPUs.
+    /// - anisotropy 1 (retail samples without it) and the frame limit 30 (retail's rate).
+    /// - Draw Distance Retail (100) rather than Unlimited.
+    /// - the background (0003 / 0004): half the window on a software rasterizer, three quarters on a GPU with a
+    ///   window over 960 wide; the UI stays at the window's size.
+    /// - a window larger than its screen (a 640x480 or 720x720 handheld) goes borderless at the screen's size.
+    ///
+    /// `legacy_software`: a software rasterizer the older block already saw (software_gpu_seen), which set the
+    /// background and anisotropy then: those two stay as the player left them.
+    pub fn low_spec_defaults(
+        &mut self,
+        class: crate::render::GpuClass,
+        window: [u32; 2],
+        monitor: Option<[u32; 2]>,
+        legacy_software: bool,
+    ) -> Vec<String> {
+        use crate::render::GpuClass;
+        let mut out = Vec::new();
+        if class == GpuClass::Capable {
+            return out;
+        }
+        let default = Config::default();
+        if !self.tool.contains_key("0017") {
+            self.set_tool("0017", 0);
+            out.push("bump mapping off".to_string());
+        }
+        if self.anisotropy == default.anisotropy && !legacy_software {
+            self.anisotropy = 1;
+            out.push("anisotropic filtering 1x".to_string());
+        }
+        if self.frame_limit == default.frame_limit {
+            self.frame_limit = 30;
+            out.push("frame limit 30".to_string());
+        }
+        if self.draw_distance == default.draw_distance {
+            self.draw_distance = 100;
+            out.push("draw distance Retail".to_string());
+        }
+        let mut window = window;
+        // Already borderless: the scene's size is the screen's.
+        if let Some(m) = monitor.filter(|_| self.window_mode() == 3) {
+            window = m;
+        }
+        if let Some([mw, mh]) = monitor
+            && (window[0] > mw || window[1] > mh)
+            && !self.tool.contains_key("0034")
+        {
+            self.set_tool("0034", 3);
+            window = [mw, mh];
+            out.push(format!("borderless at the screen's {mw}x{mh}"));
+        }
+        if !self.tool.contains_key("0003") && !self.tool.contains_key("0004") && !legacy_software {
+            let (num, den) = match class {
+                GpuClass::Software => (1, 2),
+                _ if window[0] > 960 => (3, 4),
+                _ => (1, 1),
+            };
+            if num != den {
+                self.set_tool("0003", (window[0] * num / den).max(320));
+                self.set_tool("0004", (window[1] * num / den).max(240));
+                out.push(format!("background {}x{}", self.tool("0003"), self.tool("0004")));
+            }
+        }
+        out
+    }
+
     /// Window size (0001 / 0002).
     pub fn window_size(&self) -> [u32; 2] {
         [self.tool("0001"), self.tool("0002")].map(|v| v.clamp(320, 16384))
@@ -870,6 +950,48 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A capable GPU keeps every default; a low-spec one takes the cheaper values, a handheld screen smaller than the
+    /// window goes borderless at its size, and settings the player already changed stay.
+    #[test]
+    fn low_spec_defaults_only_touch_defaults() {
+        use crate::render::GpuClass;
+        let mut c = Config::default();
+        assert!(c.low_spec_defaults(GpuClass::Capable, [1280, 800], Some([1920, 1080]), false).is_empty());
+        assert_eq!(c.tool, Config::default().tool);
+
+        let mut c = Config::default();
+        c.low_spec_defaults(GpuClass::LowSpec, [1280, 800], Some([1920, 1080]), false);
+        assert_eq!((c.tool("0017"), c.anisotropy, c.frame_limit, c.draw_distance), (0, 1, 30, 100));
+        assert_eq!((c.tool("0003"), c.tool("0004"), c.window_mode()), (960, 600, 1));
+
+        let mut c = Config::default();
+        c.low_spec_defaults(GpuClass::LowSpec, [1280, 800], Some([640, 480]), false);
+        assert_eq!((c.window_mode(), c.tool("0003"), c.tool("0004")), (3, 0, 0));
+
+        let mut c = Config::default();
+        c.low_spec_defaults(GpuClass::Software, [1280, 800], None, false);
+        assert_eq!((c.tool("0003"), c.tool("0004")), (640, 400));
+
+        let mut c = Config { anisotropy: 8, frame_limit: 60, ..Config::default() };
+        c.tool.insert("0017".into(), 1);
+        c.set_tool("0003", 1024);
+        c.low_spec_defaults(GpuClass::LowSpec, [1280, 800], None, false);
+        assert_eq!((c.tool("0017"), c.anisotropy, c.frame_limit, c.tool("0003"), c.tool("0004")), (1, 8, 60, 1024, 0));
+
+        // A software rasterizer the older block saw: background and anisotropy as the player left them (here back at
+        // the defaults), the rest still applied.
+        let mut c = Config { software_gpu_seen: true, ..Config::default() };
+        c.low_spec_defaults(GpuClass::Software, [1280, 800], None, true);
+        assert_eq!((c.anisotropy, c.tool("0003"), c.tool("0004")), (16, 0, 0));
+        assert_eq!((c.tool("0017"), c.frame_limit, c.draw_distance), (0, 30, 100));
+
+        // Borderless already on a 720x720 screen: the background is worked out from the screen, not the saved window.
+        let mut c = Config::default();
+        c.set_tool("0034", 3);
+        c.low_spec_defaults(GpuClass::LowSpec, [1280, 800], Some([720, 720]), false);
+        assert_eq!((c.tool("0003"), c.tool("0004")), (0, 0));
+    }
 
     /// 2026-11-16: Per Character turned off on Nine's RDM (on there, off everywhere else) left the mod off, the new
     /// "RDM" key never switched. Now the new key takes the state it had; other characters and jobs keep theirs.
