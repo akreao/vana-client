@@ -117,9 +117,32 @@ pub fn take_live() -> Vec<Record> {
 
 #[cfg(test)]
 static TEST_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
-/// Held by each test that turns capture on: the switch and the folder are process-wide.
 #[cfg(test)]
-pub static TEST_LOCK: Mutex<()> = Mutex::new(());
+thread_local! {
+    static TEST_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Serialize tests that change the capture settings and let only the current test's thread feed the capture hooks.
+#[cfg(test)]
+pub fn test_scope() -> impl Drop {
+    static LOCK: Mutex<()> = Mutex::new(());
+    struct Scope {
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+    impl Drop for Scope {
+        fn drop(&mut self) {
+            test_capture(None);
+            live(false);
+            FAILED.store(false, Relaxed);
+            ZONE.store(0, Relaxed);
+            TEST_ACTIVE.set(false);
+        }
+    }
+
+    let lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    TEST_ACTIVE.set(true);
+    Scope { _lock: lock }
+}
 
 /// Capture on into `dir` (a test's own folder), or off.
 #[cfg(test)]
@@ -214,6 +237,10 @@ fn record(out: bool, kind: Kind) {
 
 /// One sub-packet (with its 4-byte header) as sent or received.
 pub fn packet(out: bool, data: &[u8]) {
+    #[cfg(test)]
+    if !TEST_ACTIVE.get() {
+        return;
+    }
     if data.len() < 4 {
         return;
     }
@@ -231,6 +258,10 @@ pub fn packet(out: bool, data: &[u8]) {
 
 /// One datagram: its size, header sequence and ack, and the coder's form byte (`None` for the raw first 0x00A).
 pub fn datagram(out: bool, bytes: usize, seq: u16, ack: u16, form: Option<u8>) {
+    #[cfg(test)]
+    if !TEST_ACTIVE.get() {
+        return;
+    }
     if !wanted() {
         return;
     }
@@ -574,6 +605,7 @@ mod tests {
     /// The live feed gets what the hooks record while it is on, and nothing once it is off.
     #[test]
     fn live_feed() {
+        let _scope = test_scope();
         live(true);
         packet(false, &crate::net::map::session::build(0x1FD, &[9; 4]));
         let got = take_live();
@@ -603,7 +635,7 @@ mod tests {
     /// switch goes off and on.
     #[test]
     fn failure_latches_until_switched() {
-        let _held = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _scope = test_scope();
         let blocker = std::env::temp_dir().join(format!("vana-capture-blocker-{}", std::process::id()));
         std::fs::write(&blocker, b"not a folder").unwrap();
         *TEST_DIR.lock().unwrap() = Some(blocker.join("captures"));
