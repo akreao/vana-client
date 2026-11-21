@@ -246,7 +246,9 @@ impl Gpu {
             feet: sunshadow::feet_format(&adapter),
         });
         if pipes.feet.is_none() {
-            log::warn!("no renderable float format for the sun shadow map; Character Shadows stay off on this GPU");
+            log::warn!(
+                "no renderable float format for the sun shadow map: no sun or moon shadows on this GPU (lamp shadows, depth only, still draw)"
+            );
         }
         Ok(Self { instance, adapter, device, queue, mips: Default::default(), uploads: Default::default(), pipes })
     }

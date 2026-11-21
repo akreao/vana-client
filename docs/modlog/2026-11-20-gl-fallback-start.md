@@ -13,7 +13,7 @@ seen on Mesa llvmpipe (GL 4.6) and zink.
   written for one works on both. Other depth uses (none in the bundled mods) still fail there and skip the pass.
 - The sun shadow's feet target was R32Float, which wgpu-GL only renders to when `GL_EXT_color_buffer_float` is
   listed; Mesa's core profiles don't list it, so every Mesa GL driver failed at ZonePipes, shadows on or off. The
-  format is now picked from the adapter (R32Float, else R16Float, else no Character Shadows and a warning).
+  format is now picked from the adapter (R32Float, else R16Float, else no sun / moon shadows and a warning; lamp shadows are depth only and still draw).
 - The device asked for WebGPU's default limits, which GLES parts don't all meet (a Raspberry Pi's V3D has 15
   inter-stage variables against 16; it failed on its Vulkan driver too). The defaults are now lowered to the
   adapter's own where it has less (`wanted_limits`); a desktop GPU asks for exactly what it did before. Start-up logs
