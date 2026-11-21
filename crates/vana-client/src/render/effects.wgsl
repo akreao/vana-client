@@ -28,8 +28,10 @@ struct Params {
 @group(0) @binding(0) var<uniform> p: Params;
 @group(0) @binding(1) var<storage, read_write> el: array<u32>;
 @group(0) @binding(2) var<storage, read> ops: array<u32>;
-@group(0) @binding(3) var<storage, read> keys: array<vec2<f32>>;
-@group(0) @binding(4) var<storage, read> key_desc: array<vec2<u32>>;
+// The keyframe tables in one buffer (render/effects.rs key_words): entry 0's x the number of curves n, entries 1..=n
+// each curve's (start, count), its keys (time, value as f32 bits) from entry n + 1 on, a curve's start counted from
+// entry 0.
+@group(0) @binding(3) var<storage, read> keytab: array<vec2<u32>>;
 @group(0) @binding(5) var<storage, read> slots: array<u32>;
 @group(0) @binding(6) var<storage, read_write> outs: array<f32>;
 @group(0) @binding(7) var<storage, read_write> back: array<u32>;
@@ -160,22 +162,26 @@ fn key_sample(id: u32, x_in: f32, eased: bool) -> f32 {
     return key_ov(id, x_in, eased, false, 0.0);
 }
 
+fn key_at(i: u32) -> vec2<f32> {
+    return bitcast<vec2<f32>>(keytab[i]);
+}
+
 // FUN_10053520 / FUN_10053740: the same with the first key's value replaced by v0 when `ov`.
 fn key_ov(id: u32, x_in: f32, eased: bool, ov: bool, v0: f32) -> f32 {
-    if (id == NONE || id >= arrayLength(&key_desc)) { return 0.0; }
-    let d = key_desc[id];
+    if (id == NONE || id >= keytab[0].x) { return 0.0; }
+    let d = keytab[1u + id];
     if (d.y == 0u) { return 0.0; }
-    if (d.y == 1u) { return select(keys[d.x].y, v0, ov); }
+    if (d.y == 1u) { return select(key_at(d.x).y, v0, ov); }
     var x = x_in;
     if (!eased) { x = clamp(x, 0.0, 1.0); }
     var i = 0u;
     loop {
-        if (i + 2u >= d.y || x <= keys[d.x + i + 1u].x) { break; }
+        if (i + 2u >= d.y || x <= key_at(d.x + i + 1u).x) { break; }
         i = i + 1u;
     }
-    var a = keys[d.x + i];
+    var a = key_at(d.x + i);
     if (ov && i == 0u) { a.y = v0; }
-    let c = keys[d.x + i + 1u];
+    let c = key_at(d.x + i + 1u);
     if (c.x == a.x) { return c.y; }
     let f = (x - a.x) / (c.x - a.x);
     if (!eased) { return a.y + (c.y - a.y) * f; }

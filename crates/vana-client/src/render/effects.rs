@@ -489,8 +489,19 @@ struct Staging {
     words: usize,
 }
 
-/// The effects update pass's storage buffers in one stage.
-pub const STORAGE_NEEDED: u32 = 9;
+/// The effects update pass's storage buffers in one stage (Mali's GLES drivers allow 8).
+pub const STORAGE_NEEDED: u32 = 8;
+
+/// The keyframe tables as effects.wgsl `keytab` reads them, one storage buffer for both: the number of curves, each
+/// curve's (start, count) with the start moved past the table, then the keys (time, value).
+fn key_words(desc: &[[u32; 2]], keys: &[[f32; 2]]) -> Vec<u32> {
+    let base = 1 + desc.len() as u32;
+    let mut w = Vec::with_capacity(2 * (base as usize + keys.len()));
+    w.extend([desc.len() as u32, 0]);
+    w.extend(desc.iter().flat_map(|&[start, count]| [start + base, count]));
+    w.extend(keys.iter().flat_map(|&[t, v]| [t.to_bits(), v.to_bits()]));
+    w
+}
 
 /// Whether `gpu` can build the effects pipelines (headless tools check before EffectsGpu::new; the game stops at
 /// start-up, Gpu::with_adapter).
@@ -585,8 +596,8 @@ pub struct EffectsGpu {
     parts: wgpu::Buffer,
     staging: Vec<Staging>,
     ops: (wgpu::Buffer, usize),
+    /// The keyframe tables (key_words).
     keys: (wgpu::Buffer, usize),
-    key_desc: (wgpu::Buffer, usize),
     paths: (wgpu::Buffer, usize),
     /// The zone's point-light table (ZoneRenderer::lights), or a black one of ours until a zone gives it.
     lights: wgpu::Buffer,
@@ -688,7 +699,6 @@ impl EffectsGpu {
                 storage(1, false, cs),
                 storage(2, true, cs),
                 storage(3, true, cs),
-                storage(4, true, cs),
                 storage(5, true, cs),
                 storage(6, false, cs),
                 storage(7, false, cs),
@@ -1229,7 +1239,6 @@ impl EffectsGpu {
             staging,
             ops: table("effects ops"),
             keys: table("effects keys"),
-            key_desc: table("effects key table"),
             paths: table("effects paths"),
             lights: buf("effects lights", (crate::render::LIGHTS * 32) as u64, U::STORAGE | U::COPY_DST),
             slots: table("effects slots"),
@@ -1515,10 +1524,9 @@ impl EffectsGpu {
             reg.ops_dirty = false;
         }
         if reg.keys_dirty {
-            rebind |= Self::fit(gpu, &mut self.keys, reg.key_data.len() * 8, "effects keys");
-            rebind |= Self::fit(gpu, &mut self.key_desc, reg.key_desc.len() * 8, "effects key table");
-            q.put(&self.keys.0, 0, bytemuck::cast_slice(&reg.key_data));
-            q.put(&self.key_desc.0, 0, bytemuck::cast_slice(&reg.key_desc));
+            let words = key_words(&reg.key_desc, &reg.key_data);
+            rebind |= Self::fit(gpu, &mut self.keys, words.len() * 4, "effects keys");
+            q.put(&self.keys.0, 0, bytemuck::cast_slice(&words));
             reg.keys_dirty = false;
         }
         if reg.paths_dirty {
@@ -1606,7 +1614,6 @@ impl EffectsGpu {
                     wgpu::BindGroupEntry { binding: 1, resource: self.elems.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 2, resource: self.ops.0.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 3, resource: self.keys.0.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 4, resource: self.key_desc.0.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 5, resource: self.slots.0.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 6, resource: self.outs.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 7, resource: self.back.as_entire_binding() },
@@ -2393,6 +2400,26 @@ fn break_before(breaks: &[f32], next: usize, key: f32) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    /// The keyframe tables in one buffer: the curve count, each curve's start moved past the table, then the keys as
+    /// f32 bits, so effects.wgsl key_ov finds curve id's keys at keytab[keytab[1 + id].x ..].
+    #[test]
+    fn key_words_point_past_the_table() {
+        let desc = [[0u32, 2], [2, 1], [3, 0]];
+        let keys = [[0.0f32, 1.5], [1.0, -2.0], [0.25, 7.0]];
+        let w = super::key_words(&desc, &keys);
+        let pair = |i: u32| [w[2 * i as usize], w[2 * i as usize + 1]];
+        assert_eq!(pair(0)[0], 3);
+        for (id, &[start, count]) in desc.iter().enumerate() {
+            let [at, n] = pair(1 + id as u32);
+            assert_eq!(n, count);
+            for k in 0..count {
+                let [t, v] = pair(at + k);
+                assert_eq!([f32::from_bits(t), f32::from_bits(v)], keys[(start + k) as usize]);
+            }
+        }
+        assert_eq!(w.len(), 2 * (1 + desc.len() + keys.len()));
+    }
+
     /// A faded actor at view depth 10 between effects at 30, 12 (behind it) and 8, 2 (in front): it goes after the
     /// farther two and before the nearer two; a second one at 1 goes after all of them (the caller draws it).
     #[test]
