@@ -828,11 +828,15 @@ impl Config {
     /// - the background (0003 / 0004): half the window on a software rasterizer, three quarters on a GPU with a
     ///   window over 960 wide; the UI stays at the window's size.
     /// - a window larger than its screen (a 640x480 or 720x720 handheld) goes borderless at the screen's size.
+    ///
+    /// `legacy_software`: a software rasterizer the older block already saw (software_gpu_seen), which set the
+    /// background and anisotropy then: those two stay as the player left them.
     pub fn low_spec_defaults(
         &mut self,
         class: crate::render::GpuClass,
         window: [u32; 2],
         monitor: Option<[u32; 2]>,
+        legacy_software: bool,
     ) -> Vec<String> {
         use crate::render::GpuClass;
         let mut out = Vec::new();
@@ -844,7 +848,7 @@ impl Config {
             self.set_tool("0017", 0);
             out.push("bump mapping off".to_string());
         }
-        if self.anisotropy == default.anisotropy {
+        if self.anisotropy == default.anisotropy && !legacy_software {
             self.anisotropy = 1;
             out.push("anisotropic filtering 1x".to_string());
         }
@@ -857,6 +861,10 @@ impl Config {
             out.push("draw distance Retail".to_string());
         }
         let mut window = window;
+        // Already borderless: the scene's size is the screen's.
+        if let Some(m) = monitor.filter(|_| self.window_mode() == 3) {
+            window = m;
+        }
         if let Some([mw, mh]) = monitor
             && (window[0] > mw || window[1] > mh)
             && !self.tool.contains_key("0034")
@@ -865,7 +873,7 @@ impl Config {
             window = [mw, mh];
             out.push(format!("borderless at the screen's {mw}x{mh}"));
         }
-        if !self.tool.contains_key("0003") && !self.tool.contains_key("0004") {
+        if !self.tool.contains_key("0003") && !self.tool.contains_key("0004") && !legacy_software {
             let (num, den) = match class {
                 GpuClass::Software => (1, 2),
                 _ if window[0] > 960 => (3, 4),
@@ -928,27 +936,40 @@ mod tests {
     fn low_spec_defaults_only_touch_defaults() {
         use crate::render::GpuClass;
         let mut c = Config::default();
-        assert!(c.low_spec_defaults(GpuClass::Capable, [1280, 800], Some([1920, 1080])).is_empty());
+        assert!(c.low_spec_defaults(GpuClass::Capable, [1280, 800], Some([1920, 1080]), false).is_empty());
         assert_eq!(c.tool, Config::default().tool);
 
         let mut c = Config::default();
-        c.low_spec_defaults(GpuClass::LowSpec, [1280, 800], Some([1920, 1080]));
+        c.low_spec_defaults(GpuClass::LowSpec, [1280, 800], Some([1920, 1080]), false);
         assert_eq!((c.tool("0017"), c.anisotropy, c.frame_limit, c.draw_distance), (0, 1, 30, 100));
         assert_eq!((c.tool("0003"), c.tool("0004"), c.window_mode()), (960, 600, 1));
 
         let mut c = Config::default();
-        c.low_spec_defaults(GpuClass::LowSpec, [1280, 800], Some([640, 480]));
+        c.low_spec_defaults(GpuClass::LowSpec, [1280, 800], Some([640, 480]), false);
         assert_eq!((c.window_mode(), c.tool("0003"), c.tool("0004")), (3, 0, 0));
 
         let mut c = Config::default();
-        c.low_spec_defaults(GpuClass::Software, [1280, 800], None);
+        c.low_spec_defaults(GpuClass::Software, [1280, 800], None, false);
         assert_eq!((c.tool("0003"), c.tool("0004")), (640, 400));
 
         let mut c = Config { anisotropy: 8, frame_limit: 60, ..Config::default() };
         c.tool.insert("0017".into(), 1);
         c.set_tool("0003", 1024);
-        c.low_spec_defaults(GpuClass::LowSpec, [1280, 800], None);
+        c.low_spec_defaults(GpuClass::LowSpec, [1280, 800], None, false);
         assert_eq!((c.tool("0017"), c.anisotropy, c.frame_limit, c.tool("0003"), c.tool("0004")), (1, 8, 60, 1024, 0));
+
+        // A software rasterizer the older block saw: background and anisotropy as the player left them (here back at
+        // the defaults), the rest still applied.
+        let mut c = Config { software_gpu_seen: true, ..Config::default() };
+        c.low_spec_defaults(GpuClass::Software, [1280, 800], None, true);
+        assert_eq!((c.anisotropy, c.tool("0003"), c.tool("0004")), (16, 0, 0));
+        assert_eq!((c.tool("0017"), c.frame_limit, c.draw_distance), (0, 30, 100));
+
+        // Borderless already on a 720x720 screen: the background is worked out from the screen, not the saved window.
+        let mut c = Config::default();
+        c.set_tool("0034", 3);
+        c.low_spec_defaults(GpuClass::LowSpec, [1280, 800], Some([720, 720]), false);
+        assert_eq!((c.tool("0003"), c.tool("0004")), (0, 0));
     }
 
     /// 2026-11-16: Per Character turned off on Nine's RDM (on there, off everywhere else) left the mod off, the new
