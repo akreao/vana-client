@@ -24596,3 +24596,297 @@ From a full pass over retail's dispatcher (FUN_100bc280) against event_vm.rs / c
   what the old look's equipment part files started, and what files that left the look started, goes; the race and
   body files' tasks run on *(inferred: retail spells survive gear swaps)*. fx-shot's stand-in actors count as
   ready again, so it can run spells (category 4).
+
+## Title flyover: the movie zone's effects and their sounds (2026-11-16)
+
+- User report: retail's title screen has sound effects (voices, it seemed); ours had none.
+- File 23's schedulers hold no sound op (only 0x00 / 0x01 / 0x04 / 0x0e / 0x0f / 0x10 / 0x3b / 0x3d / 0x3e / 0x73 /
+  0x7b..0x7e / 0xaf). Op 0x7b is FUN_1018b3a0(zone), the scene loader op 0x34 uses too (FUN_10178df0: file
+  zone + 100), so a title movie loads its zone's whole scene: the auto-start generators run, their sound elements
+  play (birds, wind, water, crowds). The world's ambient loop is not one of them: it plays only in the world
+  (world+0x20 is 0 elsewhere).
+- Ours: flyover.rs drew only the geometry. Now FlyoverData loads the zone's effect libraries
+  (select::FxLibs::load_zone) and the Flyover runs them as the select and creator scenes do (select::LobbyFx): ticked
+  on the movie clock (op 0x7d sets the minute), op 0x7c switching the weather's generators, drawn over the scene under
+  the fades and blur, their sounds sent to the sound thread with voice bases TITLE_VOICES / NATION_VOICES (the
+  creator's nation step flyovers, files 24..26, load the same way). Voices pause while their screen is not up and
+  stop when a movie ends or the world starts.
+- Checked: the title run's mov6 (Beaucedine Glacier, zone 111) starts 49 of its 163 generators and plays effect
+  voice 0x3000001 (sound 2088); its level follows the camera's distance, as the world's do.
+## Two-frame motion chunks: retail's 30 fps step (2026-11-14)
+
+- FUN_1001a8e0 (a queue entry's frame step): a chunk of 2 frames whose speed x 0.5 is 0.5 steps a whole frame per
+  call (frame += 1.0), every other chunk ticks x speed x 0.5 x rate. Retail calls it once a drawn frame at its 30 fps,
+  so such a loop swaps its two keys every 2 ticks: the wings of bees and hornets (model 272 / 273, skeleton k_be,
+  `idl1`: 2 frames, speed 1, 12 tracks; `idl0` the body, 12 frames at 0.3) beat at 15 Hz.
+- Ours called it once a rendered frame: at 144 fps the keys swapped every frame and read as two still, ghosted
+  wings (user: Temple Bees and Davoi Hornets "don't flap"), and the beat changed with the frame rate. Now the whole
+  step comes every 2 ticks of elapsed time (motionq Entry::flip) *(inf: retail's frame is 2 ticks at 30 fps)*. Test
+  two_frame_chunk_steps_every_two_ticks.
+## Our engage is never held (2026-11-14)
+
+- Retail copies the server status (+0x16c) into the applied one (+0x170) only when the entity's busy counter (+0x11c)
+  is 0 (FUN_1008e9a0 -> FUN_1008b460, asm 0x1008b4a6: ECX = entity +0xa0, the actor; FUN_10083320 reads its
+  entity's +0x11c), unless actor +0x100 (Conflict teams only, FUN_1008e290: +0x1ff in 2..99). Every hold a monster
+  puts on its target raises that counter: op 0x56 / 0x20 through FUN_100601f0 -> FUN_10083300 -> FUN_100a4140. An
+  Orcish Farkiller's shot (category 11, effect 3916) holds its target 160 ticks (op 0x56), its swings 48 (op 0x20),
+  so being shot at kept our engage parked for seconds, and our first rounds landed before the draw (user, Davoi: "the
+  weapons haven't been drawn yet").
+- Ours: the 0x037 handler applies our own idle -> engaged change at once whatever holds us; every other change (the
+  disengage, death) still waits for the holds *(ours, on the user's word against the decompile's parking)*. The log
+  prints "status N parked (was M): <holds>" when ours is held (combat::held_why, Effects::held_by). Live (Lnxcsfix,
+  Davoi, an Orcish Farkiller's shot holding her until about 43.05 s): /attack at 42.08, engaged and drawing at 42.42,
+  the first round at 45.19 with its swing.
+## Event scenes: data/weat, the first-folder fallback, the default env (2026-11-15)
+
+- Some event-only scenes keep their envs one folder deeper, under `<zone>/data/weat/<tag>` (516 and 517, the Rise of
+  the Zilart ending, event 7 of zone 163; ordinary zones have `<zone>/weat/<tag>`). Our parser read that `data` folder
+  as a scenery area named "data", so the scene had no env of its own and drew unlit: 516's hills black against a
+  plain blue clear colour. Now `data` is the scene's own.
+- FUN_1018a7a0 picks the weather folder: the asked weather, else `suny`, else (FUN_10072290 on `weat`) the env keys
+  of the whole `weat` folder, nearest at or before the time; with every key at 0000 that is the first folder. 516
+  has only `rain` / `thdr` (and the event asks for weather 2 then), so it takes rain: dark, fog to about 290.
+  ZoneWeather::first.
+- A scene with no `weat` folder at all is lit by DAT_1065ca58 as FUN_1018b170 fills it (FUN_101880c0's payload
+  without a weather object): grey 0x80 light and fog, fog 80..100, a black clear colour, draw distance 100, no dome
+  (Env::retail_default, ZoneWeather::retail_default); ours drew such a scene unlit. zone-shot takes it too.
+- Test event_scene_weather. Live (Lnxcsfix, event 7 replayed in zone 163): 516's storm plain textured and lit, 517
+  clean.
+## Zone schedulers run through the event runner (2026-11-15)
+
+- Event op 0x2d (zone_sched) / 0x51 (its stop) start and stop a scheduler of the zone's (or event area's) effect file
+  by 4cc, the same CMoSchedularTask as op 0x45 (sched_file). Ours started only its effects side, so its camera paths
+  (op 0x04), fades (0x0f / 0x51) and crossfades (0x10), which the event runner plays for 0x45's, never ran: in the
+  Rise of the Zilart ending (zone 163 event 7) the event-area scenes 516 (`kon0`, `lat0`), 517 (`mel0`) and 519
+  (`sha0`) kept the last shot's camera, pointing at nothing (the "floating knights" were the cave scene's actors
+  seen from that stale camera). Now 0x2d / 0x51 go through the same Scheduler / SchedulerStop path as 0x45 / 0x52.
+- Live (Lnxcsfix, event 7 replayed; compared with the user's retail recording): the Ark and the Zilart crowd, the
+  band of light over the purple plain, the Ark breaking, the 519 forest ruins all show as retail.
+- Not done: scheduler op 0x7c (FUN_101874f0: the zone env's weather to the 4cc @8 over u16 @6) and op 0x7d
+  (FUN_1018c210: the clock), which `kon0` uses: retail's first 516 shot has a lighter purple sky.
+## Effect ZBIAS as Wine's polygon offset (2026-11-15)
+
+- D3DRS_ZBIAS 15 for the effect draw (FUN_10045950; FUN_1017c840 for MMB elements via FUN_101705e0(DAT_10616f78))
+  was ours as a fixed -7.5e-5 in NDC depth (to_clip, "as Wine maps it", 2026-10-22). With near 0.1 that is no small
+  bias far away: depth 1 - 0.1 / z moves a surface at 600 to look like 414. Wine's d3d8 sets
+  WINED3D_LEGACY_DEPTH_BIAS and draws ZBIAS as glPolygonOffset(-bias, -bias): a slope term plus units of the depth
+  buffer's resolution. Ours is now the pipelines' depth bias (render/effects.rs ZBIAS: constant -15, slope -15),
+  same semantics in Vulkan, on every effect pipeline but the CMoDist fan (vs_dist, which draws after ZBIAS 0).
+- Seen in the Zilart ending (zone 163 event 7, area 519, scheduler `sha0`): the cloud domes cld1 / cld2 (MMB
+  `suny`, 0x2440004 camera-relative, scale (8, 5, 8) / (7, 5, 7)) were pulled in front of the tree rows (420..780
+  away; the dome's cap is about 150 high there), so the trees showed through the clouds. The user's retail
+  recording has the trees solid in front of the clouds and the explosion glow; ours does too now (offscreen and
+  live). The same dome is every zone's weather cloud layer (e.g. Konschtat `weat/suny/cld1`, (9, 7, 9)).
+- The case the old bias was for (zone 101's gate tunnel at night, the `gin1` lamplight MMB over the walls) does not
+  z-fight with the polygon offset; the far lamp glows (MMB `ltla`, 40..60 away) now sit partly behind their lamp
+  housings, which the old bias pulled them in front of *(not compared with retail)*.
+## Event crossfade: the captured frame has the effects (2026-11-15)
+
+- Op 0x10's crossfade (FUN_1005f020) fades from the last frame as drawn. Ours redraws that frame offscreen from its
+  camera (client/mod.rs cross_capture) and drew only the scenery and actors, so whatever was an effect blinked out
+  at each crossfade cut: in the Zilart ending's Qufim shot (area 126, camera paths cp02 -> cp03) the whole sea,
+  which is effect meshes. The capture now draws the effects too (their GPU state is still last frame's).
+## Face-the-motion elements: any motion counts (2026-11-14)
+
+- FUN_10044350 orientation modes 1 / 2 (flags >> 6 & 7) turn the element by the atan2s of its position less its last
+  one, with no minimum length. Stoneskin's spikes (effect 2854, `g000` / `g001`: template flags 0x1242, mode 1) sit
+  on a ring (op 0x1f, 6 by count) with a 0.611 rad tilt (op 0x09) and a 1e-6 outward drift (op 0x08) that only gives
+  each its heading, so the tilt points out from the centre. Ours skipped the turn below 1e-12 squared, so every
+  spike tilted the same way (user: "supposed to all be tilted out from the center"). Now any motion turns it; none
+  leaves it as retail's atan2(0, 0) does.
+## Zone-in: no steps before the settle, and the settle snaps as FUN_1017a400 (2026-11-15)
+
+- Reported: walking through the door from Ve'Lugannon Palace (177) into Ru'Aun Gardens (130) left the user floating
+  under the island. LSB placed us at (145.6, -25.66, 404.5); the road there is at -24.0. The key was still held, and
+  the steps ran on the new zone during the half second before it settled (falls were held, input steps were not),
+  taking us to -23.0; the settle then looked only from 0.5 above the feet down (a step's floor ray), missed the road
+  1.0 above and took the next face down, 3.08: the island's underside, 26 below.
+- Now no input step runs while the zone-in is unsettled, and Ground::settle is FUN_1017a400's snap (from 2 above the
+  feet down 50, else from 2 below up 15; nearest to the start), the ray retail puts entities on the floor with, then
+  the nearest face. Test ruaun_zone_in_settles_on_the_road (-25.66, -24.5 and -23.0 all land on -24.0). The select
+  screen ring (select.rs, settle from -1) renders the same.
+
+## Grammar 0x81 / 0x83 and the choice mask's sign (2026-11-17)
+
+Addresses are 30261006_0's.
+- 0x81 / 0x83 (FUN_100bdc50 cases 0 / 2): a table byte by FUN_100bdb80 (0x40 | k: slot k's byte; low 6 bits 1:
+  (b1 & 0x7f) ^ (b2 << 7) as a byte; else 0xff), then entry num[n] by FUN_100bdbe0. Nothing is appended when the
+  lookup gives no string.
+  - 0x83 FUN_1022ec10: mission log table (objects at 0x10667a90 + t * 0x94, t < 0xf, else none) entry n, its leading
+    '_'s skipped. The 15 tables are language slots 0x49..0x4c, 0x4d..0x51, 0x55..0x57, 0x52..0x54 (FUN_1022d7a0):
+    dat/journal.rs MISSION_FILES in that order.
+  - 0x81 FUN_1022f330: quest area table (0x10668380 + t * 0x94; slots 0x40..0x48, 0x58, 0x59, FUN_1022f3d0) entry n,
+    one leading '+' skipped (no bound on t). dat/journal.rs QUEST_FILES.
+  - Both index the file's entries in order (FUN_1022edf0: none past the count).
+- First seen in Beaucedine Glacier [S]'s Regal Pawprints (event 0x17, message 8608 "Attempt which objective?"): row
+  1 mission log 7 num[0], row 2 log 8 (WotG) num[1], rows 3..8 quest area 7 (Crystal War) num[2..7]; the script
+  hides each row whose param is 0. LSB's params [0, 22] show "None." and "Dungeons and Dancers.". Ours printed the
+  rows as "." before.
+- FUN_100b0960 shifts the choice's hide mask as a signed int (`(int)mask >> 1`), so past row 32 its sign bit hides
+  (or shows) every further row. Ours shifted a u32: rows 33 and on always showed (the battlefield menus' trailing
+  "." rows, e.g. Horlais Peak 7611).
+
+## InvisFlag cleared under a held actor (2026-11-17)
+
+- FUN_100973f0 gates only two writes on the hold count (+0x84 == 0): the InvisFlag colour (0x27808080 / 0x00808080
+  with +0x128 bit 7 set) and the last step (a colour with alpha left back to 0x80808080). With InvisFlag clear, the
+  bit 7 check (cleared, colour 0x80808080) runs before the hold test, so the flag's colour is undone even while a
+  task holds the actor.
+- Ours returned for all of it while held. A weapon aura's loop (Excalibur, file 65916: `!in1` -> `auon` -> `lop0`,
+  never ending) starts again the moment InvisFlag clears and holds the actor, so `!hide` off left Nine translucent
+  for good (user, 2026-11-17). wepfx::colour now follows the order above.
+- Seen live: Lnxcsfix as RDM 99 with Excalibur 119 III: `!hide` translucent (after a bot's Cure tasks on her ended),
+  `!hide` again solid with the aura, `!hide status` 0.
+
+## Ctrl / Alt shortcuts: the common test (2026-11-17)
+
+Addresses are 30261006_0's.
+
+- The shortcut records (built in FUN_101ae140) run each frame in the field (FUN_101ae3e0), each through FUN_101adf20:
+  the press edge, then its condition set (FUN_101ae010, the set number from the record's +0x100):
+  - Set 1, A "/attack" (0x3b) and H "/heal" (0x3d): no event hold (FUN_10087070(0)), plus the common part.
+  - Set 4, E Equipment (0x36), I Items (0x39), C check / talk (0x3f) and M / J / W / B (0x41 / 0x7f / 0x80 / 0x9f):
+    no event hold, the UI shown, no window with flag 0x20000 (FUN_1015ecc0), plus the common part.
+  - The common part: no sub-target prompt (T +0x59, +0xc4; T = DAT_1057876c), not dead (own status not 2 / 3), no
+    Num+ focus (T +0x68 == 0: neither the log nor the status icons), not in Mog House layout mode (DAT_106631d4 +0x1c
+    == 0).
+- Ours checked M / J / W / B only for an event, death and the prompt, and A / H / E / I / C for nothing.
+  - Alt+A under a forgotten prompt sent /attack. Then the battle menu opened at the engage and cancelled the prompt.
+  - The cancel put back the prompt's saved target and lock: the monster that died before. It was dropped at once
+    with the lock (user, 2026-11-17).
+  - The prompt in that run was most likely the engaged battle menu's Switch Target (Enter on its first row) *(inf:
+    from the key log)*.
+- All of them now share one test (mod.rs shortcut_ok): no event, alive, no prompt (or party cursor), no Num+ focus
+  (log_active, log_focus != 2), no layout; E / I / C / M / J / W / B also no 0x20000 window (World.main_open). The
+  UI-shown part needs nothing: with the UI hidden no key arm runs.
+- egui-winit turns Ctrl+C into a Copy event before any key event, so the Copy arm takes the same test.
+- Opening a prompt is now logged with its callback and the saved target and lock.
+- Seen live: Lnxcsfix with a `/ma "Cure" <st>` prompt up: Alt+A sent nothing; after Escape it sent /attack. Ctrl+C
+  under the prompt checked nothing (after Escape: "examines you"); Ctrl+M over the map opened nothing (after Escape:
+  the magic list).
+
+## Distortion reads the scene in place (2026-11-18)
+
+- User report: many effects, fire spells most, looked like they played at a low frame rate.
+- They did. The cost was in the frame itself, not in effect timing:
+  - Offscreen, Fire's elements change every 0.2-tick step: fx-shot with a fractional step, a temporary
+    FFXI_FX_DT not kept.
+  - Live, FFXI_PERF on Lnxcsfix (BLM 75, Fire III on a Snipper, frame limit 144): 41.7 fps for the 2 s of the impact,
+    GPU 16.96 ms a frame of which fx draw was 13.42 ms (0.3 before), worst gap 62.5 ms.
+- Each CMoDist / CMoVuDist element copied the whole colour target before its 256x256 copy pass (section "Distortion
+  / heat haze"), and so did the squeeze of the DistModel / DistRing / DistMorph variants. A fire spell's dozens of
+  haze elements made dozens of full-size copies a frame. Retail copies only the diamond's screen box.
+- The copy pass draws into the 256x256 target and only reads the scene, so it now samples the colour target itself,
+  through a view in the copy's format, when the target can be bound. The swapchain image cannot, and still takes the
+  copy. What it reads is the same: the scene as drawn up to that element, the earlier distortions included.
+- Seen live (same test): 89..92 fps during the impact, fx draw 2.0..2.4 ms, worst gap 31.7 ms. That run's baseline
+  was about 105 fps.
+- Left: each distortion element still ends the effect pass and opens two (CPU encode up to 3.9 ms a frame in the
+  impact). Batching elements whose boxes do not overlap would need their screen boxes on the CPU.
+
+## CMoVuDist repeats in compute (2026-11-18)
+
+- After "Distortion reads the scene in place", a fire spell's impact still split the effect pass about 600 times a
+  frame. Fire III (file 2946, `fair/g004`) has up to 20 live CMoVuDist elements at n = 10, each repeat ending the pass,
+  running the 256x256 copy pass and opening the pass again. Live: about 4 ms of CPU encode a frame in the impact.
+- Ours now runs an element's repeats in compute (render/effects.rs DistIter, effects.wgsl "repeats in compute"):
+  - dist_region: the screen region both passes touch (the diamond's box and the shifted fan, 2 pixels wider), the
+    copy's texel rect, the shared geometry, and the indirect group counts.
+  - dist_load: the region's colour (as stored) and depth, once.
+  - Per repeat: dist_copy (vs_dist_copy / fs_dist_copy) and dist_fan (vs_dist + fragment variant 9 + SRCALPHA /
+    INVSRCALPHA colour-only blend + LESSEQUAL depth, written by flag 12). They sample by hand as the copy sampler does
+    (linear with 8-bit sub-texel weights, MIRROR), cover as the rasteriser does (pixel centres, 1/256 snapping,
+    top-left rule), and encode / decode sRGB in linearize mode.
+  - vs_dist + fs_dist_put write the region back once, under the fan, with the fan's depth state.
+  - So one break of the effect pass per element, not one per repeat; the repeat cap goes from 64 to retail's 512.
+  - Used when the scene and its depth can be bound; else the passes as before. The offscreen target (render_pngs_lit)
+    can be bound now, so the offscreen tools take the compute path too.
+- Checked offscreen against the passes (fx-shot 232, Fire III, every 20 ticks): identical outside the VuDist frames.
+  Within them, at most 8 levels on a few dozen pixels and 1..2 on the rest (sampling precision over the 10 repeats).
+- Live (Lnxcsfix BLM 75, Fire III on a Snipper, no frame limit, back to back in the same weather): the impact cost
+  +2.0 ms a frame with the passes (CPU encode +2.3 ms) and +1.1 ms with the compute repeats (CPU +0.5, GPU +1.0).
+- Not modelled: a fan triangle with a point behind the eye is dropped where the rasteriser would clip it. The
+  write-back (vs_dist_put) drops the same triangles, so it never writes a pixel dist_load did not read (review). Not
+  seen with Fire III: its VuDist elements face the camera, so their five points share one depth.
+
+## A scheduler motion that follows a counted one takes over its pose (2026-11-17)
+
+- User report: at the end of a trust cast a Mithra holds both hands out in front. Ours dropped them to her sides for
+  a moment, then raised them again.
+- The cast's scheduler (Nine's log, spell 922):
+  - `ms0` (count 8, 150 ticks);
+  - then `ms1` (hands out, count 1), stretched over its op's 80 ticks, out blend 0;
+  - then `ms2` (count 1, 100 ticks, blend in 20), started at the tick `ms1` ends.
+- Ours, in the same frame:
+  - saw `ms1`'s counted end first and brought the status motion back (blend in 0: a snap to idle);
+  - then queued `ms2`, which blended in over 20 ticks from that idle pose.
+- Retail: a counted end with nothing queued after it sets model +0x79c (vtable +0x1fc(1)), and queueing a region-0
+  motion clears it (vtable +0x1fc(0)). FUN_100c6380 brings the status motion back only while it is set (section
+  "Event motions, actor fades, PC battle motions"). So `ms2`, queued as `ms1` ends, keeps the status motion out, and blends from `ms1`'s last pose.
+- Ours now collects the frame's op-0x05 starts (the swing's one-shot and the play's) before the status test. A
+  counted end counts only when none starts that frame.
+- Seen live (Lnxcsfix, Mithra, Lehko Habhoka in West Ronfaure, side view, a shot every 0.15 s): `ms1 -> ms2`, the
+  hands out throughout. Nine's log: 14 of her 15 trust casts went `ms1 -> idl -> ms2` before.
+
+## Mode-0 generators keep their matrix: Nightmare Scythe's discs (2026-11-17)
+
+- User report: Nightmare Scythe was missing its two spinning discs that slice through the target.
+- Mithra file 37131 (37067 + animation 64), its `main`:
+  - At t95, op 0x02 starts `g0a0`..`g0a2` (attach 0xc402; elements of life 15; update op 0x33).
+  - Each of their elements clones `g0b0`..`g0b2` (emission op 0x53).
+  - The `g0b` clones draw D3m 4441, a quad textured with the green crescent blades (texture 4441, 256x128).
+  - They run along the Vtx `line` with keyframe `k004` (emission op 0x54, update op 0x34), each disc living 90 ticks.
+- FUN_10052eb0 (the per-frame generator attach) returns at once for attach mode 0, so the matrix stays.
+- Ours reset a mode-0 instance's matrix to none every frame. That was written for zone generators, before element
+  sub-clones existed.
+  - An element sub-clone (attach `&= 0xfffefff0`: mode 0) kept the matrix ops 0x53 / 0x6a gave it only while the
+    driving element re-placed it every frame (update op 0x33 / 0x46).
+  - Once the parent element died, or at once without those ops, the clone's discs were drawn about the world origin.
+- Ours now leaves a mode-0 instance's matrix as it is. Test fx::tasks::tests::element_clone_keeps_its_matrix.
+- Seen offscreen (`fx-shot 232 --file 37131`): the two discs come in above the target, grow and slice down through it
+  (t108..t174), where before nothing was drawn there.
+
+## A freed skill file takes its effects: Nightmare Scythe's red sphere (2026-11-17)
+
+- User report: Nightmare Scythe's red sphere (file 37131 `g000`, endless, flag 0x1000) stays after the weapon skill.
+  `st44`'s op 0x1e stop misses it in retail too ("Dolls go with their actor"; checked again):
+  - op 0x1e passes the child task's actors (0x10058d5f: FUN_10056c30 / FUN_10056c40), and op 0x03 starts the child
+    on the undolled pair;
+  - FUN_10052a50 compares the clone's own actor 2 (clone +0x30, FUN_1003a8c0, asm 0x10052b38..51), the doll since
+    op 0x23 moved it (FUN_10061da0).
+  - That note's conclusion, that retail ends `g000` only with the target, was wrong.
+- What ends it is the skill file going:
+  - The skill files sit on the caster's model list (+0x7e4) as 0x24-byte entries (FUN_100d4410; class FUN_1001b710,
+    vtable 0x1032a2e0) holding the file's resource at +0x1c, referenced when used (FUN_1001b7b0 -> FUN_10071e90).
+  - At `main`'s end, FUN_100d44b0(caster, 6) unlinks every kind-6 entry and deletes it (vtable +0x18(1)).
+  - The destructor (FUN_1001b760 -> FUN_1001b7d0) releases the resource (FUN_10071ec0) and calls FUN_10073b20, which
+    deletes the file's resource tree once its count is 0.
+  - A clone references only its template (the +0x28 walk of FUN_10071e90 / FUN_10071ec0 stops at a node whose
+    handle is itself), so live clones do not keep the file.
+  - So the clones of its generators go with it *(inf: the tree's delete takes the clones of its templates)*.
+- Ours: Effects::release_file kills every live instance and task of the file. The client calls it for each dropped
+  skill file that no other actor holds (extra list or skill_want). Test fx::tasks::tests::released_skill_file_takes_its_clones.
+- Seen live (Lnxcsfix, Mithra DRK 75, Mythril Scythe, a Snipper in Valkurm Dunes): the sphere goes at +5.4 s, when
+  "skill files dropped" is logged; before, it sat by the corpse until the despawn about 15 s later.
+
+## Auto-sort: the list order kept through a zone change (2026-11-19)
+
+- Ours: the zone-in reset of the inventory (LSB re-sends every container after c2s 0x00C) emptied the list order too,
+  so the resend refilled each list in slot order, and #21 had kept our keep-sorted path off for the inventory
+  whenever Auto-sort (config 0x9a) was on.
+- Retail's view (30261006_0): FUN_1021c380 syncs it with the slots each frame the inventory has settled. FUN_1021c210
+  compares the row's item id (record u16 @+0x80 + slot * 0x18) with the slot's: the same id keeps its row, another
+  id drops it (FUN_1021c680) and appends it (FUN_1021c5b0); an emptied slot drops its row. Append and drop both set
+  the view record's +8 to 0x52 (0x1021c654 / 0x1021c764). FUN_1021c4c0 then compares the free slots (FUN_100eb8d0)
+  with +8; 0x52 is above any free count, so with Auto-sort (+5) on and no Manual hold (+6) every frame whose sync
+  added or dropped a row sorts (FUN_1021c7c0) and clears the hold. The login load (every slot appended) is sorted by
+  retail's own Auto-sort, and so is an emptied slot (an item used up, stacks merged).
+- Now the view outlives the reset: Inventory::order with the item id each row took (viewed_ids). A refilled slot with
+  its item keeps its place, one with another item (LSB pushVisitedFurniture fills the Mog Safe with the host's
+  furniture on a Mog House visit) and a new one go last, and at the settle (0x01D State 1) the slots the resend left
+  empty in the loaded containers leave it (Inventory::prune_order). Appends and drops set Inventory::view_changed, and
+  retail_auto_sort compares against 0x52 when the inventory's bit is set. A (re)appended row also counts as new for
+  the keep-sorted path, which stays off for the inventory while 0x9a is on.
+- Tests: items::order_tests::kept_order_survives_a_resend, changed_item_goes_last, view_change_sorts.
+- Seen live (Lnxcsfix, slots pearlsack / wind crystal / cotton cloth / cipher), before the 0x52 reset: sorted at
+  login, still sorted after zoning to Northern San d'Oria and back.

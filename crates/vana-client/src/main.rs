@@ -1913,7 +1913,9 @@ fn main() -> Result<()> {
                                     depth: &wgpu::TextureView,
                                     cam: &render::Camera,
                                     l: Option<&dat::weather::Lighting>,
-                                    zr: &mut render::ZoneRenderer| {
+                                    zr: &mut render::ZoneRenderer|
+                     -> anyhow::Result<()> {
+                        render::effects::fits(gpu)?;
                         let eg = eg_keep.get_or_insert_with(|| {
                             render::effects::EffectsGpu::new(gpu, wgpu::TextureFormat::Rgba8Unorm)
                         });
@@ -2092,16 +2094,18 @@ fn main() -> Result<()> {
                             fog_color,
                             fog,
                         );
+                        Ok(())
                     };
                     // Twice: the effects write the point lights the scenery reads on the next frame.
-                    render::render_pngs_post(
+                    let draws = render::render_pngs_post(
                         &scene,
                         &[(&camera, out.as_path(), lighting), (&camera, out.as_path(), lighting)],
                         1600,
                         900,
                         &setup,
                         &mut post,
-                    )?
+                    )?;
+                    draws
                 }
             };
             println!("rendered {draws} draws from {eye} towards {target} into {}", out.display());
@@ -3993,7 +3997,9 @@ fn fx_shot(
                     depth: &wgpu::TextureView,
                     cam: &render::Camera,
                     l: Option<&dat::weather::Lighting>,
-                    zr: &mut render::ZoneRenderer| {
+                    zr: &mut render::ZoneRenderer|
+     -> anyhow::Result<()> {
+        render::effects::fits(gpu)?;
         let eg = eg.get_or_insert_with(|| render::effects::EffectsGpu::new(gpu, wgpu::TextureFormat::Rgba8Unorm));
         eg.set_lights(&zr.lights);
         // Lit elements (op-1 flag 16), as the client sets them with no gamma boost.
@@ -4093,6 +4099,7 @@ fn fx_shot(
             fog_color,
             fog,
         );
+        Ok(())
     };
     render::render_pngs_post(&scene, &list, 1600, 900, &|_, _| Vec::new(), &mut post)?;
     println!("wrote {} frames", paths.len());

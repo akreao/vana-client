@@ -148,6 +148,7 @@ mod plate;
 mod post;
 mod preload;
 mod primer;
+mod ptrwarp;
 mod pupset;
 mod quests;
 mod radar;
@@ -1896,7 +1897,9 @@ fn push_chat_line(world: &mut World, line: String, mode: u8, kind: u8, gm: bool,
     }
     let (colour, line, indent) = match world.battle.clone() {
         Some(bt) => {
-            let line = expand_phrases(world, &line);
+            // FUN_10129090: a line whose mode word's second byte has no low bits (every chat line) takes German's
+            // quotation marks after the expansion (its 0x800-byte buffer).
+            let line = crate::dat::font::german_quotes_str(&expand_phrases(world, &line), 0x800);
             (bt.colour_in(mode, &world.game), line, bt.indents(mode))
         }
         None => (cfgapply::chat_colour(&world.game, kind), line, false),
@@ -4696,7 +4699,12 @@ fn world_hud(
         // the right (inf: retail's scroll is not traced; as the event input window).
         let at = fep::caret(world);
         let mut before = fep::pieces(world, &world.chat_input.chars().take(at).collect::<String>());
-        let after = fep::pieces(world, &world.chat_input.chars().skip(at).collect::<String>());
+        let mut after = fep::pieces(world, &world.chat_input.chars().skip(at).collect::<String>());
+        // FUN_101b9c30: German's quotation marks over the drawn line (its 0x968-byte buffer).
+        crate::dat::font::german_quotes_parts(
+            &mut before.iter_mut().chain(after.iter_mut()).map(|p| &mut p.0).collect::<Vec<_>>(),
+            0x968,
+        );
         // FUN_10190280 cuts the line to inline +0x34 = the log's text width - 86.
         let room = tw - 86.0;
         let width = |p: &[(String, bool)]| p.iter().map(|(t, _)| gu.text_width(t)).sum::<f32>();
@@ -5554,6 +5562,18 @@ pub fn downloading(gu: &mut GameUi, n: usize, sw: f32, sh: f32) {
         (n as f32 * 0.25).min(1.0),
         0x8080_8080,
     );
+}
+
+/// FUN_10125b90's SetCursorPos for a pointer put on `at` (UI pixels, `k` UI pixels per window pixel): only when the
+/// Windows cursor is the one shown (config 0021), in full screen or borderless at the desktop size (DAT_10457c2c 0 /
+/// 3) and with the window active. Elsewhere (and where the system refuses, as Wayland does) only the game's pointer
+/// moves until the mouse does. The window position it went to, when it went.
+fn os_pointer_warp(cfg: &Config, k: (f32, f32), window: &Window, at: (f32, f32)) -> Option<(f64, f64)> {
+    if cfg.tool("0021") == 0 || !matches!(cfg.window_mode(), 0 | 3) || !window.has_focus() {
+        return None;
+    }
+    let phys = ((at.0 / k.0) as f64, (at.1 / k.1) as f64);
+    window.set_cursor_position(winit::dpi::PhysicalPosition::new(phys.0, phys.1)).ok().map(|_| phys)
 }
 
 /// Logs a zone without a group 0x14 name once per zone.
@@ -7706,6 +7726,9 @@ struct World {
     event_voices: bool,
     /// Looks set by event op 0xb6 (and the riding animals, ride.rs), for the model loader.
     event_looks: Vec<(u32, Source)>,
+    /// The actors whose model FUN_10095900 freed for an unload mark, and the look each is made from again
+    /// (event::unload_models).
+    unloaded: HashMap<u32, Option<Source>>,
     /// CMoSkeletonElem models (fx MODEL_IDS): each one's place, from its element (position, rotation x / y / z).
     fx_models: HashMap<u32, (Vec3, Vec3)>,
     /// Other characters' costumes (0x00D @0x30), and the look each actor in costume would have without it.
@@ -8972,6 +8995,8 @@ pub struct App {
     /// The window size the last frame drew at (the mouse pick's projection).
     window_size: [u32; 2],
     last_cursor: Option<(f64, f64)>,
+    /// The game's pointer put on a focused window's cursor child, until the mouse moves (client/ptrwarp.rs).
+    ptr_warp: Option<ptrwarp::PtrWarp>,
     last_frame: Instant,
     /// The creator's nation step backdrop.
     nation: NationShow,
@@ -9375,6 +9400,7 @@ impl App {
             swallow_click: false,
             window_size: [1, 1],
             last_cursor: None,
+            ptr_warp: None,
             last_frame: Instant::now(),
             next_frame: None,
             numpad_minus: false,
@@ -10880,6 +10906,7 @@ impl App {
                             carriers: Default::default(),
                             event_voices: false,
                             event_looks: Vec::new(),
+                            unloaded: HashMap::new(),
                             fx_models: HashMap::new(),
                             costumes: HashMap::new(),
                             costume_base: HashMap::new(),
@@ -12119,9 +12146,17 @@ impl App {
                     world.map = None;
                     world.scan = Default::default();
                     // LSB re-sends every container after c2s 0x00C and empties the temporary items and the recycle
-                    // bin on zoning, so slots kept from the last zone would go stale (retail's reset: inferred).
-                    world.inv =
-                        items::Inventory { sizes: world.inv.sizes, sizes2: world.inv.sizes2, ..Default::default() };
+                    // bin on zoning, so slots kept from the last zone would go stale (retail's reset: inferred). The
+                    // view stays (a sorted list stays sorted): a slot refilled with its item keeps its row, one with
+                    // another item goes last (FUN_1021c210), and slots the resend leaves empty go at the settle.
+                    world.inv = items::Inventory {
+                        sizes: world.inv.sizes,
+                        sizes2: world.inv.sizes2,
+                        order: std::mem::take(&mut world.inv.order),
+                        viewed_ids: std::mem::take(&mut world.inv.viewed_ids),
+                        view_changed: world.inv.view_changed,
+                        ..Default::default()
+                    };
                     // FUN_10093720: DAT_10487ef5 = 0.
                     world.weather_forced = false;
                     // The resend refills the emptied view: Auto-sort's free-slot count starts again once it settles.
@@ -12835,6 +12870,9 @@ impl App {
                         world.inv_flags |= 0x0020_0800;
                     }
                     world.inv_loaded = loaded;
+                    if state == 1 {
+                        world.inv.prune_order(loaded);
+                    }
                     if state == 1 && loaded & 1 << items::INVENTORY != 0 && world.inv_free.is_none() {
                         world.inv_free = Some(items::free_slots(world, items::INVENTORY));
                     }
@@ -12848,10 +12886,10 @@ impl App {
                     if matches!(container, 1..=7 | 9) {
                         world.inv_flags |= 0x0020_0000;
                     }
-                    // A slot newly filled in a container kept sorted sorts it once the burst is over.
-                    let fresh = id != 0 && !world.inv.order.get(&container).is_some_and(|o| o.contains(&index));
-                    world.inv.set(container, index, id, count);
-                    // Retail's Auto-sort (config 0x9a) already sorts the inventory on a new slot.
+                    // A slot newly filled (or refilled with another item) in a container kept sorted sorts it once
+                    // the burst is over.
+                    let fresh = world.inv.set(container, index, id, count);
+                    // Retail's Auto-sort (config 0x9a) already sorts the inventory on a new row, the login load too.
                     let retail = container == items::INVENTORY && world.game.get(0x9a) != 0;
                     if fresh && container < 32 && world.auto_sort >> container & 1 != 0 && !retail {
                         world.sort_due = (world.sort_due.0 | 1 << container, items::SORT_DELAY);
@@ -13250,8 +13288,12 @@ impl App {
                 }
             }
         }
+        // FUN_10095900: models under an unload mark are freed, the ones whose mark is gone are asked for again.
+        // Their looks go first: a newer one that came with the update that ended the mark wins.
+        let back = event::unload_models(world);
         // Looks the event scripts changed (op 0xb6) load like the server's; held ones go first, newer ones win.
         looks.extend(std::mem::take(&mut world.event_looks));
+        looks.splice(0..0, back);
         looks.splice(0..0, std::mem::take(&mut world.held_looks));
         // The mods' looks changed (render.look): every player look in sight again, before the newer ones.
         let models_ver = world.lua.models_ver();
@@ -13292,6 +13334,11 @@ impl App {
                 }
                 _ => source,
             };
+            // FUN_10095900 makes no model for an actor under an unload mark: its look waits for the mark to go.
+            if let Some(kept) = world.unloaded.get_mut(&id) {
+                *kept = Some(base);
+                continue;
+            }
             let key = format!("{source:?}");
             let spawn_fx = world.entities.get(&id).is_some_and(|e| e.spawn_fx);
             let shadow =
@@ -15532,6 +15579,23 @@ impl App {
         }
     }
 
+    /// The stacked-window pointer follow (World::ptr_dy), only with the drawn (software) cursor.
+    fn ptr_shift(&self) -> f32 {
+        match &self.phase {
+            Phase::World(w) if self.cfg.tool("0021") == 0 => w.ptr_dy,
+            _ => 0.0,
+        }
+    }
+
+    /// The mouse at window pixel `at` (the window's motion or a script's): FUN_100016c0 -> FUN_10125ad0, more than 2
+    /// pixels from a warped game pointer moves it back to the mouse.
+    fn pointer_moved(&mut self, at: (f64, f64)) {
+        let (k, dy) = (self.ui_k, self.ptr_shift());
+        if self.ptr_warp.is_some_and(|pw| pw.shifted(dy).left_by((at.0 as f32 * k.0, at.1 as f32 * k.1 + dy))) {
+            self.ptr_warp = None;
+        }
+    }
+
     /// A look drag begins: the pointer hidden and held where it is, as modern MMOs do.
     fn grab_pointer(&mut self) {
         let Some(g) = self.gfx.as_ref() else { return };
@@ -15838,11 +15902,7 @@ impl App {
         if let Some(m) = &self.modern {
             m.set_opacity(self.cfg.modern_opacity);
         }
-        // The stacked-window pointer follow, only with the drawn (software) cursor.
-        let ptr_dy = match &self.phase {
-            Phase::World(w) if self.cfg.tool("0021") == 0 => w.ptr_dy,
-            _ => 0.0,
-        };
+        let ptr_dy = self.ptr_shift();
         let swallow = ctx.input(|i| i.pointer.primary_released()) && std::mem::take(&mut self.swallow_click);
         let notches = self.list_wheel.trunc();
         self.list_wheel -= notches;
@@ -15851,7 +15911,10 @@ impl App {
             && (ctx.is_pointer_over_egui() || ctx.egui_is_using_pointer()));
         let input = ctx.input(|i| UiInput {
             wheel: if mine { notches as i32 } else { 0 },
-            pointer: i.pointer.hover_pos().map(|p| (p.x * ppp * k.0, p.y * ppp * k.1 + ptr_dy)),
+            pointer: match &self.ptr_warp {
+                Some(pw) => pw.shifted(ptr_dy).pointer(),
+                None => i.pointer.hover_pos().map(|p| (p.x * ppp * k.0, p.y * ppp * k.1 + ptr_dy)),
+            },
             moved: i.pointer.delta() != egui::Vec2::ZERO,
             clicked: i.pointer.primary_clicked() && !swallow && mine,
             pressed: i.pointer.primary_pressed() && mine,
@@ -18664,6 +18727,7 @@ impl App {
                             self.mouse.visible = true;
                         }
                         (self.cursor_in, self.last_cursor) = (true, Some(at));
+                        self.pointer_moved(at);
                     }
                     egui::Event::PointerButton { button, pressed, .. } if !consumed || !*pressed => {
                         let b = if *button == egui::PointerButton::Secondary {
@@ -18995,6 +19059,8 @@ impl App {
         } else {
             (bg, aspect)
         };
+        // Within the device's texture size (4096 on some GLES parts), the aspect kept.
+        let bg = crate::render::scale::fit(bg, gfx.gpu.device.limits().max_texture_dimension_2d);
         if lcd {
             self.lcd_frame = (self.lcd_frame + 1) % 4;
         }
@@ -19281,11 +19347,26 @@ impl App {
             Phase::World(w) => w.game.get(0xa4),
             _ => self.cfg.game.global.get(0xa4),
         } != 0;
+        let dy = self.ptr_shift();
         if self.ui_drawn
             && let Some(lu) = &mut self.game_ui
         {
             lu.open_ticks = if no_zoom { 0.0 } else { 25.0 };
             lu.end_frame(dt);
+            if let Some(at) = lu.take_focus_warp()
+                && !(3..=6).contains(&self.mouse.kind)
+            {
+                let k = self.ui_k;
+                let mouse = self.last_cursor.map(|(x, y)| (x as f32 * k.0, y as f32 * k.1 + dy));
+                let drawn = self.ptr_warp.map(|pw| pw.shifted(dy).drawn).or(mouse).unwrap_or(at);
+                self.ptr_warp = Some(ptrwarp::PtrWarp::new(at, drawn, dy));
+                if let Some(phys) = os_pointer_warp(&self.cfg, k, &gfx.window, at) {
+                    self.last_cursor = Some(phys);
+                }
+            }
+            if let Some(pw) = &mut self.ptr_warp {
+                pw.step(dt);
+            }
             if self.cfg.tool("0021") == 0
                 && self.cursor_in
                 && let Some((x, y)) = self.last_cursor
@@ -19295,18 +19376,13 @@ impl App {
                 let s = self.cfg.cursor_scale(size[1]) * self.ui_k.1;
                 let fs =
                     if self.cfg.cursor_size == 0 { 1.0 } else { self.cfg.cursor_size as f32 / 100.0 } * self.ui_k.1;
-                let dy = if let Phase::World(w) = &self.phase { w.ptr_dy } else { 0.0 };
+                // The sprite at +0xc / +0x10, which follows a warped pointer (FUN_10126340).
+                let at = self
+                    .ptr_warp
+                    .map_or((x as f32 * self.ui_k.0, y as f32 * self.ui_k.1 + dy), |pw| pw.shifted(dy).drawn);
                 // Over the modern layer too: drawn after its pass.
                 lu.start_top();
-                self.mouse.draw(
-                    lu,
-                    self.index.as_ref(),
-                    x as f32 * self.ui_k.0,
-                    y as f32 * self.ui_k.1 + dy,
-                    dt,
-                    s,
-                    fs,
-                );
+                self.mouse.draw(lu, self.index.as_ref(), at.0, at.1, dt, s, fs);
             }
             g.counts.ui_vertices = lu.vertex_count();
             lu.scene_depth = g.drew_world.then(|| scene_depth.clone());
@@ -21463,18 +21539,32 @@ impl ApplicationHandler for App {
         self.gpus = crate::render::adapter_names(&instance, Some(&surface));
         let gpu = Gpu::with_adapter(instance, Some(&surface), &self.cfg.gpu).expect("opening the GPU");
         let size = window.inner_size();
-        // A software adapter (a VM without a GPU): the first time, the scene draws at half the window's size.
-        if gpu.adapter.get_info().device_type == wgpu::DeviceType::Cpu && !self.cfg.software_gpu_seen {
-            self.cfg.software_gpu_seen = true;
-            if !self.cfg.tool.contains_key("0003") && !self.cfg.tool.contains_key("0004") {
-                self.cfg.set_tool("0003", (size.width / 2).max(320));
-                self.cfg.set_tool("0004", (size.height / 2).max(240));
-                log::info!("software GPU: background set to {}x{}", self.cfg.tool("0003"), self.cfg.tool("0004"));
-            }
-            // Anisotropic filtering costs a software rasterizer the most per texel.
-            if self.cfg.anisotropy == Config::default().anisotropy {
-                self.cfg.anisotropy = 1;
-                crate::render::ANISOTROPY.store(1, std::sync::atomic::Ordering::Relaxed);
+        // A low-spec GPU (GL / GLES, no BC textures, a software rasterizer): the first time, the settings still at
+        // their defaults take cheaper values (Config::low_spec_defaults).
+        let class = crate::render::GpuClass::of(&gpu.adapter.get_info(), gpu.adapter.features());
+        if class != crate::render::GpuClass::Capable && !self.cfg.low_spec_seen {
+            self.cfg.low_spec_seen = true;
+            // Builds before this halved the background and set anisotropy 1 for a software rasterizer once
+            // (software_gpu_seen): what the player made of those two stays.
+            let legacy = class == crate::render::GpuClass::Software && self.cfg.software_gpu_seen;
+            self.cfg.software_gpu_seen |= class == crate::render::GpuClass::Software;
+            // The game window's size, not the installer's (bootstrap opens a fixed one; the configured window follows
+            // when setup is done, window_dirty, in the mode set here). Wayland has no current monitor for a window
+            // not yet shown: the one picked for it then.
+            let game = if bootstrap { self.cfg.window_size() } else { [size.width, size.height] };
+            let screen = window.current_monitor().or_else(|| monitor.clone());
+            let was_mode = self.cfg.window_mode();
+            let changes = self.cfg.low_spec_defaults(
+                class,
+                game,
+                screen.as_ref().map(|m| [m.size().width, m.size().height]),
+                legacy,
+            );
+            log::info!("low-spec GPU ({class:?}), first start: {}", changes.join(", "));
+            crate::render::ANISOTROPY.store(self.cfg.anisotropy, std::sync::atomic::Ordering::Relaxed);
+            self.frame_limit = self.cfg.frame_limit();
+            if self.cfg.window_mode() == 3 && was_mode != 3 && !bootstrap && !self.drive.driven() {
+                window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(screen)));
             }
             if let Err(e) = self.cfg.save() {
                 log::warn!("saving the config: {e}");
@@ -21695,6 +21785,7 @@ impl ApplicationHandler for App {
                 self.mouse_button(button, state == ElementState::Pressed, consumed);
             }
             WindowEvent::CursorMoved { position, .. } => {
+                self.pointer_moved((position.x, position.y));
                 // FUN_100016c0: window-message motion shows the cursor only past 2 px (not while a look drag holds it).
                 if self.look_grab.is_none()
                     && self
