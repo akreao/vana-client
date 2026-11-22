@@ -11778,6 +11778,8 @@ impl App {
 
     fn poll_network(&mut self) {
         let mut took: Option<(u16, u16, preload::Ready, Instant)> = None;
+        // The coming frame's time (`frame_clock` measures it the same way after this).
+        let ready_dt = self.last_frame.elapsed().as_secs_f32().min(0.1);
         let Phase::World(world) = &mut self.phase else { return };
         world.net.stats.rate_ms.store(self.cfg.send_interval, std::sync::atomic::Ordering::Relaxed);
         world.net.stats.gm_window.store(self.cfg.gm_window, std::sync::atomic::Ordering::Relaxed);
@@ -13156,6 +13158,8 @@ impl App {
                 }
             }
         }
+        // FUN_10096640: the event check (a queued event's actor walk) runs ahead of the hide and model passes.
+        event::ready(world, ready_dt);
         // FUN_10095900: models under an unload mark are freed, the ones whose mark is gone are asked for again.
         // Their looks go first: a newer one that came with the update that ended the mark wins.
         let back = event::unload_models(world);

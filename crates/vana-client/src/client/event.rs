@@ -2767,15 +2767,15 @@ fn begin(w: &mut World, mut wt: Box<Waiting>, index: &DatIndex) {
     }
 }
 
-/// Per frame: the screen's tasks, a queued event waiting for its actors, the VM, and the actors it drives.
-pub fn update(w: &mut World, dt: f32) {
+/// FUN_10096640's event check (FUN_100aea40, 0x10096714), each frame ahead of the per-actor hide pass (FUN_1008e9a0
+/// -> FUN_1008e4d0) and the model pass (FUN_10095900): a queued event loads its file, walks its actors (each one
+/// passed takes part, +0x120 bit 8) and begins once they are ready. The walk must come first: the hide pass marks an
+/// actor that has not taken part by the packet's Mode (& 0x02 player characters, & 0x10 others), so the frame a
+/// 0x032 / 0x034 with such a Mode arrives would otherwise free the talked-to NPC's model and ours, and both would
+/// load again with the fade from 0. Called before `unload_models`.
+pub fn ready(w: &mut World, dt: f32) {
     let Some(index) = w.index.clone() else { return };
     let ticks = dt * 60.0;
-    w.screen.tick += ticks;
-    let (cam, follow) = (w.last_camera, follow_key(w));
-    w.screen.advance(cam, follow);
-    self_request(w, ticks);
-    loose_step(w, ticks);
     if w.event.is_none()
         && let Some(mut wt) = w.event_pending.take()
     {
@@ -2812,6 +2812,17 @@ pub fn update(w: &mut World, dt: f32) {
             }
         }
     }
+}
+
+/// Per frame: the screen's tasks, the VM, and the actors it drives (a queued event is checked by `ready`, earlier).
+pub fn update(w: &mut World, dt: f32) {
+    let Some(index) = w.index.clone() else { return };
+    let ticks = dt * 60.0;
+    w.screen.tick += ticks;
+    let (cam, follow) = (w.last_camera, follow_key(w));
+    w.screen.advance(cam, follow);
+    self_request(w, ticks);
+    loose_step(w, ticks);
     let Some(mut live) = w.event.take() else { return };
     if let Some(m) = &mut live.st.msg {
         m.open += ticks;
