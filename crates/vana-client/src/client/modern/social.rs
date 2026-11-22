@@ -73,44 +73,64 @@ pub(super) fn column(ui: &mut Ui, m: &super::Modern, gu: &GameUi, v: &MenuWin, f
         let rows = rows(m, gu, v);
         // The keys walk the column as drawn (GameUi::menu_links).
         gu.modern_order.borrow_mut().insert(v.name.to_string(), rows.iter().map(|r| r.0).collect());
-        for (id, name) in rows {
-            let (r, resp) =
-                ui.allocate_exact_size(vec2(COL_W, ROW), if focused { Sense::click() } else { Sense::hover() });
-            let off = v.off.contains(&id);
-            let face = match () {
-                _ if id == v.sel && focused => "controls/list_row_selected",
-                _ if id == v.sel => "controls/list_row_hover",
-                _ if off => "controls/list_row_disabled",
-                _ if focused && resp.hovered() => "controls/list_row_hover",
-                _ => "controls/list_row_normal",
-            };
-            super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
-            let c = if off { m.theme.color("muted") } else { m.theme.color("text") };
-            let clip = Rect::from_min_max(r.min, pos2(r.max.x - 8.0, r.max.y));
-            ui.painter().with_clip_rect(clip).text(
-                pos2(r.min.x + 24.0, r.center().y),
-                Align2::LEFT_CENTER,
-                &name,
-                FontId::proportional(m.theme.small),
-                c,
-            );
-            if let Some((_, val)) = v.values.iter().find(|x| x.0 == id) {
-                let vc = if v.marked.contains(&id) { m.theme.color("gold") } else { m.theme.color("text") };
-                ui.painter().text(
-                    pos2(r.max.x - 12.0, r.center().y),
-                    Align2::RIGHT_CENTER,
-                    val,
-                    FontId::monospace(m.theme.small),
-                    vc,
-                );
-            } else if v.marked.contains(&id) {
-                ui.painter().circle_filled(pos2(r.max.x - 16.0, r.center().y), 4.5, m.theme.color("gold"));
-            }
-            if focused && resp.clicked() {
-                click = Some(id);
-            }
-            ui.add_space(2.0);
-        }
+        // A column taller than the room left above the screen's bottom (the panel's bottom margin and frame below it)
+        // scrolls, its rows narrowed by the bar so the column keeps its width; the cursor's row is brought into view
+        // when it moves and when the window opens (not drawn the pass before).
+        let room = (ui.ctx().content_rect().max.y - ui.cursor().top() - 40.0).max(ROW * 4.0);
+        let sc = &ui.spacing().scroll;
+        let bar = sc.bar_width + sc.bar_inner_margin + sc.bar_outer_margin;
+        let row_w = if rows.len() as f32 * (ROW + 2.0) > room { COL_W - bar } else { COL_W };
+        let seen = egui::Id::unique(("menu column sel", v.name));
+        let pass = ui.ctx().cumulative_pass_nr();
+        let last = ui.ctx().data(|d| d.get_temp::<(u16, u64)>(seen));
+        let follow = last.is_none_or(|(sel, at)| sel != v.sel || at + 1 < pass);
+        ui.ctx().data_mut(|d| d.insert_temp(seen, (v.sel, pass)));
+        egui::ScrollArea::vertical().id_salt(("menu column", v.name)).max_height(room).auto_shrink([false, true]).show(
+            ui,
+            |ui| {
+                for (id, name) in rows {
+                    let (r, resp) =
+                        ui.allocate_exact_size(vec2(row_w, ROW), if focused { Sense::click() } else { Sense::hover() });
+                    let off = v.off.contains(&id);
+                    let face = match () {
+                        _ if id == v.sel && focused => "controls/list_row_selected",
+                        _ if id == v.sel => "controls/list_row_hover",
+                        _ if off => "controls/list_row_disabled",
+                        _ if focused && resp.hovered() => "controls/list_row_hover",
+                        _ => "controls/list_row_normal",
+                    };
+                    super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
+                    let c = if off { m.theme.color("muted") } else { m.theme.color("text") };
+                    let clip = Rect::from_min_max(r.min, pos2(r.max.x - 8.0, r.max.y));
+                    ui.painter().with_clip_rect(clip).text(
+                        pos2(r.min.x + 24.0, r.center().y),
+                        Align2::LEFT_CENTER,
+                        &name,
+                        FontId::proportional(m.theme.small),
+                        c,
+                    );
+                    if let Some((_, val)) = v.values.iter().find(|x| x.0 == id) {
+                        let vc = if v.marked.contains(&id) { m.theme.color("gold") } else { m.theme.color("text") };
+                        ui.painter().text(
+                            pos2(r.max.x - 12.0, r.center().y),
+                            Align2::RIGHT_CENTER,
+                            val,
+                            FontId::monospace(m.theme.small),
+                            vc,
+                        );
+                    } else if v.marked.contains(&id) {
+                        ui.painter().circle_filled(pos2(r.max.x - 16.0, r.center().y), 4.5, m.theme.color("gold"));
+                    }
+                    if id == v.sel && follow {
+                        ui.scroll_to_rect(r, None);
+                    }
+                    if focused && resp.clicked() {
+                        click = Some(id);
+                    }
+                    ui.add_space(2.0);
+                }
+            },
+        );
     });
     click
 }
