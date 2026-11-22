@@ -1338,9 +1338,10 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         act(w, gu, got, set, |w, _| bazaar::key(w, egui::Key::Enter));
         return;
     }
-    // The party menu.
+    // The party menu, unless Refine is open over it: Find Member's search (FUN_10206270) leaves the party menu up under
+    // scresult, and Enter on the results header opens scsibori over both (FUN_1020d860), so Search takes the window.
     let wins = partymenu::views(w);
-    if !wins.is_empty() {
+    if !wins.is_empty() && !searchmenu::refining(w) {
         let focused = partymenu::focused(w);
         let mut got = None;
         p.panel(
