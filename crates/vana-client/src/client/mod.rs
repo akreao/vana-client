@@ -11778,6 +11778,8 @@ impl App {
 
     fn poll_network(&mut self) {
         let mut took: Option<(u16, u16, preload::Ready, Instant)> = None;
+        // The coming frame's time, as `frame_clock` measures it after this.
+        let ready_dt = self.frame_dt();
         let Phase::World(world) = &mut self.phase else { return };
         world.net.stats.rate_ms.store(self.cfg.send_interval, std::sync::atomic::Ordering::Relaxed);
         world.net.stats.gm_window.store(self.cfg.gm_window, std::sync::atomic::Ordering::Relaxed);
@@ -13156,6 +13158,9 @@ impl App {
                 }
             }
         }
+        // FUN_10096640: the event check (a queued event's actor walk) runs ahead of the hide and model passes.
+        let queued: HashSet<u32> = looks.iter().map(|l| l.0).collect();
+        event::ready(world, ready_dt, &queued);
         // FUN_10095900: models under an unload mark are freed, the ones whose mark is gone are asked for again.
         // Their looks go first: a newer one that came with the update that ended the mark wins.
         let back = event::unload_models(world);
@@ -18410,19 +18415,23 @@ impl App {
         true
     }
 
-    /// The frame's time (dt, sped up by a mod's cutscene speed) and the work that runs on it before the input: the
-    /// test drive's step (true when it wants a screenshot), key functions, movement and the lobby fades.
-    fn frame_clock(&mut self) -> (bool, f32) {
-        let shoot = self.step_drive();
+    /// The time since the last frame, sped up by a Lua mod's cutscene speed while an event plays.
+    fn frame_dt(&self) -> f32 {
         let dt = self.last_frame.elapsed().as_secs_f32().min(0.1);
-        self.last_frame = Instant::now();
-        // A Lua mod's cutscene speed: the whole frame runs faster while an event plays.
-        let dt = match &self.phase {
+        match &self.phase {
             Phase::World(w) if w.opts.cutscene_speed > 1.0 && event::active(w) => {
                 (dt * w.opts.cutscene_speed).min(0.25)
             }
             _ => dt,
-        };
+        }
+    }
+
+    /// The frame's time (dt, sped up by a mod's cutscene speed) and the work that runs on it before the input: the
+    /// test drive's step (true when it wants a screenshot), key functions, movement and the lobby fades.
+    fn frame_clock(&mut self) -> (bool, f32) {
+        let shoot = self.step_drive();
+        let dt = self.frame_dt();
+        self.last_frame = Instant::now();
         self.key_functions(dt);
         perf::timed(|| "movement".into(), || self.update_movement(dt));
         if matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Create, .. })
