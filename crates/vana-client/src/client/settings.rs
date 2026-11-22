@@ -27,6 +27,7 @@ pub struct Settings {
     pub actor_shadows: u32,
     pub shadow_map: u32,
     pub ssao: bool,
+    pub bloom: u32,
     pub timers_dock: u32,
     pub minimap_dock: u32,
     pub minimap_size: u32,
@@ -71,6 +72,7 @@ impl Settings {
             actor_shadows: c.actor_shadows,
             shadow_map: c.shadow_map,
             ssao: c.ssao,
+            bloom: c.bloom,
             timers_dock: c.timers_dock,
             minimap_dock: c.minimap_dock,
             minimap_size: c.minimap_size,
@@ -111,6 +113,7 @@ impl Settings {
         c.actor_shadows = self.actor_shadows;
         c.shadow_map = self.shadow_map;
         c.ssao = self.ssao;
+        c.bloom = self.bloom;
         c.timers_dock = self.timers_dock;
         c.minimap_dock = self.minimap_dock;
         c.minimap_size = self.minimap_size;
@@ -161,6 +164,7 @@ enum Val {
     ActorShadows,
     ShadowMap,
     Ssao,
+    Bloom,
     TimersDock,
     MinimapDock,
     MinimapSize,
@@ -298,7 +302,7 @@ const fn row(
     SRow { label, help, val, choices, when }
 }
 
-const TABS: [&str; 11] = [
+const TABS: [&str; 12] = [
     "General",
     "Screen",
     "Textures",
@@ -308,12 +312,13 @@ const TABS: [&str; 11] = [
     "Client",
     "Controls",
     "Graphics",
+    "Scene",
     "DAT Packs",
     "Mods",
 ];
 /// The DAT Packs and Mods pages (client/modsui.rs): their rows come from the mods folder, not a table.
-const PACKS: usize = 9;
-const MODS: usize = 10;
+const PACKS: usize = 10;
+const MODS: usize = 11;
 const EXTRA_TABS: [&str; 4] = ["Maps", "Timers", "Battle", "Misc."];
 
 /// `in_game`: the volumes are the Gameplay page's there, so the Sound page leaves them out. `modern`: the minimap's and
@@ -615,6 +620,14 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
             Now,
         ),
     ];
+    // Ours: full-screen effects over the 3D world (render/scenefx.rs), each off (retail) unless turned on.
+    const SCENE: &[SRow] = &[row(
+        "Bloom",
+        "Bright parts of the world, such as lamps, fires and sunlit clouds, glow softly. Menus and text are left alone (not retail).",
+        Bloom,
+        &[(0, "Off"), (1, "Subtle"), (2, "Strong")],
+        Now,
+    )];
     // A page holds 7 rows; the controls' (the gamepad, mouse look) have theirs.
     const GAMEPAD: &[SRow] = &[
         row(
@@ -678,7 +691,9 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
         Kind::Settings if tab >= PACKS => &[],
         // UI Setup (the last Linux row) is a character's: in game only.
         Kind::Settings if !in_game && tab == 6 => &CLIENT[..CLIENT.len() - 1],
-        Kind::Settings => [GENERAL, SCREEN, TEXTURES, EFFECTS, SOUND, MISC, CLIENT, GAMEPAD, GRAPHICS][tab.min(8)],
+        Kind::Settings => {
+            [GENERAL, SCREEN, TEXTURES, EFFECTS, SOUND, MISC, CLIENT, GAMEPAD, GRAPHICS, SCENE][tab.min(9)]
+        }
     }
 }
 
@@ -961,6 +976,7 @@ impl SettingsUi {
             Val::ActorShadows => self.s.actor_shadows,
             Val::ShadowMap => self.s.shadow_map,
             Val::Ssao => self.s.ssao as u32,
+            Val::Bloom => self.s.bloom,
             Val::TimersDock => self.s.timers_dock,
             Val::MinimapDock => self.s.minimap_dock,
             Val::MinimapSize => self.s.minimap_size,
@@ -996,6 +1012,7 @@ impl SettingsUi {
             Val::ActorShadows => self.s.actor_shadows = x,
             Val::ShadowMap => self.s.shadow_map = x,
             Val::Ssao => self.s.ssao = x != 0,
+            Val::Bloom => self.s.bloom = x,
             Val::TimersDock => self.s.timers_dock = x,
             Val::MinimapDock => self.s.minimap_dock = x,
             Val::MinimapSize => self.s.minimap_size = x,
