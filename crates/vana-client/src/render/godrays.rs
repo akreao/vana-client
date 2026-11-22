@@ -305,6 +305,58 @@ mod tests {
         assert!(out[1].iter().all(|p| *p == [60, 60, 60, 255]), "scenery only");
     }
 
+    /// At a silhouette the mask takes only the sky's own colour: bright scenery beside dim sky gives the same shafts
+    /// as dark scenery would.
+    #[test]
+    fn scenery_colour_stays_out_of_the_mask() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        let n = 32u32;
+        let toward = Vec3::new(0.0, -0.5, 1.0).normalize();
+        let cam = crate::render::Camera { eye: Vec3::ZERO, target: toward * 10.0, up: Vec3::NEG_Y, fov_y: 0.8 };
+        let sun = SunFrame { dir: (-toward).to_array(), color: [1.0; 3], moon: false };
+        let fr = Frame { view_proj: cam.view_proj(1.0), eye: cam.eye, target: cam.target, fog: None, sun: Some(sun) };
+        let mut rays = GodRays::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
+        rays.resize(&gpu, [n, n]);
+        rays.set_strength(2);
+        // Scenery in odd columns (depth 0.5), dim sky in even ones (depth at the clear value).
+        let depth_data: Vec<f32> = (0..n * n).map(|i| if (i % n) % 2 == 1 { 0.5 } else { 1.0 }).collect();
+        let mut out = Vec::new();
+        for bright in [255u8, 0] {
+            let (tex, view) =
+                filled(&gpu, [n, n], |x, _| if x % 2 == 1 { [bright, bright, bright, 255] } else { [40, 40, 40, 255] });
+            let depth_tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R32Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            gpu.queue.write_texture(
+                depth_tex.as_image_copy(),
+                bytemuck::cast_slice(&depth_data),
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(n * 4), rows_per_image: Some(n) },
+                wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
+            );
+            let depth = depth_tex.create_view(&Default::default());
+            let mut enc = gpu.device.create_command_encoder(&Default::default());
+            rays.draw(&gpu, &mut enc, &view, &depth, &fr);
+            gpu.queue.submit([enc.finish()]);
+            // The sky columns only (the scenery's own colour differs between the runs).
+            out.push(
+                read(&gpu, &tex)
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(i, _)| (*i as u32 % n) % 2 == 0)
+                    .map(|(_, p)| p)
+                    .collect::<Vec<_>>(),
+            );
+        }
+        assert_eq!(out[0], out[1]);
+    }
+
     fn frame(sun: Option<SunFrame>, target: Vec3) -> Frame {
         let cam = crate::render::Camera { eye: Vec3::ZERO, target, up: Vec3::NEG_Y, fov_y: 0.8 };
         Frame { view_proj: cam.view_proj(16.0 / 9.0), eye: cam.eye, target: cam.target, fog: None, sun }
