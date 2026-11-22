@@ -29,6 +29,7 @@ pub struct Settings {
     pub ssao: bool,
     pub bloom: u32,
     pub height_fog: u32,
+    pub god_rays: u32,
     pub timers_dock: u32,
     pub minimap_dock: u32,
     pub minimap_size: u32,
@@ -75,6 +76,7 @@ impl Settings {
             ssao: c.ssao,
             bloom: c.bloom,
             height_fog: c.height_fog,
+            god_rays: c.god_rays,
             timers_dock: c.timers_dock,
             minimap_dock: c.minimap_dock,
             minimap_size: c.minimap_size,
@@ -117,6 +119,7 @@ impl Settings {
         c.ssao = self.ssao;
         c.bloom = self.bloom;
         c.height_fog = self.height_fog;
+        c.god_rays = self.god_rays;
         c.timers_dock = self.timers_dock;
         c.minimap_dock = self.minimap_dock;
         c.minimap_size = self.minimap_size;
@@ -169,6 +172,7 @@ enum Val {
     Ssao,
     Bloom,
     HeightFog,
+    GodRays,
     TimersDock,
     MinimapDock,
     MinimapSize,
@@ -640,6 +644,13 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
             &[(0, "Retail"), (1, "Height"), (2, "Dense")],
             Now,
         ),
+        row(
+            "Light Shafts",
+            "Sunlight streams through gaps in trees and buildings when you look toward the sun. Strong also gives faint moonlight shafts. Outdoors only (not retail).",
+            GodRays,
+            &[(0, "Off"), (1, "Subtle"), (2, "Strong")],
+            Now,
+        ),
     ];
     // A page holds 7 rows; the controls' (the gamepad, mouse look) have theirs.
     const GAMEPAD: &[SRow] = &[
@@ -991,6 +1002,7 @@ impl SettingsUi {
             Val::Ssao => self.s.ssao as u32,
             Val::Bloom => self.s.bloom,
             Val::HeightFog => self.s.height_fog,
+            Val::GodRays => self.s.god_rays,
             Val::TimersDock => self.s.timers_dock,
             Val::MinimapDock => self.s.minimap_dock,
             Val::MinimapSize => self.s.minimap_size,
@@ -1028,6 +1040,7 @@ impl SettingsUi {
             Val::Ssao => self.s.ssao = x != 0,
             Val::Bloom => self.s.bloom = x,
             Val::HeightFog => self.s.height_fog = x,
+            Val::GodRays => self.s.god_rays = x,
             Val::TimersDock => self.s.timers_dock = x,
             Val::MinimapDock => self.s.minimap_dock = x,
             Val::MinimapSize => self.s.minimap_size = x,
