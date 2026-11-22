@@ -41,13 +41,24 @@ fn depth_at(px: vec2<i32>) -> f32 {
     return textureLoad(depth, clamp(px, vec2<i32>(0), size - 1), 0).x;
 }
 
-// Half size: the four full-size pixels under this one averaged, with the largest blur size of the four in alpha.
+// Half size: the four full-size pixels under this one (the same four for colour and depth, clamped at an odd edge),
+// averaged by their own blur sizes so a sharp silhouette's colour doesn't go into the blurred background beside it,
+// with the largest blur size of the four in alpha.
 @fragment fn fs_down(i: VOut) -> @location(0) vec4<f32> {
+    let size = vec2<i32>(textureDimensions(depth));
     let px = vec2<i32>(floor(i.pos.xy)) * 2;
-    let c = textureSampleLevel(src, samp, i.uv, 0.0).rgb;
-    let k = max(max(coc(depth_at(px)), coc(depth_at(px + vec2<i32>(1, 0)))),
-        max(coc(depth_at(px + vec2<i32>(0, 1))), coc(depth_at(px + vec2<i32>(1, 1)))));
-    return vec4<f32>(c, k);
+    var sum = vec3<f32>(0.0);
+    var total = 0.0;
+    var k = 0.0;
+    for (var j = 0; j < 4; j++) {
+        let q = clamp(px + vec2<i32>(j & 1, j >> 1u), vec2<i32>(0), size - 1);
+        let c = coc(textureLoad(depth, q, 0).x);
+        let w = c + 1e-3;
+        sum += textureLoad(src, q, 0).rgb * w;
+        total += w;
+        k = max(k, c);
+    }
+    return vec4<f32>(sum / total, k);
 }
 
 // Half size: 16 taps on a golden-angle spiral out to this pixel's blur size, each weighted by its own.
@@ -255,7 +266,7 @@ mod tests {
         assert!((u[0] - 8.0).abs() < 1e-5 && u[1] == 12.0);
     }
 
-    /// Stripes at the focus stay as they are; the same stripes far behind are averaged toward grey.
+    /// Stripes at the focus stay as they are; the same stripes far behind are averaged toward grey by the gather.
     #[test]
     fn near_sharp_far_soft() {
         let Ok(gpu) = Gpu::headless() else { return };
@@ -266,7 +277,8 @@ mod tests {
         let mut dof = Dof::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
         dof.resize(&gpu, [n, n]);
         dof.set_strength(2);
-        let stripes = |x: u32, _| if x.is_multiple_of(2) { [255, 255, 255, 255] } else { [0, 0, 0, 255] };
+        // Four pixels wide: halving keeps them, so only the gather can soften them.
+        let stripes = |x: u32, _| if (x / 4).is_multiple_of(2) { [255, 255, 255, 255] } else { [0, 0, 0, 255] };
         let mut spread = Vec::new();
         for dist in [5.0f32, 400.0] {
             let (tex, view) = filled(&gpu, [n, n], stripes);
