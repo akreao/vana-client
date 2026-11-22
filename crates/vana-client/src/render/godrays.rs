@@ -318,12 +318,15 @@ mod tests {
         let mut rays = GodRays::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
         rays.resize(&gpu, [n, n]);
         rays.set_strength(2);
-        // Scenery in odd columns (depth 0.5), dim sky in even ones (depth at the clear value).
-        let depth_data: Vec<f32> = (0..n * n).map(|i| if (i % n) % 2 == 1 { 0.5 } else { 1.0 }).collect();
+        // Scenery in even columns (depth 0.5), dim sky in odd ones (depth at the clear value): the mask reads odd columns
+        // (each half-size pixel's centre lands on full-size x = 2k + 1), so a filtered colour tap there would take half
+        // of the scenery beside it.
+        let depth_data: Vec<f32> = (0..n * n).map(|i| if (i % n).is_multiple_of(2) { 0.5 } else { 1.0 }).collect();
         let mut out = Vec::new();
         for bright in [255u8, 0] {
-            let (tex, view) =
-                filled(&gpu, [n, n], |x, _| if x % 2 == 1 { [bright, bright, bright, 255] } else { [40, 40, 40, 255] });
+            let (tex, view) = filled(&gpu, [n, n], |x, _| {
+                if x.is_multiple_of(2) { [bright, bright, bright, 255] } else { [40, 40, 40, 255] }
+            });
             let depth_tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
                 label: None,
                 size: wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
@@ -349,7 +352,7 @@ mod tests {
                 read(&gpu, &tex)
                     .into_iter()
                     .enumerate()
-                    .filter(|(i, _)| (*i as u32 % n).is_multiple_of(2))
+                    .filter(|(i, _)| !(*i as u32 % n).is_multiple_of(2))
                     .map(|(_, p)| p)
                     .collect::<Vec<_>>(),
             );
