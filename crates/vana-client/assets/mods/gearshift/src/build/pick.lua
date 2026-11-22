@@ -267,18 +267,20 @@ function M.build(ctx, set, set_name)
     -- The best in slot itself, when we hold it: another piece with more of its stats does not take its place. Another
     -- item of its name (an early stage of a relic) only when it is no worse than the share's pick.
     if list and r then
-      local named, nv
+      -- Of several copies of it (their own augments), the best; one that adds nothing to the set leaves the slot to
+      -- the picks below.
+      local named, nv, exact, ev
       for _, c in ipairs(list) do
         if not (c.key and used[c.key]) then
           if c.id == r.id then
-            pick, share, how = c, 1, "bis"
-            break
-          end
-          if c.rec and r.rec and c.rec.name == r.rec.name and (not nv or M.score(c.s, set) > nv) then
+            local v = M.score(c.s, set)
+            if not ev or v > ev then exact, ev = c, v end
+          elseif c.rec and r.rec and c.rec.name == r.rec.name and (not nv or M.score(c.s, set) > nv) then
             named, nv = c, M.score(c.s, set)
           end
         end
       end
+      if exact and ev > 0 then pick, share, how = exact, 1, "bis" end
       if not pick and named then
         local alt = M.score(r.s, set) > 0 and by_share(list, r.s, set, used)
         if not alt or nv >= M.score(alt.s, set) then
