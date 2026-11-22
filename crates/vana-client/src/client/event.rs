@@ -2571,17 +2571,24 @@ fn first_waiting(
 ///
 /// A model FUN_10095900 freed (`World::unloaded`) is not up: the walk's bit 8 on the actor ends its unload mark and
 /// the loader makes it again, which the start waits for.
-fn has_model(w: &World, id: u32) -> bool {
-    !w.unloaded.contains_key(&id) && w.actors.get(&id).is_none_or(|a| a.character.is_some() || a.failed)
+///
+/// `queued`: actors whose first look this frame's updates brought; the loader makes their model records after the
+/// check, so until then they have a model to wait for, not none.
+fn has_model(w: &World, id: u32, queued: &HashSet<u32>) -> bool {
+    !w.unloaded.contains_key(&id)
+        && match w.actors.get(&id) {
+            Some(a) => a.character.is_some() || a.failed,
+            None => !queued.contains(&id),
+        }
 }
 
 /// FUN_100ad460 / FUN_100ad280: every bound actor must exist with a full update (+0x141) and a model. The
 /// first one missing is asked for with 0x016 (once until the 120-tick timer clears the list); it returns at
 /// that actor, so the requests go one at a time.
-fn actors_ready(w: &World, wt: &mut Waiting, ticks: f32) -> bool {
+fn actors_ready(w: &World, wt: &mut Waiting, ticks: f32, queued: &HashSet<u32>) -> bool {
     let ev = wt.start.event;
     let present = |id: u32| id == w.my_id || w.entities.contains_key(&id);
-    let model = |id: u32| has_model(w, id);
+    let model = |id: u32| has_model(w, id, queued);
     let blocks = wt.blocks.as_deref().unwrap_or_default();
     let waiting = first_waiting(blocks, ev, (w.my_id, w.my_index), &present, &model, &mut wt.joined);
     // Not retail, which asks for the first missing actor and waits for it: every missing one is asked for at
@@ -2772,8 +2779,9 @@ fn begin(w: &mut World, mut wt: Box<Waiting>, index: &DatIndex) {
 /// passed takes part, +0x120 bit 8) and begins once they are ready. The walk must come first: the hide pass marks an
 /// actor that has not taken part by the packet's Mode (& 0x02 player characters, & 0x10 others), so the frame a
 /// 0x032 / 0x034 with such a Mode arrives would otherwise free the talked-to NPC's model and ours, and both would
-/// load again with the fade from 0. Called before `unload_models`.
-pub fn ready(w: &mut World, dt: f32) {
+/// load again with the fade from 0. Called before `unload_models`, with the actors whose looks this frame's updates
+/// queued (`has_model`).
+pub fn ready(w: &mut World, dt: f32, queued: &HashSet<u32>) {
     let Some(index) = w.index.clone() else { return };
     let ticks = dt * 60.0;
     if w.event.is_none()
@@ -2805,7 +2813,7 @@ pub fn ready(w: &mut World, dt: f32) {
                 }
                 wt.blocks = Some(blocks);
             }
-            if actors_ready(w, &mut wt, ticks) && actors_idle(w, &mut wt) {
+            if actors_ready(w, &mut wt, ticks, queued) && actors_idle(w, &mut wt) {
                 begin(w, wt, &index);
             } else {
                 w.event_pending = Some(wt);
