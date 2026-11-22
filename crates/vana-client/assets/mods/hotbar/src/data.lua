@@ -108,8 +108,13 @@ local function read_json(file, raw)
   return nil, tostring(parsed)
 end
 
+-- A change to the world's file that could not be written: it lives in memory only until the next save, so a sticky
+-- change keeps memory rather than reading the file afresh.
+local unsaved = false
+
 -- Returns true, or false, why and the file that failed.
 function M.load()
+  unsaved = false
   local raw = deps.read(FILE)
   if not raw and FILE ~= LEGACY then raw = deps.read(LEGACY) end
   local parsed, why = read_json(FILE, raw)
@@ -138,7 +143,11 @@ local function write(file, t)
   return ok, err
 end
 
-function M.save() return write(FILE, db) end
+function M.save()
+  local ok, err = write(FILE, db)
+  unsaved = not ok
+  return ok, err
+end
 
 local function save_sticky() return write(STICKY_FILE, sticky) end
 
@@ -179,13 +188,13 @@ local function with_sticky(f)
         sticky = st
         if not is_table(sticky.library) then sticky.library = {} end
       end
-      local raw = deps.read(FILE)
+      local raw = not unsaved and deps.read(FILE)
       local wd = raw and read_json(FILE, raw)
       if wd then db = wd end
-      local was = { db = deep_copy(db), sticky = deep_copy(sticky), last = deep_copy(last_picks()) }
+      local was = { db = deep_copy(db), sticky = deep_copy(sticky), last = deep_copy(last_picks()), unsaved = unsaved }
       local out = f()
       local saved, err = save_sticky()
-      if saved and not same(db, was.db) then
+      if saved and (unsaved or not same(db, was.db)) then
         saved, err = M.save()
         if not saved then
           sticky = was.sticky
@@ -196,7 +205,7 @@ local function with_sticky(f)
         if last_picks() then pcall(storage.save) end
         return out
       end
-      db, sticky = was.db, was.sticky
+      db, sticky, unsaved = was.db, was.sticky, was.unsaved
       if storage and storage.character then
         storage.character.hb_last = was.last
         pcall(storage.save)

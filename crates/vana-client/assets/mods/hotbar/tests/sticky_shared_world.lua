@@ -29,3 +29,22 @@ assert(moved and not data.is_sticky(moved))
 data.load()
 assert(data.get_entry("RDM", "90") and data.get_entry("RDM", "90").name == "Cure")
 assert(data.get_entry("RDM", moved).name == "Warp 2")
+
+-- A job macro's edit that the world's file did not take stays in memory; a sticky change after it keeps it (not the
+-- file's older copy) and writes it.
+local deny = false
+data.init({ read = function(f) return files[f] end, decode = json.decode, encode = json.encode,
+  write = function(f, t)
+    if deny and f == data.file() then error("denied") end
+    files[f] = t
+  end })
+data.load()
+local job = data.save_entry("RDM", nil, { name = "Warp", lines = { "/echo" } })
+deny = true
+local _, jwhy = data.save_entry("RDM", job, { name = "Warp Home", lines = { "/echo" } })
+assert(jwhy and data.get_entry("RDM", job).name == "Warp Home")
+deny = false
+local sid = data.save_entry("RDM", nil, { name = "Shared 2", lines = { "/echo" } }, true)
+assert(sid and data.get_entry("RDM", job).name == "Warp Home")
+data.load()
+assert(data.get_entry("RDM", job).name == "Warp Home", "the kept edit was written with the sticky change")

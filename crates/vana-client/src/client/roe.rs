@@ -858,7 +858,7 @@ fn search_all(w: &World) -> Vec<Found> {
         all.into_iter().enumerate().filter(|(i, f)| best[(f.id & 0xfff) as usize] == Some(*i)).map(|x| x.1).collect();
     set_in_current(&w.roe, &mut out);
     out.sort_by_key(|f| f.lock.is_some());
-    for s in [63, 42].into_iter().chain(0..30) {
+    for s in [63, 42].into_iter().chain(0..30).chain(43..63) {
         let n = (w.roe.active[s] & 0xfff) as u16;
         if n != 0 && best[n as usize].is_none() {
             best[n as usize] = Some(0);
@@ -876,9 +876,9 @@ fn set_in_current(r: &Roe, found: &mut [Found]) {
     }
 }
 
-/// The search's rows: the name and its categories as the note ("current" for a set one outside the tree or hidden in
-/// it), greyed as the list greys a record done for good; a hidden one greyed, with the objective that opens it (else
-/// "hidden").
+/// The search's rows: the name and its categories as the note ("current" or "Vana'Bout" for a set one outside the
+/// tree or hidden in it), greyed as the list greys a record done for good; a hidden one greyed, with the objective that
+/// opens it (else "hidden").
 pub fn search_rows(w: &World) -> Vec<super::listsearch::Entry> {
     let cat = |id: u16| w.item_info.as_ref().and_then(|c| c.category(id)).map(|c| c.name.clone()).unwrap_or_default();
     search_all(w)
@@ -892,6 +892,7 @@ pub fn search_rows(w: &World) -> Vec<super::listsearch::Entry> {
                     after.map_or("hidden".into(), |a| format!("after {}", a.name))
                 }
                 Some(_) => "hidden".into(),
+                None if f.path.is_empty() && w.roe.listed_in(f.id) == Some(4) => "Vana'Bout".into(),
                 None if f.path.is_empty() => "current".into(),
                 None => f.path.iter().map(|&c| cat(c)).collect::<Vec<_>>().join(" › "),
             };
