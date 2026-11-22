@@ -404,7 +404,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
                     if g.title.to_lowercase().trim_matches(|c| c == '【' || c == '】') == want.as_str() {
                         return Some(crate::dat::autotrans::id_block(g.kind, 0));
                     }
-                    g.words.iter().find(|p| p.1.to_lowercase() == want).map(|p| p.0)
+                    g.words().find(|p| p.1.to_lowercase() == want).map(|p| p.0)
                 })
             });
             Ok(hit.map(phrase))

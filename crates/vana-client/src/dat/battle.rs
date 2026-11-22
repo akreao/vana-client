@@ -112,6 +112,7 @@ impl Line {
     }
 }
 
+#[cfg_attr(test, derive(Default))]
 pub struct BattleText {
     basic: Dialog,
     skills: Option<Dialog>,
@@ -272,41 +273,6 @@ impl BattleText {
             indent_modes,
             palette,
         })
-    }
-
-    /// No tables: for tests of the expander alone.
-    #[cfg(test)]
-    fn bare() -> Self {
-        Self {
-            basic: Dialog::parse(&[0, 0, 0, 0, 4, 0, 0, 0]).unwrap(),
-            skills: None,
-            lists: None,
-            mob_skills: None,
-            spells: None,
-            abilities: None,
-            statuses: None,
-            system: None,
-            group7: None,
-            emotes: None,
-            phrases: None,
-            slot_names: None,
-            slot_names_alt: None,
-            group9: None,
-            group10: None,
-            group12: None,
-            days: None,
-            moons: None,
-            compass: None,
-            tables: [None, None, None],
-            modes: Vec::new(),
-            mode_colours: Vec::new(),
-            indent_modes: Vec::new(),
-            palette: Vec::new(),
-            filter_kinds: Vec::new(),
-            filter_tables: Vec::new(),
-            screen_kinds: Vec::new(),
-            calls: Vec::new(),
-        }
     }
 
     /// The chat mode of a message for a relation; `HIDDEN` lines are not printed.
@@ -743,6 +709,15 @@ impl BattleText {
                         }
                         3
                     }
+                    // 7f b5 n (FUN_100c1650 -> FUN_100bd9b0, as dialog::expand): row work[n] of the Monstrosity names
+                    // (language slot 0x21).
+                    0xb5 => {
+                        let row = work(s.get(i + 2).copied().unwrap_or(0)) as i16;
+                        if let Some(t) = ctx.texts.as_ref().and_then(|t| t.0.monstrosity(row)) {
+                            out.extend(t);
+                        }
+                        3
+                    }
                     0x34..=0x36 => 3,
                     0x38 => 4,
                     0x84 => {
@@ -1147,35 +1122,20 @@ mod tests {
         assert_eq!(b.colour(0xff), [0x80; 4]);
     }
 
-    /// Point names in the stub: the code and the id.
-    struct PointStub;
-
-    impl super::super::dialog::Texts for PointStub {
-        fn kind(&self, _kind: u8, _id: u32) -> Option<Vec<u8>> {
-            None
-        }
-
-        fn point(&self, sub: u8, id: u16) -> Option<Vec<u8>> {
-            Some(format!("p{sub:x}:{id}").into_bytes())
-        }
-
-        fn monstrosity(&self, _row: i16) -> Option<Vec<u8>> {
-            None
-        }
-    }
-
     /// Message 828 as the English file holds it: `7f b7 00` names work[0] from the alter ego point names, `12 01`
     /// prints work[1]. Retail's s2c 0x029 for an upgrade carries the attribute id (8 Max HP .. 18) in Data, the new
     /// level in Data2. `7f b0` / `b1` read the merit and job point names the same way.
     #[test]
     fn point_names() {
-        let bt = BattleText::bare();
+        let bt = BattleText::default();
         let raw = b"\x7f\xb7\x00 attribute increased to \x12\x01.\x7f\x31\x00\x07";
-        let texts = Some(Texts(std::sync::Arc::new(PointStub)));
+        let texts = Some(Texts(std::sync::Arc::new(super::super::dialog::tests::Stub)));
         let ctx = Ctx { work: [8, 2, 0, 0, 0], texts, ..Default::default() };
         assert_eq!(bt.expand_raw(raw, &ctx).plain(), ["pb7:8 attribute increased to 2."]);
         let ctx = Ctx { work: [0, 0, 7, 0, 0], ..ctx };
         assert_eq!(bt.expand_raw(b"\x7f\xb0\x02 \x7f\xb1\x02", &ctx).plain(), ["pb0:7 pb1:7"]);
+        // 7f b5: the Monstrosity name of row work[n].
+        assert_eq!(bt.expand_raw(b"\x7f\xb5\x02!", &ctx).plain(), ["m7!"]);
         // Without the tables the name is left out, the rest of the line kept.
         let ctx = Ctx { work: [8, 2, 0, 0, 0], ..Default::default() };
         assert_eq!(bt.expand_raw(raw, &ctx).plain(), [" attribute increased to 2."]);

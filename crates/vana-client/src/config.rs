@@ -697,9 +697,12 @@ impl Config {
         }
         c.modern_modes.split_timers();
         c.follow_applied_version();
-        // The process's language, as retail's global (an unknown value stays English).
-        crate::dat::lang::set(crate::dat::items::Lang::parse(&c.language).unwrap_or(crate::dat::items::Lang::En));
         c
+    }
+
+    /// `language` as the client's (an unknown value is English).
+    pub fn client_language(&self) -> crate::dat::items::Lang {
+        crate::dat::items::Lang::parse(&self.language).unwrap_or(crate::dat::items::Lang::En)
     }
 
     /// The lobby version follows the game files, as retail's does: a patch applied here (crate::patch's stamp file)

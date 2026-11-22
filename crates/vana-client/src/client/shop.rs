@@ -1449,7 +1449,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32, log_top: f32) -> Vec<[
                 gu.shape_text(t, wx + ww - 8.0, ry + 4.0, YELLOW, true);
             }
             if focused && k == s.list.1 {
-                gu.cursor(rx, ry);
+                gu.cursor_on(SHOP, k as u16 + 1, rx, ry, [rx, ry, ww - 12.0, 18.0]);
             }
         }
         // Resized every update (FUN_10210880 -> FUN_1011a5a0), so the bar sits at x1 - 6.

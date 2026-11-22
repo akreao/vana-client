@@ -114,6 +114,7 @@ A row is either a string (a number or a boolean is shown as text too), or a tabl
 | `cells` | `table` | the row table's list part | The row's cells, one per column. You may instead put the cells straight in the row table: `{"Potion", "12"}`. |
 | `icon` | `{kind, id}` | none | An icon before the first cell: `kind` is `"item"` (or none), `"status"`, `"spell"` or `"ability"`, as for [`hud.icon`](hud.md#hudicon); `id` is the item, status, spell or ability id (required in an `icon` table). |
 | `colour` | `{r, g, b, a}` | none | The row's text colour. |
+| `colours` | `table` | none | Single cells' colours by column, over `colour`: `{[3] = {120, 220, 120}}` colours the third cell. Clients released before it show those cells in the row's colour. |
 
 A column is a table:
 
@@ -252,7 +253,9 @@ true})` moves the cursor to it and starts listening.
 ### choice
 
 One value out of several, turned with Left / Right. Enter (or a click on the value) turns it forward. Each turn sends a
-`set` event. Turning wraps round from the last value to the first.
+`set` event. Turning wraps round from the last value to the first. The modern UI shows the values side by side as
+buttons, the one held lit, as the Settings pages do, when they fit on one line (a click picks one); else the value
+between two arrows.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -265,7 +268,9 @@ One value out of several, turned with Left / Right. Enter (or a click on the val
 
 A choice whose values open in a list under it, drawn as the login form's combo fields. Enter (or a click) opens the
 list; Up / Down move through it and Enter (or a click on a value) picks one, sending a `set` event. Escape, or a click
-anywhere else, closes the list without a change. While it is closed, Left / Right turn it as they turn a choice.
+anywhere else, closes the list without a change. While it is closed, Left / Right turn it as they turn a choice. A
+list longer than the screen has room for scrolls (the classic UI shows 12 values at a time), keeping the highlighted
+value in view.
 Released clients without dropdowns refuse the type; a mod for them can fall back to a `choice` (`pcall` around
 `ui.window`).
 

@@ -1294,6 +1294,8 @@ fn main() -> Result<()> {
                     }
                 })?;
                 println!("updated {total} files to {}", plan.server.version);
+            } else if !dry_run {
+                patch::record_current(&root, &plan)?;
             }
             Ok(())
         }
@@ -1838,10 +1840,10 @@ fn main() -> Result<()> {
                                     l: Option<&dat::weather::Lighting>,
                                     zr: &mut render::ZoneRenderer|
                      -> anyhow::Result<()> {
-                        render::effects::fits(gpu)?;
-                        let eg = eg_keep.get_or_insert_with(|| {
-                            render::effects::EffectsGpu::new(gpu, wgpu::TextureFormat::Rgba8Unorm)
-                        });
+                        if eg_keep.is_none() {
+                            eg_keep = Some(render::effects::EffectsGpu::new(gpu, wgpu::TextureFormat::Rgba8Unorm)?);
+                        }
+                        let Some(eg) = eg_keep.as_mut() else { unreachable!() };
                         eg.set_lights(&zr.lights);
                         eg.set_light(l.map(|l| (l.dir, l.diffuse, l.ambient)));
                         fx.reg.light_keys = zr.light_keys.clone();
@@ -2020,15 +2022,14 @@ fn main() -> Result<()> {
                         Ok(())
                     };
                     // Twice: the effects write the point lights the scenery reads on the next frame.
-                    let draws = render::render_pngs_post(
+                    render::render_pngs_post(
                         &scene,
                         &[(&camera, out.as_path(), lighting), (&camera, out.as_path(), lighting)],
                         1600,
                         900,
                         &setup,
                         &mut post,
-                    )?;
-                    draws
+                    )?
                 }
             };
             println!("rendered {draws} draws from {eye} towards {target} into {}", out.display());
@@ -3921,8 +3922,10 @@ fn fx_shot(
                     l: Option<&dat::weather::Lighting>,
                     zr: &mut render::ZoneRenderer|
      -> anyhow::Result<()> {
-        render::effects::fits(gpu)?;
-        let eg = eg.get_or_insert_with(|| render::effects::EffectsGpu::new(gpu, wgpu::TextureFormat::Rgba8Unorm));
+        if eg.is_none() {
+            eg = Some(render::effects::EffectsGpu::new(gpu, wgpu::TextureFormat::Rgba8Unorm)?);
+        }
+        let Some(eg) = eg.as_mut() else { unreachable!() };
         eg.set_lights(&zr.lights);
         fx.reg.light_keys = zr.light_keys.clone();
         let view = cam.view();

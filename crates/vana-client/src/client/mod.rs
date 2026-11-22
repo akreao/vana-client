@@ -749,8 +749,17 @@ struct Entity {
 }
 
 impl Entity {
+    /// `flags` bit 1 (+0x120 bit 14, HideFlag) and bit 2 (+0x120 bit 18, SleepFlag).
+    const HIDE: u8 = 2;
+    const SLEEP: u8 = 4;
+
+    /// Hidden or asleep by the server (+0x120 & 0x44000): not targetable, off the radar, marked for unloading.
+    fn server_hidden(&self) -> bool {
+        self.flags & (Self::HIDE | Self::SLEEP) != 0
+    }
+
     fn targetable(&self) -> bool {
-        self.flags & 6 == 0
+        !self.server_hidden()
     }
 
     /// FUN_10087dc0: an event's MonStat (ops 0x95 / 0x96) over the 0x00E one.
@@ -1880,9 +1889,9 @@ fn push_chat_line(world: &mut World, line: String, mode: u8, kind: u8, gm: bool,
     }
     let (colour, line, indent) = match world.battle.clone() {
         Some(bt) => {
-            // FUN_10129090: a line whose mode word's second byte has no low bits (every chat line) takes German's
-            // quotation marks after the expansion (its 0x800-byte buffer).
-            let line = crate::dat::font::german_quotes_str(&expand_phrases(world, &line), 0x800);
+            // German's quotation marks (FUN_10129090) are drawn by the log window (logwin::wrap_line); the line keeps
+            // the quotes as typed for the mods, copying and search.
+            let line = expand_phrases(world, &line);
             (bt.colour_in(mode, &world.game), line, bt.indents(mode))
         }
         None => (cfgapply::chat_colour(&world.game, kind), line, false),
@@ -1924,7 +1933,7 @@ fn draw_choice(
     for (k, (row, opt)) in rows.iter().zip(options.iter().skip(scroll)).enumerate() {
         gu.text(opt, qx + row[0] + 4.0, qy + row[1], 0, WHITE);
         if scroll + k == cursor {
-            gu.cursor(qx + row[0], qy + row[1]);
+            gu.cursor_on(name, k as u16 + 1, qx + row[0], qy + row[1], [qx + row[0], qy + row[1], row[2], row[3]]);
         }
     }
     let r = gu.window_rect(name, sw, sh)?;
@@ -4827,7 +4836,7 @@ fn world_hud(
             };
             gu.sprite(&lib, sprite, row[0], row[1], if k == m.sel { 0x8080_5020 } else { 0x8080_8080 });
             if k == m.sel && focused {
-                gu.cursor(row[0] - 2.0, row[1]);
+                gu.cursor_on("menu    mp_pmode", k as u16 + 1, row[0] - 2.0, row[1], *row);
             }
         }
         blockers.push(*r);
@@ -4924,6 +4933,8 @@ fn world_hud(
     if let Some(c) = event::choice(world).filter(|_| !world.modern) {
         let options: Vec<String> = c.options.iter().map(|o| o.1.clone()).collect();
         let (question, scroll, cursor) = (c.question.clone(), c.scroll, c.cursor);
+        // Each menu is a new window: one answered straight into the next takes the focus (and the pointer) again.
+        gu.renew_on("menu    query", c.serial);
         blockers.extend(draw_choice(
             gu,
             "menu    query",
@@ -4956,7 +4967,7 @@ fn world_hud(
             let (x, y) = (wx + r[0] + 20.0, wy + r[1]);
             gu.text(text, x, y, 0, *c);
             if k == m.sel {
-                gu.cursor(x - 2.0, y);
+                gu.cursor_on(myroom::WINDOW, *child as u16 + 1, x - 2.0, y, [wx + r[0], wy + r[1], r[2], r[3]]);
             }
         }
         blockers.extend(gu.window_rect(myroom::WINDOW, sw, sh));
@@ -5535,16 +5546,29 @@ pub fn downloading(gu: &mut GameUi, n: usize, sw: f32, sh: f32) {
     );
 }
 
+/// What FUN_10125b90's SetCursorPos did for a pointer put on a window's cursor child.
+enum OsWarp {
+    /// Not asked: the game's sprite cursor, a window mode other than 0 / 3, or the window not active. Only the game's
+    /// pointer moves until the mouse does (retail the same).
+    Skipped,
+    /// The Windows cursor went to this window position.
+    Moved((f64, f64)),
+    /// Asked, and the system refused (Wayland). Not retail's case: there the pointer stays with the visible arrow.
+    Refused,
+}
+
 /// FUN_10125b90's SetCursorPos for a pointer put on `at` (UI pixels, `k` UI pixels per window pixel): only when the
 /// Windows cursor is the one shown (config 0021), in full screen or borderless at the desktop size (DAT_10457c2c 0 /
-/// 3) and with the window active. Elsewhere (and where the system refuses, as Wayland does) only the game's pointer
-/// moves until the mouse does. The window position it went to, when it went.
-fn os_pointer_warp(cfg: &Config, k: (f32, f32), window: &Window, at: (f32, f32)) -> Option<(f64, f64)> {
+/// 3) and with the window active.
+fn os_pointer_warp(cfg: &Config, k: (f32, f32), window: &Window, at: (f32, f32)) -> OsWarp {
     if cfg.tool("0021") == 0 || !matches!(cfg.window_mode(), 0 | 3) || !window.has_focus() {
-        return None;
+        return OsWarp::Skipped;
     }
     let phys = ((at.0 / k.0) as f64, (at.1 / k.1) as f64);
-    window.set_cursor_position(winit::dpi::PhysicalPosition::new(phys.0, phys.1)).ok().map(|_| phys)
+    match window.set_cursor_position(winit::dpi::PhysicalPosition::new(phys.0, phys.1)) {
+        Ok(()) => OsWarp::Moved(phys),
+        Err(_) => OsWarp::Refused,
+    }
 }
 
 /// Logs a zone without a group 0x14 name once per zone.
@@ -7656,6 +7680,8 @@ struct World {
     /// The actors whose model FUN_10095900 freed for an unload mark, and the look each is made from again
     /// (event::unload_models).
     unloaded: HashMap<u32, Option<Source>>,
+    /// This frame's unload marks (event::unload_models takes them once a frame; the hide pass reads them).
+    unload_marks: HashSet<u32>,
     /// CMoSkeletonElem models (fx MODEL_IDS): each one's place, from its element (position, rotation x / y / z).
     fx_models: HashMap<u32, (Vec3, Vec3)>,
     /// Other characters' costumes (0x00D @0x30), and the look each actor in costume would have without it.
@@ -8088,6 +8114,9 @@ struct World {
     /// The d_msg files of language slots 0x1d..0x21 (merit, job point, gift, alter ego point and Monstrosity names) and
     /// 0x26 (the maze rune texts).
     point_files: [Option<u32>; 6],
+    /// The name tables message codes read (event::point_texts), kept while their sources stay the same so the
+    /// point, Monstrosity and grammar tables load once.
+    point_texts: std::cell::RefCell<Option<Arc<event::EventTexts>>>,
     /// FUN_100964a0's message sources by number: the files of language slots 0x63..0x66, 0x68, 0x69 and 0x6a
     /// (sources 2..7 and 10, FUN_10095430); 1 and 8 are the zone's dialogue.
     msg_files: [Option<u32>; 11],
@@ -10733,6 +10762,7 @@ impl App {
                             jp_tables: None,
                             ae_ui: None,
                             ae_tables: None,
+                            point_texts: Default::default(),
                             point_files: self.point_files,
                             msg_files: self.msg_files,
                             msg_texts: HashMap::new(),
@@ -10799,6 +10829,7 @@ impl App {
                             event_voices: false,
                             event_looks: Vec::new(),
                             unloaded: HashMap::new(),
+                            unload_marks: HashSet::new(),
                             fx_models: HashMap::new(),
                             costumes: HashMap::new(),
                             costume_base: HashMap::new(),
@@ -11090,6 +11121,9 @@ impl App {
                                 w.index = Some(index.clone());
                             }
                             let dll = crate::dat::ffximain(&self.cfg.ffxi_dir());
+                            // The process's language, as retail's global, set once here: the dictionary loading
+                            // next reads it, and so do its blocks and German's quotes after.
+                            crate::dat::lang::set(self.cfg.client_language());
                             let tx = self.tasks_tx.clone();
                             let idx = index.clone();
                             std::thread::spawn(move || {
@@ -15750,9 +15784,11 @@ impl App {
             && (ctx.is_pointer_over_egui() || ctx.egui_is_using_pointer()));
         let input = ctx.input(|i| UiInput {
             wheel: if mine { notches as i32 } else { 0 },
-            pointer: match &self.ptr_warp {
-                Some(pw) => pw.shifted(ptr_dy).pointer(),
-                None => i.pointer.hover_pos().map(|p| (p.x * ppp * k.0, p.y * ppp * k.1 + ptr_dy)),
+            // No pointer while the mouse is outside the window, warped or not.
+            pointer: match (&self.ptr_warp, i.pointer.hover_pos()) {
+                (_, None) => None,
+                (Some(pw), Some(_)) => pw.shifted(ptr_dy).pointer(),
+                (None, Some(p)) => Some((p.x * ppp * k.0, p.y * ppp * k.1 + ptr_dy)),
             },
             moved: i.pointer.delta() != egui::Vec2::ZERO,
             clicked: i.pointer.primary_clicked() && !swallow && mine,
@@ -18461,7 +18497,7 @@ impl App {
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
         // egui-winit passes the texture limit in its first input only; lost, egui assumes 2048 and the modern atlases
         // (status_0@2x is 2184 wide) fail its debug check.
-        raw.max_texture_side = Some(gfx.gpu.device.limits().max_texture_dimension_2d as usize);
+        raw.max_texture_side = Some(gfx.gpu.max_texture_2d as usize);
         if let Phase::World(w) = &mut self.phase {
             w.lua.synth_enter = self
                 .synth_events
@@ -18896,7 +18932,7 @@ impl App {
             (bg, aspect)
         };
         // Within the device's texture size (4096 on some GLES parts), the aspect kept.
-        let bg = crate::render::scale::fit(bg, gfx.gpu.device.limits().max_texture_dimension_2d);
+        let bg = crate::render::scale::fit(bg, gfx.gpu.max_texture_2d);
         if lcd {
             self.lcd_frame = (self.lcd_frame + 1) % 4;
         }
@@ -19186,15 +19222,25 @@ impl App {
         {
             lu.open_ticks = if no_zoom { 0.0 } else { 25.0 };
             lu.end_frame(dt);
+            // FUN_10125b90 does nothing during a drag (mouse kinds 3..6: the scroll thumb, a move or camera drag, the
+            // autoscroll); ours sets kinds 4 / 5 and keeps the thumb drag on the bar's hold.
+            use mousecur::{AUTOSCROLL, CAMERA_DRAG, MOVE_DRAG, SCROLL_DRAG};
+            let dragging = matches!(self.mouse.kind, SCROLL_DRAG | MOVE_DRAG | CAMERA_DRAG | AUTOSCROLL)
+                || lu.bar_hold.as_ref().is_some_and(|h| h.dragging());
             if let Some(at) = lu.take_focus_warp()
-                && !(3..=6).contains(&self.mouse.kind)
+                && !dragging
             {
                 let k = self.ui_k;
                 let mouse = self.last_cursor.map(|(x, y)| (x as f32 * k.0, y as f32 * k.1 + dy));
                 let drawn = self.ptr_warp.map(|pw| pw.shifted(dy).drawn).or(mouse).unwrap_or(at);
-                self.ptr_warp = Some(ptrwarp::PtrWarp::new(at, drawn, dy));
-                if let Some(phys) = os_pointer_warp(&self.cfg, k, &gfx.window, at) {
-                    self.last_cursor = Some(phys);
+                match os_pointer_warp(&self.cfg, k, &gfx.window, at) {
+                    OsWarp::Skipped => self.ptr_warp = Some(ptrwarp::PtrWarp::new(at, drawn, dy)),
+                    OsWarp::Moved(phys) => {
+                        self.ptr_warp = Some(ptrwarp::PtrWarp::new(at, drawn, dy));
+                        self.last_cursor = Some(phys);
+                    }
+                    // The arrow stayed: so does the windows' pointer, which is where the arrow is.
+                    OsWarp::Refused => {}
                 }
             }
             if let Some(pw) = &mut self.ptr_warp {
@@ -21017,7 +21063,7 @@ fn draw_effects(
     // Effect generators: CPU emission, the GPU update pass, then the elements over the scene.
     // Its pipelines are made while the zone still goes up (behind the loading indicator), not on the
     // first shown frame.
-    let eg = cx.effects_gpu.get_or_insert_with(|| crate::render::effects::EffectsGpu::new(&gfx.gpu, scene_fmt));
+    let Some(eg) = crate::render::effects::kept(cx.effects_gpu, &gfx.gpu, scene_fmt) else { return };
     if let Some(l) = &new_lamps {
         eg.set_lamps(&gfx.gpu, &l.iter().map(|l| (l.pos, l.slot, l.template, l.colour)).collect::<Vec<_>>());
     }
@@ -21397,7 +21443,7 @@ impl ApplicationHandler for App {
             &window,
             Some(window.scale_factor() as f32),
             None,
-            Some(gpu.device.limits().max_texture_dimension_2d as usize),
+            Some(gpu.max_texture_2d as usize),
         );
         let egui_renderer = egui_wgpu::Renderer::new(&gpu.device, config.format, Default::default());
         // Zone, posing and mip pipelines are compiled now, off this thread.
@@ -21569,7 +21615,11 @@ impl ApplicationHandler for App {
                 self.cursor_in = true;
                 self.mouse.invalidate();
             }
-            WindowEvent::CursorLeft { .. } => self.cursor_in = false,
+            WindowEvent::CursorLeft { .. } => {
+                self.cursor_in = false;
+                // The windows see no pointer once the mouse is out; a warp does not hold one there.
+                self.ptr_warp = None;
+            }
             // Config-tool 0035 = 0: no sound while the window is not focused (no DSBCAPS_GLOBALFOCUS).
             WindowEvent::Focused(f) => {
                 if !f {

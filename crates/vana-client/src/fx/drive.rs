@@ -56,13 +56,11 @@ pub struct Drive {
     last: Vec3,
     sample: Vec3,
     since: f32,
-    /// Made this frame: its first step places it without running its time.
-    pub fresh: bool,
 }
 
 impl Drive {
-    /// The op's fields: i16 @6 duration (x speed), u32 @0x10 flags, u32 @0x14 curve, f32 @0x18 yaw0; `over` is the
-    /// fast-forward's overshoot (DAT_1047bf14), taken off the time left.
+    /// The op's fields: i16 @6 duration (x speed, cut to whole ticks: __ftol at 0x1005cad3), u32 @0x10 flags, u32
+    /// @0x14 curve, f32 @0x18 yaw0; `over` is the fast-forward's overshoot (DAT_1047bf14), taken off the time left.
     pub fn new(
         actor: u32,
         owner: u64,
@@ -75,7 +73,7 @@ impl Drive {
         let u32_at = |o: usize| raw.get(o..o + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
         let dur = raw.get(6..8).map_or(0, |b| i16::from_le_bytes([b[0], b[1]]));
         let flags = u32_at(0x10);
-        let total = dur as f32 * speed;
+        let total = (dur as f32 * speed).trunc();
         Self {
             actor,
             owner,
@@ -93,7 +91,6 @@ impl Drive {
             last: Vec3::ZERO,
             sample: Vec3::ZERO,
             since: 0.0,
-            fresh: true,
         }
     }
 
@@ -101,10 +98,16 @@ impl Drive {
         spline::eval(&self.segs, u)
     }
 
-    /// One frame of `dt` ticks, the actor at `pos` turned `rot` now: what it sets, and whether it goes on (the end
-    /// applies u = 1.0 when it ever ran, whatever its direction).
+    /// One frame of `dt` ticks, the actor at `pos` turned `rot` now: what it sets, and whether it goes on. The end
+    /// (time below 0) writes the point at u = 1.0 whatever the direction (0x1005ea0b) and deletes the drive, whose
+    /// destructor lets the actor go (FUN_1005f2c0 -> vt +0x17c clears +0x88 bit 0). The actor's next update
+    /// (FUN_100a57f0) then finds bit 0 clear and takes its position from +0x34 (FUN_10086e90 copies it to +0xc4) and
+    /// its heading target from +0x44, both as its last update left them, so that point and the heading toward it
+    /// never show: the actor stays where the drive's last running frame put it. Only a first facing (+0xa3 clear)
+    /// stays, since it is written to the drawn rotation itself (+0x744 / +0x44). The frame it is made in counts: the task list puts
+    /// a new task straight after the running one and walks it next (FUN_100750b0 sets the walk's next, +0xd5c), and
+    /// FUN_1005e9c0 takes the frame's ticks off before anything else.
     pub fn step(&mut self, dt: f32, pos: Vec3, rot: Vec3) -> (ActorPose, bool) {
-        let dt = if std::mem::take(&mut self.fresh) { 0.0 } else { dt };
         self.left -= dt;
         if self.left >= 0.0 {
             let u = if self.total > 0.0 { self.left / self.total } else { 0.0 };
@@ -118,7 +121,8 @@ impl Drive {
             self.started = true;
             (pose, true)
         } else if self.started {
-            (self.apply(self.at(1.0), dt, pos, rot), false)
+            let snap = self.apply(self.at(1.0), dt, pos, rot).snap;
+            (ActorPose { snap, ..Default::default() }, false)
         } else {
             (ActorPose::default(), false)
         }
@@ -275,6 +279,27 @@ mod tests {
         assert!((p.target.unwrap().y + FRAC_PI_2).abs() < 1e-4, "{:?}", p.target);
         // At 0 ticks left the timer still runs (FUN_10060fd0 ends below 0).
         assert!(more && !d.step(2.0).1);
+    }
+
+    /// 0x1005ea0b + FUN_100a57f0: the frame a drive's time goes below 0 sets no position and no heading target,
+    /// backward (flags 1) or forward (flags 9); the frame before is the path's end for its direction.
+    #[test]
+    fn end_sets_no_position() {
+        let pts = [Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0), Vec3::new(20.0, 0.0, 5.0)];
+        for (flags, end) in [(1u32, pts[0]), (9, pts[2]), (3, pts[0]), (0xb, pts[2])] {
+            let mut raw = [0u8; 0x1c];
+            raw[6..8].copy_from_slice(&10i16.to_le_bytes());
+            raw[0x10..0x14].copy_from_slice(&flags.to_le_bytes());
+            let mut d = Drive::new(1, 1, spline::build(&pts).unwrap(), &raw, 1.0, 0.0, None);
+            let mut last = ActorPose::default();
+            for _ in 0..5 {
+                let (p, on) = d.step(2.0, Vec3::ZERO, Vec3::ZERO);
+                assert!(on);
+                last = p;
+            }
+            assert!(last.pos.unwrap().distance(end) < 1e-4, "flags {flags}: {:?}", last.pos);
+            assert_eq!(d.step(2.0, Vec3::ZERO, Vec3::ZERO), (ActorPose::default(), false), "flags {flags}");
+        }
     }
 
     /// The curves at f(0.25) for modes 0..4 (MODLOG "Ship actors"); the ends.

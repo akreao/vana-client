@@ -375,7 +375,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         let (x, y) = (x0 + dx, y0 + 4.0 + 16.0 * k as f32);
         if k == e.line {
             // The live box (FUN_101c76b0) and the drawn lines (0x200 bytes) take German's quotation marks.
-            let l = german_quotes_str(&super::fep::plain(w, l), 0x41a);
+            let l = german_quotes_str(&super::fep::plain(w, l), 0x41a).into_owned();
             let caret = if (w.started.elapsed().as_secs_f32() * 60.0) as u32 % 30 < 20 { "|" } else { "" };
             gu.text(&format!("{l}{caret}"), x, y, 0, [0x80; 4]);
         } else {

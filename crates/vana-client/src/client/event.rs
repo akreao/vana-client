@@ -516,6 +516,8 @@ pub struct Choice {
     pub options: Vec<(u32, String)>,
     pub cursor: usize,
     pub scroll: usize,
+    /// Which menu this is (op 0x24 or 0xd4, both through `choice_op`): each opens a new "menu    query" window.
+    pub serial: u64,
 }
 
 /// A bound actor as drawn while the event runs: the VM body (FUN_1008cce0: actor +0x260 +0x140 / +0x150),
@@ -1014,7 +1016,9 @@ impl Host for LiveHost<'_> {
                 });
             }
             Effect::Choice { question, options, cursor, .. } => {
-                self.st.choice = Some(Choice { question, options, cursor, scroll: cursor.saturating_sub(2) });
+                static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let serial = SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.st.choice = Some(Choice { question, options, cursor, scroll: cursor.saturating_sub(2), serial });
             }
             Effect::Scheduler { file, tag, actor, target, param } => {
                 // The same CMoSchedularTask runs the effects side (generators, sounds, motions): the set of a
@@ -3191,48 +3195,90 @@ pub fn rebuild_models(w: &mut World) {
 /// FUN_10092900 then FUN_1008f740: the entity's model goes (its riding animal and chair with it) and loads again,
 /// its load fade from 0.
 fn remake_model(w: &mut World, id: u32) {
-    let src = w.actors.get(&id).and_then(|a| a.source);
+    let src = w.actors.get(&id).and_then(|a| reload_source(w, id, a));
     free_model(w, id);
     if let Some(src) = src {
         w.event_looks.push((id, src));
     }
 }
 
-/// FUN_10092900: the entity's model goes, its riding animal and chair with it, and what ran on them. The model made
-/// next is a new one, so its `init` runs again (FUN_1008c480).
+/// FUN_10092900: the entity's model goes, with what rides with it (its riding animal, chair, Geomancy aura and fishing
+/// rod) and what ran on them. The model made next is a new one, so its `init` runs again (FUN_1008c480).
 fn free_model(w: &mut World, id: u32) {
-    for gone in [id, super::ride::ANIMAL | id, super::chair::CHAIR | id] {
-        if w.actors.remove(&gone).is_some() {
-            w.effects.forget_actor(gone);
-        }
-    }
-    if id == w.my_id {
-        w.my_init_done = false;
+    free_riders(w, id);
+    if w.actors.remove(&id).is_some() {
+        w.effects.forget_actor(id);
     }
     if let Some(e) = w.entities.get_mut(&id) {
         e.init_done = false;
     }
+}
+
+/// What rides with `id`'s model goes with it: the riding animal, the chair (the seat too), the Geomancy aura (shown
+/// again, its `init` with it, once the model is back: indi.rs) and the fishing rod.
+fn free_riders(w: &mut World, id: u32) {
+    for gone in [super::ride::ANIMAL | id, super::chair::CHAIR | id, super::indi::AURA | id, super::fishrod::ROD | id] {
+        if w.actors.remove(&gone).is_some() {
+            w.effects.forget_actor(gone);
+        }
+    }
     super::chair::model_freed(w, id);
+    w.anglers.remove(&id);
+    let aura = if id == w.my_id { Some(&mut w.my_aura) } else { w.entities.get_mut(&id).map(|e| &mut e.aura) };
+    if let Some(a) = aura {
+        a.forget();
+    }
 }
 
 /// FUN_10095900 on FUN_1008e4d0's unload marks (+0x120 bit 23, `unloaded`), once a frame ahead of the model loader:
 /// a marked actor's model is freed (FUN_10092900) and none is made while the mark stays; the frame the mark is gone
 /// FUN_1008f740 makes it again as a new model (colour 0x80808080, the load fade from 0, the status motion from its
 /// start). `World::unloaded` holds the look each marked actor comes back with; the loader leaves a newer one there.
+/// The marks are kept in `World::unload_marks` for the frame's hide pass.
+///
+/// A pending event's walk (FUN_100ad460, `first_waiting`) has run first (`ready`, as FUN_10096640 orders them), so the
+/// actors it binds take part (bit 8) before its filter could mark them: an event start never frees the NPC talked to
+/// or, under Mode & 0x02, the player.
+///
+/// Our own actor keeps its entry: the camera, the bump radius and the sun shadow read it (retail reads the actor
+/// object there, not its model). Under the mark it is not drawn and what ran on it and rode with it goes; when the mark
+/// goes it comes back as a new model does, its `init` again and its load fade from 0.
 pub fn unload_models(w: &mut World) -> Vec<(u32, super::Source)> {
     let marked = unloaded(w);
+    let me = w.my_id;
+    // Ours keeps its model, so its looks load as ever: only the others' models are held in `World::unloaded`.
+    let others: HashSet<u32> = marked.iter().copied().filter(|&id| id != me).collect();
     // The models in play: the marked actors' (freed now) and those of actors whose mark is gone.
-    let shown: HashMap<u32, Option<super::Source>> = marked
+    let shown: HashMap<u32, Option<super::Source>> = others
         .iter()
         .chain(w.unloaded.keys())
         .filter_map(|id| w.actors.get(id).map(|a| (*id, reload_source(w, *id, a))))
         .collect();
-    let me = w.my_id;
-    let back = unload_step(&mut w.unloaded, &marked, &shown, &|id| id == me || w.entities.contains_key(&id));
-    for &id in &marked {
-        free_model(w, id);
+    let back = unload_step(&mut w.unloaded, &others, &shown, &|id| w.entities.contains_key(&id));
+    // Only a newly marked model goes (the others are gone already, and nothing makes them while the mark stays).
+    let fresh = newly_marked(&marked, &w.unload_marks, me, &|id| w.actors.contains_key(&id));
+    for id in fresh {
+        if id == me {
+            free_riders(w, me);
+            w.effects.forget_actor(me);
+        } else {
+            free_model(w, id);
+        }
     }
+    if w.unload_marks.contains(&me) && !marked.contains(&me) {
+        w.my_init_done = false;
+        if let Some(a) = w.actors.get_mut(&me) {
+            a.appear = 0.0;
+        }
+    }
+    w.unload_marks = marked;
     back
+}
+
+/// The marked actors whose model goes this frame: ours on its mark's first frame (its entry stays), another's while
+/// it still has one.
+fn newly_marked(marked: &HashSet<u32>, before: &HashSet<u32>, me: u32, has_model: &dyn Fn(u32) -> bool) -> Vec<u32> {
+    marked.iter().copied().filter(|&id| if id == me { !before.contains(&me) } else { has_model(id) }).collect()
 }
 
 /// One frame of `World::unloaded` (`kept`): every marked actor has an entry, with the look of the model it had
@@ -3745,7 +3791,7 @@ impl<'a> HideRule<'a> {
     fn gone(&self, w: &World, id: u32, e: &super::Entity) -> bool {
         let trust = w.game.get(0x99) & 0x20 != 0 && e.marks.trust && !w.party.party().any(|m| m.index == e.index);
         !self.takes_part(id)
-            && unloads(id >> 24 == 0, self.flags, matches!(e.sub_kind, 2..=4), e.ev_reserved, trust, e.flags & 6 != 0)
+            && unloads(id >> 24 == 0, self.flags, matches!(e.sub_kind, 2..=4), e.ev_reserved, trust, e.server_hidden())
     }
 
     /// `gone` for our own actor: our 0x037 / 0x00A hide and sleep bits, and the event's filter of player characters.
@@ -3756,7 +3802,7 @@ impl<'a> HideRule<'a> {
     fn entity(&self, w: &World, id: u32, e: &super::Entity) -> bool {
         let hide = match self.script {
             Some(h) if self.takes_part(id) => h.contains(&id),
-            _ => e.flags & 2 != 0 || self.gone(w, id, e),
+            _ => e.flags & super::Entity::HIDE != 0 || w.unload_marks.contains(&id),
         };
         // FUN_100cd040: a listed-only NPC the s2c 0x077 list lacks is not drawn (+0xb2 bit 7), events included; nor
         // one outside our fenced content's gate (+0xb2 bit 5).
@@ -3767,7 +3813,7 @@ impl<'a> HideRule<'a> {
         let me = w.my_id;
         let hide_me = match self.script {
             Some(h) if self.takes_part(me) => h.contains(&me),
-            _ => self_hidden(w) || self.gone_me(w),
+            _ => self_hidden(w) || w.unload_marks.contains(&me),
         };
         // FUN_101d4d90: laying out the Mog House or gardening in it the player is not drawn (+0xb2 bit 4).
         hide_me || w.layout.is_some() || super::garden::hides_player(w)
@@ -4192,7 +4238,7 @@ pub fn talk_with(w: &mut World, target: u32, param: u32) -> bool {
     let Some(e) = w.entities.get(&target) else { return false };
     // UniqueNo high byte: NPCs only; a model on the target (+0x120 bit 9); not hidden by the server.
     // A door's XiDoorActor counts as its model.
-    if target >> 24 == 0 || e.index == 0 || !(w.actors.contains_key(&target) || e.door != 0) || e.flags & 6 != 0 {
+    if target >> 24 == 0 || e.index == 0 || !(w.actors.contains_key(&target) || e.door != 0) || e.server_hidden() {
         return false;
     }
     // An index past 0x6ff (pets, trusts) only when talkable (+0x12c bit 30: 0x00E @0x28 bit 6).
@@ -4227,7 +4273,7 @@ pub fn talk_with(w: &mut World, target: u32, param: u32) -> bool {
 }
 
 /// The tables a line's codes read (dialog::Texts); the point and Monstrosity names load on first use.
-struct EventTexts {
+pub(super) struct EventTexts {
     bt: Option<Arc<crate::dat::battle::BattleText>>,
     index: Option<Arc<crate::dat::DatIndex>>,
     files: [Option<u32>; 6],
@@ -4318,8 +4364,13 @@ pub fn text_ctx(w: &World) -> dialog::Ctx {
 }
 
 /// The name tables FUN_100c1650 reads besides the item names (the point and Monstrosity names load on first use).
+/// One copy is kept on World while its sources stay the same, so each table is read from disk once.
 pub fn point_texts(w: &World) -> Arc<dyn dialog::Texts> {
-    Arc::new(EventTexts {
+    let mut kept = w.point_texts.borrow_mut();
+    if let Some(t) = kept.as_ref().filter(|t| t.same_sources(w)) {
+        return t.clone();
+    }
+    let t = Arc::new(EventTexts {
         bt: w.battle.clone(),
         index: w.index.clone(),
         files: w.point_files,
@@ -4329,7 +4380,26 @@ pub fn point_texts(w: &World) -> Arc<dyn dialog::Texts> {
         mon: Default::default(),
         words: Default::default(),
         logs: w.logs.clone().map(std::sync::OnceLock::from).unwrap_or_default(),
-    })
+    });
+    *kept = Some(t.clone());
+    t
+}
+
+impl EventTexts {
+    /// Built from the World's current game data (a new install or language makes new tables).
+    fn same_sources(&self, w: &World) -> bool {
+        fn same<T>(a: &Option<Arc<T>>, b: &Option<Arc<T>>) -> bool {
+            match (a, b) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            }
+        }
+        same(&self.bt, &w.battle)
+            && same(&self.index, &w.index)
+            && self.files == w.point_files
+            && w.logs.as_ref().is_none_or(|l| self.logs.get().is_some_and(|k| Arc::ptr_eq(k, l)))
+    }
 }
 
 /// s2c 0x036 / 0x02A: zone dialogue by server id (mapped to the install with MsgShift), into the log.
@@ -4608,6 +4678,18 @@ mod tests {
         let shown: HashMap<u32, Option<Source>> = [(3, Some(b))].into();
         assert!(unload_step(&mut kept, &HashSet::new(), &shown, &|id| id != 1).is_empty());
         assert!(kept.is_empty());
+    }
+
+    /// A mark frees a model once: an actor still marked whose model is gone is left alone (its chair seat and init
+    /// with it); ours, which keeps its entry, only on the mark's first frame.
+    #[test]
+    fn unload_frees_once() {
+        let me = 1;
+        let marked: HashSet<u32> = [me, 7, 8].into();
+        let mut first = newly_marked(&marked, &HashSet::new(), me, &|id| id != 8);
+        first.sort();
+        assert_eq!(first, [me, 7], "8 arrived marked: no model to free");
+        assert!(newly_marked(&marked, &marked, me, &|id| id == me).is_empty());
     }
 
     /// FUN_1008e4d0 (0x1008e686): the hide and sleep bits (+0x120 & 0x44000) mark an actor like the event's filter, whatever
