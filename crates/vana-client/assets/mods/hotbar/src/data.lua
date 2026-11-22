@@ -108,8 +108,13 @@ local function read_json(file, raw)
   return nil, tostring(parsed)
 end
 
+-- A change to the world's file that could not be written: it lives in memory only until the next save, so a sticky
+-- change keeps memory rather than reading the file afresh.
+local unsaved = false
+
 -- Returns true, or false, why and the file that failed.
 function M.load()
+  unsaved = false
   local raw = deps.read(FILE)
   if not raw and FILE ~= LEGACY then raw = deps.read(LEGACY) end
   local parsed, why = read_json(FILE, raw)
@@ -138,7 +143,11 @@ local function write(file, t)
   return ok, err
 end
 
-function M.save() return write(FILE, db) end
+function M.save()
+  local ok, err = write(FILE, db)
+  unsaved = not ok
+  return ok, err
+end
 
 local function save_sticky() return write(STICKY_FILE, sticky) end
 
@@ -151,10 +160,22 @@ end
 
 local function last_picks() return storage and storage.character and storage.character.hb_last end
 
--- Runs f with sticky.json locked and read afresh (every client on this install shares the file, so a change starts
--- from the others' ids and entries); f changes memory only, then sticky.json and the world's file are saved. When
--- either cannot be written, all f changed (both tables and the groups' last picks) is put back, a file already written
--- is written back, and it returns nil and why. Without fs.lock (older clients) f runs unlocked.
+local function same(a, b)
+  if not is_table(a) or not is_table(b) then return a == b end
+  for k, v in pairs(a) do
+    if not same(v, b[k]) then return false end
+  end
+  for k in pairs(b) do
+    if a[k] == nil then return false end
+  end
+  return true
+end
+
+-- Runs f with sticky.json locked and both files read afresh (every client on this install shares sticky.json, and the
+-- characters on one world share its file, so a change starts from the others' ids, entries and slots); f changes
+-- memory only, then sticky.json is saved, and the world's file when f changed it (a sticky-only edit leaves it to the
+-- others). When either cannot be written, all f changed (both tables and the groups' last picks) is put back, a file
+-- already written is written back, and it returns nil and why. Without fs.lock (older clients) f runs unlocked.
 local held = false
 local function with_sticky(f)
   if held then return f() end
@@ -167,12 +188,19 @@ local function with_sticky(f)
         sticky = st
         if not is_table(sticky.library) then sticky.library = {} end
       end
-      local was = { db = deep_copy(db), sticky = deep_copy(sticky), last = deep_copy(last_picks()) }
+      local raw = not unsaved and deps.read(FILE)
+      local wd = raw and read_json(FILE, raw)
+      if wd then db = wd end
+      local was = { db = deep_copy(db), sticky = deep_copy(sticky), last = deep_copy(last_picks()), unsaved = unsaved }
       local out = f()
       local saved, err = save_sticky()
-      if saved then
-        saved, err = M.save()
-        if not saved then
+      local touched = not same(db, was.db)
+      if saved and (unsaved or touched) then
+        local wrote, werr = M.save()
+        -- Only the edits still waiting in memory failed again (f left the world alone): the sticky change stands and
+        -- they keep waiting.
+        if not wrote and touched then
+          saved, err = false, werr
           sticky = was.sticky
           save_sticky()
         end
@@ -181,7 +209,7 @@ local function with_sticky(f)
         if last_picks() then pcall(storage.save) end
         return out
       end
-      db, sticky = was.db, was.sticky
+      db, sticky, unsaved = was.db, was.sticky, was.unsaved
       if storage and storage.character then
         storage.character.hb_last = was.last
         pcall(storage.save)
@@ -477,8 +505,8 @@ function M.set_sticky(main, id, on)
 end
 
 -- Saves an entry under `id` (nil: a new id), then makes it sticky or the job's when `want` says so (nil: as it is).
--- Returns its id; when a file cannot be written, also why (an edit is kept where the entry was; a new sticky entry
--- is not made, and its id is nil).
+-- Returns its id; when a file cannot be written, also why. A sticky entry's edit or a new sticky entry is then not made
+-- (all is put back) and the id is nil; a job entry's change stays in memory with its id.
 function M.save_entry(main, id, entry, want)
   local shared = id == nil and want or id ~= nil and M.is_sticky(tostring(id))
   local function put()
@@ -489,7 +517,7 @@ function M.save_entry(main, id, entry, want)
   local nid, why
   if shared then
     nid, why = with_sticky(put)
-    nid = nid or (id ~= nil and tostring(id) or nil)
+    if why then return nil, why end
   else
     nid = put()
     local ok, err = M.save()

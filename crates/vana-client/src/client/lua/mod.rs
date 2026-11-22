@@ -4577,6 +4577,24 @@ fn classic_places(w: &World) -> Vec<(usize, String, f32, f32)> {
     out
 }
 
+/// The wheel on the classic mod windows: an open dropdown's list under the pointer scrolls `notches` (up positive);
+/// with 0, only whether one is there. True when one is.
+pub(super) fn wheel_classic(w: &World, p: (f32, f32), notches: i32) -> bool {
+    let mut places = classic_places(w);
+    if let Some((k, mid)) = w.lua.modal() {
+        places.retain(|(v, id, _, _)| *v == k && *id == mid);
+    }
+    for (v, id, x, y) in places.into_iter().rev() {
+        let mut st = w.lua.vms[v].st.borrow_mut();
+        let Some(win) = st.windows.iter_mut().find(|x| x.id == id) else { continue };
+        if win.over_drop(x, y, p) {
+            win.drop_wheel(x, y, p, notches);
+            return true;
+        }
+    }
+    false
+}
+
 /// The pointer on the classic mod windows (the topmost under it); whether it is over a control.
 pub(super) fn pointer_classic(
     w: &mut World,

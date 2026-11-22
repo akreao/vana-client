@@ -75,6 +75,20 @@ impl Roe {
         self.flags & 2 != 0 && id >= 0xe000 && self.active.iter().any(|r| r & 0xfff == num(id))
     }
 
+    /// The list a set objective is listed in: Current (mode 2: records 63, 42 and 0..30) or Vana'Bout (mode 4: records
+    /// 43..63), as `update` builds them; None when it is in neither.
+    fn listed_in(&self, id: u16) -> Option<usize> {
+        if self.flags & 2 == 0 || id < 0xe000 {
+            return None;
+        }
+        let k = self.active.iter().position(|r| r & 0xfff == num(id))?;
+        match k {
+            43..63 => Some(4),
+            63 | 42 | 0..30 => Some(2),
+            _ => None,
+        }
+    }
+
     /// FUN_10230a80: the first such record's count.
     fn progress(&self, id: u16) -> u32 {
         if self.flags & 2 == 0 {
@@ -844,7 +858,7 @@ fn search_all(w: &World) -> Vec<Found> {
         all.into_iter().enumerate().filter(|(i, f)| best[(f.id & 0xfff) as usize] == Some(*i)).map(|x| x.1).collect();
     set_in_current(&w.roe, &mut out);
     out.sort_by_key(|f| f.lock.is_some());
-    for s in [63, 42].into_iter().chain(0..30) {
+    for s in [63, 42].into_iter().chain(0..30).chain(43..63) {
         let n = (w.roe.active[s] & 0xfff) as u16;
         if n != 0 && best[n as usize].is_none() {
             best[n as usize] = Some(0);
@@ -862,9 +876,9 @@ fn set_in_current(r: &Roe, found: &mut [Found]) {
     }
 }
 
-/// The search's rows: the name and its categories as the note ("current" for a set one outside the tree or hidden in
-/// it), greyed as the list greys a record done for good; a hidden one greyed, with the objective that opens it (else
-/// "hidden").
+/// The search's rows: the name and its categories as the note ("current" or "Vana'Bout" for a set one outside the
+/// tree or hidden in it), greyed as the list greys a record done for good; a hidden one greyed, with the objective that
+/// opens it (else "hidden").
 pub fn search_rows(w: &World) -> Vec<super::listsearch::Entry> {
     let cat = |id: u16| w.item_info.as_ref().and_then(|c| c.category(id)).map(|c| c.name.clone()).unwrap_or_default();
     search_all(w)
@@ -878,6 +892,7 @@ pub fn search_rows(w: &World) -> Vec<super::listsearch::Entry> {
                     after.map_or("hidden".into(), |a| format!("after {}", a.name))
                 }
                 Some(_) => "hidden".into(),
+                None if f.path.is_empty() && w.roe.listed_in(f.id) == Some(4) => "Vana'Bout".into(),
                 None if f.path.is_empty() => "current".into(),
                 None => f.path.iter().map(|&c| cat(c)).collect::<Vec<_>>().join(" › "),
             };
@@ -886,12 +901,12 @@ pub fn search_rows(w: &World) -> Vec<super::listsearch::Entry> {
         .collect()
 }
 
-/// A search pick: a set objective in Current, any other in its Objective List category (each category above it left
-/// on the row that leads there), the cursor on it, then Enter as a click on the row. A hidden one opens the deepest
-/// category the list reaches on its way.
+/// A search pick: a set objective in Current or Vana'Bout (the list it is in), any other in its Objective List category
+/// (each category above it left on the row that leads there), the cursor on it, then Enter as a click on the row. A
+/// hidden one opens the deepest category the list reaches on its way.
 pub fn search_pick(w: &mut World, k: usize) {
     let Some(f) = search_all(w).into_iter().nth(k) else { return };
-    let mode = if f.lock.is_none() && w.roe.is_active(f.id) { 2 } else { 3 };
+    let mode = f.lock.is_none().then(|| w.roe.listed_in(f.id)).flatten().unwrap_or(3);
     let mut stack = vec![(ROOT, 0)];
     if mode == 3 {
         let c = ctx(w);
@@ -1044,6 +1059,20 @@ mod tests {
         assert!(one([4, 0, 0, 7]) && !one([0, 0, 0, 7]));
         assert!(one([1, 0, 0, 8]) && !one([0, 0, 0, 8]));
         assert!(!one([0, 0, 0, 9]));
+    }
+
+    /// A set objective's list for the search: Vana'Bout records 43..63 open Vana'Bout, the Current records Current.
+    #[test]
+    fn search_list_of_set_objectives() {
+        let mut r = roe();
+        r.active[0] = 0x0c;
+        r.active[63] = 0x05;
+        r.active[50] = 0x21;
+        r.active[35] = 0x30;
+        assert_eq!(
+            [0xe00c, 0xe005, 0xe021, 0xe030, 0xe031].map(|id| r.listed_in(id)),
+            [Some(2), Some(2), Some(4), None, None]
+        );
     }
 
     #[test]

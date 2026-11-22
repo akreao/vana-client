@@ -2702,6 +2702,15 @@ fn world_hud(
     // The focused list's scroll bar and the wheel, before the windows see the press.
     // Game files from 30261102 on hold fe_main (client/celestite.rs).
     world.fe_menu = gu.layout(celestite::MAIN).is_some();
+    // The wheel over a mod window's open dropdown list is that list's alone: the game's lists see none of it.
+    let dropped;
+    let input = match input.pointer {
+        Some(p) if !world.modern && input.wheel != 0 && lua::wheel_classic(world, p, input.wheel) => {
+            dropped = UiInput { wheel: 0, events: input.events.clone(), ..*input };
+            &dropped
+        }
+        _ => input,
+    };
     let taken = scrollbar::frame(gu, world, input);
     let input = taken.as_ref().unwrap_or(input);
     // A middle click is this frame's only: one made while the HUD is down (downloading, hidden) is dropped.
@@ -21710,8 +21719,11 @@ impl ApplicationHandler for App {
                     if at.is_some_and(|p| minimap::wheel(world, p, d)) {
                         return;
                     }
-                    // A focused list takes the wheel (FUN_10125360: 0x16 / 0x17 to the focus window).
-                    if self.game_ui.as_ref().is_some_and(|g| g.wants_wheel()) {
+                    // A focused list takes the wheel (FUN_10125360: 0x16 / 0x17 to the focus window), and so does a mod
+                    // window's open dropdown list under the pointer.
+                    if self.game_ui.as_ref().is_some_and(|g| g.wants_wheel())
+                        || !world.modern && at.is_some_and(|p| lua::wheel_classic(world, p, 0))
+                    {
                         self.list_wheel += d;
                         return;
                     }
