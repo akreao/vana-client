@@ -74,17 +74,23 @@ pub(super) fn column(ui: &mut Ui, m: &super::Modern, gu: &GameUi, v: &MenuWin, f
         // The keys walk the column as drawn (GameUi::menu_links).
         gu.modern_order.borrow_mut().insert(v.name.to_string(), rows.iter().map(|r| r.0).collect());
         // A column taller than the room left above the screen's bottom (the panel's bottom margin and frame below it)
-        // scrolls; the cursor's row is brought into view when it moves.
+        // scrolls, its rows narrowed by the bar so the column keeps its width; the cursor's row is brought into view
+        // when it moves and when the window opens (not drawn the pass before).
         let room = (ui.ctx().content_rect().max.y - ui.cursor().top() - 40.0).max(ROW * 4.0);
+        let sc = &ui.spacing().scroll;
+        let bar = sc.bar_width + sc.bar_inner_margin + sc.bar_outer_margin;
+        let row_w = if rows.len() as f32 * (ROW + 2.0) > room { COL_W - bar } else { COL_W };
         let seen = egui::Id::unique(("menu column sel", v.name));
-        let follow = ui.ctx().data(|d| d.get_temp::<u16>(seen)) != Some(v.sel);
-        ui.ctx().data_mut(|d| d.insert_temp(seen, v.sel));
+        let pass = ui.ctx().cumulative_pass_nr();
+        let last = ui.ctx().data(|d| d.get_temp::<(u16, u64)>(seen));
+        let follow = last.is_none_or(|(sel, at)| sel != v.sel || at + 1 < pass);
+        ui.ctx().data_mut(|d| d.insert_temp(seen, (v.sel, pass)));
         egui::ScrollArea::vertical().id_salt(("menu column", v.name)).max_height(room).auto_shrink([false, true]).show(
             ui,
             |ui| {
                 for (id, name) in rows {
                     let (r, resp) =
-                        ui.allocate_exact_size(vec2(COL_W, ROW), if focused { Sense::click() } else { Sense::hover() });
+                        ui.allocate_exact_size(vec2(row_w, ROW), if focused { Sense::click() } else { Sense::hover() });
                     let off = v.off.contains(&id);
                     let face = match () {
                         _ if id == v.sel && focused => "controls/list_row_selected",
