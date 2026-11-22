@@ -122,10 +122,13 @@ pub fn scale(ms: f32) -> f32 {
 }
 
 /// Runs of the GPU line: for each column of `hist` whose redraw has a GPU reading, (column, ms), split where a
-/// column has none (a readback skipped, or not back yet). Both lists are in redraw order, so one merge pass does it.
+/// column has none (a readback skipped, or not back yet). Readbacks can come back out of order (a later redraw in a
+/// lower slot drained first), so the readings are sorted by redraw first; then one merge pass does it.
 pub fn gpu_runs(hist: &Ring<Sample>, gpu: &Ring<(u64, f32)>) -> Vec<Vec<(usize, f32)>> {
     let mut runs: Vec<Vec<(usize, f32)>> = Vec::new();
-    let mut g = gpu.iter().peekable();
+    let mut sorted: Vec<(u64, f32)> = gpu.iter().copied().collect();
+    sorted.sort_unstable_by_key(|(q, _)| *q);
+    let mut g = sorted.iter().peekable();
     let mut last = None;
     for (i, s) in hist.iter().enumerate() {
         while g.peek().is_some_and(|(q, _)| *q < s.seq) {
@@ -505,7 +508,8 @@ mod tests {
         }
         let mut gpu = Ring::default();
         // Older than the graph, then 11, 12, (13 skipped), 14; 15 not back yet.
-        for (q, ms) in [(5, 9.0), (11, 1.0), (12, 2.0), (14, 4.0)] {
+        // 12 drained before 11 (a later redraw in a lower readback slot).
+        for (q, ms) in [(5, 9.0), (12, 2.0), (11, 1.0), (14, 4.0)] {
             gpu.push((q, ms));
         }
         assert_eq!(gpu_runs(&hist, &gpu), vec![vec![(1, 1.0), (2, 2.0)], vec![(4, 4.0)]]);
