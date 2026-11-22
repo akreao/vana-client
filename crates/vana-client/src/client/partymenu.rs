@@ -659,7 +659,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
                 if on { 0x8080_5020 } else { 0x8080_8080 },
             );
             if on && focused {
-                gu.cursor(cx, cy);
+                gu.cursor_child(win.name, c, cx, cy, wx, wy);
             }
         }
         match win.name {

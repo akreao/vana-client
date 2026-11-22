@@ -611,7 +611,13 @@ impl UiBatch {
 
     /// The hand was drawn on element `e` of window `m` placed at (x, y).
     pub fn hand_on(&mut self, m: &crate::dat::ui::Menu, e: &crate::dat::ui::MenuElement, x: f32, y: f32) {
-        self.hand = Some((m.name.clone(), e.id, [x + e.x as f32, y + e.y as f32, e.w as f32, e.h as f32]));
+        self.set_hand(&m.name, e.id, [x + e.x as f32, y + e.y as f32, e.w as f32, e.h as f32]);
+    }
+
+    /// The hand was drawn on child `child` of window `name`, whose rect is `rect` (UI pixels): the one place it is
+    /// recorded.
+    pub fn set_hand(&mut self, name: &str, child: u16, rect: [f32; 4]) {
+        self.hand = Some((name.to_string(), child, rect));
     }
 
     /// One cell at (x, y) scaled by (sx, sy); `tint` is ARGB with 0x80 = 1.0, as the client passes it.

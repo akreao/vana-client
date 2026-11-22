@@ -48,6 +48,8 @@ pub struct Gpu {
     pub mips: std::sync::Mutex<mipgen::MipGen>,
     pub uploads: std::sync::Mutex<upload::Budget>,
     pub pipes: std::sync::Arc<PipeCache>,
+    /// The device's `max_texture_dimension_2d` (fixed when it is made; Device::limits copies every limit).
+    pub max_texture_2d: u32,
 }
 
 /// Pipelines made once per device, by any thread (Gpu::warm makes them at start-up).
@@ -104,7 +106,9 @@ impl GpuClass {
     }
 }
 
-/// FFXI_LOW_LIMITS's limits: a GLES 3.1 Mali / V3D class device.
+/// FFXI_LOW_LIMITS's limits: a GLES 3.1 Mali / V3D class device. wgpu's downlevel defaults (16 KiB uniform buffers,
+/// 15 inter-stage variables, 4 colour attachments, 256 3D textures, 16352 bytes of workgroup storage, the rest
+/// WebGPU's defaults) with 8 storage buffers per stage and 4096 textures.
 const LOW_LIMITS: wgpu::Limits = wgpu::Limits {
     max_storage_buffers_per_shader_stage: 8,
     max_texture_dimension_1d: 4096,
@@ -112,9 +116,20 @@ const LOW_LIMITS: wgpu::Limits = wgpu::Limits {
     ..wgpu::Limits::downlevel_defaults()
 };
 
+/// What the client needs of a device, every limit: LOW_LIMITS, where the whole test suite runs on GLES 3.1, with the
+/// effects update's 8 storage buffers in one stage (render/effects.rs). zone.wgsl's widest vertex output takes 13
+/// inter-stage variables and the mip generator's solve pass 256 invocations in x (render/mipgen.rs), both within it.
+const NEEDED: wgpu::Limits = wgpu::Limits {
+    max_storage_buffers_per_shader_stage: effects::STORAGE_NEEDED,
+    max_texture_dimension_1d: 2048,
+    max_inter_stage_shader_variables: 13,
+    ..LOW_LIMITS
+};
+
 /// The device limits to ask for: WebGPU's defaults with up to 16 storage buffers per stage (the GPU culling binds 8 in
-/// compute, the effects update 8; desktop GPUs allow far more), lowered to whatever the adapter can't meet. A GLES device (a Raspberry Pi's V3D has 15
-/// inter-stage variables, the default is 16) then still opens, and each pipeline is checked against what it really has.
+/// compute, the effects update 8; desktop GPUs allow far more), lowered to whatever the adapter can't meet. A GLES
+/// device (a Raspberry Pi's V3D has 15 inter-stage variables, the default is 16) then still opens; short_limits says
+/// whether that is enough.
 fn wanted_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
     wgpu::Limits {
         max_storage_buffers_per_shader_stage: adapter.max_storage_buffers_per_shader_stage.min(16),
@@ -123,31 +138,21 @@ fn wanted_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
     .or_worse_values_from(adapter)
 }
 
-/// What the client's pipelines need of `limits` and it lacks, one line each: the effects update binds 8 storage
-/// buffers in one stage (render/effects.rs), zone.wgsl's widest vertex output has 13 locations and the mip
-/// generator's solve pass runs 256 invocations in x (render/mipgen.rs).
+/// Every limit of `limits` below what the client needs (NEEDED), one line each.
 fn short_limits(limits: &wgpu::Limits) -> Vec<String> {
     let mut out = Vec::new();
-    if limits.max_storage_buffers_per_shader_stage < effects::STORAGE_NEEDED {
-        out.push(format!(
-            "{} storage buffers per shader stage, the effects need {}",
-            limits.max_storage_buffers_per_shader_stage,
-            effects::STORAGE_NEEDED
-        ));
-    }
-    if limits.max_inter_stage_shader_variables < 13 {
-        out.push(format!(
-            "{} inter-stage shader variables, the scenery needs 13",
-            limits.max_inter_stage_shader_variables
-        ));
-    }
-    if limits.max_compute_invocations_per_workgroup < 256 || limits.max_compute_workgroup_size_x < 256 {
-        out.push(format!(
-            "{} compute invocations per workgroup ({} in x), the mip generator needs 256",
-            limits.max_compute_invocations_per_workgroup, limits.max_compute_workgroup_size_x
-        ));
-    }
+    NEEDED.check_limits_with_fail_fn(limits, false, |name, needed, has| {
+        out.push(format!("{name} is {has}, the client needs {needed}"));
+    });
     out
+}
+
+/// The limits the client sees of `adapter`: its own, or under FFXI_LOW_LIMITS (tests) no more than LOW_LIMITS.
+fn adapter_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
+    match std::env::var_os("FFXI_LOW_LIMITS") {
+        Some(_) => adapter.limits().or_worse_values_from(&LOW_LIMITS),
+        None => adapter.limits(),
+    }
 }
 
 /// The GPUs that can draw to `surface` (or any, headless), by name.
@@ -164,16 +169,20 @@ pub fn adapter_names(instance: &wgpu::Instance, surface: Option<&wgpu::Surface>)
     names
 }
 
-/// With WGPU_BACKEND set, the best adapter (discrete first, software last) of its backends.
-fn preferred_backend(instance: &wgpu::Instance, surface: Option<&wgpu::Surface>) -> Option<wgpu::Adapter> {
-    let backends = wgpu::Backends::from_env()?;
-    let rank = |t: wgpu::DeviceType| match t {
+/// Adapters by kind, best first: discrete, integrated, virtual, other, software.
+fn rank(t: wgpu::DeviceType) -> u8 {
+    match t {
         wgpu::DeviceType::DiscreteGpu => 0,
         wgpu::DeviceType::IntegratedGpu => 1,
         wgpu::DeviceType::VirtualGpu => 2,
         wgpu::DeviceType::Other => 3,
         wgpu::DeviceType::Cpu => 4,
-    };
+    }
+}
+
+/// With WGPU_BACKEND set, the best adapter (discrete first, software last) of its backends.
+fn preferred_backend(instance: &wgpu::Instance, surface: Option<&wgpu::Surface>) -> Option<wgpu::Adapter> {
+    let backends = wgpu::Backends::from_env()?;
     pollster::block_on(instance.enumerate_adapters(backends))
         .into_iter()
         .filter(|a| surface.is_none_or(|s| a.is_surface_supported(s)))
@@ -200,7 +209,7 @@ impl Gpu {
         if !preferred.is_empty() && named.is_none() {
             log::warn!("GPU {preferred:?} not found or can't drive the window; using the default");
         }
-        let adapter = match named.or_else(|| preferred_backend(&instance, surface)) {
+        let first_pick = match named.or_else(|| preferred_backend(&instance, surface)) {
             Some(a) => a,
             None => pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -209,6 +218,32 @@ impl Gpu {
                 apply_limit_buckets: false,
             }))
             .context("no suitable GPU adapter")?,
+        };
+        // The game (a surface) needs every limit (short_limits): when the first pick is short and another adapter for
+        // the window has enough (another backend of the card, a second GPU), that one runs. FFXI_LOW_LIMITS and
+        // headless tools keep the first pick.
+        let enough = |a: &wgpu::Adapter| short_limits(&wanted_limits(&adapter_limits(a))).is_empty();
+        let adapter = if surface.is_some() && std::env::var_os("FFXI_LOW_LIMITS").is_none() && !enough(&first_pick) {
+            let other = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
+                .into_iter()
+                .filter(|a| surface.is_none_or(|s| a.is_surface_supported(s)) && enough(a))
+                .min_by_key(|a| rank(a.get_info().device_type));
+            match other {
+                Some(a) => {
+                    let (was, now) = (first_pick.get_info(), a.get_info());
+                    log::warn!(
+                        "{} ({:?}) is short of what the client needs; using {} ({:?})",
+                        was.name,
+                        was.backend,
+                        now.name,
+                        now.backend
+                    );
+                    a
+                }
+                None => first_pick,
+            }
+        } else {
+            first_pick
         };
         let info = adapter.get_info();
         log::info!("GPU: {} ({:?}, {:?})", info.name, info.backend, info.device_type);
@@ -240,13 +275,7 @@ impl Gpu {
             std::sync::atomic::Ordering::Relaxed,
         );
         set_uncompressed(uncompressed());
-        // FFXI_LOW_LIMITS (tests): the limits of a GLES 3.1 Mali-class part (8 storage buffers per stage, 15
-        // inter-stage variables, 4096 textures, 16 KiB uniform buffers) wherever the adapter has more.
-        let adapter_limits = match std::env::var_os("FFXI_LOW_LIMITS") {
-            Some(_) => adapter.limits().or_worse_values_from(&LOW_LIMITS),
-            None => adapter.limits(),
-        };
-        let required_limits = wanted_limits(&adapter_limits);
+        let required_limits = wanted_limits(&adapter_limits(&adapter));
         log::info!("device limits {required_limits:?}");
         // Below what the world's pipelines need, the game's device would open and the first such pipeline panic: the
         // game (a surface) stops here and says why. Headless tools (UI shots and the like) and FFXI_LOW_LIMITS, which
@@ -276,7 +305,17 @@ impl Gpu {
                 "no renderable float format for the sun shadow map: no sun or moon shadows on this GPU (lamp shadows, depth only, still draw)"
             );
         }
-        Ok(Self { instance, adapter, device, queue, mips: Default::default(), uploads: Default::default(), pipes })
+        let max_texture_2d = device.limits().max_texture_dimension_2d;
+        Ok(Self {
+            instance,
+            adapter,
+            device,
+            queue,
+            mips: Default::default(),
+            uploads: Default::default(),
+            pipes,
+            max_texture_2d,
+        })
     }
 
     /// Makes the shared pipelines on a worker thread, so no frame compiles them later.
@@ -591,7 +630,7 @@ pub struct ZoneRenderer {
     shadows: Option<shadow::Shadows>,
     /// Real character shadows (render/sunshadow.rs; prepare_sun_shadow), and whether render drew them this frame
     /// (the client then leaves retail's out). Their depth pipelines: ZonePipes::sun_depth.
-    sun_depth: Option<(wgpu::TextureFormat, [wgpu::RenderPipeline; 2])>,
+    sun_depth: Option<[wgpu::RenderPipeline; 2]>,
     lamp_depth_pipeline: wgpu::RenderPipeline,
     sun_shadow: Option<sunshadow::SunShadow>,
     /// Ambient occlusion on the scenery (render/ssao.rs; prepare_ssao).
@@ -1212,8 +1251,8 @@ pub struct ZonePipes {
     sil_layout: wgpu::BindGroupLayout,
     sil_pipeline: wgpu::RenderPipeline,
     /// Real character shadows (render/sunshadow.rs, render/lampshadow.rs): the actors' depth from the sun (with
-    /// their feet heights, in the format given; plain and lamp lit; None where no feet format renders) and from a lamp.
-    sun_depth: Option<(wgpu::TextureFormat, [wgpu::RenderPipeline; 2])>,
+    /// their feet heights, in PipeCache::feet; plain and lamp lit; None where no feet format renders) and from a lamp.
+    sun_depth: Option<[wgpu::RenderPipeline; 2]>,
     lamp_depth_pipeline: wgpu::RenderPipeline,
     /// The scenery's frustum culling (render/cull.rs): its group 3 layout, the visibility and compaction passes; None
     /// where it can't run (cull::on_gpu: GLES, or too few storage buffers), which culls on the CPU instead.
@@ -1643,13 +1682,10 @@ impl ZonePipes {
             })
         };
         let sun_depth = feet.map(|f| {
-            (
-                f,
-                [
-                    shadow_depth("sun shadow depth", Some(f), "vs_skinned_sun"),
-                    shadow_depth("sun shadow depth (lamp lit)", Some(f), "vs_skinned_sun_lamped"),
-                ],
-            )
+            [
+                shadow_depth("sun shadow depth", Some(f), "vs_skinned_sun"),
+                shadow_depth("sun shadow depth (lamp lit)", Some(f), "vs_skinned_sun_lamped"),
+            ]
         });
         let lamp_depth_pipeline = shadow_depth("lamp shadow depth", None, "vs_skinned_silhouette");
         // The shine overlay (FUN_10024e10's second pass): additive (SRCALPHA / ONE), z tested (as drawn) but not written.
@@ -4047,11 +4083,14 @@ impl ZoneRenderer {
         };
         // Real character shadows (render/sunshadow.rs): the actors' depth from the zone's sun, laid on the scenery
         // below after all the scenery (the blended too) and before the actors.
-        let sun = match (&self.sun_shadow, self.sun_shadow_light(camera.target), &self.pose_gpu, &self.sun_depth) {
-            (Some(s), Some((m, d, st)), Some((_, group, _)), Some(_)) => Some((s, m, d, st, group)),
+        let sun = match (&self.sun_shadow, self.sun_shadow_light(camera.target), &self.pose_gpu) {
+            (Some(s), Some((m, d, st)), Some((_, group, _))) => Some((s, m, d, st, group)),
             _ => None,
         };
-        if let (Some((s, m, _, _, group)), Some((_, [sun_pipe, lamped_pipe]))) = (&sun, &self.sun_depth) {
+        // sun_shadow is only made with the depth pipelines (prepare_sun_shadow).
+        if let Some((s, m, _, _, group)) = &sun
+            && let Some([sun_pipe, lamped_pipe]) = &self.sun_depth
+        {
             s.set_light(gpu, *m);
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("sun shadow depth"),
@@ -4664,12 +4703,12 @@ impl ZoneRenderer {
     /// them only with a lit sun or moon.
     pub fn prepare_sun_shadow(&mut self, gpu: &Gpu, on: bool, size: u32) {
         let size = if sunshadow::MAP_SIZES.contains(&size) { size } else { sunshadow::MAP_SIZE };
-        let Some((feet, _)) = self.sun_depth.as_ref().filter(|_| on) else {
+        let Some(feet) = gpu.pipes.feet.filter(|_| on && self.sun_depth.is_some()) else {
             self.sun_shadow = None;
             return;
         };
         if self.sun_shadow.as_ref().is_none_or(|s| s.size != size) {
-            self.sun_shadow = Some(sunshadow::SunShadow::new(gpu, &self.sil_layout, self.color_format, *feet, size));
+            self.sun_shadow = Some(sunshadow::SunShadow::new(gpu, &self.sil_layout, self.color_format, feet, size));
         }
     }
 
@@ -5316,22 +5355,30 @@ mod limits_tests {
     #[test]
     fn short_limits_name_what_is_missing() {
         // Mali's 8 storage buffers are enough; GLES 3.1's guaranteed 4 are not.
-        let mali = wgpu::Limits { max_storage_buffers_per_shader_stage: 8, ..wgpu::Limits::downlevel_defaults() };
+        let mali = wgpu::Limits { max_storage_buffers_per_shader_stage: 8, ..super::LOW_LIMITS };
         assert!(super::short_limits(&mali).is_empty());
-        let four = wgpu::Limits { max_storage_buffers_per_shader_stage: 4, ..wgpu::Limits::downlevel_defaults() };
+        let four = wgpu::Limits { max_storage_buffers_per_shader_stage: 4, ..super::LOW_LIMITS };
         let short = super::short_limits(&four);
-        assert_eq!(short.len(), 1, "{short:?}");
-        assert!(short[0].starts_with("4 storage buffers"));
+        assert_eq!(short, ["max_storage_buffers_per_shader_stage is 4, the client needs 8"]);
         // Panfrost on Midgard: 128 invocations.
         let midgard = wgpu::Limits {
             max_storage_buffers_per_shader_stage: 16,
             max_compute_invocations_per_workgroup: 128,
             max_compute_workgroup_size_x: 128,
-            ..wgpu::Limits::downlevel_defaults()
+            ..super::LOW_LIMITS
         };
         let short = super::short_limits(&midgard);
-        assert_eq!(short.len(), 1, "{short:?}");
-        assert!(short[0].starts_with("128 compute invocations"));
+        assert_eq!(
+            short,
+            [
+                "max_compute_invocations_per_workgroup is 128, the client needs 256",
+                "max_compute_workgroup_size_x is 128, the client needs 256"
+            ]
+        );
+        // Any limit counts, not only the three the effects, scenery and mip generator name: 2 colour attachments.
+        let two = wgpu::Limits { max_color_attachments: 2, ..super::NEEDED };
+        assert_eq!(super::short_limits(&two), ["max_color_attachments is 2, the client needs 4"]);
+        assert!(super::short_limits(&super::NEEDED).is_empty());
         let desktop = wgpu::Limits { max_storage_buffers_per_shader_stage: 16, ..Default::default() };
         assert!(super::short_limits(&super::wanted_limits(&desktop)).is_empty());
     }

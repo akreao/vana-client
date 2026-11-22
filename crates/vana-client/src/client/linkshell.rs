@@ -967,8 +967,8 @@ fn draw_naming(gu: &mut GameUi, w: &World, nm: &Naming, sw: f32, sh: f32) -> Opt
             gu.sprite_scaled("menu    windowps", 97, cx + 12.0, cy + 1.0, nm.rgb[k] as f32 / 15.0, 1.0, BAR_TINTS[k]);
         }
     }
-    if focused && let Some([cx, cy, ..]) = child(nm.sel) {
-        gu.cursor(cx, cy);
+    if focused && let Some(r @ [cx, cy, ..]) = child(nm.sel) {
+        gu.cursor_on(NAMING, nm.sel, cx, cy, r);
     }
     Some(win.frame)
 }

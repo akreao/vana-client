@@ -503,15 +503,26 @@ fn key_words(desc: &[[u32; 2]], keys: &[[f32; 2]]) -> Vec<u32> {
     w
 }
 
-/// Whether `gpu` can build the effects pipelines (headless tools check before EffectsGpu::new; the game stops at
-/// start-up, Gpu::with_adapter).
-pub fn fits(gpu: &super::Gpu) -> anyhow::Result<()> {
-    let n = gpu.device.limits().max_storage_buffers_per_shader_stage;
-    anyhow::ensure!(
-        n >= STORAGE_NEEDED,
-        "the effects need {STORAGE_NEEDED} storage buffers per shader stage; this GPU has {n}"
-    );
-    Ok(())
+/// `slot`'s effects pipelines, made on first use; None (logged once) on a GPU short of what they need. The game never
+/// gets here with such a GPU (Gpu::with_adapter stops first); headless tools without a window can.
+pub fn kept<'a>(
+    slot: &'a mut Option<EffectsGpu>,
+    gpu: &Gpu,
+    format: wgpu::TextureFormat,
+) -> Option<&'a mut EffectsGpu> {
+    static LOGGED: AtomicBool = AtomicBool::new(false);
+    if slot.is_none() {
+        match EffectsGpu::new(gpu, format) {
+            Ok(eg) => *slot = Some(eg),
+            Err(e) => {
+                if !LOGGED.swap(true, Ordering::Relaxed) {
+                    log::error!("no effects: {e:#}");
+                }
+                return None;
+            }
+        }
+    }
+    slot.as_mut()
 }
 
 pub struct EffectsGpu {
@@ -658,7 +669,13 @@ impl EffectsGpu {
         self.light = l;
     }
 
-    pub fn new(gpu: &Gpu, format: wgpu::TextureFormat) -> Self {
+    /// The effects pipelines; an error on a GPU with fewer than STORAGE_NEEDED storage buffers per shader stage.
+    pub fn new(gpu: &Gpu, format: wgpu::TextureFormat) -> anyhow::Result<Self> {
+        let n = gpu.device.limits().max_storage_buffers_per_shader_stage;
+        anyhow::ensure!(
+            n >= STORAGE_NEEDED,
+            "the effects need {STORAGE_NEEDED} storage buffers per shader stage; this GPU has {n}"
+        );
         let device = &gpu.device;
         let consts = crate::fx::elem::wgsl_consts();
         let src = include_str!("effects.wgsl");
@@ -1169,7 +1186,7 @@ impl EffectsGpu {
                 view_formats: &[],
             })
             .create_view(&Default::default());
-        Self {
+        Ok(Self {
             update,
             update_layout,
             depth: None,
@@ -1261,7 +1278,7 @@ impl EffectsGpu {
             count: 0,
             linearize: format.is_srgb(),
             light: None,
-        }
+        })
     }
 
     pub fn has_dmgnum(&self) -> bool {
@@ -2477,7 +2494,7 @@ mod tests {
             wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: Some(h) },
             src.size(),
         );
-        let eg = EffectsGpu::new(&gpu, fmt);
+        let eg = EffectsGpu::new(&gpu, fmt).unwrap();
         let view = src.create_view(&Default::default());
         let g = EffectsGpu::tex_group(&gpu.device, &eg.tex_layout, &eg.copy_sampler, &view);
         let dst = gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -2656,7 +2673,7 @@ mod tests {
             fx.writes.push(Write::Full(k as u32, Box::new(el)));
             fx.elems.push(None);
         }
-        let mut eg = EffectsGpu::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
+        let mut eg = EffectsGpu::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb).unwrap();
         let mut shown = Vec::new();
         for _ in 0..2 {
             let mut enc = gpu.device.create_command_encoder(&Default::default());
@@ -2678,7 +2695,7 @@ mod tests {
         // One device and one EffectsGpu for every case: EffectsGpu::new compiles every effects pipeline, the bulk of
         // the test's time (once per case, this test took minutes on some drivers).
         let Ok(gpu) = Gpu::headless() else { return };
-        let mut eg = EffectsGpu::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
+        let mut eg = EffectsGpu::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb).unwrap();
         let eye = glam::Vec3::new(0.0, 0.0, -10.0);
         let view = glam::camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::NEG_Y);
         let mut view_rot = view;
@@ -2802,7 +2819,7 @@ mod tests {
             fx.set_keys(Arc::new(crate::dat::zone::Keys::from_ffximain(&dll).unwrap()));
             fx.set_global(crate::fx::lib::Library::load(0, index.read(0).unwrap()).unwrap());
             fx.load_zone(crate::fx::lib::Library::load(129, index.read(129).unwrap()).unwrap());
-            let mut eg = EffectsGpu::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
+            let mut eg = EffectsGpu::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb).unwrap();
             let eye = at + glam::Vec3::new(0.0, 0.0, d);
             let view = glam::camera::rh::view::look_at_mat4(eye, at, glam::Vec3::NEG_Y);
             let mut view_rot = view;
@@ -2877,7 +2894,7 @@ mod tests {
         fx.set_keys(Arc::new(crate::dat::zone::Keys::from_ffximain(&dll).unwrap()));
         fx.set_global(crate::fx::lib::Library::load(0, index.read(0).unwrap()).unwrap());
         fx.load_zone(crate::fx::lib::Library::load(zone, index.read(zone).unwrap()).unwrap());
-        let mut eg = EffectsGpu::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
+        let mut eg = EffectsGpu::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb).unwrap();
         let mut cpu: HashMap<u32, Elem> = HashMap::new();
         for tick in 0..40 {
             let eye = glam::Vec3::new(20.0 + tick as f32 * 3.0, -12.0, -40.0 + tick as f32 * 9.0);
@@ -2990,7 +3007,7 @@ mod tests {
         fx.set_keys(Arc::new(crate::dat::zone::Keys::from_ffximain(&dll).unwrap()));
         fx.set_global(crate::fx::lib::Library::load(0, index.read(0).unwrap()).unwrap());
         fx.load_zone(crate::fx::lib::Library::load(218, index.read(218).unwrap()).unwrap());
-        let mut eg = EffectsGpu::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
+        let mut eg = EffectsGpu::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb).unwrap();
         let mut cpu: HashMap<u32, Elem> = HashMap::new();
         let mut start: HashMap<u32, glam::Vec3> = HashMap::new();
         let eye = glam::Vec3::new(460.0, 15.0, -140.0);

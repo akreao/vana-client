@@ -123,7 +123,14 @@ pub fn start(root: PathBuf, playonline: bool) -> Shared {
                 g.lock().unwrap().game = Game::Behind(server.version.clone());
                 match crate::patch::plan_against(&root, server) {
                     Ok(plan) if !plan.todo.is_empty() => Game::Available(Box::new(plan)),
-                    Ok(_) => Game::Current,
+                    // Every file is current (a reinstall the Viewer then patched): the version is recorded, so the
+                    // next start does not read every file again.
+                    Ok(plan) => {
+                        if let Err(e) = crate::patch::record_current(&root, &plan) {
+                            log::warn!("update check: recording {}: {e:#}", plan.server.version);
+                        }
+                        Game::Current
+                    }
                     Err(e) => Game::Failed(format!("{e:#}")),
                 }
             }

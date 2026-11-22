@@ -151,7 +151,7 @@ impl LobbyFx {
         alive: Option<Vec<u32>>,
     ) {
         let (fx, (view, color_tex, bg)) = (&mut self.fx, target);
-        let eg = self.gpu.get_or_insert_with(|| crate::render::effects::EffectsGpu::new(gpu, format));
+        let Some(eg) = crate::render::effects::kept(&mut self.gpu, gpu, format) else { return };
         if fx.reg.light_keys != zone.light_keys {
             fx.reg.light_keys = zone.light_keys.clone();
         }

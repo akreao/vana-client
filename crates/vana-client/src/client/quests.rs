@@ -469,7 +469,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
                 };
                 text(gu, label, cx + 16.0, cy, tint);
                 if on && focused {
-                    gu.cursor(cx, cy);
+                    gu.cursor_child(CHOOSER, k as u16 + 1, cx, cy, x, y);
                 }
             }
             // FUN_10233560: the Records of Eminence panel.

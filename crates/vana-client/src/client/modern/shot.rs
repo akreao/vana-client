@@ -855,7 +855,7 @@ pub fn shot(width: u32, height: u32, scale: u32, backdrop: Option<&Path>, out: &
     let view = target.create_view(&Default::default());
     let ctx = egui::Context::default();
     // The atlases load at once: the context learns the GPU's texture limit first (egui assumes 2048 until told).
-    let side = Some(gpu.device.limits().max_texture_dimension_2d as usize);
+    let side = Some(gpu.max_texture_2d as usize);
     let mut warm = ctx.run_ui(egui::RawInput { max_texture_side: side, ..Default::default() }, |_| {});
     let mut deltas: Vec<_> = warm.textures_delta.set.drain().collect();
     warm.textures_delta.clear();

@@ -1191,7 +1191,7 @@ fn draw_editor(gu: &mut GameUi, w: &World, d: &Editor, sw: f32, sh: f32, free: b
     let text = |f: usize| shown(w, &d.fields[f]);
     if let Some(&(_, r)) = win.children.iter().find(|(id, _)| *id == 3) {
         // The title as it is (FUN_10191db0); the live field takes German's quotation marks (FUN_101c76b0).
-        let title = if d.editing == Some(0) { german_quotes_str(&text(0), 0x41a) } else { text(0) };
+        let title = if d.editing == Some(0) { german_quotes_str(&text(0), 0x41a).into_owned() } else { text(0) };
         gu.text_fit(&title, r[0] + 2.0, r[1] + 5.0, 120.0, WHITE);
         if d.editing == Some(0) {
             caret_at(gu, w, &d.fields[0], d.caret, r[0] + 2.0, r[1] + 5.0, 120.0);
