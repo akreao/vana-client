@@ -80,11 +80,14 @@ fn depth_at(px: vec2<i32>) -> f32 {
     return vec4<f32>(sum / total, centre.a);
 }
 
-// Full size: the blurred scene over the sharp one by this pixel's own blur size.
+// Full size: the blurred scene over the sharp one by this pixel's own blur size, read where this pixel falls in the
+// half-size target (half its full-size place, the pairs fs_down took: at an odd size that target is rounded up, so
+// stretching it over the screen by uv would drift half a pixel by the far edge).
 @fragment fn fs_apply(i: VOut) -> @location(0) vec4<f32> {
     let k = coc(depth_at(vec2<i32>(floor(i.pos.xy))));
     if (k <= 0.0) { discard; }
-    return vec4<f32>(textureSampleLevel(src, samp, i.uv, 0.0).rgb, smoothstep(0.0, 1.0, k));
+    let at = i.pos.xy * 0.5 / vec2<f32>(textureDimensions(src));
+    return vec4<f32>(textureSampleLevel(src, samp, at, 0.0).rgb, smoothstep(0.0, 1.0, k));
 }
 "#;
 
