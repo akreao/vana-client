@@ -17417,6 +17417,7 @@ impl App {
                                             .extend(),
                                         );
                                     }
+                                    perf::graph(ui, &mut self.perf, self.gpu_time.as_ref().map(|t| &t.hist));
                                 },
                             );
                         });

@@ -36,6 +36,8 @@ pub struct GpuTime {
     /// The last window's mean ms a frame by stage, and their total.
     pub ms: Vec<(&'static str, f32)>,
     pub total: f32,
+    /// Each frame's total ms as it comes back (a few frames late), for the F12 graph.
+    pub hist: crate::client::perf::Ring<f32>,
     /// The first window went to the log; with FFXI_PERF every window does.
     logged: bool,
     log_all: bool,
@@ -84,6 +86,7 @@ impl GpuTime {
             window: Instant::now(),
             ms: Vec::new(),
             total: 0.0,
+            hist: Default::default(),
             logged: false,
             log_all: std::env::var_os("FFXI_PERF").is_some(),
         })
@@ -154,6 +157,8 @@ impl GpuTime {
         if ticks.len() != labels.len() {
             return;
         }
+        let total = ticks[ticks.len() - 1].saturating_sub(ticks[0]) as f64 * self.period / 1e6;
+        self.hist.push(total as f32);
         for i in 1..ticks.len() {
             let ms = ticks[i].saturating_sub(ticks[i - 1]) as f64 * self.period / 1e6;
             match self.sums.iter_mut().find(|(l, _)| *l == labels[i]) {
