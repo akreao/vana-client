@@ -349,7 +349,7 @@ mod tests {
                 read(&gpu, &tex)
                     .into_iter()
                     .enumerate()
-                    .filter(|(i, _)| (*i as u32 % n) % 2 == 0)
+                    .filter(|(i, _)| (*i as u32 % n).is_multiple_of(2))
                     .map(|(_, p)| p)
                     .collect::<Vec<_>>(),
             );
