@@ -255,39 +255,61 @@ mod tests {
         assert!(lit([0.0, 0.5, -1.0], true)[32] < up[32]);
     }
 
+    /// The centre pixel of a black scene with depth at `dist` along the view (None: sky), after the fog of `fr`.
+    fn fogged(gpu: &Gpu, fog: &Fog, fr: &Frame, cam: &crate::render::Camera, dist: Option<f32>) -> [u8; 4] {
+        let n = 16u32;
+        let (tex, view) = filled(gpu, [n, n], |_, _| [0, 0, 0, 255]);
+        let depth = crate::render::depth_view(&gpu.device, n, n);
+        let z = dist.map_or(1.0, |d| cam.view_proj(1.0).project_point3(cam.eye + Vec3::Z * d).z);
+        let mut enc = gpu.device.create_command_encoder(&Default::default());
+        enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth,
+                depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(z), store: wgpu::StoreOp::Store }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        fog.draw(gpu, &mut enc, &view, &depth, fr);
+        gpu.queue.submit([enc.finish()]);
+        read(gpu, &tex)[(n * n / 2 + n / 2) as usize]
+    }
+
     /// The sky is left alone; geometry far away is fogged more than near, toward the fog colour, never past the cap.
     #[test]
     fn sky_untouched_far_fogged_more() {
         let Ok(gpu) = Gpu::headless() else { return };
-        let n = 16u32;
         let f = FogFrame { color: [1.0, 1.0, 1.0], start: 20.0, end: 100.0 };
         let (fr, cam) = frame(Some(f));
         let mut fog = Fog::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
         fog.set_strength(2);
-        let mut out = Vec::new();
-        for dist in [None, Some(5.0f32), Some(80.0)] {
-            let (tex, view) = filled(&gpu, [n, n], |_, _| [0, 0, 0, 255]);
-            let depth = crate::render::depth_view(&gpu.device, n, n);
-            let z = dist.map_or(1.0, |d| cam.view_proj(1.0).project_point3(cam.eye + Vec3::Z * d).z);
-            let mut enc = gpu.device.create_command_encoder(&Default::default());
-            enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth,
-                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(z), store: wgpu::StoreOp::Store }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            fog.draw(&gpu, &mut enc, &view, &depth, &fr);
-            gpu.queue.submit([enc.finish()]);
-            out.push(read(&gpu, &tex)[(n * n / 2 + n / 2) as usize]);
-        }
+        let out: Vec<[u8; 4]> = [None, Some(5.0f32), Some(80.0)].map(|d| fogged(&gpu, &fog, &fr, &cam, d)).to_vec();
         assert_eq!(out[0], [0, 0, 0, 255], "sky");
         assert!(out[1][0] > 0 && out[2][0] > out[1][0], "{out:?}");
         assert!(out[2][0] <= (0.75f32 * 255.0).ceil() as u8 && out[2][3] == 255, "{out:?}");
+    }
+
+    /// Looking toward a sun up ahead, the mist is brighter than with no sun; a sun behind the view adds next to
+    /// nothing.
+    #[test]
+    fn mist_brightens_toward_the_sun() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        let f = FogFrame { color: [0.2, 0.2, 0.2], start: 20.0, end: 100.0 };
+        let (mut fr, cam) = frame(Some(f));
+        let mut fog = Fog::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
+        fog.set_strength(2);
+        let plain = fogged(&gpu, &fog, &fr, &cam, Some(60.0))[0];
+        let view = (cam.target - cam.eye).normalize();
+        let sun =
+            |toward: Vec3| crate::render::scenefx::SunFrame { dir: (-toward).to_array(), color: [1.0; 3], moon: false };
+        fr.sun = Some(sun((view + Vec3::new(0.0, -0.3, 0.0)).normalize()));
+        let ahead = fogged(&gpu, &fog, &fr, &cam, Some(60.0))[0];
+        fr.sun = Some(sun(Vec3::new(0.0, -0.3, -1.0).normalize()));
+        let behind = fogged(&gpu, &fog, &fr, &cam, Some(60.0))[0];
+        assert!(ahead > plain + 40 && behind <= plain + 3, "{plain} {ahead} {behind}");
     }
 }
