@@ -28,6 +28,7 @@ pub struct Settings {
     pub shadow_map: u32,
     pub ssao: bool,
     pub bloom: u32,
+    pub height_fog: u32,
     pub timers_dock: u32,
     pub minimap_dock: u32,
     pub minimap_size: u32,
@@ -73,6 +74,7 @@ impl Settings {
             shadow_map: c.shadow_map,
             ssao: c.ssao,
             bloom: c.bloom,
+            height_fog: c.height_fog,
             timers_dock: c.timers_dock,
             minimap_dock: c.minimap_dock,
             minimap_size: c.minimap_size,
@@ -114,6 +116,7 @@ impl Settings {
         c.shadow_map = self.shadow_map;
         c.ssao = self.ssao;
         c.bloom = self.bloom;
+        c.height_fog = self.height_fog;
         c.timers_dock = self.timers_dock;
         c.minimap_dock = self.minimap_dock;
         c.minimap_size = self.minimap_size;
@@ -165,6 +168,7 @@ enum Val {
     ShadowMap,
     Ssao,
     Bloom,
+    HeightFog,
     TimersDock,
     MinimapDock,
     MinimapSize,
@@ -621,13 +625,22 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
         ),
     ];
     // Ours: full-screen effects over the 3D world (render/scenefx.rs), each off (retail) unless turned on.
-    const SCENE: &[SRow] = &[row(
-        "Bloom",
-        "Bright parts of the world, such as lamps, fires and sunlit clouds, glow softly. Menus and text are left alone (not retail).",
-        Bloom,
-        &[(0, "Off"), (1, "Subtle"), (2, "Strong")],
-        Now,
-    )];
+    const SCENE: &[SRow] = &[
+        row(
+            "Bloom",
+            "Bright parts of the world, such as lamps, fires and sunlit clouds, glow softly. Menus and text are left alone (not retail).",
+            Bloom,
+            &[(0, "Off"), (1, "Subtle"), (2, "Strong")],
+            Now,
+        ),
+        row(
+            "Fog",
+            "Retail keeps the game's own fog. Height adds low mist in the zone's fog colour that fills valleys and low ground; Dense adds more. Zones with close fog get more mist (not retail).",
+            HeightFog,
+            &[(0, "Retail"), (1, "Height"), (2, "Dense")],
+            Now,
+        ),
+    ];
     // A page holds 7 rows; the controls' (the gamepad, mouse look) have theirs.
     const GAMEPAD: &[SRow] = &[
         row(
@@ -977,6 +990,7 @@ impl SettingsUi {
             Val::ShadowMap => self.s.shadow_map,
             Val::Ssao => self.s.ssao as u32,
             Val::Bloom => self.s.bloom,
+            Val::HeightFog => self.s.height_fog,
             Val::TimersDock => self.s.timers_dock,
             Val::MinimapDock => self.s.minimap_dock,
             Val::MinimapSize => self.s.minimap_size,
@@ -1013,6 +1027,7 @@ impl SettingsUi {
             Val::ShadowMap => self.s.shadow_map = x,
             Val::Ssao => self.s.ssao = x != 0,
             Val::Bloom => self.s.bloom = x,
+            Val::HeightFog => self.s.height_fog = x,
             Val::TimersDock => self.s.timers_dock = x,
             Val::MinimapDock => self.s.minimap_dock = x,
             Val::MinimapSize => self.s.minimap_size = x,

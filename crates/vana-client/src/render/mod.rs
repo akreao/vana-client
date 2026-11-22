@@ -7,6 +7,7 @@ pub mod cloth;
 pub mod cull;
 pub mod dancer;
 pub mod effects;
+pub mod fog;
 pub mod gputime;
 pub mod invwin;
 pub mod lampshadow;
@@ -5055,7 +5056,8 @@ pub fn render_pngs_post(
                 }
                 renderer.render(&gpu, &mut encoder, &view, &depth, camera, width as f32 / height as f32, &actor_refs);
                 if let Some(fx) = &scene_fx {
-                    fx.draw(&gpu, &mut encoder, &view);
+                    let frame = scenefx::Frame::new(camera, width as f32 / height as f32, lighting.as_ref());
+                    fx.draw(&gpu, &mut encoder, &view, &depth, &frame);
                 }
                 if let Some(q) = q {
                     encoder.write_timestamp(q, f * 2 + 1);
@@ -5130,7 +5132,8 @@ pub fn render_pngs_post(
         // An error (a GPU short of what the pass needs) stops before the frame is written over an older one.
         post(&gpu, &mut encoder, (&view, &target), &depth, camera, lighting.as_ref(), &mut renderer)?;
         if let Some(fx) = &scene_fx {
-            fx.draw(&gpu, &mut encoder, &view);
+            let frame = scenefx::Frame::new(camera, width as f32 / height as f32, lighting.as_ref());
+            fx.draw(&gpu, &mut encoder, &view, &depth, &frame);
         }
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {

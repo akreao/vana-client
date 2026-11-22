@@ -20008,7 +20008,8 @@ fn cross_capture(cx: &mut WorldDraw, gfx: &Gfx, fg: &FrameGpu, w: &mut World, r:
             if want.any() {
                 let sfx = cx.scene_fx.get_or_insert_with(|| crate::render::scenefx::SceneFx::new(scene_fmt));
                 sfx.prepare(&gfx.gpu, want, bg);
-                sfx.draw(&gfx.gpu, &mut enc, target);
+                let frame = crate::render::scenefx::Frame::new(&cam, aspect, r.lighting.as_ref());
+                sfx.draw(&gfx.gpu, &mut enc, target, &scene_depth, &frame);
             }
             gfx.gpu.queue.submit([enc.finish()]);
         }
@@ -21235,7 +21236,8 @@ fn world_overlays(
     if want.any() {
         let fx = cx.scene_fx.get_or_insert_with(|| crate::render::scenefx::SceneFx::new(scene_fmt));
         fx.prepare(&gfx.gpu, want, bg);
-        fx.draw(&gfx.gpu, &mut fg.encoder, &scene_raw);
+        let frame = crate::render::scenefx::Frame::new(camera, fg.aspect, r.lighting.as_ref());
+        fx.draw(&gfx.gpu, &mut fg.encoder, &scene_raw, &scene_depth, &frame);
         fg.mark("scene fx");
     } else {
         *cx.scene_fx = None;
