@@ -2,12 +2,12 @@
 //! fog. Retail's fog (the zone's or the weather's colour, start and end, drawn by the zone shader) is left exactly as it
 //! is; this adds a layer whose colour is that same fog colour this frame (so it follows the time of day, the weather and
 //! the zone) and whose density comes from the same range: a zone whose retail fog ends close is mistier. The layer is
-//! thickest at the camera's target (our character's feet in play), as thick below it, and thins exponentially above
-//! it, so valleys and low ground fill while hill tops and the sky stay clear. Looking toward the sun, the mist is lit by
-//! it: forward scattering (a Henyey-Greenstein lobe) brightens it in the sun's colour around the sun's direction, the
-//! glow that makes mist read as air with light in it. One full-size pass from depth: the exponential height density
-//! integrated in closed form along the eye ray, blended over the scene. The sky (depth at the clear value) is never
-//! fogged.
+//! thickest at the camera's target (our character in play: retail's look target, a little above the feet), as thick
+//! below it, and thins exponentially above it, so valleys and low ground fill while hill tops and the sky stay clear.
+//! Looking toward the sun, the mist is lit by it: forward scattering (a Henyey-Greenstein lobe) brightens it in the
+//! sun's colour around the sun's direction, the glow that makes mist read as air with light in it. One full-size pass
+//! from depth: the height density integrated in closed form along the eye ray, blended over the scene. The sky (depth
+//! at the clear value) is never fogged.
 
 use super::Gpu;
 use super::scenefx::{Frame, pipeline};
@@ -51,23 +51,31 @@ struct U {
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var depth: texture_2d<f32>;
 
+// The mean of exp(-b max(h, 0)) as the height h (above the reference; y points down) goes linearly from he to hp: the
+// layer is no denser in a pit or over water below the reference than at it. The part of the ray below the reference
+// is at full density, the rest is the exponential's mean over its own heights.
+fn mean_density(he: f32, hp: f32, b: f32) -> f32 {
+    let lo = min(he, hp);
+    let hi = max(he, hp);
+    if (hi <= 0.0) { return 1.0; }
+    // The share of the ray below the reference, and the heights of the rest.
+    let below = select(0.0, -lo / (hi - lo), lo < 0.0);
+    let a = max(lo, 0.0);
+    var above = exp(-b * a);
+    if ((hi - a) * b > 1e-3) {
+        above = (exp(-b * a) - exp(-b * hi)) / (b * (hi - a));
+    }
+    return below + (1.0 - below) * above;
+}
+
 @fragment fn fs_fog(i: VOut) -> @location(0) vec4<f32> {
     let d = textureLoad(depth, vec2<i32>(i.pos.xy), 0).x;
     if (d >= 1.0) { discard; }
     let h = u.inv_view_proj * vec4<f32>(i.uv.x * 2.0 - 1.0, 1.0 - i.uv.y * 2.0, d, 1.0);
     let p = h.xyz / h.w;
     let dist = distance(p, u.eye.xyz);
-    let b = u.p.y;
-    // Heights above the reference (y points down), held at 0 below it: the layer is no denser in a pit or over water
-    // below our feet than at them.
-    let he = max(u.eye.w - u.eye.y, 0.0);
-    let hp = max(u.eye.w - p.y, 0.0);
-    let dh = hp - he;
-    // The mean of exp(-b h) along the ray from the eye to the point.
-    var mean = exp(-b * he);
-    if (abs(dh * b) > 1e-3) {
-        mean = (exp(-b * he) - exp(-b * hp)) / (b * dh);
-    }
+    // The mean density along the ray from the eye to the point.
+    let mean = mean_density(u.eye.w - u.eye.y, u.eye.w - p.y, u.p.y);
     // Eased in over the first stretch from the eye (to retail's fog start), so the ground at our feet stays clear.
     let amount = (1.0 - exp(-u.p.x * dist * mean)) * smoothstep(0.0, u.p.z, dist);
     // Lit by the sun ahead: the Henyey-Greenstein lobe at the angle between the view ray and the sun, over its peak

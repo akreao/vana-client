@@ -58,9 +58,10 @@ impl Frame {
             target: camera.target,
             fog: lighting.map(|l| FogFrame { color: l.fog.to_array(), start: l.fog_start, end: l.fog_end }),
             sun: lighting.filter(|l| l.sky.is_some() && !l.fixed).map(|l| {
-                // `two` holds the sun and the moon (direction, colour each); the bump-mapping light `dir` is the
-                // moon's at night (dat/weather.rs).
-                let moon = (l.dir - l.two[2]).length() < 1e-4 && (l.two[0] - l.two[2]).length() > 1e-4;
+                // `two` holds the sun and the moon (direction, colour each). The sun while it is above the horizon
+                // (y down: its light travels downward), else the moon (the eased bump-mapping light `dir` can't tell
+                // them apart: it lags both).
+                let moon = l.two[0].y <= 0.0;
                 let (dir, color) = if moon { (l.two[2], l.two[3]) } else { (l.two[0], l.two[1]) };
                 SunFrame { dir: dir.to_array(), color: color.to_array(), moon }
             }),
