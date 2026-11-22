@@ -181,6 +181,7 @@ const PAGES: [(&str, &str, &[Item]); 14] = [
             Head("Scene"),
             Ours("Bloom"),
             Ours("Fog"),
+            Ours("Light Shafts"),
             Head("Effects"),
             Retail("conf12wi", 1),
             Open(SUB_EFFECTS),

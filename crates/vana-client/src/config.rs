@@ -253,6 +253,9 @@ pub struct Config {
     pub bloom: u32,
     /// Height fog over the game's own fog (render/fog.rs): 0 retail's only, 1 Height, 2 Dense. Not a retail option.
     pub height_fog: u32,
+    /// Light shafts from the sun through gaps in the scenery (render/godrays.rs): 0 off (retail), 1 Subtle, 2 Strong.
+    /// Not a retail option.
+    pub god_rays: u32,
     /// The Game Master window (ours, client/gm.rs): its request (c2s 0x1F0) goes out at a zone-in only while this is
     /// on and only to a private server. No Settings row: only a server with its GM extension can use it, so it is set
     /// in config.json by hand.
@@ -617,6 +620,7 @@ impl Default for Config {
             ssao: false,
             bloom: 0,
             height_fog: 0,
+            god_rays: 0,
             timers_dock: 0,
             timers_out: true,
             timers_folded: 0,

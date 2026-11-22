@@ -8,6 +8,7 @@ pub mod cull;
 pub mod dancer;
 pub mod effects;
 pub mod fog;
+pub mod godrays;
 pub mod gputime;
 pub mod invwin;
 pub mod lampshadow;
