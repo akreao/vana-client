@@ -82,9 +82,11 @@ impl<T: Copy> Ring<T> {
     }
 }
 
-/// One frame for the graph, in ms: the start-to-start gap (what the player sees) and each span.
+/// One redraw for the graph, in ms: from its start to the next redraw's start (what the player sees) and its own
+/// spans. `seq` numbers redraws (`Perf::seq`), so the GPU's readings, which come back a few frames late, find theirs.
 #[derive(Clone, Copy, Default)]
 pub struct Sample {
+    pub seq: u64,
     pub gap: f32,
     pub spans: [f32; SPANS.len()],
 }
@@ -119,6 +121,29 @@ pub fn scale(ms: f32) -> f32 {
     [20.0, 40.0, 80.0].into_iter().find(|&t| ms <= t).unwrap_or(160.0)
 }
 
+/// Runs of the GPU line: for each column of `hist` whose redraw has a GPU reading, (column, ms), split where a
+/// column has none (a readback skipped, or not back yet). Both lists are in redraw order, so one merge pass does it.
+pub fn gpu_runs(hist: &Ring<Sample>, gpu: &Ring<(u64, f32)>) -> Vec<Vec<(usize, f32)>> {
+    let mut runs: Vec<Vec<(usize, f32)>> = Vec::new();
+    let mut g = gpu.iter().peekable();
+    let mut last = None;
+    for (i, s) in hist.iter().enumerate() {
+        while g.peek().is_some_and(|(q, _)| *q < s.seq) {
+            g.next();
+        }
+        if let Some(&&(q, ms)) = g.peek()
+            && q == s.seq
+        {
+            if last != Some(i.wrapping_sub(1)) {
+                runs.push(Vec::new());
+            }
+            runs.last_mut().unwrap().push((i, ms));
+            last = Some(i);
+        }
+    }
+    runs
+}
+
 /// Colours of the spans in SPANS order (acquire is mostly the wait for the swap chain).
 const SPAN_COLOURS: [egui::Color32; SPANS.len()] = [
     egui::Color32::from_rgb(90, 150, 255),
@@ -133,7 +158,7 @@ const GPU_COLOUR: egui::Color32 = egui::Color32::from_rgb(255, 230, 80);
 
 /// Draws the frame-time graph into `ui`: per frame a grey bar for the gap with the CPU spans stacked on it, the GPU
 /// time (when the device has timestamps) as a yellow line, 60 / 30 fps guides, then a legend and the gap stats.
-pub fn graph(ui: &mut egui::Ui, perf: &mut Perf, gpu: Option<&Ring<f32>>) {
+pub fn graph(ui: &mut egui::Ui, perf: &mut Perf, gpu: Option<&Ring<(u64, f32)>>) {
     const W: f32 = 360.0;
     const H: f32 = 90.0;
     let st = stats(perf.hist.iter().map(|s| s.gap), &mut perf.scratch);
@@ -149,13 +174,20 @@ pub fn graph(ui: &mut egui::Ui, perf: &mut Perf, gpu: Option<&Ring<f32>>) {
     for (i, s) in perf.hist.iter().enumerate() {
         let x = x0 + i as f32 * bar;
         let r = |a: f32, b: f32| egui::Rect::from_min_max(egui::pos2(x, y(b)), egui::pos2(x + bar, y(a)));
-        mesh.add_colored_rect(r(0.0, s.gap), if s.gap > top { egui::Color32::RED } else { GAP_COLOUR });
+        mesh.add_colored_rect(r(0.0, s.gap), GAP_COLOUR);
         let mut at = 0.0;
         for (k, v) in s.spans.iter().enumerate() {
             if *v > 0.0 && at < top {
                 mesh.add_colored_rect(r(at, at + v), SPAN_COLOURS[k]);
             }
             at += v;
+        }
+        // A frame past the top: a red cap over whatever reaches it, spans included.
+        if s.gap > top {
+            mesh.add_colored_rect(
+                egui::Rect::from_min_max(egui::pos2(x, rect.top()), egui::pos2(x + bar, rect.top() + 4.0)),
+                egui::Color32::RED,
+            );
         }
     }
     painter.add(egui::Shape::mesh(mesh));
@@ -175,11 +207,16 @@ pub fn graph(ui: &mut egui::Ui, perf: &mut Perf, gpu: Option<&Ring<f32>>) {
             );
         }
     }
-    if let Some(g) = gpu.filter(|g| g.len() > 1) {
-        let gx0 = rect.right() - g.len() as f32 * bar;
-        let pts: Vec<egui::Pos2> =
-            g.iter().enumerate().map(|(i, v)| egui::pos2(gx0 + (i as f32 + 0.5) * bar, y(*v))).collect();
-        painter.add(egui::Shape::line(pts, egui::Stroke::new(1.0, GPU_COLOUR)));
+    if let Some(g) = gpu {
+        for run in gpu_runs(&perf.hist, g) {
+            let pts: Vec<egui::Pos2> =
+                run.iter().map(|&(i, v)| egui::pos2(x0 + (i as f32 + 0.5) * bar, y(v))).collect();
+            if pts.len() == 1 {
+                painter.circle_filled(pts[0], 1.0, GPU_COLOUR);
+            } else {
+                painter.add(egui::Shape::line(pts, egui::Stroke::new(1.0, GPU_COLOUR)));
+            }
+        }
     }
     painter.text(
         rect.right_top() + egui::vec2(-2.0, 1.0),
@@ -238,6 +275,10 @@ pub struct Perf {
     pub limit: String,
     /// The last FRAMES frames, for the F12 graph.
     pub hist: Ring<Sample>,
+    /// The redraw `frame` numbers next, and the last redraw's start, seq and spans, waiting for the next start to
+    /// close its column.
+    seq: u64,
+    pending: Option<(Instant, u64, [f32; SPANS.len()])>,
     /// Reused by `graph`'s stats.
     scratch: Vec<f32>,
     log: bool,
@@ -267,6 +308,8 @@ impl Default for Perf {
             counts: Counts::default(),
             limit: String::new(),
             hist: Ring::default(),
+            seq: 0,
+            pending: None,
             scratch: Vec::new(),
             log,
         }
@@ -274,6 +317,11 @@ impl Default for Perf {
 }
 
 impl Perf {
+    /// The number the redraw being drawn now will get (GpuTime tags its readback with it).
+    pub fn seq(&self) -> u64 {
+        self.seq
+    }
+
     /// One redraw: its span end times from `start`; the CPU time excludes the acquire wait.
     pub fn frame(&mut self, start: Instant, marks: [Instant; SPANS.len()]) {
         let mut prev = start;
@@ -294,9 +342,14 @@ impl Perf {
         let notes =
             if self.log { NOTES.lock().map(|mut n| std::mem::take(&mut *n)).unwrap_or_default() } else { Vec::new() };
         self.worst_gap = self.worst_gap.max(gap);
-        // The first frame has no gap; its busy time stands in.
+        // The graph pairs each redraw's spans with the time until the next one starts, so a slow redraw's column
+        // shows what made it slow.
         let ms = |d: Duration| d.as_secs_f32() * 1000.0;
-        self.hist.push(Sample { gap: ms(if gap.is_zero() { busy } else { gap }), spans: this.map(ms) });
+        if let Some((prev, seq, spans)) = self.pending.take() {
+            self.hist.push(Sample { seq, gap: ms(start.saturating_duration_since(prev)), spans });
+        }
+        self.pending = Some((start, self.seq, this.map(ms)));
+        self.seq += 1;
         if self.log && (gap > self.spike || busy > self.spike) {
             self.spikes += 1;
             let ms = |d: Duration| d.as_secs_f32() * 1000.0;
@@ -428,13 +481,33 @@ mod tests {
     fn frame_feeds_history() {
         let mut p = Perf::default();
         let t = Instant::now();
-        let ms = |n: u64| t + Duration::from_millis(n);
-        p.frame(t, [ms(1), ms(2), ms(3), ms(4), ms(5), ms(6)]);
-        p.frame(ms(16), [ms(17), ms(18), ms(19), ms(20), ms(21), ms(22)]);
+        let at = |n: u64| t + Duration::from_millis(n);
+        // A: 50 ms encoding; B starts at 60 with 1 ms spans; C at 80.
+        p.frame(t, [at(1), at(2), at(3), at(4), at(54), at(55)]);
+        assert_eq!(p.hist.len(), 0, "a column closes at the next start");
+        p.frame(at(60), [at(61), at(62), at(63), at(64), at(65), at(66)]);
+        p.frame(at(80), [at(81), at(82), at(83), at(84), at(85), at(86)]);
         let v: Vec<Sample> = p.hist.iter().copied().collect();
         assert_eq!(v.len(), 2);
-        assert!((v[0].gap - 5.0).abs() < 0.01, "first frame: busy (6 less the 1 ms acquire)");
-        assert!((v[1].gap - 16.0).abs() < 0.01);
+        assert_eq!((v[0].seq, v[1].seq), (0, 1));
+        assert!((v[0].gap - 60.0).abs() < 0.01);
+        assert!((v[0].spans[4] - 50.0).abs() < 0.01, "A's long encode sits in A's 60 ms column");
+        assert!((v[1].gap - 20.0).abs() < 0.01);
         assert!(v[1].spans.iter().all(|s| (s - 1.0).abs() < 0.01));
+        assert_eq!(p.seq(), 3);
+    }
+
+    #[test]
+    fn gpu_runs_match_seq_and_break_on_gaps() {
+        let mut hist = Ring::default();
+        for seq in 10..16 {
+            hist.push(Sample { seq, ..Default::default() });
+        }
+        let mut gpu = Ring::default();
+        // Older than the graph, then 11, 12, (13 skipped), 14; 15 not back yet.
+        for (q, ms) in [(5, 9.0), (11, 1.0), (12, 2.0), (14, 4.0)] {
+            gpu.push((q, ms));
+        }
+        assert_eq!(gpu_runs(&hist, &gpu), vec![vec![(1, 1.0), (2, 2.0)], vec![(4, 4.0)]]);
     }
 }

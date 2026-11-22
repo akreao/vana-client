@@ -19390,7 +19390,7 @@ impl App {
             buf
         });
         if let Some(t) = gpu_time.as_mut() {
-            t.finish(&mut encoder);
+            t.finish(&mut encoder, self.perf.seq());
         }
         perf::timed(|| "submit".into(), || gfx.gpu.queue.submit(extra.into_iter().chain([encoder.finish()])));
         if let Some(t) = gpu_time.as_mut() {

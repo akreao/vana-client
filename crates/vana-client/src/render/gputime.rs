@@ -20,6 +20,8 @@ struct Read {
     labels: Vec<&'static str>,
     /// Copied into this frame, its map not asked yet.
     copied: bool,
+    /// The redraw it was copied in (`perf::Perf::seq`).
+    seq: u64,
 }
 
 pub struct GpuTime {
@@ -36,8 +38,8 @@ pub struct GpuTime {
     /// The last window's mean ms a frame by stage, and their total.
     pub ms: Vec<(&'static str, f32)>,
     pub total: f32,
-    /// Each frame's total ms as it comes back (a few frames late), for the F12 graph.
-    pub hist: crate::client::perf::Ring<f32>,
+    /// Each redraw's number and total ms as they come back (a few frames late), for the F12 graph.
+    pub hist: crate::client::perf::Ring<(u64, f32)>,
     /// The first window went to the log; with FFXI_PERF every window does.
     logged: bool,
     log_all: bool,
@@ -73,6 +75,7 @@ impl GpuTime {
                 state: Arc::new(AtomicU8::new(FREE)),
                 labels: Vec::new(),
                 copied: false,
+                seq: 0,
             })
             .collect();
         Some(Self {
@@ -100,8 +103,9 @@ impl GpuTime {
         }
     }
 
-    /// Resolves this frame's timestamps into a free readback buffer; skipped while all are in flight.
-    pub fn finish(&mut self, encoder: &mut wgpu::CommandEncoder) {
+    /// Resolves this frame's timestamps into a free readback buffer, tagged with the redraw's `seq`; skipped while all
+    /// are in flight.
+    pub fn finish(&mut self, encoder: &mut wgpu::CommandEncoder, seq: u64) {
         let labels = std::mem::take(&mut self.labels);
         if labels.len() < 2 {
             return;
@@ -114,6 +118,7 @@ impl GpuTime {
         encoder.copy_buffer_to_buffer(&self.resolve, 0, &r.buf, 0, n as u64 * 8);
         r.labels = labels;
         r.copied = true;
+        r.seq = seq;
     }
 
     /// After the submit: maps what was copied and takes in what has come back.
@@ -135,7 +140,8 @@ impl GpuTime {
                 r.buf.unmap();
                 r.state.store(FREE, Ordering::Release);
                 let labels = std::mem::take(&mut r.labels);
-                self.take(&labels, &ticks);
+                let seq = r.seq;
+                self.take(&labels, &ticks, seq);
             }
         }
         if self.window.elapsed() >= Duration::from_secs(2) && self.frames > 0 {
@@ -153,12 +159,12 @@ impl GpuTime {
         }
     }
 
-    fn take(&mut self, labels: &[&'static str], ticks: &[u64]) {
+    fn take(&mut self, labels: &[&'static str], ticks: &[u64], seq: u64) {
         if ticks.len() != labels.len() {
             return;
         }
         let total = ticks[ticks.len() - 1].saturating_sub(ticks[0]) as f64 * self.period / 1e6;
-        self.hist.push(total as f32);
+        self.hist.push((seq, total as f32));
         for i in 1..ticks.len() {
             let ms = ticks[i].saturating_sub(ticks[i - 1]) as f64 * self.period / 1e6;
             match self.sums.iter_mut().find(|(l, _)| *l == labels[i]) {
