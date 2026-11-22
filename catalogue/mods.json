@@ -1112,7 +1112,7 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "f799dad4d13d5eb1b8516252cc0cf89ef60b791a193b8b066b3e4d5a675cc5d6",
+          "sha256": "9ac269d610bf38ba616f1aa6b5a6549422ea507817fd3f788c27c237fdc6f8a1",
           "size": 2235,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/gearshift/mod.toml"
         },
@@ -1136,8 +1136,8 @@
         },
         {
           "path": "src/build/pick.lua",
-          "sha256": "ddc2f2f219a4dd9cf0856d12bc798718538c2dd1465e3c865f2a43fda76cd979",
-          "size": 14603,
+          "sha256": "b6e68112ea88255717bacb924397ba2610512a81e46e034702da58a01bd8a15a",
+          "size": 14854,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/gearshift/src/build/pick.lua"
         },
         {
@@ -1240,7 +1240,7 @@
       "id": "gearshift",
       "kind": "lua",
       "name": "Gearshift",
-      "version": "0.2.12"
+      "version": "0.2.13"
     },
     {
       "authors": [],
@@ -1338,7 +1338,7 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "fd3c495513f36c71698e2db3c14e665593d47cb286af635a543cbdf23c79e43f",
+          "sha256": "3e408b9e32b2feabca9498771d9fe1c15fe64e39182539ed6ba4be87db1266d1",
           "size": 4231,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/mod.toml"
         },
@@ -1368,8 +1368,8 @@
         },
         {
           "path": "src/data.lua",
-          "sha256": "ef611ef261242a6351b10f09809fede742340e7df10ab84c65f6836f6307ccd6",
-          "size": 22938,
+          "sha256": "4c49afea1d2029c5c525dfc38a7bb2ea7f28728a183a5b17b5f57d83a7a9063a",
+          "size": 23506,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/data.lua"
         },
         {
@@ -1442,7 +1442,7 @@
       "id": "hotbar",
       "kind": "lua",
       "name": "Hotbars",
-      "version": "1.13.4"
+      "version": "1.13.5"
     },
     {
       "authors": [],

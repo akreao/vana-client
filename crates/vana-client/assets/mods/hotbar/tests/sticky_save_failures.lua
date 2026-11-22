@@ -86,3 +86,18 @@ data.init({ read = function(f) return files[f] end, decode = json.decode, encode
   end })
 back = data.set_sticky("RDM", s, false)
 assert(back and writes["sticky.json"] == 1 and writes[data.file()] == 1)
+
+-- An edit of a sticky macro while sticky.json cannot be written: not saved (no id), the old one as it was.
+deny = {}
+data.init({ read = function(f) return files[f] end, decode = json.decode, encode = json.encode,
+  write = function(f, t)
+    if deny[f] then error("denied") end
+    files[f] = t
+  end })
+data.load()
+local st = data.save_entry("RDM", nil, { name = "Shared", lines = { "/echo" } }, true)
+assert(st and data.is_sticky(st))
+deny["sticky.json"] = true
+id, why = data.save_entry("RDM", st, { name = "Renamed", lines = { "/echo" } })
+assert(id == nil and why and data.get_entry("RDM", st).name == "Shared")
+deny["sticky.json"] = nil
