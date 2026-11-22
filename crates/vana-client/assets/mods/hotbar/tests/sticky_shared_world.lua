@@ -48,3 +48,16 @@ local sid = data.save_entry("RDM", nil, { name = "Shared 2", lines = { "/echo" }
 assert(sid and data.get_entry("RDM", job).name == "Warp Home")
 data.load()
 assert(data.get_entry("RDM", job).name == "Warp Home", "the kept edit was written with the sticky change")
+
+-- The world's file still refuses a job edit waiting in memory: a sticky-only edit is saved all the same, the job edit
+-- keeps waiting.
+deny = true
+_, jwhy = data.save_entry("RDM", job, { name = "Warp Away", lines = { "/echo" } })
+assert(jwhy)
+local sid2, swhy = data.save_entry("RDM", sid, { name = "Shared 3", lines = { "/echo" } })
+assert(sid2 == sid and not swhy and data.get_entry("RDM", sid).name == "Shared 3")
+assert(data.get_entry("RDM", job).name == "Warp Away")
+deny = false
+assert(data.save())
+data.load()
+assert(data.get_entry("RDM", job).name == "Warp Away" and data.get_entry("RDM", sid).name == "Shared 3")

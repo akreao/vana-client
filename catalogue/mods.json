@@ -1338,7 +1338,7 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "deb834623d57eb66d2d0440b2d7be213c8e595365fa28334e8a6c520d1be36f4",
+          "sha256": "8b57014a163c4414c6bcac6f494f25a9e667d6ff278e1ffe7aaa51204e39704b",
           "size": 4231,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/mod.toml"
         },
@@ -1368,8 +1368,8 @@
         },
         {
           "path": "src/data.lua",
-          "sha256": "61a54aa0f27fff50f29e9aee9ce5a003514e795c66bdfee9f97491d97b85a816",
-          "size": 23840,
+          "sha256": "f7bdad2b818dbebaf57e934df5974b5cdd04b7ad467bacfcaea07a7a95eca266",
+          "size": 24072,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/data.lua"
         },
         {
@@ -1442,7 +1442,7 @@
       "id": "hotbar",
       "kind": "lua",
       "name": "Hotbars",
-      "version": "1.13.6"
+      "version": "1.13.7"
     },
     {
       "authors": [],

@@ -194,9 +194,13 @@ local function with_sticky(f)
       local was = { db = deep_copy(db), sticky = deep_copy(sticky), last = deep_copy(last_picks()), unsaved = unsaved }
       local out = f()
       local saved, err = save_sticky()
-      if saved and (unsaved or not same(db, was.db)) then
-        saved, err = M.save()
-        if not saved then
+      local touched = not same(db, was.db)
+      if saved and (unsaved or touched) then
+        local wrote, werr = M.save()
+        -- Only the edits still waiting in memory failed again (f left the world alone): the sticky change stands and
+        -- they keep waiting.
+        if not wrote and touched then
+          saved, err = false, werr
           sticky = was.sticky
           save_sticky()
         end
