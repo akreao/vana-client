@@ -293,6 +293,21 @@ mod tests {
         assert!(out[2][0] <= (0.75f32 * 255.0).ceil() as u8 && out[2][3] == 255, "{out:?}");
     }
 
+    /// At the same distance, scenery at the reference height is fogged more than the same scenery seen with the layer
+    /// far below it (the reference moved down 40 units, y down): the falloff with height, apart from distance.
+    #[test]
+    fn thinner_above_the_layer() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        let f = FogFrame { color: [1.0, 1.0, 1.0], start: 20.0, end: 100.0 };
+        let (mut fr, cam) = frame(Some(f));
+        let mut fog = Fog::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
+        fog.set_strength(1);
+        let at_layer = fogged(&gpu, &fog, &fr, &cam, Some(40.0))[0];
+        fr.target.y += 40.0;
+        let above = fogged(&gpu, &fog, &fr, &cam, Some(40.0))[0];
+        assert!(at_layer > above + 30 && above > 0, "{at_layer} {above}");
+    }
+
     /// Looking toward a sun up ahead, the mist is brighter than with no sun; a sun behind the view adds next to
     /// nothing.
     #[test]
