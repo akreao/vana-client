@@ -174,9 +174,9 @@ pub fn install(opts: &Options, progress: Arc<Progress>) -> Result<()> {
         targets.insert(file.key.clone(), (path, file.size));
     }
     let total: u64 = targets.values().map(|(_, size)| size).sum();
-    // The files below go back to the installer's versions: once the first is written the applied version no longer
-    // describes the folder (crate::patch::forget_applied), so the next update reads every file. An install that fails
-    // before writing any leaves the folder's version as it was.
+    // The files below go back to the installer's versions: before the first is written the applied version is dropped
+    // (crate::patch::forget_applied), since it no longer describes the folder, so the next update reads every file. An
+    // install that fails before writing any (a bad cabinet) leaves the folder's version as it was.
     let forgot: std::sync::OnceLock<std::result::Result<(), String>> = std::sync::OnceLock::new();
     progress.begin(format!("Installing {} files", targets.len()), total);
 
@@ -190,14 +190,16 @@ pub fn install(opts: &Options, progress: Arc<Progress>) -> Result<()> {
                 let (forgot, install_root) = (&forgot, &install_root);
                 s.spawn(move || {
                     let file = std::fs::File::open(&cab).with_context(|| format!("opening {}", cab.display()))?;
-                    cabx::extract_all(
+                    cabx::extract_all_with(
                         file,
-                        |name| {
-                            let (p, _) = targets.get(name)?;
-                            let ok = forgot.get_or_init(|| {
-                                crate::patch::forget_applied(install_root).map_err(|e| format!("{e:#}"))
-                            });
-                            ok.is_ok().then(|| p.clone())
+                        |name| targets.get(name).map(|(p, _)| p.clone()),
+                        || {
+                            forgot
+                                .get_or_init(|| {
+                                    crate::patch::forget_applied(install_root).map_err(|e| format!("{e:#}"))
+                                })
+                                .clone()
+                                .map_err(|e| anyhow!("dropping the applied version: {e}"))
                         },
                         |n| {
                             progress.done.fetch_add(n, Ordering::Relaxed);
