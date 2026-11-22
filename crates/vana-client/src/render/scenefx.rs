@@ -8,27 +8,81 @@
 
 use super::Gpu;
 use super::bloom::Bloom;
+use super::fog::Fog;
+use glam::{Mat4, Vec3};
 
-/// What the settings turn on, each 0 = off (retail). `bloom`: config `bloom`, 1 Subtle, 2 Strong.
+/// What the settings turn on, each 0 = off (retail). `bloom`: config `bloom`, 1 Subtle, 2 Strong. `fog`: config
+/// `height_fog`, 1 Height, 2 Dense.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Want {
     pub bloom: u32,
+    pub fog: u32,
+}
+
+/// The frame the effects are drawn for.
+#[derive(Clone, Copy, Debug)]
+pub struct Frame {
+    /// The camera's (as the scene was drawn).
+    pub view_proj: Mat4,
+    pub eye: Vec3,
+    /// What the camera looks at: our character in play, the event camera's target in a cutscene.
+    pub target: Vec3,
+    /// The zone's fog this frame (render::ZoneRenderer::lighting), None without zone lighting.
+    pub fog: Option<FogFrame>,
+    /// The zone's sun (or moon) this frame, None indoors (no sky dome, or a fixed light) or without zone lighting.
+    pub sun: Option<SunFrame>,
+}
+
+/// The light in the sky: the way it travels (world y down), its colour, and whether it is the moon.
+#[derive(Clone, Copy, Debug)]
+pub struct SunFrame {
+    pub dir: [f32; 3],
+    pub color: [f32; 3],
+    pub moon: bool,
+}
+
+/// Retail's fog this frame: colour (gamma space) and range.
+#[derive(Clone, Copy, Debug)]
+pub struct FogFrame {
+    pub color: [f32; 3],
+    pub start: f32,
+    pub end: f32,
+}
+
+impl Frame {
+    /// The frame seen by `camera` at `aspect` under `lighting`.
+    pub fn new(camera: &super::Camera, aspect: f32, lighting: Option<&crate::dat::weather::Lighting>) -> Self {
+        Self {
+            view_proj: camera.view_proj(aspect),
+            eye: camera.eye,
+            target: camera.target,
+            fog: lighting.map(|l| FogFrame { color: l.fog.to_array(), start: l.fog_start, end: l.fog_end }),
+            sun: lighting.filter(|l| l.sky.is_some() && !l.fixed).map(|l| {
+                // `two` holds the sun and the moon (direction, colour each). The sun while it is above the horizon
+                // (y down: its light travels downward), else the moon (the eased bump-mapping light `dir` can't tell
+                // them apart: it lags both).
+                let moon = l.two[0].y <= 0.0;
+                let (dir, color) = if moon { (l.two[2], l.two[3]) } else { (l.two[0], l.two[1]) };
+                SunFrame { dir: dir.to_array(), color: color.to_array(), moon }
+            }),
+        }
+    }
 }
 
 impl Want {
     pub fn from_config(c: &crate::config::Config) -> Self {
-        Self { bloom: c.bloom }
+        Self { bloom: c.bloom, fog: c.height_fog }
     }
 
-    /// zone-shot's switches: FFXI_BLOOM=1|2.
+    /// zone-shot's switches: FFXI_BLOOM=1|2, FFXI_HEIGHT_FOG=1|2.
     pub fn from_env() -> Self {
         let n = |k: &str| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(0);
-        Self { bloom: n("FFXI_BLOOM") }
+        Self { bloom: n("FFXI_BLOOM"), fog: n("FFXI_HEIGHT_FOG") }
     }
 
     /// Whether any effect is on (the stage is made only then).
     pub fn any(&self) -> bool {
-        self.bloom != 0
+        self.bloom != 0 || self.fog != 0
     }
 }
 
@@ -36,11 +90,12 @@ pub struct SceneFx {
     /// The scene target's format (the passes that write it are made for it).
     format: wgpu::TextureFormat,
     bloom: Option<Bloom>,
+    fog: Option<Fog>,
 }
 
 impl SceneFx {
     pub fn new(format: wgpu::TextureFormat) -> Self {
-        Self { format, bloom: None }
+        Self { format, bloom: None, fog: None }
     }
 
     /// Makes what `want` turns on for a scene of `size` (made on first use or a size change) and lets go of what it
@@ -53,11 +108,26 @@ impl SceneFx {
             b.resize(gpu, size);
             b.set_strength(gpu, want.bloom);
         }
+        if want.fog == 0 {
+            self.fog = None;
+        } else {
+            self.fog.get_or_insert_with(|| Fog::new(gpu, self.format)).set_strength(want.fog);
+        }
     }
 
     /// The effects turned on, over `scene` (the plain, not sRGB, view of the scene target, the size `prepare` was
-    /// given).
-    pub fn draw(&self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, scene: &wgpu::TextureView) {
+    /// given) with its `depth`, in the order light travels: the fog in the air, then the glow of what is bright.
+    pub fn draw(
+        &self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        scene: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
+        frame: &Frame,
+    ) {
+        if let Some(f) = &self.fog {
+            f.draw(gpu, encoder, scene, depth, frame);
+        }
         if let Some(b) = &self.bloom {
             b.draw(gpu, encoder, scene);
         }

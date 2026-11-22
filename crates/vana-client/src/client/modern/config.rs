@@ -180,6 +180,7 @@ const PAGES: [(&str, &str, &[Item]); 14] = [
             Ours("Colour Grading"),
             Head("Scene"),
             Ours("Bloom"),
+            Ours("Fog"),
             Head("Effects"),
             Retail("conf12wi", 1),
             Open(SUB_EFFECTS),
