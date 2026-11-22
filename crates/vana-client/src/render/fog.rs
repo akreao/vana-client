@@ -2,7 +2,7 @@
 //! fog. Retail's fog (the zone's or the weather's colour, start and end, drawn by the zone shader) is left exactly as it
 //! is; this adds a layer whose colour is that same fog colour this frame (so it follows the time of day, the weather and
 //! the zone) and whose density comes from the same range: a zone whose retail fog ends close is mistier. The layer is
-//! thickest at and below the camera's target (our character's feet in play) and thins exponentially above it, so
+//! thickest at and below the camera's target (the same density below it) (our character's feet in play) and thins exponentially above it, so
 //! valleys and low ground fill while hill tops and the sky stay clear. One full-size pass from depth: the exponential
 //! height density integrated in closed form along the eye ray, blended over the scene. The sky (depth at the clear
 //! value) is never fogged.
@@ -14,8 +14,8 @@ use super::scenefx::{Frame, pipeline};
 /// for Height (1) and Dense (2).
 pub fn params(strength: u32) -> [f32; 3] {
     match strength {
-        2 => [8.0, 0.04, 0.85],
-        _ => [4.0, 0.05, 0.7],
+        2 => [3.0, 0.05, 0.75],
+        _ => [1.5, 0.05, 0.6],
     }
 }
 
@@ -46,9 +46,10 @@ struct U {
     let p = h.xyz / h.w;
     let dist = distance(p, u.eye.xyz);
     let b = u.p.y;
-    // Heights above the reference (y points down), held at -1/b below it so the density there tops out at e.
-    let he = max(u.eye.w - u.eye.y, -1.0 / b);
-    let hp = max(u.eye.w - p.y, -1.0 / b);
+    // Heights above the reference (y points down), held at 0 below it: the layer is no denser in a pit or over water
+    // below our feet than at them.
+    let he = max(u.eye.w - u.eye.y, 0.0);
+    let hp = max(u.eye.w - p.y, 0.0);
     let dh = hp - he;
     // The mean of exp(-b h) along the ray from the eye to the point.
     var mean = exp(-b * he);
@@ -202,7 +203,7 @@ mod tests {
         let f = FogFrame { color: [0.5; 3], start: 20.0, end: 200.0 };
         let u = uniform(&frame(Some(f)).0, 2).unwrap();
         assert_eq!(u[19], 0.0, "reference height = the target's y");
-        assert!((u[24] - 8.0 / 200.0).abs() < 1e-6);
+        assert!((u[24] - 3.0 / 200.0).abs() < 1e-6);
     }
 
     /// The sky is left alone; geometry far away is fogged more than near, toward the fog colour, never past the cap.
@@ -238,6 +239,6 @@ mod tests {
         }
         assert_eq!(out[0], [0, 0, 0, 255], "sky");
         assert!(out[1][0] > 0 && out[2][0] > out[1][0], "{out:?}");
-        assert!(out[2][0] <= (0.85f32 * 255.0).ceil() as u8 && out[2][3] == 255, "{out:?}");
+        assert!(out[2][0] <= (0.75f32 * 255.0).ceil() as u8 && out[2][3] == 255, "{out:?}");
     }
 }
