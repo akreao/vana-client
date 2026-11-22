@@ -9424,6 +9424,10 @@ impl App {
     /// Puts changed settings into effect: window size and mode, frame limit, anisotropy (new samplers), volumes.
     /// The background resolution is read every frame.
     fn apply_settings(&mut self) {
+        // Scene effects all turned off: their targets go now, not at the next world frame (the lobby draws none).
+        if !crate::render::scenefx::Want::from_config(&self.cfg).any() {
+            self.scene_fx = None;
+        }
         self.frame_limit = self.cfg.frame_limit();
         ground::set_move_rate(self.cfg.move_rate);
         self.present_dirty = true;
@@ -19998,6 +20002,13 @@ fn cross_capture(cx: &mut WorldDraw, gfx: &Gfx, fg: &FrameGpu, w: &mut World, r:
                     fog_color,
                     fog,
                 );
+            }
+            // The scene effects on it as on the frames around it, so they fade out with the shot.
+            let want = crate::render::scenefx::Want::from_config(cx.cfg);
+            if want.any() {
+                let sfx = cx.scene_fx.get_or_insert_with(|| crate::render::scenefx::SceneFx::new(scene_fmt));
+                sfx.prepare(&gfx.gpu, want, bg);
+                sfx.draw(&gfx.gpu, &mut enc, target);
             }
             gfx.gpu.queue.submit([enc.finish()]);
         }

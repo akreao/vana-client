@@ -5020,9 +5020,13 @@ pub fn render_pngs_post(
     let view = target.create_view(&Default::default());
     let depth = depth_view(&gpu.device, width, height);
     let row = (width * 4).div_ceil(256) * 256;
-    // The scene effects their FFXI_ switches turn on (render/scenefx.rs), over the frame after the post step.
+    // The scene effects their FFXI_ switches turn on (render/scenefx.rs), over the frame after the post step (and in
+    // FFXI_BENCH's frames, so their cost is in its times).
     let fx_want = scenefx::Want::from_env();
     let mut scene_fx = fx_want.any().then(|| scenefx::SceneFx::new(format));
+    if let Some(fx) = scene_fx.as_mut() {
+        fx.prepare(&gpu, fx_want, [width, height]);
+    }
     // FFXI_BENCH=N: the first view N more times after a warm-up, its time a frame printed (GPU-bound offscreen).
     if let (Some(n), Some((camera, _, lighting))) =
         (std::env::var("FFXI_BENCH").ok().and_then(|v| v.parse::<u32>().ok()), frames.first())
@@ -5050,6 +5054,9 @@ pub fn render_pngs_post(
                     encoder.write_timestamp(q, f * 2);
                 }
                 renderer.render(&gpu, &mut encoder, &view, &depth, camera, width as f32 / height as f32, &actor_refs);
+                if let Some(fx) = &scene_fx {
+                    fx.draw(&gpu, &mut encoder, &view);
+                }
                 if let Some(q) = q {
                     encoder.write_timestamp(q, f * 2 + 1);
                 }
@@ -5122,8 +5129,7 @@ pub fn render_pngs_post(
         );
         // An error (a GPU short of what the pass needs) stops before the frame is written over an older one.
         post(&gpu, &mut encoder, (&view, &target), &depth, camera, lighting.as_ref(), &mut renderer)?;
-        if let Some(fx) = scene_fx.as_mut() {
-            fx.prepare(&gpu, fx_want, [width, height]);
+        if let Some(fx) = &scene_fx {
             fx.draw(&gpu, &mut encoder, &view);
         }
         encoder.copy_texture_to_buffer(
