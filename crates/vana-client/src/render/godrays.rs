@@ -41,7 +41,8 @@ fn luma(c: vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.299, 0.587, 0.114)); }
     let full = vec2<f32>(textureDimensions(depth));
     let px = vec2<i32>(clamp(i.uv * full, vec2<f32>(0.0), full - 1.0));
     if (textureLoad(depth, px, 0).x < 1.0) { return vec4<f32>(0.0); }
-    let c = textureSampleLevel(src, samp, i.uv, 0.0).rgb;
+    // The colour of that same pixel (a filtered tap at a silhouette would bring in the scenery's colour).
+    let c = textureLoad(src, px, 0).rgb;
     let over = max(luma(c) - u.tint.a, 0.0) / max(1.0 - u.tint.a, 1e-3);
     let d = (i.uv - u.sun.xy) * vec2<f32>(full.x / full.y, 1.0);
     let near = 1.0 - smoothstep(0.0, 0.4, length(d));
@@ -260,8 +261,49 @@ impl GodRays {
 
 #[cfg(test)]
 mod tests {
+    use super::super::scenefx::test_util::{filled, read};
     use super::super::scenefx::{Frame, SunFrame};
     use super::*;
+
+    /// Open sky with the sun in the middle of the screen brightens round it more than at the edge; the same view
+    /// with scenery everywhere (no sky) is left exactly as it was.
+    #[test]
+    fn sky_round_the_sun_shines_scenery_alone_does_not() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        let n = 32u32;
+        // Looking straight at a sun up and ahead (y down).
+        let toward = Vec3::new(0.0, -0.5, 1.0).normalize();
+        let cam = crate::render::Camera { eye: Vec3::ZERO, target: toward * 10.0, up: Vec3::NEG_Y, fov_y: 0.8 };
+        let sun = SunFrame { dir: (-toward).to_array(), color: [1.0; 3], moon: false };
+        let fr = Frame { view_proj: cam.view_proj(1.0), eye: cam.eye, target: cam.target, fog: None, sun: Some(sun) };
+        let mut rays = GodRays::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
+        rays.resize(&gpu, [n, n]);
+        rays.set_strength(2);
+        let mut out = Vec::new();
+        for z in [1.0f32, 0.5] {
+            let (tex, view) = filled(&gpu, [n, n], |_, _| [60, 60, 60, 255]);
+            let depth = crate::render::depth_view(&gpu.device, n, n);
+            let mut enc = gpu.device.create_command_encoder(&Default::default());
+            enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth,
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(z), store: wgpu::StoreOp::Store }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            rays.draw(&gpu, &mut enc, &view, &depth, &fr);
+            gpu.queue.submit([enc.finish()]);
+            out.push(read(&gpu, &tex));
+        }
+        let at = |px: &Vec<[u8; 4]>, x: u32, y: u32| px[(y * n + x) as usize][0];
+        assert!(at(&out[0], 16, 16) > at(&out[0], 0, 0) && at(&out[0], 16, 16) > 60, "sky");
+        assert!(out[1].iter().all(|p| *p == [60, 60, 60, 255]), "scenery only");
+    }
 
     fn frame(sun: Option<SunFrame>, target: Vec3) -> Frame {
         let cam = crate::render::Camera { eye: Vec3::ZERO, target, up: Vec3::NEG_Y, fov_y: 0.8 };
