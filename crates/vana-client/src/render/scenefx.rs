@@ -8,17 +8,20 @@
 
 use super::Gpu;
 use super::bloom::Bloom;
+use super::dof::Dof;
 use super::fog::Fog;
 use super::godrays::GodRays;
 use glam::{Mat4, Vec3};
 
 /// What the settings turn on, each 0 = off (retail). `bloom`: config `bloom`, 1 Subtle, 2 Strong. `fog`: config
-/// `height_fog`, 1 Height, 2 Dense. `rays`: config `god_rays`, 1 Subtle, 2 Strong.
+/// `height_fog`, 1 Height, 2 Dense. `rays`: config `god_rays`, 1 Subtle, 2 Strong. `dof`: config `dof`, 1 Subtle, 2
+/// Strong.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Want {
     pub bloom: u32,
     pub fog: u32,
     pub rays: u32,
+    pub dof: u32,
 }
 
 /// The frame the effects are drawn for.
@@ -73,18 +76,18 @@ impl Frame {
 
 impl Want {
     pub fn from_config(c: &crate::config::Config) -> Self {
-        Self { bloom: c.bloom, fog: c.height_fog, rays: c.god_rays }
+        Self { bloom: c.bloom, fog: c.height_fog, rays: c.god_rays, dof: c.dof }
     }
 
-    /// zone-shot's switches: FFXI_BLOOM=1|2, FFXI_HEIGHT_FOG=1|2, FFXI_GOD_RAYS=1|2.
+    /// zone-shot's switches: FFXI_BLOOM=1|2, FFXI_HEIGHT_FOG=1|2, FFXI_GOD_RAYS=1|2, FFXI_DOF=1|2.
     pub fn from_env() -> Self {
         let n = |k: &str| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(0);
-        Self { bloom: n("FFXI_BLOOM"), fog: n("FFXI_HEIGHT_FOG"), rays: n("FFXI_GOD_RAYS") }
+        Self { bloom: n("FFXI_BLOOM"), fog: n("FFXI_HEIGHT_FOG"), rays: n("FFXI_GOD_RAYS"), dof: n("FFXI_DOF") }
     }
 
     /// Whether any effect is on (the stage is made only then).
     pub fn any(&self) -> bool {
-        self.bloom != 0 || self.fog != 0 || self.rays != 0
+        self.bloom != 0 || self.fog != 0 || self.rays != 0 || self.dof != 0
     }
 }
 
@@ -94,11 +97,12 @@ pub struct SceneFx {
     bloom: Option<Bloom>,
     fog: Option<Fog>,
     rays: Option<GodRays>,
+    dof: Option<Dof>,
 }
 
 impl SceneFx {
     pub fn new(format: wgpu::TextureFormat) -> Self {
-        Self { format, bloom: None, fog: None, rays: None }
+        Self { format, bloom: None, fog: None, rays: None, dof: None }
     }
 
     /// Makes what `want` turns on for a scene of `size` (made on first use or a size change) and lets go of what it
@@ -123,11 +127,18 @@ impl SceneFx {
             r.resize(gpu, size);
             r.set_strength(want.rays);
         }
+        if want.dof == 0 {
+            self.dof = None;
+        } else {
+            let d = self.dof.get_or_insert_with(|| Dof::new(gpu, self.format));
+            d.resize(gpu, size);
+            d.set_strength(want.dof);
+        }
     }
 
     /// The effects turned on, over `scene` (the plain, not sRGB, view of the scene target, the size `prepare` was
-    /// given) with its `depth`, in the order light travels: the fog in the air, the shafts through it, then the glow
-    /// of what is bright.
+    /// given) with its `depth`, in the order light travels: the fog in the air, the shafts through it, the glow of what
+    /// is bright, then the lens's focus over all of it.
     pub fn draw(
         &self,
         gpu: &Gpu,
@@ -144,6 +155,9 @@ impl SceneFx {
         }
         if let Some(b) = &self.bloom {
             b.draw(gpu, encoder, scene);
+        }
+        if let Some(d) = &self.dof {
+            d.draw(gpu, encoder, scene, depth, frame);
         }
     }
 }

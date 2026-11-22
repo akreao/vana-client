@@ -6,6 +6,7 @@ pub mod character;
 pub mod cloth;
 pub mod cull;
 pub mod dancer;
+pub mod dof;
 pub mod effects;
 pub mod fog;
 pub mod godrays;
