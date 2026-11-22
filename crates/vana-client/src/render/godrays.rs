@@ -81,8 +81,11 @@ fn luma(c: vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.299, 0.587, 0.114)); }
     return vec4<f32>(sum / total, 1.0);
 }
 
+// Full size: the half-size result added, read where this pixel falls in it (half its full-size place: at an odd size
+// the half-size target is rounded up, so stretching it over the screen by uv would drift half a pixel by the far edge).
 @fragment fn fs_apply(i: VOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(textureSampleLevel(src, samp, i.uv, 0.0).rgb * u.tint.rgb, 0.0);
+    let at = i.pos.xy * 0.5 / vec2<f32>(textureDimensions(src));
+    return vec4<f32>(textureSampleLevel(src, samp, at, 0.0).rgb * u.tint.rgb, 0.0);
 }
 "#;
 
