@@ -2,10 +2,12 @@
 //! fog. Retail's fog (the zone's or the weather's colour, start and end, drawn by the zone shader) is left exactly as it
 //! is; this adds a layer whose colour is that same fog colour this frame (so it follows the time of day, the weather and
 //! the zone) and whose density comes from the same range: a zone whose retail fog ends close is mistier. The layer is
-//! thickest at and below the camera's target (the same density below it) (our character's feet in play) and thins exponentially above it, so
-//! valleys and low ground fill while hill tops and the sky stay clear. One full-size pass from depth: the exponential
-//! height density integrated in closed form along the eye ray, blended over the scene. The sky (depth at the clear
-//! value) is never fogged.
+//! thickest at the camera's target (our character's feet in play), as thick below it, and thins exponentially above
+//! it, so valleys and low ground fill while hill tops and the sky stay clear. Looking toward the sun, the mist is lit by
+//! it: forward scattering (a Henyey-Greenstein lobe) brightens it in the sun's colour around the sun's direction, the
+//! glow that makes mist read as air with light in it. One full-size pass from depth: the exponential height density
+//! integrated in closed form along the eye ray, blended over the scene. The sky (depth at the clear value) is never
+//! fogged.
 
 use super::Gpu;
 use super::scenefx::{Frame, pipeline};
@@ -18,6 +20,12 @@ pub fn params(strength: u32) -> [f32; 3] {
         _ => [1.5, 0.05, 0.6],
     }
 }
+
+/// The sun's light in the mist: how much (of its colour, at the sun's own direction), the lobe's Henyey-Greenstein g
+/// (0 spreads it everywhere, near 1 a small halo), and the moon's share.
+const SUN_GLOW: f32 = 0.6;
+const SUN_G: f32 = 0.6;
+const MOON_SHARE: f32 = 0.3;
 
 /// The fade-in distance from the eye: retail's fog start, held within these (units).
 const NEAR_CLEAR: [f32; 2] = [15.0, 60.0];
@@ -35,6 +43,10 @@ struct U {
     // x: density per unit at the reference height; y: falloff per unit of height above it; z: the distance over
     // which it fades in from the eye.
     p: vec4<f32>,
+    // xyz: toward the sun (unit); w: 1 with a sun, 0 without.
+    sun: vec4<f32>,
+    // rgb: the sun's colour x glow; a: the lobe's g.
+    sun_color: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var depth: texture_2d<f32>;
@@ -58,7 +70,16 @@ struct U {
     }
     // Eased in over the first stretch from the eye (to retail's fog start), so the ground at our feet stays clear.
     let amount = (1.0 - exp(-u.p.x * dist * mean)) * smoothstep(0.0, u.p.z, dist);
-    return vec4<f32>(u.color.rgb, min(amount, u.color.a));
+    // Lit by the sun ahead: the Henyey-Greenstein lobe at the angle between the view ray and the sun, over its peak
+    // (1 looking straight at the sun).
+    var color = u.color.rgb;
+    if (u.sun.w > 0.5) {
+        let g = u.sun_color.a;
+        let c = dot((p - u.eye.xyz) / max(dist, 1e-4), u.sun.xyz);
+        let lobe = (1.0 - g) * (1.0 - g) * (1.0 - g) / pow(1.0 + g * g - 2.0 * g * c, 1.5);
+        color = min(color + u.sun_color.rgb * lobe, vec3<f32>(1.0));
+    }
+    return vec4<f32>(color, min(amount, u.color.a));
 }
 "#;
 
@@ -72,10 +93,10 @@ pub struct Fog {
 }
 
 /// The fog's uniform for `frame` at `strength`, or None when the frame has no zone fog (no pass then).
-pub fn uniform(frame: &Frame, strength: u32) -> Option<[f32; 28]> {
+pub fn uniform(frame: &Frame, strength: u32) -> Option<[f32; 36]> {
     let f = frame.fog?;
     let [density, falloff, most] = params(strength);
-    let mut u = [0.0f32; 28];
+    let mut u = [0.0f32; 36];
     u[..16].copy_from_slice(&frame.view_proj.inverse().to_cols_array());
     u[16..20].copy_from_slice(&[frame.eye.x, frame.eye.y, frame.eye.z, frame.target.y]);
     u[20..24].copy_from_slice(&[f.color[0], f.color[1], f.color[2], most]);
@@ -85,6 +106,15 @@ pub fn uniform(frame: &Frame, strength: u32) -> Option<[f32; 28]> {
         f.start.clamp(NEAR_CLEAR[0], NEAR_CLEAR[1]),
         0.0,
     ]);
+    // The sun above the horizon (y down: its light travels downward).
+    if let Some(s) = frame.sun
+        && let Some(toward) = (-glam::Vec3::from(s.dir)).try_normalize()
+        && toward.y < 0.0
+    {
+        let k = SUN_GLOW * if s.moon { MOON_SHARE } else { 1.0 };
+        u[28..32].copy_from_slice(&[toward.x, toward.y, toward.z, 1.0]);
+        u[32..36].copy_from_slice(&[s.color[0] * k, s.color[1] * k, s.color[2] * k, SUN_G]);
+    }
     Some(u)
 }
 
@@ -137,7 +167,7 @@ impl Fog {
         };
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("height fog"),
-            size: 28 * 4,
+            size: 36 * 4,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -194,7 +224,7 @@ mod tests {
             up: Vec3::NEG_Y,
             fov_y: 0.8,
         };
-        (Frame { view_proj: cam.view_proj(1.0), eye: cam.eye, target: cam.target, fog }, cam)
+        (Frame { view_proj: cam.view_proj(1.0), eye: cam.eye, target: cam.target, fog, sun: None }, cam)
     }
 
     #[test]
@@ -204,6 +234,17 @@ mod tests {
         let u = uniform(&frame(Some(f)).0, 2).unwrap();
         assert_eq!(u[19], 0.0, "reference height = the target's y");
         assert!((u[24] - 3.0 / 200.0).abs() < 1e-6);
+        assert_eq!(u[31], 0.0, "no sun, no glow");
+        // A sun up ahead lights the mist; one under the horizon doesn't; the moon less.
+        let lit = |dir: [f32; 3], moon: bool| {
+            let mut fr = frame(Some(f)).0;
+            fr.sun = Some(crate::render::scenefx::SunFrame { dir, color: [1.0; 3], moon });
+            uniform(&fr, 1).unwrap()
+        };
+        let up = lit([0.0, 0.5, -1.0], false);
+        assert!(up[31] == 1.0 && up[29] < 0.0 && up[30] > 0.0, "{:?}", &up[28..36]);
+        assert_eq!(lit([0.0, -0.5, -1.0], false)[31], 0.0);
+        assert!(lit([0.0, 0.5, -1.0], true)[32] < up[32]);
     }
 
     /// The sky is left alone; geometry far away is fogged more than near, toward the fog colour, never past the cap.

@@ -29,6 +29,16 @@ pub struct Frame {
     pub target: Vec3,
     /// The zone's fog this frame (render::ZoneRenderer::lighting), None without zone lighting.
     pub fog: Option<FogFrame>,
+    /// The zone's sun (or moon) this frame, None indoors (no sky dome, or a fixed light) or without zone lighting.
+    pub sun: Option<SunFrame>,
+}
+
+/// The light in the sky: the way it travels (world y down), its colour, and whether it is the moon.
+#[derive(Clone, Copy, Debug)]
+pub struct SunFrame {
+    pub dir: [f32; 3],
+    pub color: [f32; 3],
+    pub moon: bool,
 }
 
 /// Retail's fog this frame: colour (gamma space) and range.
@@ -47,6 +57,13 @@ impl Frame {
             eye: camera.eye,
             target: camera.target,
             fog: lighting.map(|l| FogFrame { color: l.fog.to_array(), start: l.fog_start, end: l.fog_end }),
+            sun: lighting.filter(|l| l.sky.is_some() && !l.fixed).map(|l| {
+                // `two` holds the sun and the moon (direction, colour each); the bump-mapping light `dir` is the
+                // moon's at night (dat/weather.rs).
+                let moon = (l.dir - l.two[2]).length() < 1e-4 && (l.two[0] - l.two[2]).length() > 1e-4;
+                let (dir, color) = if moon { (l.two[2], l.two[3]) } else { (l.two[0], l.two[1]) };
+                SunFrame { dir: dir.to_array(), color: color.to_array(), moon }
+            }),
         }
     }
 }
