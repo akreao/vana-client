@@ -36,20 +36,30 @@ struct U {
 
 fn luma(c: vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.299, 0.587, 0.114)); }
 
-// Half size: the sky (the full-size pixel under this one at the clear depth) near the sun on screen (aspect kept).
+// Half size: the sky among the four full-size pixels under this one (those at the clear depth, by their share, so a
+// one-pixel gap in foliage counts wherever it falls) near the sun on screen (aspect kept). Each sky pixel's own colour
+// is read (a filtered tap at a silhouette would bring in the scenery's colour).
 @fragment fn fs_mask(i: VOut) -> @location(0) vec4<f32> {
-    let full = vec2<f32>(textureDimensions(depth));
-    let px = vec2<i32>(clamp(i.uv * full, vec2<f32>(0.0), full - 1.0));
-    if (textureLoad(depth, px, 0).x < 1.0) { return vec4<f32>(0.0); }
-    // The colour of that same pixel (a filtered tap at a silhouette would bring in the scenery's colour).
-    let c = textureLoad(src, px, 0).rgb;
-    let over = max(luma(c) - u.tint.a, 0.0) / max(1.0 - u.tint.a, 1e-3);
+    let size = vec2<i32>(textureDimensions(depth));
+    let full = vec2<f32>(size);
+    let px = vec2<i32>(floor(i.pos.xy)) * 2;
+    var bright = vec3<f32>(0.0);
+    var sky = 0.0;
+    for (var j = 0; j < 4; j++) {
+        let q = clamp(px + vec2<i32>(j & 1, j >> 1u), vec2<i32>(0), size - 1);
+        if (textureLoad(depth, q, 0).x >= 1.0) {
+            let c = textureLoad(src, q, 0).rgb;
+            bright += c * max(luma(c) - u.tint.a, 0.0) / max(1.0 - u.tint.a, 1e-3);
+            sky += 1.0;
+        }
+    }
+    if (sky == 0.0) { return vec4<f32>(0.0); }
     let d = (i.uv - u.sun.xy) * vec2<f32>(full.x / full.y, 1.0);
     let near = 1.0 - smoothstep(0.0, 0.4, length(d));
     let core = 1.0 - smoothstep(0.0, 0.18, length(d));
     // The sky's own brightness, and the sun's glow itself: the dome has no sun disc (the sun is an effect sprite, and
     // may be hidden or not yet drawn), so the open sky around its place shines whatever its colour.
-    return vec4<f32>(c * over * near + vec3<f32>(core * core) * 0.35, 1.0);
+    return vec4<f32>((bright * near + vec3<f32>(core * core * 0.35 * sky)) * 0.25, 1.0);
 }
 
 // Half size: the mask marched toward the sun, each step weighted down by the decay.
@@ -60,7 +70,10 @@ fn luma(c: vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.299, 0.587, 0.114)); }
     var sum = vec3<f32>(0.0);
     var total = 0.0;
     for (var k = 0u; k < STEPS; k++) {
-        sum += textureSampleLevel(src, samp, uv, 0.0).rgb * w;
+        // Past the screen's edge there is no mask: those steps count as dark, not as the border texel again.
+        if (all(uv >= vec2<f32>(0.0)) && all(uv <= vec2<f32>(1.0))) {
+            sum += textureSampleLevel(src, samp, uv, 0.0).rgb * w;
+        }
         total += w;
         w *= u.sun.w;
         uv += step;
@@ -303,6 +316,46 @@ mod tests {
         let at = |px: &Vec<[u8; 4]>, x: u32, y: u32| px[(y * n + x) as usize][0];
         assert!(at(&out[0], 16, 16) > at(&out[0], 0, 0) && at(&out[0], 16, 16) > 60, "sky");
         assert!(out[1].iter().all(|p| *p == [60, 60, 60, 255]), "scenery only");
+    }
+
+    /// A one-pixel gap of sky in scenery lets light through whichever column it falls on, odd or even.
+    #[test]
+    fn one_pixel_gaps_shine_on_any_column() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        let n = 32u32;
+        let toward = Vec3::new(0.0, -0.5, 1.0).normalize();
+        let cam = crate::render::Camera { eye: Vec3::ZERO, target: toward * 10.0, up: Vec3::NEG_Y, fov_y: 0.8 };
+        let sun = SunFrame { dir: (-toward).to_array(), color: [1.0; 3], moon: false };
+        let fr = Frame { view_proj: cam.view_proj(1.0), eye: cam.eye, target: cam.target, fog: None, sun: Some(sun) };
+        let mut rays = GodRays::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
+        rays.resize(&gpu, [n, n]);
+        rays.set_strength(2);
+        for gap in [16u32, 17] {
+            let (tex, view) = filled(&gpu, [n, n], |_, _| [40, 40, 40, 255]);
+            let depth_data: Vec<f32> = (0..n * n).map(|i| if i % n == gap { 1.0 } else { 0.5 }).collect();
+            let depth_tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R32Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            gpu.queue.write_texture(
+                depth_tex.as_image_copy(),
+                bytemuck::cast_slice(&depth_data),
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(n * 4), rows_per_image: Some(n) },
+                wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
+            );
+            let depth = depth_tex.create_view(&Default::default());
+            let mut enc = gpu.device.create_command_encoder(&Default::default());
+            rays.draw(&gpu, &mut enc, &view, &depth, &fr);
+            gpu.queue.submit([enc.finish()]);
+            let lit = read(&gpu, &tex).iter().filter(|p| p[0] > 40).count();
+            assert!(lit > 0, "gap at column {gap}");
+        }
     }
 
     /// At a silhouette the mask takes only the sky's own colour: bright scenery beside dim sky gives the same shafts
