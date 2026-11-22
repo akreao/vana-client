@@ -8960,6 +8960,8 @@ pub struct App {
     /// A mod's recording (client.record), and the mods' post-process passes (render.shader).
     recorder: Option<record::Recorder>,
     post_fx: Option<crate::render::postfx::PostFx>,
+    /// The scene effects turned on (render/scenefx.rs); None while all are off.
+    scene_fx: Option<crate::render::scenefx::SceneFx>,
     /// The Lua HUD's portrait targets (client/portrait.rs).
     portraits: portrait::Portraits,
     /// Frames per second, 0 = unlimited (config frame_limit), and the present mode must be picked again.
@@ -9349,6 +9351,7 @@ impl App {
             lobby_mods: Default::default(),
             recorder: None,
             post_fx: None,
+            scene_fx: None,
             portraits: Default::default(),
             frame_limit,
             present_dirty: false,
@@ -9450,6 +9453,10 @@ impl App {
     /// Puts changed settings into effect: window size and mode, frame limit, anisotropy (new samplers), volumes.
     /// The background resolution is read every frame.
     fn apply_settings(&mut self) {
+        // Scene effects all turned off: their targets go now, not at the next world frame (the lobby draws none).
+        if !crate::render::scenefx::Want::from_config(&self.cfg).any() {
+            self.scene_fx = None;
+        }
         self.frame_limit = self.cfg.frame_limit();
         ground::set_move_rate(self.cfg.move_rate);
         self.present_dirty = true;
@@ -19004,6 +19011,7 @@ impl App {
             screen_fx_zone: &mut self.screen_fx_zone,
             effects_gpu: &mut self.effects_gpu,
             post_fx: &mut self.post_fx,
+            scene_fx: &mut self.scene_fx,
             audio: &mut self.audio,
             fx_census: &mut self.fx_census,
         };
@@ -19590,6 +19598,7 @@ struct WorldDraw<'a> {
     screen_fx_zone: &'a mut Option<crate::render::screenfx::ScreenFx>,
     effects_gpu: &'a mut Option<crate::render::effects::EffectsGpu>,
     post_fx: &'a mut Option<crate::render::postfx::PostFx>,
+    scene_fx: &'a mut Option<crate::render::scenefx::SceneFx>,
     audio: &'a mut Option<crate::audio::Audio>,
     fx_census: &'a mut Option<Instant>,
 }
@@ -20039,6 +20048,13 @@ fn cross_capture(cx: &mut WorldDraw, gfx: &Gfx, fg: &FrameGpu, w: &mut World, r:
                     fog_color,
                     fog,
                 );
+            }
+            // The scene effects on it as on the frames around it, so they fade out with the shot.
+            let want = crate::render::scenefx::Want::from_config(cx.cfg);
+            if want.any() {
+                let sfx = cx.scene_fx.get_or_insert_with(|| crate::render::scenefx::SceneFx::new(scene_fmt));
+                sfx.prepare(&gfx.gpu, want, bg);
+                sfx.draw(&gfx.gpu, &mut enc, target);
             }
             gfx.gpu.queue.submit([enc.finish()]);
         }
@@ -21259,6 +21275,17 @@ fn world_overlays(
     let (bg, scene_fmt) = (fg.bg, fg.scene_fmt);
     let (scene_depth, scene_tex, scene_raw) = (fg.scene_depth.clone(), fg.scene_tex.clone(), fg.scene_raw.clone());
     let WorldFrame { camera, .. } = wf;
+    // The scene effects (ours, render/scenefx.rs) over the finished 3D scene, under the shapes, mods' passes and
+    // fades: only those turned on, and nothing made while all are off.
+    let want = crate::render::scenefx::Want::from_config(cx.cfg);
+    if want.any() {
+        let fx = cx.scene_fx.get_or_insert_with(|| crate::render::scenefx::SceneFx::new(scene_fmt));
+        fx.prepare(&gfx.gpu, want, bg);
+        fx.draw(&gfx.gpu, &mut fg.encoder, &scene_raw);
+        fg.mark("scene fx");
+    } else {
+        *cx.scene_fx = None;
+    }
     // The Lua mods' world shapes, then layout mode's overlay over the finished scene.
     r.render_world_shapes(&mut fg.encoder, &scene_raw, &scene_depth);
     r.render_lines(&mut fg.encoder, &scene_raw);

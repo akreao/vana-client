@@ -249,6 +249,8 @@ pub struct Config {
     pub shadow_map: u32,
     /// Ambient occlusion on the scenery (render/ssao.rs). Not a retail option.
     pub ssao: bool,
+    /// Bloom over the 3D scene (render/bloom.rs): 0 off (retail), 1 Subtle, 2 Strong. Not a retail option.
+    pub bloom: u32,
     /// The Game Master window (ours, client/gm.rs): its request (c2s 0x1F0) goes out at a zone-in only while this is
     /// on and only to a private server. No Settings row: only a server with its GM extension can use it, so it is set
     /// in config.json by hand.
@@ -611,6 +613,7 @@ impl Default for Config {
             actor_shadows: 0,
             shadow_map: 2048,
             ssao: false,
+            bloom: 0,
             timers_dock: 0,
             timers_out: true,
             timers_folded: 0,
