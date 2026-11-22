@@ -3706,7 +3706,13 @@ fn world_hud(
         }
         world.sounds.extend(s.sounds.drain(..).map(|x| x as u32));
     }
-    // Mouse on the Lua mods' windows (the modern UI's panels take egui's).
+    // Mouse on the Lua mods' windows (the modern UI's panels take egui's); the wheel over an open dropdown's list.
+    if !world.modern
+        && input.wheel != 0
+        && let Some(p) = input.pointer
+    {
+        lua::wheel_classic(world, p, input.wheel);
+    }
     if !world.modern
         && let Some(p) = input.pointer
         && lua::pointer_classic(
@@ -21681,8 +21687,11 @@ impl ApplicationHandler for App {
                     if at.is_some_and(|p| minimap::wheel(world, p, d)) {
                         return;
                     }
-                    // A focused list takes the wheel (FUN_10125360: 0x16 / 0x17 to the focus window).
-                    if self.game_ui.as_ref().is_some_and(|g| g.wants_wheel()) {
+                    // A focused list takes the wheel (FUN_10125360: 0x16 / 0x17 to the focus window), and so does a mod
+                    // window's open dropdown list under the pointer.
+                    if self.game_ui.as_ref().is_some_and(|g| g.wants_wheel())
+                        || !world.modern && at.is_some_and(|p| lua::wheel_classic(world, p, 0))
+                    {
                         self.list_wheel += d;
                         return;
                     }

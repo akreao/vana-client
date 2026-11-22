@@ -1799,6 +1799,28 @@ impl Window {
         Some((i, [x + 32.0, ey + 30.0, w - 64.0, LINE * items.len().min(DROP_ROWS) as f32]))
     }
 
+    /// Whether `p` is on the open dropdown's list of the classic page at (x, y).
+    pub fn over_drop(&self, x: f32, y: f32, p: (f32, f32)) -> bool {
+        self.drop_box(x, y).is_some_and(|(_, b)| p.0 >= b[0] && p.1 >= b[1] && p.0 < b[0] + b[2] && p.1 < b[1] + b[3])
+    }
+
+    /// The wheel over the open dropdown's list on the classic page at (x, y): its rows scroll `notches` (up positive),
+    /// the highlight kept among them. True when it took the wheel.
+    pub fn drop_wheel(&mut self, x: f32, y: f32, p: (f32, f32), notches: i32) -> bool {
+        if notches == 0 || !self.over_drop(x, y, p) {
+            return false;
+        }
+        let n = match self.drop_open().and_then(|i| self.elems.get(i)) {
+            Some(Elem::Choice { items, .. }) => items.len(),
+            _ => return false,
+        };
+        let shown = self.drop_rows().len();
+        let top = (self.drop_top.get() as i64 - notches as i64).clamp(0, (n - shown) as i64) as usize;
+        self.drop_top.set(top);
+        self.drop_at = self.drop_at.clamp(top, top + shown - 1);
+        true
+    }
+
     /// The open dropdown's items in view (at most DROP_ROWS), moved to keep its highlight among them.
     fn drop_rows(&self) -> std::ops::Range<usize> {
         let n = match self.drop_open().and_then(|i| self.elems.get(i)) {
@@ -2373,6 +2395,27 @@ mod tests {
         assert_eq!((w.drop_at, w.drop_rows()), (5, 5..17));
         w.key(K::ArrowDown);
         assert_eq!(w.drop_rows(), 5..17, "a move inside the view keeps it");
+    }
+
+    /// The wheel over a long dropdown's open list scrolls it, the highlight kept in view; elsewhere it does nothing.
+    #[test]
+    fn long_dropdown_wheel() {
+        let mut w = Window::new("w");
+        let items: Vec<String> = (0..40).map(|k| format!("Set {k}")).collect();
+        w.elems = vec![Elem::Choice { id: "t".into(), label: "Set".into(), items, at: 0, drop: true }];
+        (w.open, w.focus) = (true, true);
+        w.settle();
+        w.key(K::Enter);
+        assert_eq!(w.drop_rows(), 0..12);
+        let b = w.drop_box(0.0, 0.0).unwrap().1;
+        let on = (b[0] + 4.0, b[1] + 4.0);
+        assert!(!w.drop_wheel(0.0, 0.0, (b[0] - 10.0, b[1]), -3), "off the list");
+        assert!(w.drop_wheel(0.0, 0.0, on, -3));
+        assert_eq!((w.drop_rows(), w.drop_at), (3..15, 3));
+        assert!(w.drop_wheel(0.0, 0.0, on, -100));
+        assert_eq!((w.drop_rows(), w.drop_at), (28..40, 28), "stops at the end");
+        assert!(w.drop_wheel(0.0, 0.0, on, 5));
+        assert_eq!((w.drop_rows(), w.drop_at), (23..35, 28), "a highlight still in view stays");
     }
 
     /// `moved`: yes the first time and on a change, no while the place stays (in the clones the modern UI draws too);
