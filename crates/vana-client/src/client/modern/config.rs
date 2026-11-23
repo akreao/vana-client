@@ -137,6 +137,8 @@ const PAGES: [(&str, &str, &[Item]); 14] = [
             Ours("Anisotropic Filtering"),
             Head("Edges & Stability"),
             Ours("Anti-aliasing"),
+            Ours("Upscaling"),
+            Ours("Upscaling Sharpness"),
             Ours("Graphics Stabilization"),
         ],
     ),

@@ -9,6 +9,7 @@ pub mod dancer;
 pub mod dof;
 pub mod effects;
 pub mod fog;
+pub mod fsr1;
 pub mod godrays;
 pub mod gputime;
 pub mod invwin;
@@ -5059,9 +5060,30 @@ pub fn render_pngs_post(
             | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
-    let view = target.create_view(&Default::default());
-    let depth = depth_view(&gpu.device, width, height);
+    let out_view = target.create_view(&Default::default());
     let row = (width * 4).div_ceil(256) * 256;
+    // FFXI_FSR1=1..4 / FFXI_CATROM=1..4 (ours): the scene drawn at that quality's render size (render/fsr1.rs) and
+    // scaled to the frame by FSR 1 (RCAS at FFXI_FSR1_SHARP percent, default 50) or by the plain Catmull-Rom
+    // scaling pass, as the client does; the frames compare the two with a native one.
+    let env_q = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u32>().ok()).filter(|q| (1..=4).contains(q));
+    let up = env_q("FFXI_FSR1").map(|q| (q, true)).or_else(|| env_q("FFXI_CATROM").map(|q| (q, false)));
+    let sharp = std::env::var("FFXI_FSR1_SHARP").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(50);
+    let mut scale = up.map(|_| scale::SceneScale::new(&gpu, format));
+    let (rw, rh) = up.map_or((width, height), |(q, _)| {
+        let r = fsr1::render_size([width, height], q);
+        (r[0], r[1])
+    });
+    let (view, depth, scene_target) = match scale.as_mut() {
+        Some(s) => s.target(&gpu, [rw, rh]),
+        None => (out_view.clone(), depth_view(&gpu.device, width, height), target.clone()),
+    };
+    let mut scale_up = |encoder: &mut wgpu::CommandEncoder| {
+        if let (Some(s), Some((_, fsr))) = (scale.as_mut(), up) {
+            s.blit(&gpu, encoder, &out_view, [width, height], [1.0; 3], None, false, 0, fsr.then_some(sharp));
+        }
+    };
+    let out_size = [width, height];
+    let (width, height) = (rw, rh);
     // The scene effects their FFXI_ switches turn on (render/scenefx.rs), over the frame after the post step (and in
     // FFXI_BENCH's frames, so their cost is in its times).
     let fx_want = scenefx::Want::from_env();
@@ -5087,7 +5109,7 @@ pub fn render_pngs_post(
                 count: n * 2,
             })
         });
-        let run = |k: u32, timed: bool| -> Result<(f32, Option<f32>)> {
+        let mut run = |k: u32, timed: bool| -> Result<(f32, Option<f32>)> {
             let t = std::time::Instant::now();
             for f in 0..k {
                 let mut encoder = gpu.device.create_command_encoder(&Default::default());
@@ -5100,6 +5122,7 @@ pub fn render_pngs_post(
                     let frame = scenefx::Frame::new(camera, width as f32 / height as f32, lighting.as_ref());
                     fx.draw(&gpu, &mut encoder, &view, &depth, &frame);
                 }
+                scale_up(&mut encoder);
                 if let Some(q) = q {
                     encoder.write_timestamp(q, f * 2 + 1);
                 }
@@ -5153,7 +5176,7 @@ pub fn render_pngs_post(
         renderer.lighting = *lighting;
         let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("readback"),
-            size: (row * height) as u64,
+            size: (row * out_size[1]) as u64,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -5164,18 +5187,20 @@ pub fn render_pngs_post(
             &gpu,
             &mut encoder,
             &view,
-            Some(&target),
+            Some(&scene_target),
             &depth,
             camera,
             width as f32 / height as f32,
             &actor_refs,
         );
         // An error (a GPU short of what the pass needs) stops before the frame is written over an older one.
-        post(&gpu, &mut encoder, (&view, &target), &depth, camera, lighting.as_ref(), &mut renderer)?;
+        post(&gpu, &mut encoder, (&view, &scene_target), &depth, camera, lighting.as_ref(), &mut renderer)?;
         if let Some(fx) = &scene_fx {
             let frame = scenefx::Frame::new(camera, width as f32 / height as f32, lighting.as_ref());
             fx.draw(&gpu, &mut encoder, &view, &depth, &frame);
         }
+        scale_up(&mut encoder);
+        let (width, height) = up.map_or((width, height), |_| (out_size[0], out_size[1]));
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &target,

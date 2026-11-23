@@ -18947,6 +18947,14 @@ impl App {
         } else {
             (bg, aspect)
         };
+        // FSR 1 (config `upscaler`, not retail): the world draws at the quality's render size and the scaling pass
+        // takes it up to the window (render/fsr1.rs); Background is not used then (it would only be upscaled to be
+        // shrunk again). The effects and screen passes size themselves by the scene target.
+        let fsr1 = matches!(self.phase, Phase::World(_)) && !lcd && self.cfg.upscaler == crate::render::fsr1::FSR1;
+        let bg = if fsr1 { crate::render::fsr1::render_size(size, self.cfg.upscale_quality.clamp(1, 4)) } else { bg };
+        if !fsr1 && let Some(s) = self.scene_scale.as_mut() {
+            s.drop_fsr1();
+        }
         // Within the device's texture size (4096 on some GLES parts), the aspect kept.
         let bg = crate::render::scale::fit(bg, gfx.gpu.max_texture_2d);
         if lcd {
@@ -18994,6 +19002,7 @@ impl App {
             bg,
             aspect,
             lcd,
+            fsr1,
             gamma,
             scaled,
             scene_view,
@@ -19209,6 +19218,7 @@ impl App {
                 lcd.then_some((LCD_SHIFT, self.lcd_frame % 2 == 1)),
                 self.cfg.antialias != 0,
                 self.cfg.grading,
+                g.fsr1.then_some(self.cfg.upscale_sharpness),
             );
         }
         (ui_level, scene_level)
@@ -19582,6 +19592,8 @@ struct FrameGpu {
     bg: [u32; 2],
     aspect: f32,
     lcd: bool,
+    /// FSR 1 upscales the world this frame (`bg` is its render size).
+    fsr1: bool,
     gamma: [f32; 3],
     scaled: bool,
     scene_view: wgpu::TextureView,
