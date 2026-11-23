@@ -404,6 +404,8 @@ pub struct ConfigUi {
     pub m_retail: bool,
     pub m_open: bool,
     pub m_row: usize,
+    /// The button the cursor is on in a topic page's row of buttons (our action rows).
+    pub m_col: usize,
     /// The modern page's category (Log, Font Colors).
     pub m_cat: usize,
     /// The modern page's key assignment list (k1assign / k2assign) open over its page, and its row.

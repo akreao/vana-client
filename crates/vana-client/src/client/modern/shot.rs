@@ -632,8 +632,8 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
             row(0, "Lenon", 5, true, 0.98, false, vec![]),
             row(1, "Raven", 1, true, 0.88, false, theirs.clone()),
             row(2, "Koru", 3, true, 0.62, true, vec![]),
-            row(3, "Shantotto", 4, true, 0.95, false, vec![]),
-            row(4, "Prishe", 2, false, 1.0, false, vec![]),
+            row(3, "Wynnefrederique", 4, true, 0.95, false, vec![]),
+            row(4, "Sophronisbanist", 2, false, 1.0, false, vec![]),
         ],
         &[hud::PetRow {
             id: 9,

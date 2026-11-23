@@ -1008,29 +1008,27 @@ fn row(ui: &mut Ui, m: &Modern, r: &super::super::select::RowView, on: bool, foc
     let [_, race, job, level, area] = &r.info;
     let top = rect.min.y + 18.0;
     let strong = FontId::new(m.theme.title * 1.15, FontFamily::Name(super::STRONG.into()));
-    ui.painter().text(pos2(rect.min.x + 24.0, top), Align2::LEFT_CENTER, &r.name, strong, tint(m, r.tint));
-    ui.painter().text(
+    // The job and the race whole; the name and the area fitted beside them.
+    let job_r = ui.painter().text(
         pos2(rect.max.x - 12.0, top),
         Align2::RIGHT_CENTER,
         format!("{job} {level}"),
         FontId::proportional(m.theme.ui),
         m.theme.color("gold"),
     );
+    let (name, strong) = super::kit::fit(ui, &r.name, &strong, job_r.min.x - 10.0 - rect.min.x - 24.0, 0.8);
+    ui.painter().text(pos2(rect.min.x + 24.0, top), Align2::LEFT_CENTER, name, strong, tint(m, r.tint));
     let low = rect.max.y - 15.0;
-    ui.painter().text(
+    let race_r = ui.painter().text(
         pos2(rect.min.x + 24.0, low),
         Align2::LEFT_CENTER,
         race,
         FontId::proportional(m.theme.ui),
         m.theme.color("muted"),
     );
-    ui.painter().text(
-        pos2(rect.max.x - 12.0, low),
-        Align2::RIGHT_CENTER,
-        area,
-        FontId::proportional(m.theme.ui),
-        m.theme.color("muted"),
-    );
+    let (area, font) =
+        super::kit::fit(ui, area, &FontId::proportional(m.theme.ui), rect.max.x - 12.0 - race_r.max.x - 10.0, 0.8);
+    ui.painter().text(pos2(rect.max.x - 12.0, low), Align2::RIGHT_CENTER, area, font, m.theme.color("muted"));
     resp
 }
 

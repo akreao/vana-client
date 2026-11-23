@@ -558,14 +558,15 @@ impl Effects {
     pub fn stop_actor_scheduler(&mut self, actor: u32, name: u32) {
         let who = Who::Actor(actor);
         self.pending.retain(|p| !(p.actor == Some(actor) && p.name == name));
-        for i in 0..self.tasks.len() {
-            let hit = self.tasks[i].as_ref().is_some_and(|t| {
-                t.a1 == who && u32::from_le_bytes(self.reg.libs[t.res.0].tree.nodes[t.res.1].name) == name
-            });
-            if hit {
-                self.tasks[i] = None;
-            }
-        }
+        let libs = &self.reg.libs;
+        let hit: Vec<usize> = (0..self.tasks.len())
+            .filter(|&i| {
+                self.tasks[i]
+                    .as_ref()
+                    .is_some_and(|t| t.a1 == who && u32::from_le_bytes(libs[t.res.0].tree.nodes[t.res.1].name) == name)
+            })
+            .collect();
+        self.kill_slots(hit);
     }
 
     /// The actor's destructor (FUN_100c5c00 -> FUN_10082b10, its caster and target links): every scheduler task and
@@ -607,11 +608,7 @@ impl Effects {
             clear(&mut p.a1);
             clear(&mut p.a2);
         }
-        for t in self.tasks.iter_mut() {
-            if t.as_ref().is_some_and(|t| gone.contains(&t.a1) || gone.contains(&t.a2)) {
-                *t = None;
-            }
-        }
+        self.kill_tasks_where(|t| gone.contains(&t.a1) || gone.contains(&t.a2));
         // Clones: op 0x02's and the model file's, the footstep dust, prints and ripple, an element's sub-clones.
         for i in 0..self.insts.len() {
             let linked = self.insts[i].as_ref().is_some_and(|x| {
@@ -632,11 +629,7 @@ impl Effects {
     /// Nightmare Scythe's `g000`) and every task on its schedulers.
     pub fn release_file(&mut self, file: u32) {
         let Some(l) = self.reg.lib_of(file) else { return };
-        for t in self.tasks.iter_mut() {
-            if t.as_ref().is_some_and(|t| t.res.0 == l) {
-                *t = None;
-            }
-        }
+        self.kill_tasks_where(|t| t.res.0 == l);
         for i in 0..self.insts.len() {
             if self.insts[i].as_ref().is_some_and(|x| x.src.0 == l) {
                 self.kill(i);
@@ -950,6 +943,7 @@ impl Effects {
         );
         let mut t = Task::new(r, ops, a1, a2, action, speed);
         t.ends_loop = crate::dat::sched::loops(self.reg.libs[r.0].data(r.1));
+        t.end_wait = crate::dat::sched::end_wait(self.reg.libs[r.0].data(r.1)) as f32;
         t.parent = parent;
         // A task an op creates belongs to its creator's event.
         t.event = self.spawn_event;
@@ -1032,8 +1026,11 @@ impl Effects {
                 continue;
             }
             // The update after the end op: the countdown is 0 and no op is left, FUN_10057c20 finds no loop, +0x145.
+            // An end op with a wait keeps it there until the countdown runs out.
             if t.ended {
-                (t.dying, t.walked) = (true, self.walk_serial);
+                t.walked = self.walk_serial;
+                t.countdown -= if t.vana { self.vana_dt } else { f.dt };
+                t.dying = t.countdown <= 0.0;
                 self.tasks[i] = Some(t);
                 i += 1;
                 continue;
@@ -1247,6 +1244,8 @@ impl Effects {
                 if t.stop_at.is_some() {
                     t.done = true;
                 } else {
+                    // The end op's wait goes on the countdown first (FUN_10057e10), like any op's.
+                    t.countdown += t.end_wait * t.speed;
                     t.ended = true;
                 }
                 break;
@@ -1359,8 +1358,8 @@ impl Effects {
                 );
                 if spawn {
                     let mut c = Task::new(t.res, t.ops.clone(), t.a1, t.a2, t.action.clone(), t.speed);
-                    (c.ip, c.countdown, c.parent, c.motions, c.num, c.ends_loop) =
-                        (t.ip + 1, op.wait as f32 * t.speed, t.parent, t.motions, t.num, t.ends_loop);
+                    (c.ip, c.countdown, c.parent, c.motions, c.num, c.ends_loop, c.end_wait) =
+                        (t.ip + 1, op.wait as f32 * t.speed, t.parent, t.motions, t.num, t.ends_loop, t.end_wait);
                     log::debug!(
                         "effects: {} window opens",
                         String::from_utf8_lossy(&self.reg.libs[t.res.0].tree.nodes[t.res.1].name)
@@ -1394,7 +1393,16 @@ impl Effects {
                 } else {
                     None
                 };
-                self.drives.push(drive::Drive::new(id, t.uid, segs, &op.raw, t.speed, self.seq_over, key));
+                self.drives.push(drive::Drive::new(
+                    id,
+                    t.uid,
+                    segs,
+                    &op.raw,
+                    t.speed,
+                    self.seq_over,
+                    key,
+                    self.walk_ticks,
+                ));
                 Flow::Next
             }
             // Case 0xa9 / 0xaa (FUN_1005fa20): a rotation drive on actor1 / actor2 from its drawn rotation, a child of
@@ -2812,11 +2820,7 @@ impl Effects {
     pub fn kill_sequence(&mut self, actor: u32) {
         let who = Who::Actor(actor);
         self.pending.retain(|p| !(p.seq.is_some() && p.a1 == who));
-        for t in self.tasks.iter_mut() {
-            if t.as_ref().is_some_and(|t| t.seq && t.a1 == who) {
-                *t = None;
-            }
-        }
+        self.kill_tasks_where(|t| t.seq && t.a1 == who);
     }
 
     /// The frame's path and rotation drives, after the schedulers (MODLOG "Ship actors"): one whose scheduler ended
@@ -3040,9 +3044,21 @@ impl Effects {
 
     /// FUN_10055f00 / FUN_10055f40: tasks running scheduler `r` (on one actor pair when given) end now.
     pub(super) fn kill_tasks(&mut self, r: Ref, pair: Option<(Who, Who)>) {
-        for t in self.tasks.iter_mut() {
-            if t.as_ref().is_some_and(|t| t.res == r && pair.is_none_or(|(a, b)| t.a1 == a && t.a2 == b)) {
-                *t = None;
+        self.kill_tasks_where(|t| t.res == r && pair.is_none_or(|(a, b)| t.a1 == a && t.a2 == b));
+    }
+
+    /// Deletes the tasks `hit` picks through their destructor, as retail's kills do: each wakes a parent waiting on
+    /// it (FUN_100574a0 -> FUN_10074a50) and ends its action, as a task that ran to its end does (settle).
+    fn kill_tasks_where(&mut self, hit: impl Fn(&Task) -> bool) {
+        let slots: Vec<usize> = (0..self.tasks.len()).filter(|&i| self.tasks[i].as_ref().is_some_and(&hit)).collect();
+        self.kill_slots(slots);
+    }
+
+    fn kill_slots(&mut self, slots: Vec<usize>) {
+        for i in slots {
+            if let Some(mut t) = self.tasks[i].take() {
+                t.done = true;
+                self.settle(t, i);
             }
         }
     }
@@ -3541,11 +3557,7 @@ impl Effects {
             let libs: Vec<usize> =
                 (0..self.reg.libs.len()).filter(|&l| drop.contains(&self.reg.libs[l].file_id)).collect();
             let who = Who::Actor(id);
-            for t in self.tasks.iter_mut() {
-                if t.as_ref().is_some_and(|t| libs.contains(&t.res.0) && (t.a1 == who || t.a2 == who)) {
-                    *t = None;
-                }
-            }
+            self.kill_tasks_where(|t| libs.contains(&t.res.0) && (t.a1 == who || t.a2 == who));
             for i in 0..self.insts.len() {
                 if self.insts[i].as_ref().is_some_and(|x| {
                     x.owner == Owner::Actor(id) || (libs.contains(&x.src.0) && x.actors.contains(&who))
@@ -3812,6 +3824,24 @@ mod tests {
         fn models(&self) -> Vec<(u32, Vec<u32>)> {
             Vec::new()
         }
+    }
+
+    /// A killed task goes through its destructor as an ended one does: a parent waiting on it runs on (FUN_100574a0
+    /// -> FUN_10074a50).
+    #[test]
+    fn killed_child_lets_its_parent_go() {
+        let mut fx = Effects::new();
+        let task = |fx: &mut Effects, who: Who| {
+            fx.tasks.push(Some(Task::new((0, 0), Rc::new(Vec::new()), who, Who::None, None, 1.0)));
+            fx.tasks.len() - 1
+        };
+        let parent = task(&mut fx, Who::Actor(HUME));
+        let child = task(&mut fx, Who::Actor(ORC));
+        fx.tasks[parent].as_mut().unwrap().waiting = true;
+        fx.tasks[child].as_mut().unwrap().parent = Some(parent);
+        fx.forget_actor(ORC);
+        assert!(fx.tasks[child].is_none());
+        assert!(!fx.tasks[parent].as_ref().unwrap().waiting);
     }
 
     /// Op 0x7a (86913's layout): the orc stands at the Hume's point + (2, 0, 0), facing back, for dur ticks.

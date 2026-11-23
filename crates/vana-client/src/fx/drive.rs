@@ -52,6 +52,10 @@ pub struct Drive {
     key: Option<KeyFrame>,
     started: bool,
     turned: bool,
+    /// The walk's ticks in the retail frame that made it (a relative drive's first step, below), and the time left
+    /// where that first step ends (set on the first step).
+    first: f32,
+    base: Option<f32>,
     /// The last point applied (relative moves), and the facing's sample and ticks since it.
     last: Vec3,
     sample: Vec3,
@@ -61,6 +65,8 @@ pub struct Drive {
 impl Drive {
     /// The op's fields: i16 @6 duration (x speed, cut to whole ticks: __ftol at 0x1005cad3), u32 @0x10 flags, u32
     /// @0x14 curve, f32 @0x18 yaw0; `over` is the fast-forward's overshoot (DAT_1047bf14), taken off the time left.
+    /// `first`: the retail frame's ticks of the walk that made it.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         actor: u32,
         owner: u64,
@@ -69,6 +75,7 @@ impl Drive {
         speed: f32,
         over: f32,
         key: Option<KeyFrame>,
+        first: f32,
     ) -> Self {
         let u32_at = |o: usize| raw.get(o..o + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
         let dur = raw.get(6..8).map_or(0, |b| i16::from_le_bytes([b[0], b[1]]));
@@ -88,6 +95,8 @@ impl Drive {
             key,
             started: false,
             turned: false,
+            first: first.max(0.0),
+            base: None,
             last: Vec3::ZERO,
             sample: Vec3::ZERO,
             since: 0.0,
@@ -96,6 +105,18 @@ impl Drive {
 
     fn at(&self, u: f32) -> Vec3 {
         spline::eval(&self.segs, u)
+    }
+
+    /// The path's point with `left` ticks to go: u by the time, its direction, then the curve.
+    fn point(&self, left: f32) -> Vec3 {
+        let u = if self.total > 0.0 { left / self.total } else { 0.0 };
+        let u = if self.fwd { 1.0 - u } else { u };
+        let f = match (&self.key, self.curve) {
+            (_, c) if c < 5 => ease(u, c),
+            (Some(k), _) => k.linear(u),
+            _ => u,
+        };
+        self.at(f)
     }
 
     /// One frame of `dt` ticks, the actor at `pos` turned `rot` now: what it sets, and whether it goes on. The end
@@ -107,17 +128,18 @@ impl Drive {
     /// stays, since it is written to the drawn rotation itself (+0x744 / +0x44). The frame it is made in counts: the task list puts
     /// a new task straight after the running one and walks it next (FUN_100750b0 sets the walk's next, +0xd5c), and
     /// FUN_1005e9c0 takes the frame's ticks off before anything else.
+    ///
+    /// A relative drive's first update moves nothing and keeps the point it reached as the one later moves start
+    /// from, so the first retail frame's stretch of the path never shows. That frame is the walk's ticks (`first`),
+    /// whatever our own frames are: until the time passes it the actor stays, and the moves start from its point.
     pub fn step(&mut self, dt: f32, pos: Vec3, rot: Vec3) -> (ActorPose, bool) {
+        if self.base.is_none() {
+            let base = (self.left - self.first).max(0.0);
+            (self.base, self.last) = (Some(base), self.point(base));
+        }
         self.left -= dt;
         if self.left >= 0.0 {
-            let u = if self.total > 0.0 { self.left / self.total } else { 0.0 };
-            let u = if self.fwd { 1.0 - u } else { u };
-            let f = match (&self.key, self.curve) {
-                (_, c) if c < 5 => ease(u, c),
-                (Some(k), _) => k.linear(u),
-                _ => u,
-            };
-            let pose = self.apply(self.at(f), dt, pos, rot);
+            let pose = self.apply(self.point(self.left), dt, pos, rot);
             self.started = true;
             (pose, true)
         } else if self.started {
@@ -132,10 +154,10 @@ impl Drive {
         let mut out = ActorPose::default();
         if self.abs {
             out.pos = Some(p);
-        } else if self.started {
+        } else if self.base.is_some_and(|b| self.left <= b) {
             out.pos = Some(pos + (p - self.last));
+            self.last = p;
         }
-        self.last = p;
         if self.face == 0 {
             return out;
         }
@@ -290,7 +312,7 @@ mod tests {
             let mut raw = [0u8; 0x1c];
             raw[6..8].copy_from_slice(&10i16.to_le_bytes());
             raw[0x10..0x14].copy_from_slice(&flags.to_le_bytes());
-            let mut d = Drive::new(1, 1, spline::build(&pts).unwrap(), &raw, 1.0, 0.0, None);
+            let mut d = Drive::new(1, 1, spline::build(&pts).unwrap(), &raw, 1.0, 0.0, None, 2.0);
             let mut last = ActorPose::default();
             for _ in 0..5 {
                 let (p, on) = d.step(2.0, Vec3::ZERO, Vec3::ZERO);
@@ -300,6 +322,28 @@ mod tests {
             assert!(last.pos.unwrap().distance(end) < 1e-4, "flags {flags}: {:?}", last.pos);
             assert_eq!(d.step(2.0, Vec3::ZERO, Vec3::ZERO), (ActorPose::default(), false), "flags {flags}");
         }
+    }
+
+    /// A relative drive (flags bit 0 clear) ends at the same place at 30 fps and at 240 (quarter ticks, exact in f32): the first retail frame's
+    /// stretch (the walk's 2 ticks) is skipped either way, not just our first frame's.
+    #[test]
+    fn relative_first_frame_is_the_walks() {
+        let pts = [Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0), Vec3::new(20.0, 0.0, 5.0)];
+        let run = |dt: f32| {
+            let mut raw = [0u8; 0x1c];
+            raw[6..8].copy_from_slice(&40i16.to_le_bytes());
+            raw[0x10..0x14].copy_from_slice(&8u32.to_le_bytes());
+            let mut d = Drive::new(1, 1, spline::build(&pts).unwrap(), &raw, 1.0, 0.0, None, 2.0);
+            let mut pos = Vec3::new(100.0, 0.0, 0.0);
+            while let (p, true) = d.step(dt, pos, Vec3::ZERO) {
+                pos = p.pos.unwrap_or(pos);
+            }
+            pos
+        };
+        let (thirty, fast) = (run(2.0), run(0.25));
+        assert!(thirty.distance(fast) < 1e-3, "30 fps {thirty}, 300 fps {fast}");
+        // Retail moves it the path's end less its first 2 ticks.
+        assert!(thirty.x > 100.0 && thirty.distance(Vec3::new(100.0, 0.0, 0.0) + pts[2]) > 0.1, "{thirty}");
     }
 
     /// The curves at f(0.25) for modes 0..4 (MODLOG "Ship actors"); the ends.

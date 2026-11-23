@@ -24,7 +24,8 @@ pub struct Entry {
     /// Its folder in the mods folder (a Lua mod's id).
     pub id: String,
     pub name: String,
-    /// "lua" (a Lua mod) or "pack" (game files).
+    /// "lua" (a Lua mod), "pack" (game files) or "materials" (the material pack, material.rs; listed with the DAT packs,
+    /// installed as `<data>/materials`; older clients leave it out).
     #[serde(default = "lua")]
     pub kind: String,
     pub version: String,
@@ -111,8 +112,11 @@ fn check(e: &Entry, any_host: bool) -> Result<()> {
     if e.id.is_empty() || !e.id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
         bail!("id: letters, digits, _ and - only");
     }
-    if e.kind != "lua" && e.kind != "pack" {
-        bail!("kind is \"lua\" or \"pack\" ({:?} given)", e.kind);
+    if !matches!(e.kind.as_str(), "lua" | "pack" | "materials") {
+        bail!("kind is \"lua\", \"pack\" or \"materials\" ({:?} given)", e.kind);
+    }
+    if e.kind == "materials" && e.id != MATERIALS {
+        bail!("the material pack's id is {MATERIALS:?}");
     }
     if e.files.is_empty() {
         bail!("no files");
@@ -155,7 +159,7 @@ pub fn parse(text: &str, any_host: bool) -> Result<Vec<Entry>> {
 /// A list: fetched, else the copy kept from the last fetch; only its kind's entries (packs or Lua mods).
 /// VANA_DAT_CATALOGUE / VANA_MOD_CATALOGUE: another list (a URL or a file).
 pub fn fetch(list: List) -> Result<Vec<Entry>> {
-    let want = |e: &Entry| (e.kind == "pack") == (list == List::Dats);
+    let want = |e: &Entry| (e.kind != "lua") == (list == List::Dats);
     fetch_all(list).map(|v| v.into_iter().filter(want).collect())
 }
 
@@ -182,6 +186,14 @@ fn fetch_all(list: List) -> Result<Vec<Entry>> {
         }
         Err(e) => Err(e),
     }
+}
+
+/// The material pack's id: its folder in the data folder (material::dir).
+pub const MATERIALS: &str = "materials";
+
+/// Where an entry installs: the data folder for the material pack, else the mods folder.
+pub fn root_of(e: &Entry) -> std::path::PathBuf {
+    if e.kind == "materials" { crate::config::data_dir() } else { crate::config::mods_dir() }
 }
 
 /// The version installed in `root/id`: the catalogue's mark, else its mod.toml's; "" for a folder with neither.
@@ -284,7 +296,11 @@ pub fn install(e: &Entry, root: &Path, progress: &AtomicU32) -> Result<String> {
                 let _ = std::fs::remove_file(&file);
                 bail!("{} is not the file the catalogue names (its SHA-256 differs); not installed", f.url);
             }
-            let pack = modpack::pack_named(&file, Some(&e.id))?;
+            let pack = if e.kind == "materials" {
+                modpack::materials_pack(&file)?
+            } else {
+                modpack::pack_named(&file, Some(&e.id))?
+            };
             match (&pack.lua, e.kind == "lua") {
                 (Some(_), true) if pack.slug != e.id => bail!("{} holds mod {}, not {}", f.url, pack.slug, e.id),
                 (Some(_), false) => bail!("{} holds a Lua mod, not game files", f.url),
@@ -321,6 +337,18 @@ mod tests {
         {"id": "nohash", "name": "No hash", "version": "1.0.0", "files": [{"url": "https://github.com/a/b/x.zip", "sha256": "abc"}]}
     ]}"#;
 
+    /// The material pack is kept only under its id, with the DAT packs.
+    #[test]
+    fn material_pack_entry() {
+        let list = r#"{"format": 1, "mods": [
+            {"id": "materials", "name": "M", "kind": "materials", "version": "1", "files": [{"url": "https://github.com/a/b/m.7z", "sha256": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"}]},
+            {"id": "other", "name": "O", "kind": "materials", "version": "1", "files": [{"url": "https://github.com/a/b/o.7z", "sha256": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"}]}
+        ]}"#;
+        let got = parse(list, false).unwrap();
+        assert_eq!(got.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["materials"]);
+        assert_eq!(root_of(&got[0]), crate::config::data_dir());
+    }
+
     /// Only GitHub archives with a full SHA-256 and a clean id are kept; a test list may name any host.
     #[test]
     fn entries_checked() {
@@ -330,7 +358,8 @@ mod tests {
         assert!(parse(r#"{"format": 2, "mods": []}"#, false).is_err());
     }
 
-    /// The repository's lists read whole under the GitHub-only rule: DAT packs in dats.json, Lua mods in mods.json.
+    /// The repository's lists read whole under the GitHub-only rule: DAT packs (and the material pack) in dats.json,
+    /// Lua mods in mods.json.
     #[test]
     fn committed_list() {
         for (text, pack) in [
@@ -340,7 +369,7 @@ mod tests {
             let n = serde_json::from_str::<serde_json::Value>(text).unwrap()["mods"].as_array().unwrap().len();
             let got = parse(text, false).unwrap();
             assert_eq!(got.len(), n);
-            assert!(got.iter().all(|e| (e.kind == "pack") == pack));
+            assert!(got.iter().all(|e| (e.kind != "lua") == pack));
         }
     }
 

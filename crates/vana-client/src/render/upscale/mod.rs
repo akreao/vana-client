@@ -27,51 +27,56 @@ pub fn set_neural_status(s: Result<(), String>) {
     }
 }
 
+/// Whether the device was made on the Vulkan backend (neural rendering needs it). Set when the device is made.
+static VULKAN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_vulkan(on: bool) {
+    VULKAN.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn vulkan() -> bool {
+    VULKAN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The release the engine has to come from: this client's (`vana_nr_version`).
+pub const ENGINE_VERSION: &str = concat!("vana-client/", env!("CARGO_PKG_VERSION"));
+
+/// An engine of another release (it says which through vana_nr_version) that the client fetched: replaced, not used.
+/// A player's build (no vana_nr_version) or one named by VANA_UPSCALE_ENGINE is never judged.
+pub fn engine_outdated() -> bool {
+    std::env::var_os("VANA_UPSCALE_ENGINE").is_none() && external::tools::version().is_some_and(|v| v != ENGINE_VERSION)
+}
+
 pub fn neural_status() -> Result<(), String> {
     NEURAL.lock().ok().and_then(|n| n.clone()).unwrap_or_else(|| Err("no device yet".into()))
 }
 
-/// Whether this device runs FSR 3.1 (`supported`) and the external engine's upscaler (that, plus Vulkan and an engine
-/// library with vana_upscale_dispatch); Err says why not. Set when the device is made, so Settings can leave out what
-/// can't run.
-#[derive(Clone)]
-pub struct Availability {
-    pub fsr3: Result<(), String>,
-    pub external: Result<(), String>,
-    /// DLSS: an NVIDIA GPU on Vulkan with the runtime, NGX started (dlss::status).
-    pub dlss: Result<(), String>,
-}
+/// Whether FSR and External can run here (else why not), worked out once when the device is made.
+type Status = (Result<(), String>, Result<(), String>);
+static STATUS: std::sync::Mutex<Option<Status>> = std::sync::Mutex::new(None);
 
-static AVAILABLE: std::sync::Mutex<Option<Availability>> = std::sync::Mutex::new(None);
-
-pub fn set_availability(gpu: &Gpu) {
-    let fsr3 = supported(gpu);
-    let external = fsr3.clone().and_then(|()| {
-        if gpu.adapter.get_info().backend != wgpu::Backend::Vulkan {
-            return Err("the engine needs the Vulkan backend".to_string());
-        }
-        match external::probe()? {
-            (true, _) => Ok(()),
-            _ => Err("the engine has no vana_upscale_dispatch".to_string()),
-        }
+/// `fsr`: `supported`'s answer; External also needs an engine with vana_upscale_dispatch.
+pub fn set_status(fsr: Result<(), String>) {
+    let ext = fsr.clone().and_then(|()| match external::probe() {
+        Ok((true, _)) => Ok(()),
+        Ok(_) => Err("the engine has no vana_upscale_dispatch".into()),
+        Err(e) => Err(e),
     });
-    if let Err(e) = &fsr3 {
-        log::info!("FSR 3.1 unavailable, FSR 1 instead: {e}");
-    }
-    if let Ok(mut a) = AVAILABLE.lock() {
-        *a = Some(Availability { dlss: Err("read live".into()), fsr3, external });
+    if let Ok(mut n) = STATUS.lock() {
+        *n = Some((fsr, ext.map_err(|e| format!("External: {e}"))));
     }
 }
 
-pub fn availability() -> Availability {
-    let mut a = AVAILABLE.lock().ok().and_then(|a| a.clone()).unwrap_or_else(|| Availability {
-        fsr3: Err("no device yet".into()),
-        external: Err("no device yet".into()),
-        dlss: Err("no device yet".into()),
-    });
-    // DLSS's live: NGX may refuse the GPU only once the runtime is downloaded, after the device was made.
-    a.dlss = a.fsr3.clone().and_then(|()| dlss::status());
-    a
+/// Whether config `upscaler` `kind` (1 FSR, 2 External, 4 DLSS) can run here; else why not, for Settings. DLSS's is
+/// read live: NGX may refuse the GPU only once the runtime is in, after the device was made.
+pub fn status(kind: u32) -> Result<(), String> {
+    let s = STATUS.lock().ok().and_then(|n| n.clone());
+    let Some((fsr, ext)) = s else { return Err("no device yet".into()) };
+    match kind {
+        2 => ext,
+        dlss::DLSS => fsr.and_then(|()| dlss::status()),
+        _ => fsr,
+    }
 }
 
 /// Whether config `upscaler` `kind` is a temporal upscaler (jittered, run by `Upscale`): FSR 3.1, the external engine,

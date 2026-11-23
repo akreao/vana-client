@@ -22,6 +22,7 @@ pub mod occlusion;
 pub mod points;
 pub mod portrait;
 pub mod postfx;
+pub mod rain;
 pub mod scale;
 pub mod scenefx;
 pub mod screenfx;
@@ -34,6 +35,7 @@ pub mod sway;
 pub mod ui;
 pub mod upload;
 pub mod upscale;
+pub mod worldshadow;
 
 use crate::dat::zone::ZoneScene;
 use anyhow::{Context, Result};
@@ -68,6 +70,8 @@ pub struct PipeCache {
     zone: std::sync::Mutex<HashMap<wgpu::TextureFormat, ZonePipes>>,
     /// The sun shadow's feet target format here (sunshadow::feet_format; None: no character shadows).
     feet: Option<wgpu::TextureFormat>,
+    /// The material maps of a texture without any: a flat normal, roughness 1, metal 0.
+    flat_material: std::sync::OnceLock<(wgpu::TextureView, wgpu::TextureView)>,
 }
 
 impl PipeCache {
@@ -140,7 +144,7 @@ const NEEDED: wgpu::Limits = wgpu::Limits {
 fn wanted_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
     wgpu::Limits {
         max_storage_buffers_per_shader_stage: adapter.max_storage_buffers_per_shader_stage.min(16),
-        // FSR 3.1's shading change pyramid binds 6 storage textures (default 4); not in NEEDED, as FSR 1 needs none.
+        // FSR's shading change pyramid binds 6 storage textures (default 4).
         max_storage_textures_per_shader_stage: adapter.max_storage_textures_per_shader_stage.min(16),
         ..Default::default()
     }
@@ -289,6 +293,7 @@ impl Gpu {
             required_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
             std::sync::atomic::Ordering::Relaxed,
         );
+        crate::material::set_gpu_support(required_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC));
         set_uncompressed(uncompressed());
         let required_limits = wanted_limits(&adapter_limits(&adapter));
         log::info!("device limits {required_limits:?}");
@@ -322,6 +327,7 @@ impl Gpu {
             cloth: Default::default(),
             zone: Default::default(),
             feet: sunshadow::feet_format(&adapter),
+            flat_material: Default::default(),
         });
         if pipes.feet.is_none() {
             log::warn!(
@@ -339,7 +345,7 @@ impl Gpu {
             pipes,
             max_texture_2d,
         };
-        upscale::set_availability(&gpu);
+        upscale::set_status(upscale::supported(&gpu));
         Ok(gpu)
     }
 
@@ -433,10 +439,12 @@ pub struct Uniforms {
     /// Config 0017 off (FUN_10181b50): the sun and the moon as two lights, (direction, colour) each.
     two: [[f32; 4]; 4],
     /// x: 1 with bump mapping on (one eased light, vertex fog), 0 off (two lights, table fog); y: Light Shading
-    /// Smooth; z: the texture LOD bias (an upscaler's, ours).
+    /// Smooth; z: 1 with Material Maps, w their strength.
     modes: [f32; 4],
     /// Windowed mode's light boost (light_boost): rgb factors, w = 1 on.
     boost: [f32; 4],
+    /// x: the textures' LOD bias (lod_bias).
+    lod: [f32; 4],
 }
 
 /// Windowed mode's light boost (FUN_1000be50, the SetLight wrapper FUN_1000bf30's helper; only while config 0034 !=
@@ -624,9 +632,11 @@ pub struct ZoneRenderer {
     /// Settings' Light Shading (ours): false Retail (the scenery's point lights per vertex, hard cut at the range),
     /// true Smooth (per pixel, soft edge; not retail).
     pub smooth_lights: bool,
-    /// The texture LOD bias (zone.wgsl `u.modes.z`): negative while the world draws below the window's size for an
-    /// upscaler (ours), 0 otherwise.
-    pub lod_bias: f32,
+    /// Settings' Material Maps (ours, material.rs): textures' normal / roughness / metal maps light the scenery and
+    /// actors.
+    pub material_maps: bool,
+    /// Their strength: the normal maps' tilt and the relief they put on the baked light (1 = as generated).
+    pub material_strength: f32,
     /// Windowed mode's light boost (light_boost; zero = off).
     pub light_boost: [f32; 4],
     /// The zone's scenery culled on the GPU (render/cull.rs) when the device draws indirectly, and its passes.
@@ -673,6 +683,19 @@ pub struct ZoneRenderer {
     sun_depth: Option<[wgpu::RenderPipeline; 2]>,
     lamp_depth_pipeline: wgpu::RenderPipeline,
     sun_shadow: Option<sunshadow::SunShadow>,
+    /// World sun shadows (render/worldshadow.rs; prepare_world_shadow): their depth pipelines, their maps and cache,
+    /// the bindings in their place while they are off, and the globals with those (the depth pass's: its map can't
+    /// be bound while drawn into; `globals` is these too while they are off).
+    world_depth: [wgpu::RenderPipeline; 2],
+    world_shadow: Option<worldshadow::WorldShadow>,
+    world_off: worldshadow::Off,
+    globals_plain: wgpu::BindGroup,
+    /// The scenery's culling data and instances as built, from which the world shadows' own CPU culling is made at
+    /// their first use (shadow_cull; dropped with them).
+    shadow_src: Option<Box<(cull::CullData, Vec<u8>)>>,
+    shadow_cull: std::sync::OnceLock<Option<cull::CpuCull>>,
+    /// The camera list's mask in force (set_camera_list), for the world shadows' culling made after it.
+    list_mask: Option<(Vec<bool>, Vec<bool>, f32)>,
     /// Ambient occlusion on the scenery (render/ssao.rs; prepare_ssao).
     ssao: Option<ssao::Ssao>,
     /// Lamp shadows (render/lampshadow.rs): the maps (always made) and this frame's lamps (light slot, matrix,
@@ -803,6 +826,9 @@ struct SubGeometry {
     cull: Option<cull::Cull>,
     /// Culled on the CPU where the GPU's can't run (render/cull.rs CpuCull).
     cpu_cull: Option<cull::CpuCull>,
+    /// The world shadows' culling, as the zone's (ZoneRenderer::shadow_src).
+    shadow_src: Option<Box<(cull::CullData, Vec<u8>)>>,
+    shadow_cull: std::sync::OnceLock<Option<cull::CpuCull>>,
     draws: Vec<Draw>,
     tex_base: usize,
     link: u32,
@@ -871,6 +897,18 @@ pub static MIPMAPS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 static UNCOMPRESSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Whether the device samples BC textures.
 static BC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The textures' LOD bias while the world draws below the window's size for an upscaler (AMD's FSR 3.1 notes:
+/// log2(render / display) - 1), else 0; set each frame, read by the scenery, actor and effect shaders.
+static LOD_BIAS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn set_lod_bias(b: f32) {
+    LOD_BIAS.store(b.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn lod_bias() -> f32 {
+    f32::from_bits(LOD_BIAS.load(std::sync::atomic::Ordering::Relaxed))
+}
 
 /// Config-tool 0018 = 2; with the device's BC support, whether loaders decode DXT to RGBA up front.
 pub fn set_uncompressed(on: bool) {
@@ -990,14 +1028,99 @@ fn view_bind_group(
     sampler: &wgpu::Sampler,
     view: &wgpu::TextureView,
 ) -> wgpu::BindGroup {
+    material_bind_group(gpu, layout, sampler, view, None)
+}
+
+fn material_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+/// A texture's group with its material maps (material.rs; uploaded once per map, by its TexUp when streamed), or the
+/// flat ones (no maps, or a GPU without BC).
+fn material_bind_group(
+    gpu: &Gpu,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    view: &wgpu::TextureView,
+    material: Option<&crate::material::Material>,
+) -> wgpu::BindGroup {
+    let own = material
+        .filter(|_| crate::material::gpu_supported())
+        .map(|m| m.gpu.get_or_init(|| upload_material(gpu, m)).clone());
+    let (normal, rm) = match &own {
+        Some((n, r)) => (n, r),
+        None => {
+            let f = flat_material(gpu);
+            (&f.0, &f.1)
+        }
+    };
     gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout,
         entries: &[
             wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
             wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
+            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(normal) },
+            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(rm) },
         ],
     })
+}
+
+fn flat_material(gpu: &Gpu) -> &(wgpu::TextureView, wgpu::TextureView) {
+    gpu.pipes.flat_material.get_or_init(|| {
+        let one = |rg: [u8; 2]| {
+            let t = gpu.device.create_texture_with_data(
+                &gpu.queue,
+                &wgpu::TextureDescriptor {
+                    label: Some("flat material"),
+                    size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rg8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                },
+                wgpu::util::TextureDataOrder::LayerMajor,
+                &rg,
+            );
+            t.create_view(&Default::default())
+        };
+        (one([128, 128]), one([255, 0]))
+    })
+}
+
+/// The two BC5 chains as they are stored.
+fn upload_material(gpu: &Gpu, m: &crate::material::Material) -> (wgpu::TextureView, wgpu::TextureView) {
+    let one = |data: &[u8]| {
+        let t = gpu.device.create_texture_with_data(
+            &gpu.queue,
+            &wgpu::TextureDescriptor {
+                label: Some("material"),
+                size: wgpu::Extent3d { width: m.width, height: m.height, depth_or_array_layers: 1 },
+                mip_level_count: m.levels,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Bc5RgUnorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            data,
+        );
+        TEXTURE_BYTES.fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        t.create_view(&Default::default())
+    };
+    (one(&m.normal), one(&m.rough_metal))
 }
 
 /// Which shadow depth pass draw_actor_depth draws.
@@ -1325,6 +1448,8 @@ pub struct ZonePipes {
     /// their feet heights, in PipeCache::feet; plain and lamp lit; None where no feet format renders) and from a lamp.
     sun_depth: Option<[wgpu::RenderPipeline; 2]>,
     lamp_depth_pipeline: wgpu::RenderPipeline,
+    /// World sun shadows (render/worldshadow.rs): the scenery's depth, opaque and cut out.
+    world_depth: [wgpu::RenderPipeline; 2],
     /// The scenery's frustum culling (render/cull.rs): its group 3 layout, the visibility and compaction passes; None
     /// where it can't run (cull::on_gpu: GLES, or too few storage buffers), which culls on the CPU instead.
     cull: Option<(wgpu::BindGroupLayout, [wgpu::ComputePipeline; 2])>,
@@ -1336,6 +1461,7 @@ impl ZonePipes {
             label: Some("zone"),
             source: wgpu::ShaderSource::Wgsl(include_str!("zone.wgsl").into()),
         });
+        let [ws6, ws7, ws8, ws9] = worldshadow::layout_entries();
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("globals"),
             entries: &[
@@ -1400,6 +1526,11 @@ impl ZonePipes {
                     },
                     count: None,
                 },
+                // World sun shadows (render/worldshadow.rs): their uniform, the two cascades' maps, the comparison.
+                ws6,
+                ws7,
+                ws8,
+                ws9,
             ],
         });
         let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1421,6 +1552,9 @@ impl ZonePipes {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // Material maps (material.rs): the normal map and roughness / metal.
+                material_entry(2),
+                material_entry(3),
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1860,6 +1994,43 @@ impl ZonePipes {
             ]
         });
         let lamp_depth_pipeline = shadow_depth("lamp shadow depth", None, "vs_skinned_silhouette");
+        // World sun shadows (render/worldshadow.rs): the scenery's depth through the cascade's matrix at group 3, both
+        // sides (single-sided walls and roofs still cast), the opaque without a fragment stage and the cut-outs with
+        // their alpha test.
+        let world_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("world shadow depth"),
+            bind_group_layouts: &[Some(&globals_layout), Some(&texture_layout), None, Some(&sil_layout)],
+            immediate_size: 0,
+        });
+        let world_depth = [None, Some("fs_world_cut")].map(|fragment| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("world shadow depth"),
+                layout: Some(&world_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_world_sun"),
+                    compilation_options: Default::default(),
+                    buffers: &vertex_layouts,
+                },
+                primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: Default::default(),
+                    bias: wgpu::DepthBiasState { constant: 4, slope_scale: 2.0, clamp: 0.0 },
+                }),
+                multisample: Default::default(),
+                fragment: fragment.map(|entry| wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(entry),
+                    compilation_options: Default::default(),
+                    targets: &[],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        });
         // The shine overlay (FUN_10024e10's second pass): additive (SRCALPHA / ONE), z tested (as drawn) but not written.
         let shine_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("shine"),
@@ -2235,6 +2406,7 @@ impl ZonePipes {
             faded_clear_pipeline,
             sun_depth,
             lamp_depth_pipeline,
+            world_depth,
             color_format,
             line_pipeline,
             world_pipelines,
@@ -2790,18 +2962,14 @@ impl ZoneRenderer {
             gpu.queue.put(&deltas, 0, bytemuck::cast_slice(&geo.deltas));
         }
         let lamp_shadow = lampshadow::LampShadows::new(gpu, &p.sil_layout, color_format);
-        let globals = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("globals"),
-            layout: &p.globals_layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: uniforms.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: lights.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: areas.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: parts_gpu.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: deltas.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: lamp_shadow.uniform.as_entire_binding() },
-            ],
-        });
+        let world_off = worldshadow::Off::new(gpu);
+        let globals = globals_group(
+            device,
+            &p.globals_layout,
+            [&uniforms, &lights, &areas, &parts_gpu, &deltas, &lamp_shadow.uniform],
+            None,
+            &world_off,
+        );
         let sampler = mip_sampler(device);
         // Slot 0 is plain white for models whose texture lives elsewhere; the others fill in as they go up.
         let white = texture_bind_group(gpu, &p.texture_layout, &sampler, 1, 1, &[255, 255, 255, 255]);
@@ -2898,7 +3066,8 @@ impl ZoneRenderer {
             bump_groups,
             bump_mode: true,
             smooth_lights: false,
-            lod_bias: 0.0,
+            material_maps: false,
+            material_strength: 1.0,
             light_boost: [0.0; 4],
             scenery_bump: p.scenery_bump,
             scenery: p.scenery,
@@ -2916,7 +3085,7 @@ impl ZoneRenderer {
             texture_layout: p.texture_layout,
             sampler,
             uniforms,
-            globals,
+            globals: globals.clone(),
             textures: vec![white; textures + 1],
             magenta,
             instances,
@@ -2958,6 +3127,13 @@ impl ZoneRenderer {
             shadows: None,
             sun_depth: p.sun_depth,
             lamp_depth_pipeline: p.lamp_depth_pipeline,
+            world_depth: p.world_depth,
+            globals_plain: globals.clone(),
+            world_shadow: None,
+            world_off,
+            shadow_src: Some(Box::new((geo.cull.clone(), geo.parts()[2].to_vec()))),
+            shadow_cull: Default::default(),
+            list_mask: None,
             sun_shadow: None,
             ssao: None,
             lamp_shadow,
@@ -3103,9 +3279,6 @@ impl ZoneRenderer {
                 self.camera_lists.get(&list).map(|l| (0..base).chain(l.iter().copied()).collect());
             l.set_list(whole.as_deref());
         }
-        if self.cull.is_none() && self.cpu_cull.is_none() {
-            return;
-        }
         let mask = match self.camera_lists.get(&list) {
             Some(l) => {
                 let listed: std::collections::HashSet<u32> = l.iter().copied().collect();
@@ -3130,13 +3303,18 @@ impl ZoneRenderer {
             }
             None => None,
         };
-        let mask = mask.as_ref().map(|(a, b, r)| (a.as_slice(), b.as_slice(), *r));
+        let view = mask.as_ref().map(|(a, b, r)| (a.as_slice(), b.as_slice(), *r));
         if let Some(c) = self.cull.as_mut() {
-            c.set_mask(gpu, mask);
+            c.set_mask(gpu, view);
         }
         if let Some(c) = &self.cpu_cull {
-            c.set_mask(mask);
+            c.set_mask(view);
         }
+        // The world shadows' culling takes the same list (made later, it takes it then); shown_key redraws them.
+        if let Some(Some(c)) = self.shadow_cull.get() {
+            c.set_mask(view);
+        }
+        self.list_mask = mask;
     }
 
     /// Ours (the Lamp Lights setting, client/lamps.rs): the lamps' lights (position, table slot) go into the free light
@@ -3305,6 +3483,8 @@ impl ZoneRenderer {
             instances,
             cull,
             cpu_cull,
+            shadow_src: Some(Box::new((geo.cull.clone(), m.to_vec()))),
+            shadow_cull: Default::default(),
             draws,
             tex_base,
             link,
@@ -3384,6 +3564,8 @@ impl ZoneRenderer {
                 // A few pieces that layout mode moves: drawn unculled.
                 cull: None,
                 cpu_cull: None,
+                shadow_src: None,
+                shadow_cull: Default::default(),
                 draws,
                 tex_base,
                 link: 0,
@@ -3669,7 +3851,8 @@ impl ZoneRenderer {
         view: &wgpu::TextureView,
         seq: u64,
     ) {
-        self.textures[slot] = view_bind_group(gpu, &self.texture_layout, &self.sampler, view);
+        self.textures[slot] =
+            material_bind_group(gpu, &self.texture_layout, &self.sampler, view, t.material.as_deref());
         self.mips_seq = self.mips_seq.max(seq);
         self.tex_bytes.1 += (t.width * t.height * 4) as u64;
         self.tex_bytes.2 += 1;
@@ -3750,8 +3933,9 @@ impl ZoneRenderer {
                 let up = up.get_or_insert_with(|| upload::TexUp::new(gpu, t, true));
                 let Some(seq) = up.step(gpu, t, false) else { break };
                 let view = up.texture.create_view(&Default::default());
-                let (slot, _, _) = m.pending.pop_front().unwrap();
-                m.textures[slot] = view_bind_group(gpu, &self.texture_layout, &self.sampler, &view);
+                let (slot, t, _) = m.pending.pop_front().unwrap();
+                m.textures[slot] =
+                    material_bind_group(gpu, &self.texture_layout, &self.sampler, &view, t.material.as_deref());
                 m.mips = m.mips.max(seq);
             }
             m.up = m.pending.is_empty() && gpu.mips_done() >= m.mips;
@@ -3799,7 +3983,8 @@ impl ZoneRenderer {
             let up = b.cur.get_or_insert_with(|| upload::TexUp::new(gpu, t, true));
             let Some(seq) = up.step(gpu, t, false) else { return false };
             let view = up.texture.create_view(&Default::default());
-            b.actor.textures[b.tex + 1] = view_bind_group(gpu, &self.texture_layout, &self.sampler, &view);
+            b.actor.textures[b.tex + 1] =
+                material_bind_group(gpu, &self.texture_layout, &self.sampler, &view, t.material.as_deref());
             b.actor.mips = b.actor.mips.max(seq);
             b.cur = None;
             b.tex += 1;
@@ -4134,14 +4319,14 @@ impl ZoneRenderer {
                     if range.is_empty() {
                         continue;
                     }
-                    match &culled {
+                    match culled {
                         Some(Culled::Gpu(c, a, shown)) if shown[c.run_of(d.args[k])] => {
                             pass.draw_indexed_indirect(a, d.args[k] as u64 * 20)
                         }
                         Some(Culled::Cpu(c, placed)) => {
-                            let placed = placed[c.run_of(d.args[k])].clone();
-                            if !placed.is_empty() {
-                                pass.draw_indexed(d.first_index..d.first_index + d.index_count, d.base_vertex, placed)
+                            let run = placed[c.run_of(d.args[k])].clone();
+                            if !run.is_empty() {
+                                pass.draw_indexed(d.first_index..d.first_index + d.index_count, d.base_vertex, run);
                             }
                         }
                         Some(_) => {}
@@ -4184,7 +4369,7 @@ impl ZoneRenderer {
             slot.entry(t.name.clone()).or_insert(textures.len());
             let (view, seq) = upload_texture_seq(gpu, t, true);
             mips = mips.max(seq);
-            textures.push(view_bind_group(gpu, &self.texture_layout, &self.sampler, &view));
+            textures.push(material_bind_group(gpu, &self.texture_layout, &self.sampler, &view, t.material.as_deref()));
         }
         let instance = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("actor instance"),
@@ -4301,8 +4486,14 @@ impl ZoneRenderer {
             area_info: [0.0; 4],
             voyage: self.voyage.to_cols_array_2d(),
             two: [[0.0; 4]; 4],
-            modes: [self.bump_mode as u32 as f32, self.smooth_lights as u32 as f32, self.lod_bias, 0.0],
+            modes: [
+                self.bump_mode as u32 as f32,
+                self.smooth_lights as u32 as f32,
+                self.material_maps as u32 as f32,
+                self.material_strength,
+            ],
             boost: self.light_boost,
+            lod: [lod_bias(), 0.0, 0.0, 0.0],
         };
         let mut clear = self.fog_color;
         if let Some(l) = &self.lighting {
@@ -4416,6 +4607,8 @@ impl ZoneRenderer {
             Some(SubGeometry { cpu_cull: Some(c), instances, .. }) => cpu(c, instances),
             _ => Vec::new(),
         };
+        // World sun shadows (render/worldshadow.rs): the stale cascades drawn again, the shaders' strength.
+        self.world_shadow_pass(gpu, encoder, camera);
         // Real character shadows (render/sunshadow.rs): the actors' depth from the zone's sun, laid on the scenery
         // below after all the scenery (the blended too) and before the actors.
         let sun = match (&self.sun_shadow, self.sun_shadow_light(camera.target), &self.pose_gpu) {
@@ -4547,7 +4740,11 @@ impl ZoneRenderer {
                     upscale::snap(encoder, scene, &s[if mode == 2 { 0 } else { 1 }]);
                 }
                 if let Some((s, m, d, st, _)) = sun.as_ref().filter(|_| sun_now) {
-                    s.receive(gpu, encoder, color, depth, vp, *m, *d, *st, camera.eye, self.shadow_soft);
+                    let world = match &self.world_shadow {
+                        Some(w) => (&w.uniform, &w.maps[0], w.far()),
+                        None => (&self.world_off.uniform, &self.world_off.map, &self.world_off.map),
+                    };
+                    s.receive(gpu, encoder, color, depth, vp, *m, *d, *st, camera.eye, self.shadow_soft, world);
                 }
                 if sun_now {
                     self.lamp_shadow.receive(gpu, encoder, color, depth, vp, lamps, camera.eye, &self.lights);
@@ -4788,18 +4985,14 @@ impl ZoneRenderer {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("portrait globals"),
-                layout: &self.globals_layout,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: self.lights.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: self.areas.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: self.parts_gpu.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 4, resource: self.deltas_gpu.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 5, resource: self.lamp_shadow.uniform.as_entire_binding() },
-                ],
-            });
+            // Portraits are lit as the zone is, without its world shadows.
+            let group = globals_group(
+                &gpu.device,
+                &self.globals_layout,
+                [&buf, &self.lights, &self.areas, &self.parts_gpu, &self.deltas_gpu, &self.lamp_shadow.uniform],
+                None,
+                &self.world_off,
+            );
             self.portrait_globals.push((buf, group));
         }
         let (u, _) = self.frame_uniforms(camera, aspect);
@@ -5028,6 +5221,156 @@ impl ZoneRenderer {
             a.refract.is_some(),
             a.shadow_off
         )
+    }
+
+    /// World sun shadows (ours) at `level` (config `world_shadows`: 0 off, 1 Low, 2 High); made at the first use or
+    /// a level change, dropped with their culling when off. render draws them only with an outdoor sun or moon.
+    pub fn prepare_world_shadow(&mut self, gpu: &Gpu, level: u32) {
+        let level = level.min(2);
+        if self.world_shadow.as_ref().map_or(0, |w| w.level) == level {
+            return;
+        }
+        self.world_shadow = (level > 0).then(|| worldshadow::WorldShadow::new(gpu, &self.sil_layout, level));
+        if level == 0 {
+            self.shadow_cull = Default::default();
+            if let Some(s) = &mut self.sub {
+                s.shadow_cull = Default::default();
+            }
+        }
+        self.globals = globals_group(
+            &gpu.device,
+            &self.globals_layout,
+            [&self.uniforms, &self.lights, &self.areas, &self.parts_gpu, &self.deltas_gpu, &self.lamp_shadow.uniform],
+            self.world_shadow.as_ref(),
+            &self.world_off,
+        );
+    }
+
+    /// The world shadows' strength this frame and how many cascades render drew again (diagnostics, the benchmark);
+    /// None while they are off.
+    pub fn world_shadow_stats(&self) -> Option<(f32, usize)> {
+        self.world_shadow.as_ref().map(|w| w.stats())
+    }
+
+    /// What the scenery shows that the world shadows' maps depend on: the sub-area and whether it shows, the hidden
+    /// link, the link-999 placements, the camera list, and how many textures are still to go up.
+    fn shown_key(&self) -> u64 {
+        let sub = self.sub.as_ref().map_or(0, |s| (s.tex_base as u64) << 2 | (s.shown as u64) << 1 | 1);
+        let list = (self.camera_list.0 as u64 ^ (self.camera_list.1.map_or(0, f32::to_bits) as u64) << 32)
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        sub ^ (self.hidden as u64) << 32 ^ (self.link999_off as u64) << 63 ^ list ^ (self.pending.len() as u64) << 40
+    }
+
+    /// The world shadows' frame (render/worldshadow.rs): off without an outdoor light strong enough (night's change,
+    /// dusk, a fixed indoor light); otherwise each stale cascade drawn again from the scenery the light's box holds
+    /// (culled on the CPU through the cascade's matrix: a cached map is drawn rarely), a voyage's moving world every
+    /// frame.
+    fn world_shadow_pass(&self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, camera: &Camera) {
+        let Some(ws) = &self.world_shadow else { return };
+        let light = self.lighting.as_ref().filter(|l| !l.fixed).and_then(|l| {
+            let st = worldshadow::strength(l.diffuse, self.shadow_level);
+            (st > 0.0).then_some((worldshadow::direction(l.dir)?, st))
+        });
+        // Not before the zone's geometry, textures and mips are all up: a map drawn from placeholders would stay.
+        let Some((d, st)) = light else {
+            ws.set(gpu, 0.0, Vec3::Y);
+            return;
+        };
+        let dir = self.lighting.map_or(d, |l| l.dir);
+        // Not drawn while geometry, textures or mips are still going up (a map drawn from placeholders would stay):
+        // before the first map the shadows wait; a sub-area uploading keeps the maps already drawn, which its
+        // finished textures (shown_key) then draw again.
+        let ready = self.geo_pending.is_none() && self.pending.is_empty() && gpu.mips_done() >= self.mips_seq;
+        if !ready {
+            ws.set(gpu, if ws.drawn() { st } else { 0.0 }, dir);
+            return;
+        }
+        let force = self.voyage != Mat4::IDENTITY || std::env::var_os("FFXI_WS_REDRAW").is_some();
+        // Door and lift parts moving (move_part): drawn each frame they move, and once more as they stop.
+        let moving = self.now <= self.parts_busy;
+        for (k, vp) in ws.stale(gpu, d, camera.target, camera.eye, force, self.shown_key(), moving) {
+            let view = cull::View { view_proj: vp, eye: camera.eye, voyage: self.voyage, clip: self.clip };
+            fn culled<'a>(
+                gpu: &Gpu,
+                src: &Option<Box<(cull::CullData, Vec<u8>)>>,
+                lock: &'a std::sync::OnceLock<Option<cull::CpuCull>>,
+                instances: &wgpu::Buffer,
+                encoder: &mut wgpu::CommandEncoder,
+                view: &cull::View,
+                mask: Option<&(Vec<bool>, Vec<bool>, f32)>,
+            ) -> Option<(&'a cull::CpuCull, Vec<std::ops::Range<u32>>)> {
+                let c = lock
+                    .get_or_init(|| {
+                        let c = cull::CpuCull::new(gpu, &src.as_ref()?.0, &src.as_ref()?.1)?;
+                        c.set_mask(mask.map(|(a, b, r)| (a.as_slice(), b.as_slice(), *r)));
+                        Some(c)
+                    })
+                    .as_ref()?;
+                let placed = c.run(encoder, instances, view, &c.runs_shown(view.view_proj, view.eye, view.clip));
+                Some((c, placed))
+            }
+            let zone = culled(
+                gpu,
+                &self.shadow_src,
+                &self.shadow_cull,
+                &self.instances,
+                encoder,
+                &view,
+                self.list_mask.as_ref(),
+            );
+            let sub = self
+                .sub
+                .as_ref()
+                .filter(|s| s.shown)
+                .map(|s| (s, culled(gpu, &s.shadow_src, &s.shadow_cull, &s.instances, encoder, &view, None)));
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("world shadow depth"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &ws.maps[k],
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_bind_group(0, &self.globals_plain, &[]);
+            pass.set_bind_group(1, &self.textures[0], &[]);
+            pass.set_bind_group(3, &ws.matrix_group, &[256 * k as u32]);
+            let geos = [
+                Some((&self.vertices, &self.indices, &self.instances, &self.draws, zone)),
+                sub.map(|(s, c)| (&s.vertices, &s.indices, &s.instances, &s.draws, c)),
+            ];
+            for (vertices, indices, instances, draws, culled) in geos.into_iter().flatten() {
+                pass.set_vertex_buffer(1, culled.as_ref().map_or(instances, |(c, _)| &c.out).slice(..));
+                pass.set_vertex_buffer(0, vertices.slice(..));
+                pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint16);
+                let mut pipe = usize::MAX;
+                // The opaque and the cut-outs cast; plain blended meshes (water, glass, ground layers) don't.
+                for d in draws.iter().filter(|d| d.mode != 2) {
+                    let cut = (d.mode != 0) as usize;
+                    for (a, (_, range)) in d.runs().into_iter().enumerate() {
+                        let range = match &culled {
+                            Some((c, placed)) => placed[c.run_of(d.args[a])].clone(),
+                            None => range,
+                        };
+                        if range.is_empty() {
+                            continue;
+                        }
+                        if pipe != cut {
+                            pass.set_pipeline(&self.world_depth[cut]);
+                            pipe = cut;
+                        }
+                        if cut == 1 {
+                            pass.set_bind_group(1, &self.textures[d.texture], &[]);
+                        }
+                        pass.draw_indexed(d.first_index..d.first_index + d.index_count, d.base_vertex, range);
+                    }
+                }
+            }
+        }
+        ws.set(gpu, st, dir);
     }
 
     /// Ambient occlusion (ours) on or off at the scene's `size`; made at the first use.
@@ -5307,7 +5650,9 @@ impl ZoneRenderer {
 /// The device with the neural rendering engine's Vulkan features, when an engine with vana_nr_dispatch is installed
 /// and the device has them (render/upscale/vkdevice.rs); None for the usual device. Sets upscale::neural_status.
 fn neural_device(adapter: &wgpu::Adapter, desc: &wgpu::DeviceDescriptor) -> Option<(wgpu::Device, wgpu::Queue)> {
+    upscale::set_vulkan(adapter.get_info().backend == wgpu::Backend::Vulkan);
     let status = match upscale::external::probe() {
+        _ if upscale::engine_outdated() => Err("the engine is from another release".to_string()),
         Ok((_, true)) if adapter.get_info().backend == wgpu::Backend::Vulkan => Ok(()),
         Ok((_, true)) => Err("neural rendering needs the Vulkan backend".to_string()),
         Ok(_) => Err("the engine has no vana_nr_dispatch".to_string()),
@@ -5330,6 +5675,33 @@ fn neural_device(adapter: &wgpu::Adapter, desc: &wgpu::DeviceDescriptor) -> Opti
             None
         }
     }
+}
+
+/// The zone shader's group 0 (zone.wgsl): uniforms, point lights, areas, door parts, sway deltas, lamp shadows, then
+/// the world shadows' uniform, maps and comparison (`world`'s, or `off`'s in their place).
+fn globals_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    buffers: [&wgpu::Buffer; 6],
+    world: Option<&worldshadow::WorldShadow>,
+    off: &worldshadow::Off,
+) -> wgpu::BindGroup {
+    let (uniform, near, far) = match world {
+        Some(w) => (&w.uniform, &w.maps[0], w.far()),
+        None => (&off.uniform, &off.map, &off.map),
+    };
+    let mut entries: Vec<wgpu::BindGroupEntry> = buffers
+        .iter()
+        .enumerate()
+        .map(|(k, b)| wgpu::BindGroupEntry { binding: k as u32, resource: b.as_entire_binding() })
+        .collect();
+    entries.extend([
+        wgpu::BindGroupEntry { binding: 6, resource: uniform.as_entire_binding() },
+        wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(near) },
+        wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::TextureView(far) },
+        wgpu::BindGroupEntry { binding: 9, resource: wgpu::BindingResource::Sampler(&off.cmp) },
+    ]);
+    device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("globals"), layout, entries: &entries })
 }
 
 pub fn depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
@@ -5409,6 +5781,11 @@ pub fn render_pngs_post(
     // A plain (not sRGB) target: the scene is written and blended in gamma space, as D3D8 did; its bytes are the PNG's.
     let format = wgpu::TextureFormat::Rgba8Unorm;
     let mut renderer = ZoneRenderer::new(&gpu, scene, format);
+    // FFXI_WORLD_SHADOWS=1|2 (ours): world sun shadows at Low / High (render/worldshadow.rs); FFXI_WS_REDRAW draws
+    // their maps every frame (their cost when the cache refreshes).
+    if let Some(level) = std::env::var("FFXI_WORLD_SHADOWS").ok().and_then(|v| v.parse::<u32>().ok()) {
+        renderer.prepare_world_shadow(&gpu, level);
+    }
     let actors = setup(&gpu, &mut renderer);
     let actor_refs: Vec<&ActorGpu> = actors.iter().collect();
     let target = gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -5466,7 +5843,7 @@ pub fn render_pngs_post(
     };
     // The texture LOD bias the client gives the upscalers (FFXI_LODBIAS=0: none, to compare).
     if std::env::var("FFXI_LODBIAS").as_deref() != Ok("0") && (up.is_some_and(|u| u.1) || fsr3.is_some()) {
-        renderer.lod_bias = upscale::lod_bias(rw, width, fsr3.is_some());
+        set_lod_bias(upscale::lod_bias(rw, width, fsr3.is_some()));
     }
     let (view, depth, scene_target) = match scale.as_mut() {
         Some(s) => s.target(&gpu, [rw, rh]),
@@ -5488,6 +5865,8 @@ pub fn render_pngs_post(
     let mut scene_fx = fx_want.any().then(|| scenefx::SceneFx::new(format));
     if let Some(fx) = scene_fx.as_mut() {
         fx.prepare(&gpu, fx_want, [width, height]);
+        // FFXI_WET_GROUND's frames are soaked, the ripples caught at a fixed moment (the same picture each run).
+        fx.set_rain(rain::Wetness::soaked(1.3));
     }
     // FFXI_BENCH=N: the first view N more times after a warm-up, its time a frame printed (GPU-bound offscreen).
     if let (Some(n), Some((camera, _, lighting))) =
@@ -5589,6 +5968,9 @@ pub fn render_pngs_post(
         }
         if let Some(c) = &renderer.cpu_cull {
             println!("cull (CPU): {} instances drawn", c.drawn());
+        }
+        if let Some((st, redrawn)) = renderer.world_shadow_stats() {
+            println!("world shadows: strength {st:.2}, {redrawn} cascades drawn in the last frame");
         }
     }
     for (camera, path, lighting) in frames {

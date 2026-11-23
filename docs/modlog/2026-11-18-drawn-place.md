@@ -37,6 +37,12 @@
   only at the drawn step (no displacement test). Ours: Entity::drawn (ease_drawn), snapped for the cases above, a lift,
   a fresh spawn and a place set from outside; base_place poses at it; the facing aims through drawn_aim at 0.01 a retail
   frame. Doors, lifts and ship models are not skeleton actors and are not eased.
+- Remote actors, review round: the drawn step (fStack_26c) also feeds the walk / run motion (FUN_100c83c0 ->
+  FUN_100c8930 takes its length for an actor not ours, vt+0x304 == 0), so one gliding to a stop keeps its feet moving.
+  A jump over 12 and a 0x1c / 0x1f rider have +0x5fc set before the update (FUN_100929a0 / FUN_10092c20 in
+  FUN_1008cd90): their drawn step is 0 (no turn toward the jump or the carrier's move, no motion); a lift keeps the
+  whole step. Name plates and target arrows of actors not ours sit at the drawn place too (+0x678 follows +0x5fc), as
+  ours already did.
 - Riding (status 5 / 0x55, FUN_10084350 / 70 on the entity's +0x170): FUN_1008f740 builds the mount as a second actor
   (entity +0xa4, FUN_100c59b0 / FUN_100d7240), and for a chocobo (kind DAT_1035c4d0[colour], 0..0x3e) or a mount (id + 5
   under 0x25) puts it at the rider's +0x768 (slot 0). With +0x768 set, 0x100c655c goes on to the same ease (0x100c6591);

@@ -3796,13 +3796,17 @@ impl<'a> HideRule<'a> {
     /// FUN_100961d0).
     fn gone(&self, w: &World, id: u32, e: &super::Entity) -> bool {
         let trust = w.game.get(0x99) & 0x20 != 0 && e.marks.trust && !w.party.party().any(|m| m.index == e.index);
-        !self.takes_part(id)
-            && unloads(id >> 24 == 0, self.flags, matches!(e.sub_kind, 2..=4), e.ev_reserved, trust, e.server_hidden())
+        self.marks(id, id >> 24 == 0, matches!(e.sub_kind, 2..=4), e.ev_reserved, trust, e.server_hidden())
+    }
+
+    /// The unload mark (`unloads`) on an actor that has not taken part (bit 8 skips FUN_1008e4d0's mark block).
+    fn marks(&self, id: u32, pc: bool, structure: bool, reserved: bool, trust: bool, server: bool) -> bool {
+        !self.takes_part(id) && unloads(pc, self.flags, structure, reserved, trust, server)
     }
 
     /// `gone` for our own actor: our 0x037 / 0x00A hide and sleep bits, and the event's filter of player characters.
     fn gone_me(&self, w: &World) -> bool {
-        !self.takes_part(w.my_id) && unloads(true, self.flags, false, false, false, self_hidden(w) || self_asleep(w))
+        self.marks(w.my_id, true, false, false, false, self_hidden(w) || self_asleep(w))
     }
 
     fn entity(&self, w: &World, id: u32, e: &super::Entity) -> bool {
@@ -4696,6 +4700,41 @@ mod tests {
         first.sort();
         assert_eq!(first, [me, 7], "8 arrived marked: no model to free");
         assert!(newly_marked(&marked, &marked, me, &|id| id == me).is_empty());
+    }
+
+    /// The frame a 0x034 with Mode 0x1a arrives (a sparks vendor's events 993 / 995): FUN_10096640 runs the queued
+    /// event's check (FUN_100aea40: the event file, then the walk FUN_100aeea0, bit 8 on each actor it passes) before
+    /// the hide pass, so the vendor and the player have taken part when the marks are taken and only the bystanders
+    /// lose their model. A walk over a file not loaded yet passes nobody, and the filter marks both talkers.
+    #[test]
+    fn arrival_frame_walk_spares_the_talkers() {
+        use crate::dat::event::Block;
+        let (me, vendor, bystander, npc) = ((0x0004_2a10, 0x0010), 0x0100_e156, 0x0004_9b20, 0x0100_e0a3);
+        let block =
+            |actor: u32, events: &[(u16, u16)]| Block { actor, events: events.to_vec(), consts: vec![], code: vec![] };
+        let blocks = [block(vendor, &[(0xffff, 0), (993, 4)]), block(PLAYER, &[(993, 0)]), block(npc, &[(0xffff, 0)])];
+        let filter = |joined: &HashSet<u32>| {
+            let rule = HideRule { flags: 0x1a, script: None, part: Some(joined) };
+            let mut marked: Vec<u32> = [(me.0, true), (vendor, false), (bystander, true), (npc, false)]
+                .into_iter()
+                .filter(|&(id, pc)| rule.marks(id, pc, false, false, false, false))
+                .map(|(id, _)| id)
+                .collect();
+            marked.sort();
+            marked
+        };
+        let (present, model) = (|_: u32| true, |_: u32| true);
+
+        // The file loaded and walked ahead of the marks (`ready` before `unload_models`).
+        let mut joined = HashSet::new();
+        assert_eq!(first_waiting(&blocks, 993, me, &present, &model, &mut joined), None);
+        assert_eq!(joined, [vendor, me.0].into());
+        assert_eq!(filter(&joined), [bystander, npc]);
+
+        // A walk with the file still to load (`Waiting::blocks` None) passes nobody: both talkers are marked.
+        let mut empty = HashSet::new();
+        assert_eq!(first_waiting(&[], 993, me, &present, &model, &mut empty), None);
+        assert_eq!(filter(&empty), [me.0, bystander, npc, vendor]);
     }
 
     /// FUN_1008e4d0 (0x1008e686): the hide and sleep bits (+0x120 & 0x44000) mark an actor like the event's filter, whatever

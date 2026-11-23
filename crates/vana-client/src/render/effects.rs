@@ -56,6 +56,8 @@ struct DrawU {
     /// The light colour (eased, x the light scale; w = the light count) and AMBIENT (trunc(min(a, 1) x 128) / 255).
     light_col: [f32; 4],
     ambient: [f32; 4],
+    /// x: the textures' LOD bias (render lod_bias).
+    lod: [f32; 4],
 }
 
 /// The ground projections' images: 256x256 (FUN_10044270's DAT_1047bb88).
@@ -1979,6 +1981,7 @@ impl EffectsGpu {
                 let g = crate::fx::elem::ambient_ref(a);
                 [g.x, g.y, g.z, 0.0]
             }),
+            lod: [super::lod_bias(), 0.0, 0.0, 0.0],
         };
         gpu.queue.put(&self.draw_u, 0, bytemuck::bytes_of(&u));
         let mut u_rt = u;

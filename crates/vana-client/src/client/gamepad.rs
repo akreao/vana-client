@@ -16,6 +16,16 @@ pub const DEFAULT_PADSIN: &str =
 pub const DEFAULT_PADEXSIN: &str =
     "-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-33,-33,32,32,-36,-36,35,35,6,7,5,4,-1,-1,-1,-1,-1,-1,-1";
 
+/// FFXiPadConfig's Pattern A (menu 0x410, record 0x6ef598, applied by FUN_0040dfc0): "for console-type gamepads
+/// with 2 directional control devices and 16 buttons". The default for a DirectInput controller (not read through
+/// XInput) when nothing is saved: the XInput layout's axis codes are XInput's, so on such a pad the camera would read
+/// the triggers. Its flags (force feedback, sliders, hat switch on) are padmode000's defaults already. *(Not retail:
+/// the game itself has no default per device; the tool applies a pattern only when the player picks it.)*
+pub const DINPUT_PADSIN: &str = "4,6,11,7,10,1,0,2,3,8,-1,-1,9,33,33,32,32,37,37,34,34,41,41,40,40,5,-1,-1,-1,-1,-1,-1";
+/// Pattern A's alternate map, made as DEFAULT_PADEXSIN is from DEFAULT_PADSIN: the sticks and d-pad only.
+pub const DINPUT_PADEXSIN: &str =
+    "-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,33,33,32,32,37,37,34,34,41,41,40,40,-1,-1,-1,-1,-1,-1,-1";
+
 /// padsin position -> slot (0x1034f930).
 const PERM: [u8; 32] = [
     8, 9, 14, 13, 10, 3, 1, 0, 2, 16, 25, 26, 15, 23, 24, 22, 21, 19, 20, 18, 17, 6, 7, 5, 4, 12, 31, 32, 33, 34, 35,
@@ -324,6 +334,20 @@ pub struct Settings {
     pub saved: bool,
 }
 
+impl Settings {
+    /// With nothing saved and a DirectInput controller playing, FFXiPadConfig's Pattern A instead of its XInput
+    /// setup (DINPUT_PADSIN).
+    pub fn for_dinput(mut self, dinput: bool) -> Settings {
+        if dinput && self.source == Source::Default {
+            self.padsin = DINPUT_PADSIN.into();
+            if self.padexsin == DEFAULT_PADEXSIN {
+                self.padexsin = DINPUT_PADEXSIN.into();
+            }
+        }
+        self
+    }
+}
+
 /// What a frame's settings are. config.json's maps win (the Controller window writes them); else retail's registry
 /// values, whose padmode000 also says whether the pad is on ([0]: off, FUN_10002840 leaves the maps empty) and plays in
 /// the background ([4]) and rumbles ([1]); else FFXiPadConfig's XInput layout. config gamepad off always turns it
@@ -582,7 +606,7 @@ impl Gamepad {
             }
             self.retail = r;
         }
-        let set = settings(cfg, self.retail.as_ref());
+        let set = settings(cfg, self.retail.as_ref()).for_dinput(self.plays_dinput());
         if !set.on && !capture {
             mods(&[], [0.0; 6], false);
             // The pad turned off lets the DirectInput device go (a changed padmode000, DAT_10456df0), so a background
@@ -852,7 +876,7 @@ impl Gamepad {
         // XInput only while gilrs has no pad: a pad both see plays once.
         #[cfg(windows)]
         if let Some(x) = &mut self.xinput {
-            x.update();
+            x.update(false);
             if let Some(p) = x.state() {
                 self.xinput_plays = true;
                 return Some(p);
@@ -881,8 +905,13 @@ impl Gamepad {
             self.dinput.as_mut()?.reset();
             true
         } else {
+            // Every 0x5b frames with nothing picked the enumeration runs again (a thread's, DInput::probe); the setup
+            // follows once it found a controller it would pick.
             let d = self.dinput.as_mut()?;
-            !d.has_device() && !d.pick.xinput && frame && d.lost_frame()
+            if !d.has_device() && !d.pick.xinput && frame && d.lost_frame() {
+                d.probe();
+            }
+            d.probed().is_some_and(|found| di::would_pick(&want, &found))
         };
         if again {
             // FUN_10008d90 / FUN_10008e10: the XInput DLL, with the option.
@@ -925,7 +954,7 @@ impl Gamepad {
         }
         let x = self.xinput.as_mut()?;
         x.set_slot(slot);
-        x.update();
+        x.update(pick.xinput);
         let p = x.state();
         self.xinput_plays = p.is_some();
         p
@@ -1289,6 +1318,21 @@ mod tests {
         assert_eq!((s.xinput, s.sliders, s.hat, s.padguid.as_str()), (true, true, true, ""));
         cfg.gamepad_padguid = "{00000001-0000-0000-0000-000000000000}".into();
         assert_eq!(settings(&cfg, Some(&retail)).padguid, cfg.gamepad_padguid);
+    }
+
+    /// A DirectInput controller with nothing saved takes the tool's Pattern A; saved or retail maps stay.
+    #[test]
+    fn dinput_default_pattern() {
+        let cfg = Config::default();
+        let s = settings(&cfg, None).for_dinput(true);
+        assert_eq!((s.padsin.as_str(), s.padexsin.as_str()), (DINPUT_PADSIN, DINPUT_PADEXSIN));
+        assert_eq!(settings(&cfg, None).for_dinput(false).padsin, DEFAULT_PADSIN);
+        let saved = Config { gamepad_padsin: "1".into(), ..Default::default() };
+        assert_eq!(settings(&saved, None).for_dinput(true).padsin, "1");
+        // The alternate map: padsin's sticks and d-pad (positions 13..25), nothing else.
+        let (m, alt): (Vec<&str>, Vec<&str>) =
+            (DINPUT_PADSIN.split(',').collect(), DINPUT_PADEXSIN.split(',').collect());
+        assert!((0..32).all(|i| alt[i] == if (13..25).contains(&i) { m[i] } else { "-1" }));
     }
 
     #[test]

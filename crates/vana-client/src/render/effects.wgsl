@@ -1023,6 +1023,8 @@ struct Draw {
     // (FUN_10188e00: trunc(min(a, 1) x 128) / 255)
     light_col: vec4<f32>,
     ambient: vec4<f32>,
+    // x: the textures' LOD bias while upscaling (render lod_bias), else 0.
+    lod: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> d: Draw;
@@ -1429,7 +1431,7 @@ fn fs_spec(i: VOut) -> @location(0) vec4<f32> {
     let variant = i.mode.z;
     let dd = i.color;
     let f = i.tf;
-    let t0 = textureSample(tex, samp, i.uv);
+    let t0 = textureSampleBias(tex, samp, i.uv, d.lod.x);
     let s2 = textureSample(spec2d, spec_samp, i.sd.xy);
     let sc = textureSample(speccube, spec_samp, i.sd);
     let sp = sat3(select(s2.rgb, sc.rgb, i.sk.w > 0.5) * i.sk.rgb);
@@ -1819,7 +1821,7 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
     let vonly = (flags & 0x10000000u) != 0u;
     if ((variant <= 1u || variant == 11u) && mode == 0x44u && f.a > 126.0 / 255.0) { f.a = 1.0; }
     if (variant == 0u) {
-        let t = textureSample(tex, samp, i.uv);
+        let t = textureSampleBias(tex, samp, i.uv, d.lod.x);
         rgb = sat3(sat3(2.0 * dd.rgb * t.rgb) * 2.0 * f.rgb);
         a = sat(sat(dd.a * t.a) * 4.0 * f.a);
         if (vonly) { a = sat(dd.a * 4.0 * f.a); }
@@ -1828,7 +1830,7 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
         rgb = sat3(2.0 * dd.rgb * f.rgb);
         a = sat(select(4.0, 2.0, mode == 0x44u) * dd.a * f.a);
     } else if (variant == 2u) {
-        let t = textureSample(tex, samp, i.uv);
+        let t = textureSampleBias(tex, samp, i.uv, d.lod.x);
         if (mode == 0x64u || vonly) {
             rgb = sat3(sat3(t.rgb * dd.rgb) * f.rgb * 4.0);
             a = sat(4.0 * dd.a * f.a);
@@ -1841,7 +1843,7 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
         a = sat(4.0 * dd.a * f.a);
     } else if (variant == 5u) {
         // Flare stages: colour diffuse x texture x 2 (TFACTOR rgb not applied), alpha x TFACTOR x 2.
-        let t = textureSample(tex, samp, i.uv);
+        let t = textureSampleBias(tex, samp, i.uv, d.lod.x);
         rgb = sat3(2.0 * dd.rgb * t.rgb);
         a = sat(sat(dd.a * t.a) * f.a * 2.0);
     } else if (variant == 6u) {
@@ -1849,14 +1851,14 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
         a = 1.0;
     } else if (variant == 9u) {
         // TSS 0x10347f68: colour = texture x diffuse x 2, alpha = diffuse x TFACTOR (0x80, left by pass 1) x 4.
-        var t = textureSample(tex, samp, i.uv).rgb;
+        var t = textureSampleBias(tex, samp, i.uv, d.lod.x).rgb;
         if (d.fog.z > 0.5) { t = pow(t, vec3<f32>(1.0 / 2.2)); }
         rgb = sat3(2.0 * dd.rgb * t);
         a = sat(dd.a * (128.0 / 255.0) * 4.0);
     } else if (variant == 11u) {
         // DistModel (TSS 0x10352740, 0x10352848 for 0x44): the copy's colour; alpha k x copy alpha (0x80) x stage 0's
         // 2 x diffuse x TFACTOR, k 2 for 0x44 else 4. The mesh texture is never bound.
-        var t = textureSample(tex, samp, i.uv).rgb;
+        var t = textureSampleBias(tex, samp, i.uv, d.lod.x).rgb;
         if (d.fog.z > 0.5) { t = pow(t, vec3<f32>(1.0 / 2.2)); }
         t = copy_fog(t, flags, mode);
         rgb = t;
@@ -1864,7 +1866,7 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
     } else if (variant == 14u || variant == 15u) {
         // DistMorph (TSS 0x10352258): copy x raw diffuse x 2, then x TFACTOR x 2; alpha the copy's 0x80 x diffuse x 2,
         // then x TFACTOR x 4; alpha test GREATER 0x60 with res byte 2 bit 7.
-        var t = textureSample(tex, samp, i.uv).rgb;
+        var t = textureSampleBias(tex, samp, i.uv, d.lod.x).rgb;
         if (d.fog.z > 0.5) { t = pow(t, vec3<f32>(1.0 / 2.2)); }
         t = copy_fog(t, flags, mode);
         let s0 = sat3(2.0 * t * dd.rgb);
@@ -1874,25 +1876,25 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
         if (variant == 15u && a <= 96.0 / 255.0) { discard; }
     } else if (variant == 13u) {
         // The ground decal: the image draw's stages (0x103524a8) over the image, which is not alpha-doubled.
-        let t = textureSample(tex, samp, i.uv);
+        let t = textureSampleBias(tex, samp, i.uv, d.lod.x);
         rgb = sat3(2.0 * sat3(2.0 * dd.rgb * t.rgb) * f.rgb);
         a = sat(4.0 * sat(2.0 * dd.a * t.a) * f.a);
     } else if (variant == 12u) {
         // DistRing: colour 2 x diffuse x copy, alpha 4 x diffuse a x copy alpha (0x80).
-        var t = textureSample(tex, samp, i.uv).rgb;
+        var t = textureSampleBias(tex, samp, i.uv, d.lod.x).rgb;
         if (d.fog.z > 0.5) { t = pow(t, vec3<f32>(1.0 / 2.2)); }
         t = copy_fog(t, flags, mode);
         rgb = sat3(2.0 * dd.rgb * t);
         a = sat(4.0 * dd.a * (128.0 / 255.0));
     } else if (variant == 7u || variant == 8u) {
         // D3b stages (TSS 0x103470b8): texture x diffuse x 2, then x TFACTOR x 2 (alpha x 4).
-        let t = textureSample(tex, samp, i.uv);
+        let t = textureSampleBias(tex, samp, i.uv, d.lod.x);
         let s0 = sat3(2.0 * dd.rgb * t.rgb);
         rgb = sat3(2.0 * s0 * f.rgb);
         a = sat(4.0 * sat(dd.a * t.a) * f.a);
         if (variant == 8u && a <= 96.0 / 255.0) { discard; }
     } else {
-        let t = textureSample(tex, samp, i.uv);
+        let t = textureSampleBias(tex, samp, i.uv, d.lod.x);
         let s0 = sat3(2.0 * dd.rgb * t.rgb);
         var s0a = sat(dd.a * t.a);
         if (vonly) { s0a = dd.a; }
