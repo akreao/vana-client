@@ -21459,6 +21459,8 @@ fn draw_effects(
         let (fog_color, fog) =
             r.lighting.as_ref().map_or(([0.0; 3], [150.0, 600.0]), |l| (l.fog.to_array(), [l.fog_start, l.fog_end]));
         let keys: Vec<f32> = late.iter().map(|p| p.0).collect();
+        // Water reflections (ours, render/reflect.rs) on the zone's effect water, drawn by the effects draw.
+        eg.water = r.fx_water(&gfx.gpu, eg, &scene_depth);
         late_done = eg.draw_with_breaks(
             &gfx.gpu,
             &mut fg.encoder,
@@ -21472,6 +21474,7 @@ fn draw_effects(
             &keys,
             &mut |enc, i| late_one(&mut *r, enc, &late[i].1),
         );
+        eg.water = None;
         fg.mark("fx draw");
     }
     // Those nearer than every effect (or all of them, with no effects drawn).

@@ -2,6 +2,9 @@
 
 struct Params {
     view_proj: mat4x4<f32>,
+    // The projection alone and the inverse view, for effect meshes (they come in view space).
+    proj: mat4x4<f32>,
+    view_inv: mat4x4<f32>,
     eye: vec4<f32>,
     forward: vec4<f32>,
     // x: sky gradient on; y: the target holds gamma bytes; z: seconds; w: the frame copy is readable.
@@ -14,6 +17,10 @@ struct Params {
     sky_stops: array<vec4<f32>, 2>,
     // The height each mirrored-characters layer belongs to (1e9 for an empty one).
     mirror_heights: vec4<f32>,
+    // The zone's water levels (reflect.rs Level): height, 1 when exact; counts.x of them. counts.y: 1 to show the
+    // water found in flat colours instead (FFXI_REFLECT_DEBUG).
+    levels: array<vec4<f32>, 16>,
+    counts: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Params;
@@ -25,9 +32,24 @@ struct Params {
 // One layer per plane: a surface reads only the layer of its own height.
 @group(0) @binding(3) var layer: texture_2d_array<f32>;
 @group(0) @binding(4) var layer_samp: sampler;
+// Effect meshes only: the effects' per-element output (render/effects.rs `outs`, OUT_WORDS each): element-to-view
+// matrix (0..16), TFACTOR colour (16..20), UV offset (20, 21), visible (23).
+@group(0) @binding(5) var<storage, read> douts: array<f32>;
+@group(1) @binding(0) var fx_tex: texture_2d<f32>;
+@group(1) @binding(1) var fx_samp: sampler;
 
-// A surface takes the layer whose height is nearest its own, within this much (world units).
-const PLANE_MATCH: f32 = 0.3;
+const OUT_WORDS: u32 = 44u;
+// An effect mesh that writes depth (op flag 0x1000): its water fades nothing at the shore (the depth is its own).
+override FX_OPAQUE: bool = false;
+
+// A surface takes the layer whose height is nearest its own, within this much (world units): a drawn sea may lie up to
+// reflect.rs LEVEL_TOL off the collision height the characters are mirrored in.
+const PLANE_MATCH: f32 = 0.75;
+// Water levels (reflect.rs LEVEL_TOL, BED_ABOVE).
+const LEVEL_TOL: f32 = 0.75;
+const BED_ABOVE: f32 = 3.0;
+// A face is flat when its normal is within about 18 degrees of straight up or down (reflect.rs FLAT).
+const FLAT: f32 = 0.95;
 
 // The mirrored characters at a screen point (`size` the scene's) on a surface at height `y`, the water's ripples
 // bending it a little; nothing when no layer belongs to that height.
@@ -50,13 +72,17 @@ const STEPS: i32 = 32;
 const REFINE: i32 = 5;
 // How far a reflected ray is followed, in world units.
 const RAY: f32 = 80.0;
-// Fresnel for water (F0 = 0.02), lifted a little so calm water shows its reflection from above too, and capped so the
-// water's own colour always shows through.
+// Fresnel for water (F0 = 0.02), capped so the water's own colour always shows through. No floor under it: looking
+// straight down at water shows the water, whatever its colour.
 const F0: f32 = 0.02;
-const LIFT: f32 = 0.12;
 const MAX_WEIGHT: f32 = 0.7;
-// The reflection fades in over this much water depth under the surface (world units), so it never shows where the
-// collision's surface stands above the drawn water's edge (Bibiki Bay's shores sit about half a unit above its sea).
+// How far the reflection takes on the water's own hue (0: none, 1: the reflection times the hue at full brightness).
+const TINT: f32 = 0.6;
+// Water whose own alpha is at least this reflects fully (effect sheets are often drawn at TFACTOR alpha 0x80 or less).
+const COVER: f32 = 0.15;
+// A mirrored character shows at least this strongly over the water (times its alpha), so it reads from above too.
+const CHARACTER: f32 = 0.3;
+// See-through water: the reflection fades in over this much water depth under the surface (world units).
 const SHORE: f32 = 1.0;
 // Floors: a reflection fades out over this much of the ray (a glossy floor shows what stands on it, not the far end of
 // the room), and a floor's own depth is matched within a small margin (its faces are the scenery's, placed on the CPU).
@@ -68,16 +94,72 @@ const THICK: f32 = 0.6;
 struct VOut {
     @builtin(position) pos: vec4<f32>,
     @location(0) world: vec3<f32>,
-    // A floor's strength; 0 for water.
-    @location(1) @interpolate(flat) floor: f32,
+    // A floor's strength; 0 for see-through water, -1 for opaque water (reflect.rs SEE_THROUGH, OPAQUE).
+    @location(1) @interpolate(flat) kind: f32,
+    // The water's own colour and alpha (gamma).
+    @location(2) water: vec4<f32>,
+    // Effect meshes: the texture's coordinates, and 1 where the vertex lies on a water level.
+    @location(3) uv: vec2<f32>,
+    @location(4) on_level: f32,
 };
 
 @vertex
-fn vs(@location(0) p: vec4<f32>) -> VOut {
+fn vs(@location(0) p: vec4<f32>, @location(1) c: vec4<f32>) -> VOut {
     var o: VOut;
     o.pos = u.view_proj * vec4<f32>(p.xyz, 1.0);
     o.world = p.xyz;
-    o.floor = p.w;
+    o.kind = p.w;
+    o.water = c;
+    o.uv = vec2<f32>(0.0);
+    // Scenery: placed on a level at load (2 tells it from an effect mesh's 1).
+    o.on_level = 2.0;
+    return o;
+}
+
+// Whether a surface at height `y` can be one of the zone's water levels (reflect.rs Level::holds).
+fn on_level(y: f32) -> bool {
+    for (var k = 0u; k < u32(u.counts.x); k = k + 1u) {
+        let l = u.levels[k];
+        if (l.y > 0.5) {
+            if (abs(y - l.x) <= LEVEL_TOL) {
+                return true;
+            }
+        } else if (y >= l.x - BED_ABOVE && y <= l.x + LEVEL_TOL) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// An effect mesh drawn as the effects draw it (effects.wgsl vs_mesh: the element's model-view, TFACTOR and UV offset;
+// instance = element).
+@vertex
+fn vs_fx(
+    @location(0) pos: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) color: vec4<f32>,
+    @location(3) uv: vec2<f32>,
+    @builtin(instance_index) e: u32,
+) -> VOut {
+    var o: VOut;
+    let b = e * OUT_WORDS;
+    if (douts[b + 23u] < 0.5) {
+        o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        return o;
+    }
+    let mv = mat4x4<f32>(
+        vec4<f32>(douts[b], douts[b + 1u], douts[b + 2u], douts[b + 3u]),
+        vec4<f32>(douts[b + 4u], douts[b + 5u], douts[b + 6u], douts[b + 7u]),
+        vec4<f32>(douts[b + 8u], douts[b + 9u], douts[b + 10u], douts[b + 11u]),
+        vec4<f32>(douts[b + 12u], douts[b + 13u], douts[b + 14u], douts[b + 15u]));
+    let vp = mv * vec4<f32>(pos, 1.0);
+    o.pos = u.proj * vp;
+    o.world = (u.view_inv * vp).xyz;
+    o.kind = 0.0;
+    let tf = vec4<f32>(douts[b + 16u], douts[b + 17u], douts[b + 18u], douts[b + 19u]);
+    o.water = color * tf;
+    o.uv = uv + vec2<f32>(douts[b + 20u], douts[b + 21u]);
+    o.on_level = select(0.0, 1.0, on_level(o.world.y));
     return o;
 }
 
@@ -146,13 +228,37 @@ fn to_uv(c: vec4<f32>) -> vec2<f32> {
 @fragment
 fn fs(i: VOut) -> @location(0) vec4<f32> {
     let size = vec2<f32>(textureDimensions(depth));
-    // The depth test, against the scene (water draws no depth): hidden behind scenery or an actor.
-    let px = vec2<i32>(i.pos.xy);
-    let d = textureLoad(depth, px, 0).x;
-    if (i.floor > 0.0) {
+    let d = textureLoad(depth, vec2<i32>(i.pos.xy), 0).x;
+    if (i.kind > 0.0) {
         return floor_reflection(i, d, size);
     }
-    if (i.pos.z > d + 1e-6) {
+    return water(i, i.water, d, size, i.kind == 0.0, 1e-6);
+}
+
+// An effect water mesh: its texture times its colour is the water's own; only where it is flat and on a level.
+@fragment
+fn fs_fx(i: VOut) -> @location(0) vec4<f32> {
+    // Sampled and differentiated before anything is discarded (uniform control flow).
+    let t = textureSample(fx_tex, fx_samp, i.uv);
+    let n = cross(dpdx(i.world), dpdy(i.world));
+    // The effects' depth bias (render/effects.rs ZBIAS, -15 constant and slope): an opaque mesh wrote its depth that
+    // much nearer than it lies.
+    let bias = 16.0 * max(abs(dpdx(i.pos.z)), abs(dpdy(i.pos.z))) + 2e-6;
+    let size = vec2<f32>(textureDimensions(depth));
+    let d = textureLoad(depth, vec2<i32>(i.pos.xy), 0).x;
+    if (i.on_level < 0.999 || abs(n.y) < FLAT * length(n)) {
+        discard;
+    }
+    return water(i, i.water * t, d, size, !FX_OPAQUE, bias);
+}
+
+// The reflection on a water pixel: `own` the water's colour and alpha, `d` the scene's depth there, `fade_shallow`
+// for see-through water (the scene's depth is the bed under it), `tol` the depth test's allowance.
+fn water(i: VOut, own: vec4<f32>, d: f32, size: vec2<f32>, fade_shallow: bool, tol: f32) -> vec4<f32> {
+    // The depth test, against the scene with a small margin (the water draws no depth here, and opaque water's own
+    // depth is in it already, placed by the GPU from the same data, or biased nearer for an effect mesh).
+    let w_scene = linear(d);
+    if (i.pos.z > d + tol && linear(i.pos.z) > w_scene + 0.05 + 0.003 * w_scene) {
         discard;
     }
     let to_p = i.world - u.eye.xyz;
@@ -162,19 +268,21 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
     if (v.y <= 0.0) {
         discard;
     }
-    // How far below the surface the scene behind it lies (y grows downward): the water's depth along this ray.
-    let under = u.eye.xyz + v * (linear(d) / max(dot(v, u.forward.xyz), 1e-3));
-    let shore = smoothstep(0.0, SHORE, under.y - i.world.y);
-    if (shore <= 0.0) {
-        discard;
+    var shore = 1.0;
+    if (fade_shallow) {
+        // How far below the surface the scene behind it lies (y grows downward): the water's depth along this ray.
+        let under = u.eye.xyz + v * (w_scene / max(dot(v, u.forward.xyz), 1e-3));
+        shore = smoothstep(0.0, SHORE, under.y - i.world.y);
+        if (shore <= 0.0) {
+            discard;
+        }
     }
     let n = ripple_normal(i.world, dist);
     var r = reflect(v, n);
     r.y = min(r.y, -0.02);
     r = normalize(r);
 
-    var colour = sky(r);
-    var from_scene = 0.0;
+    var colour = to_target(sky(r));
     if (u.info.w > 0.5) {
         let b = march(i.world, r, RAY, size, jitter(i.pos.xy));
         if (b > 0.0) {
@@ -183,20 +291,29 @@ fn fs(i: VOut) -> @location(0) vec4<f32> {
             let hit_rgb = textureLoad(scene, texel, 0).rgb;
             // Faded toward the sky near the screen's edges and the ray's end.
             let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
-            from_scene = smoothstep(0.0, 0.08, edge) * (1.0 - smoothstep(0.7, 1.0, b / RAY));
-            // The copy holds target values; the sky is gamma-space: bring the sky to the target first.
-            return with_character(finish(mix(to_target(colour), hit_rgb, from_scene), n, v, dist), i, n, size, shore);
+            let from_scene = smoothstep(0.0, 0.08, edge) * (1.0 - smoothstep(0.7, 1.0, b / RAY));
+            // The copy holds target values; the sky is gamma-space: brought to the target above.
+            colour = mix(colour, hit_rgb, from_scene);
         }
     }
-    return with_character(finish(to_target(colour), n, v, dist), i, n, size, shore);
-}
-
-// The water's colour and weight with a mirrored character over it: the character at least as strong as a calm
-// reflection seen from above (the lift plus a little), bent by the ripples; then the shoreline fade.
-fn with_character(c: vec4<f32>, i: VOut, n: vec3<f32>, size: vec2<f32>, shore: f32) -> vec4<f32> {
+    // The water's hue at full brightness (its colour is gamma bytes, as the target's when the shaders encode it).
+    let hue = to_target(own.rgb / max(max(own.r, own.g), max(own.b, 1e-3)));
+    colour = colour * mix(vec3<f32>(1.0), hue, TINT);
+    let cos_i = clamp(dot(n, -v), 0.0, 1.0);
+    let fresnel = F0 + (1.0 - F0) * pow(1.0 - cos_i, 5.0);
+    let fog = clamp((u.fog.y - dist) / max(u.fog.y - u.fog.x, 1e-3), 0.0, 1.0);
+    // The water's alpha says how much of the bed shows through it, not how much it reflects: it only fades the
+    // reflection out where the water itself fades out (a sheet's edges, holes in its texture).
+    let alpha = smoothstep(0.0, COVER, own.a);
+    let w = min(fresnel, MAX_WEIGHT) * alpha * fog;
+    // A mirrored character over it, bent by the ripples.
     let ch = mirrored(i.pos.xy, size, n.xz * 0.04, i.world.y);
-    let w = mix(c.a, max(c.a, LIFT + 0.25), ch.a);
-    return vec4<f32>(mix(c.rgb, ch.rgb, ch.a), w * shore);
+    let wc = mix(w, max(w, CHARACTER * alpha * fog), ch.a);
+    // FFXI_REFLECT_DEBUG: the water found, scenery magenta and effect meshes cyan, at half strength.
+    if (u.counts.y > 0.5) {
+        return vec4<f32>(select(vec3<f32>(0.0, 1.0, 1.0), vec3<f32>(1.0, 0.0, 1.0), i.on_level > 1.5), 0.5);
+    }
+    return vec4<f32>(mix(colour, ch.rgb, ch.a), wc * shore);
 }
 
 // The first scene point the reflected ray from `p` along `r` meets on screen within `reach`, as its distance along the
@@ -302,15 +419,6 @@ fn floor_reflection(i: VOut, d: f32, size: vec2<f32>) -> vec4<f32> {
     let cos_i = clamp(dot(n, -v), 0.0, 1.0);
     let fresnel = F0 + (1.0 - F0) * pow(1.0 - cos_i, 5.0);
     let fog = clamp((u.fog.y - dist) / max(u.fog.y - u.fog.x, 1e-3), 0.0, 1.0);
-    let w = i.floor * mix(0.7, 1.0, fresnel) * found * fog;
-    return vec4<f32>(rgb, w);
-}
-
-// The Fresnel weight, fogged away with distance (the water there is already the fog's colour).
-fn finish(rgb: vec3<f32>, n: vec3<f32>, v: vec3<f32>, dist: f32) -> vec4<f32> {
-    let cos_i = clamp(dot(n, -v), 0.0, 1.0);
-    let fresnel = F0 + (1.0 - F0) * pow(1.0 - cos_i, 5.0);
-    let fog = clamp((u.fog.y - dist) / max(u.fog.y - u.fog.x, 1e-3), 0.0, 1.0);
-    let w = clamp(LIFT + fresnel, 0.0, MAX_WEIGHT) * fog;
+    let w = i.kind * mix(0.7, 1.0, fresnel) * found * fog;
     return vec4<f32>(rgb, w);
 }
