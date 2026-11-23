@@ -80,20 +80,53 @@ struct World {
 @group(0) @binding(6) var world1: texture_depth_2d;
 @group(0) @binding(7) var<uniform> wsu: World;
 
-// How far into the world's shadow the point lies: 0 lit (or the world shadows off), 1 wholly shaded.
+// The part of the sun's direct light the world shadows take off the point (zone.wgsl world_lit's, the same taps,
+// cascade blend, edge fade and strength): 0 lit (or the world shadows off), up to their strength.
+fn world_pcf0(lp: vec3<f32>) -> f32 {
+    let uv = vec2<f32>(lp.x * 0.5 + 0.5, 0.5 - lp.y * 0.5);
+    let t = 0.75 * wsu.misc.x;
+    return 0.25 * (textureSampleCompareLevel(world0, cmp, uv + vec2<f32>(-t, -t), lp.z)
+        + textureSampleCompareLevel(world0, cmp, uv + vec2<f32>(t, -t), lp.z)
+        + textureSampleCompareLevel(world0, cmp, uv + vec2<f32>(-t, t), lp.z)
+        + textureSampleCompareLevel(world0, cmp, uv + vec2<f32>(t, t), lp.z));
+}
+
+fn world_pcf1(lp: vec3<f32>) -> f32 {
+    let uv = vec2<f32>(lp.x * 0.5 + 0.5, 0.5 - lp.y * 0.5);
+    let t = 0.75 * wsu.misc.x;
+    return 0.25 * (textureSampleCompareLevel(world1, cmp, uv + vec2<f32>(-t, -t), lp.z)
+        + textureSampleCompareLevel(world1, cmp, uv + vec2<f32>(t, -t), lp.z)
+        + textureSampleCompareLevel(world1, cmp, uv + vec2<f32>(-t, t), lp.z)
+        + textureSampleCompareLevel(world1, cmp, uv + vec2<f32>(t, t), lp.z));
+}
+
 fn world_shade(p: vec3<f32>, n: vec3<f32>) -> f32 {
     if (wsu.info.x <= 0.0) {
         return 0.0;
     }
     let l0 = wsu.vp0 * vec4<f32>(p + n * wsu.info.z, 1.0);
-    if (max(abs(l0.x), abs(l0.y)) < 0.98 && l0.z > 0.0 && l0.z < 1.0) {
-        return 1.0 - textureSampleCompareLevel(world0, cmp, vec2<f32>(l0.x * 0.5 + 0.5, 0.5 - l0.y * 0.5), l0.z);
+    let m0 = max(abs(l0.x), abs(l0.y));
+    var s = 1.0;
+    var fade = 1.0;
+    if (wsu.info.y < 1.5) {
+        if (m0 >= 1.0 || l0.z <= 0.0 || l0.z >= 1.0) {
+            return 0.0;
+        }
+        s = world_pcf0(l0.xyz);
+        fade = 1.0 - smoothstep(0.8, 0.98, m0);
+    } else {
+        let l1 = wsu.vp1 * vec4<f32>(p + n * wsu.info.w, 1.0);
+        let m1 = max(abs(l1.x), abs(l1.y));
+        let far = select(1.0, world_pcf1(l1.xyz), m1 < 1.0 && l1.z > 0.0 && l1.z < 1.0);
+        let k = smoothstep(0.85, 0.98, m0);
+        var near = far;
+        if (k < 1.0 && l0.z > 0.0 && l0.z < 1.0) {
+            near = world_pcf0(l0.xyz);
+        }
+        s = mix(near, far, k);
+        fade = 1.0 - smoothstep(0.8, 0.98, m1);
     }
-    let l1 = wsu.vp1 * vec4<f32>(p + n * wsu.info.w, 1.0);
-    if (wsu.info.y > 1.5 && max(abs(l1.x), abs(l1.y)) < 0.98 && l1.z > 0.0 && l1.z < 1.0) {
-        return 1.0 - textureSampleCompareLevel(world1, cmp, vec2<f32>(l1.x * 0.5 + 0.5, 0.5 - l1.y * 0.5), l1.z);
-    }
-    return 0.0;
+    return wsu.info.x * (1.0 - s) * fade;
 }
 
 struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
@@ -622,12 +655,11 @@ mod tests {
             let cv = color.create_view(&Default::default());
             // The floor's depth in the map: a caster just above it shadows, one far above does not.
             let floor_lz = light.project_point3(Vec3::ZERO).z;
-            // The world shadows off (their stand-ins), and on with a map that shades the whole floor.
+            // The world shadows off (their stand-ins), and on with a map that shades the whole floor (run_in's
+            // strength: the part of the sun they take off).
             let off = crate::render::worldshadow::Off::new(&gpu);
             let ws = crate::render::worldshadow::WorldShadow::new(&gpu, &silly, 1);
             let wl = crate::render::worldshadow::matrix(sun, Vec3::ZERO, 16.0).0;
-            let params = crate::render::worldshadow::Params::new(&[(wl, 16.0)], 0.85);
-            crate::render::Put::put(&gpu.queue, &ws.uniform, 0, bytemuck::bytes_of(&params));
             {
                 let mut enc = gpu.device.create_command_encoder(&Default::default());
                 let _p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -648,7 +680,9 @@ mod tests {
                 drop(_p);
                 gpu.queue.submit([enc.finish()]);
             }
-            let run_in = |map_depth: f32, feet_y: f32, shaded: bool| {
+            let run_in = |map_depth: f32, feet_y: f32, shaded: f32| {
+                let params = crate::render::worldshadow::Params::new(&[(wl, 16.0)], shaded, sun);
+                crate::render::Put::put(&gpu.queue, &ws.uniform, 0, bytemuck::bytes_of(&params));
                 let mut enc = gpu.device.create_command_encoder(&Default::default());
                 {
                     let _p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -700,13 +734,16 @@ mod tests {
                         multiview_mask: None,
                     });
                 }
-                let world =
-                    if shaded { (&ws.uniform, &ws.maps[0], ws.far()) } else { (&off.uniform, &off.map, &off.map) };
+                let world = if shaded > 0.0 {
+                    (&ws.uniform, &ws.maps[0], ws.far())
+                } else {
+                    (&off.uniform, &off.map, &off.map)
+                };
                 sh.receive(&gpu, &mut enc, &cv, &depth, vp, light, sun, STRENGTH, cam.eye, 1.0, world);
                 gpu.queue.submit([enc.finish()]);
                 read(&gpu, &color, n, n)
             };
-            let run = |map_depth: f32, feet_y: f32| run_in(map_depth, feet_y, false);
+            let run = |map_depth: f32, feet_y: f32| run_in(map_depth, feet_y, 0.0);
             let lit = (0.8f32 * 255.0).round() as i32;
             let dark = (0.8 * (1.0 - STRENGTH) * 255.0).round() as i32;
             for p in run(1.0, 0.0).as_chunks::<4>().0 {
@@ -722,9 +759,13 @@ mod tests {
             for p in run(floor_lz - 20.0 / DEPTH, -1.0).as_chunks::<4>().0 {
                 assert!((p[0] as i32 - dark).abs() <= 3, "caster a step above {p:?} want {dark} ({feet:?})");
             }
-            // A floor already in the world's shadow takes no character shadow on top.
-            for p in run_in(floor_lz - 1.0 / DEPTH, 0.0, true).as_chunks::<4>().0 {
-                assert!((p[0] as i32 - lit).abs() <= 2, "in the world's shadow {p:?}");
+            // A floor already in the world's shadow takes the character's shadow only from the sun left on it:
+            // fully (0.85 taken) and partly (dusk's 0.3).
+            for r in [0.85f32, 0.3] {
+                let want = (0.8 * (1.0 - STRENGTH * (1.0 - r)) * 255.0).round() as i32;
+                for p in run_in(floor_lz - 1.0 / DEPTH, 0.0, r).as_chunks::<4>().0 {
+                    assert!((p[0] as i32 - want).abs() <= 3, "in the world's shadow ({r}) {p:?} want {want}");
+                }
             }
         }
     }

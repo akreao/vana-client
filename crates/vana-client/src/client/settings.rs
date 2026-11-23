@@ -694,7 +694,7 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
         ),
         row(
             "World Shadows",
-            "Buildings, trees and cliffs cast shadows from the sun onto the ground, the scenery and characters, which only lose the direct sunlight (the game's painted shade is kept). Low covers the area around you; High adds sharper shadows close by and reaches farther. Outdoors in daylight only (not retail).",
+            "Buildings, trees and cliffs cast shadows from the sun onto the ground, the scenery and characters, which only lose the direct sunlight (the game's painted shade is kept). Low covers the area around you; High adds sharper shadows close by and reaches farther. Outdoors only, and faint by moonlight (not retail).",
             WorldShadows,
             &[(0, "Off"), (1, "Low"), (2, "High")],
             Now,

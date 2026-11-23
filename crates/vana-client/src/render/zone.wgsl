@@ -98,7 +98,7 @@ struct WorldShadowU {
     vp1: mat4x4<f32>,
     // x: strength (0 = off); y: cascades (1 or 2); z, w: each cascade's normal offset in world units.
     info: vec4<f32>,
-    // x: one map texel in uv.
+    // x: one map texel in uv; yzw: the direction the map's light travels.
     misc: vec4<f32>,
 };
 @group(0) @binding(6) var<uniform> wsh: WorldShadowU;
@@ -899,16 +899,29 @@ fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
     // moon as two lights (the zone's, or the area's) and table fog over the view depth.
     var direct = boost(sun_color) * max(dot(n, -sun), 0.0);
     var d = in.range;
+    // World shadows (ours): the zone's light only (an area's own light has no map).
+    let shadowed = slot == 0u && wsh.info.x > 0.0;
     if (u.modes.x < 0.5) {
         var two = u.two;
         if (slot != 0u && areas[slot].sun.w > 0.5) {
             two = areas[slot].two;
         }
-        direct = boost(two[1].rgb) * max(dot(n, -two[0].xyz), 0.0) + boost(two[3].rgb) * max(dot(n, -two[2].xyz), 0.0);
+        var lit_sun = boost(two[1].rgb) * max(dot(n, -two[0].xyz), 0.0);
+        var lit_moon = boost(two[3].rgb) * max(dot(n, -two[2].xyz), 0.0);
+        // The map is cast by one of the two (the zone's light, sun by day, moon by night): only that one's term
+        // is shaded, the one whose direction lies nearer the map's.
+        if (shadowed) {
+            let w = world_lit(in.world, n);
+            let to_map = wsh.misc.yzw;
+            if (dot(normalize(two[0].xyz), to_map) >= dot(normalize(two[2].xyz), to_map)) {
+                lit_sun = lit_sun * w;
+            } else {
+                lit_moon = lit_moon * w;
+            }
+        }
+        direct = lit_sun + lit_moon;
         d = in.depth;
-    }
-    // World shadows (ours): the zone's sun only (an area's own light has no map).
-    if (slot == 0u && any(direct > vec3<f32>(0.0))) {
+    } else if (shadowed && any(direct > vec3<f32>(0.0))) {
         direct = direct * world_lit(in.world, n);
     }
     // Every N.L takes the normal's length (NORMALIZENORMALS off).

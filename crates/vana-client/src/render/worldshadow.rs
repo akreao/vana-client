@@ -130,8 +130,9 @@ pub struct Params {
 }
 
 impl Params {
-    /// The cascades' matrices and half sides at `strength` (0 = off).
-    pub fn new(cascades: &[(Mat4, f32)], strength: f32) -> Self {
+    /// The cascades' matrices and half sides at `strength` (0 = off), cast by a light travelling along `dir`.
+    pub fn new(cascades: &[(Mat4, f32)], strength: f32, dir: Vec3) -> Self {
+        let dir = dir.normalize_or_zero();
         let vp = |k: usize| cascades.get(k).map_or(Mat4::IDENTITY, |c| c.0).to_cols_array_2d();
         let off = |k: usize| cascades.get(k).map_or(0.0, |c| OFFSET_TEXELS * 2.0 * c.1 / SIZE as f32);
         let on = !cascades.is_empty() && strength > 0.0;
@@ -139,7 +140,7 @@ impl Params {
             vp0: vp(0),
             vp1: vp(1),
             info: [if on { strength } else { 0.0 }, cascades.len() as f32, off(0), off(1)],
-            misc: [1.0 / SIZE as f32, 0.0, 0.0, 0.0],
+            misc: [1.0 / SIZE as f32, dir.x, dir.y, dir.z],
         }
     }
 }
@@ -246,6 +247,8 @@ struct State {
     drawn: Vec<Option<Drawn>>,
     /// What was shown when the maps were drawn (ZoneRenderer::shown_key); a change draws them all again.
     shown: u64,
+    /// Whether door parts were moving at the last frame: their final pose is drawn once more after they stop.
+    moving: bool,
     /// The last frame's strength and how many cascades it drew (the diagnostics and the benchmark).
     strength: f32,
     redrawn: usize,
@@ -296,11 +299,13 @@ impl WorldShadow {
     }
 
     /// The cascades to draw this frame (index, matrix) for light direction `d` around `target`: plan()'s, all of
-    /// them when `all` or what is shown (`shown`) changed. Their matrices are written for the depth pass.
-    pub fn stale(&self, gpu: &Gpu, d: Vec3, target: Vec3, all: bool, shown: u64) -> Vec<(usize, Mat4)> {
+    /// them when `all`, what is shown (`shown`) changed, door parts are `moving` or just stopped. Their matrices are
+    /// written for the depth pass.
+    pub fn stale(&self, gpu: &Gpu, d: Vec3, target: Vec3, all: bool, shown: u64, moving: bool) -> Vec<(usize, Mat4)> {
         let mut s = self.state();
-        let all = all || s.shown != shown;
+        let all = all || s.shown != shown || moving || s.moving;
         s.shown = shown;
+        s.moving = moving;
         let out: Vec<(usize, Mat4)> = plan(&mut s.drawn, halves(self.level), d, target, all)
             .into_iter()
             .filter_map(|k| Some((k, s.drawn[k]?.vp)))
@@ -312,8 +317,8 @@ impl WorldShadow {
         out
     }
 
-    /// Writes the shaders' uniform for this frame at `strength` (0 = off).
-    pub fn set(&self, gpu: &Gpu, strength: f32) {
+    /// Writes the shaders' uniform for this frame at `strength` (0 = off), the light travelling along `dir`.
+    pub fn set(&self, gpu: &Gpu, strength: f32, dir: Vec3) {
         let mut s = self.state();
         let cascades: Vec<(Mat4, f32)> =
             s.drawn.iter().zip(halves(self.level)).map_while(|(d, &h)| d.map(|d| (d.vp, h))).collect();
@@ -322,7 +327,7 @@ impl WorldShadow {
             s.redrawn = 0;
         }
         s.strength = strength;
-        super::Put::put(&gpu.queue, &self.uniform, 0, bytemuck::bytes_of(&Params::new(&cascades, strength)));
+        super::Put::put(&gpu.queue, &self.uniform, 0, bytemuck::bytes_of(&Params::new(&cascades, strength, dir)));
     }
 
     /// This frame's strength and the cascades it drew.
@@ -388,9 +393,10 @@ mod tests {
         assert_eq!(strength(Vec3::ONE, 0.0), 0.0);
         assert_eq!(strength(Vec3::ZERO, 1.0), 0.0);
         assert!((strength(Vec3::ONE, 1.0) - STRENGTH).abs() < 1e-6);
-        let p = Params::new(&[], 1.0);
+        let p = Params::new(&[], 1.0, Vec3::Y);
         assert_eq!(p.info[0], 0.0);
-        let p = Params::new(&[(Mat4::IDENTITY, 40.0)], 0.5);
+        let p = Params::new(&[(Mat4::IDENTITY, 40.0)], 0.5, Vec3::new(0.0, 2.0, 0.0));
+        assert_eq!(p.misc[1..], [0.0, 1.0, 0.0]);
         assert_eq!((p.info[0], p.info[1]), (0.5, 1.0));
         assert!((p.info[2] - 1.5 * 80.0 / SIZE as f32).abs() < 1e-6);
     }

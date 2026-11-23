@@ -677,6 +677,8 @@ pub struct ZoneRenderer {
     /// their first use (shadow_cull; dropped with them).
     shadow_src: Option<Box<(cull::CullData, Vec<u8>)>>,
     shadow_cull: std::sync::OnceLock<Option<cull::CpuCull>>,
+    /// The camera list's mask in force (set_camera_list), for the world shadows' culling made after it.
+    list_mask: Option<(Vec<bool>, Vec<bool>, f32)>,
     /// Ambient occlusion on the scenery (render/ssao.rs; prepare_ssao).
     ssao: Option<ssao::Ssao>,
     /// Lamp shadows (render/lampshadow.rs): the maps (always made) and this frame's lamps (light slot, matrix,
@@ -3013,6 +3015,7 @@ impl ZoneRenderer {
             world_off,
             shadow_src: Some(Box::new((geo.cull.clone(), geo.parts()[2].to_vec()))),
             shadow_cull: Default::default(),
+            list_mask: None,
             sun_shadow: None,
             ssao: None,
             lamp_shadow,
@@ -3158,9 +3161,6 @@ impl ZoneRenderer {
                 self.camera_lists.get(&list).map(|l| (0..base).chain(l.iter().copied()).collect());
             l.set_list(whole.as_deref());
         }
-        if self.cull.is_none() && self.cpu_cull.is_none() {
-            return;
-        }
         let mask = match self.camera_lists.get(&list) {
             Some(l) => {
                 let listed: std::collections::HashSet<u32> = l.iter().copied().collect();
@@ -3185,13 +3185,18 @@ impl ZoneRenderer {
             }
             None => None,
         };
-        let mask = mask.as_ref().map(|(a, b, r)| (a.as_slice(), b.as_slice(), *r));
+        let view = mask.as_ref().map(|(a, b, r)| (a.as_slice(), b.as_slice(), *r));
         if let Some(c) = self.cull.as_mut() {
-            c.set_mask(gpu, mask);
+            c.set_mask(gpu, view);
         }
         if let Some(c) = &self.cpu_cull {
-            c.set_mask(mask);
+            c.set_mask(view);
         }
+        // The world shadows' culling takes the same list (made later, it takes it then); shown_key redraws them.
+        if let Some(Some(c)) = self.shadow_cull.get() {
+            c.set_mask(view);
+        }
+        self.list_mask = mask;
     }
 
     /// Ours (the Lamp Lights setting, client/lamps.rs): the lamps' lights (position, table slot) go into the free light
@@ -5121,10 +5126,12 @@ impl ZoneRenderer {
     }
 
     /// What the scenery shows that the world shadows' maps depend on: the sub-area and whether it shows, the hidden
-    /// link, the link-999 placements.
+    /// link, the link-999 placements, the camera list, and how many textures are still to go up.
     fn shown_key(&self) -> u64 {
         let sub = self.sub.as_ref().map_or(0, |s| (s.tex_base as u64) << 2 | (s.shown as u64) << 1 | 1);
-        sub ^ (self.hidden as u64) << 32 ^ (self.link999_off as u64) << 63
+        let list = (self.camera_list.0 as u64 ^ (self.camera_list.1.map_or(0, f32::to_bits) as u64) << 32)
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        sub ^ (self.hidden as u64) << 32 ^ (self.link999_off as u64) << 63 ^ list ^ (self.pending.len() as u64) << 40
     }
 
     /// The world shadows' frame (render/worldshadow.rs): off without an outdoor light strong enough (night's change,
@@ -5137,12 +5144,17 @@ impl ZoneRenderer {
             let st = worldshadow::strength(l.diffuse, self.shadow_level);
             (st > 0.0).then_some((worldshadow::direction(l.dir)?, st))
         });
-        let Some((d, st)) = light else {
-            ws.set(gpu, 0.0);
+        // Not before the zone's geometry, textures and mips are all up: a map drawn from placeholders would stay.
+        let ready = self.geo_pending.is_none() && self.pending.is_empty() && gpu.mips_done() >= self.mips_seq;
+        let (Some((d, st)), true) = (light, ready) else {
+            ws.set(gpu, 0.0, Vec3::Y);
             return;
         };
         let force = self.voyage != Mat4::IDENTITY || std::env::var_os("FFXI_WS_REDRAW").is_some();
-        for (k, vp) in ws.stale(gpu, d, camera.target, force, self.shown_key()) {
+        // Door and lift parts moving (move_part): drawn each frame they move, and once more as they stop.
+        let moving = self.now <= self.parts_busy;
+        let dir = self.lighting.map_or(d, |l| l.dir);
+        for (k, vp) in ws.stale(gpu, d, camera.target, force, self.shown_key(), moving) {
             let view = cull::View { view_proj: vp, eye: camera.eye, voyage: self.voyage, clip: self.clip };
             fn culled<'a>(
                 gpu: &Gpu,
@@ -5151,17 +5163,32 @@ impl ZoneRenderer {
                 instances: &wgpu::Buffer,
                 encoder: &mut wgpu::CommandEncoder,
                 view: &cull::View,
+                mask: Option<&(Vec<bool>, Vec<bool>, f32)>,
             ) -> Option<(&'a cull::CpuCull, Vec<std::ops::Range<u32>>)> {
-                let c = lock.get_or_init(|| src.as_ref().and_then(|s| cull::CpuCull::new(gpu, &s.0, &s.1))).as_ref()?;
+                let c = lock
+                    .get_or_init(|| {
+                        let c = cull::CpuCull::new(gpu, &src.as_ref()?.0, &src.as_ref()?.1)?;
+                        c.set_mask(mask.map(|(a, b, r)| (a.as_slice(), b.as_slice(), *r)));
+                        Some(c)
+                    })
+                    .as_ref()?;
                 let placed = c.run(encoder, instances, view, &c.runs_shown(view.view_proj, view.eye, view.clip));
                 Some((c, placed))
             }
-            let zone = culled(gpu, &self.shadow_src, &self.shadow_cull, &self.instances, encoder, &view);
+            let zone = culled(
+                gpu,
+                &self.shadow_src,
+                &self.shadow_cull,
+                &self.instances,
+                encoder,
+                &view,
+                self.list_mask.as_ref(),
+            );
             let sub = self
                 .sub
                 .as_ref()
                 .filter(|s| s.shown)
-                .map(|s| (s, culled(gpu, &s.shadow_src, &s.shadow_cull, &s.instances, encoder, &view)));
+                .map(|s| (s, culled(gpu, &s.shadow_src, &s.shadow_cull, &s.instances, encoder, &view, None)));
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("world shadow depth"),
                 color_attachments: &[],
@@ -5209,7 +5236,7 @@ impl ZoneRenderer {
                 }
             }
         }
-        ws.set(gpu, st);
+        ws.set(gpu, st, dir);
     }
 
     /// Ambient occlusion (ours) on or off at the scene's `size`; made at the first use.
