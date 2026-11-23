@@ -445,6 +445,8 @@ pub struct CnqMap {
     camp: Option<Camp>,
     /// Cursor mode's mouse (map.rs mouse_step): where the game's pointer was last set, the warp asked of the app.
     anchor: Option<(f32, f32)>,
+    /// Ticks toward the next retail frame for the cursor keys (map::key_ticks).
+    key_acc: f32,
     pub warp: Option<(f32, f32)>,
 }
 
@@ -562,6 +564,7 @@ pub fn open_map(w: &mut World, gu: &GameUi, mode: usize, sw: f32, sh: f32) -> bo
         acc: 0.0,
         camp: None,
         anchor: None,
+        key_acc: 0.0,
         warp: None,
     });
     if let Some(m) = w.region_menu.as_mut() {
@@ -911,8 +914,8 @@ pub fn update(
         // key (0x9a, flag 0x200) scrolls the view instead.
         let dead = |v: f32| if (v * fast).abs() < 2.0 { 0.0 } else { v };
         let (sw, sh) = m.view.screen;
-        let v =
-            (dead(input.axis(0x9d) * 15.0) * fast * ticks * 0.5, dead(input.axis(0x9e) * 15.0) * fast * ticks * 0.5);
+        let kt = super::map::key_ticks(&mut m.key_acc, ticks);
+        let v = (dead(input.axis(0x9d) * 15.0) * fast * kt * 0.5, dead(input.axis(0x9e) * 15.0) * fast * kt * 0.5);
         let (bx, by) = ([sw / 512.0 * 40.0, sw - sw / 512.0 * 60.0], [sh / 448.0 * 65.0, sh - sh / 448.0 * 180.0]);
         let d = match mouse.filter(|_| v == (0.0, 0.0)) {
             Some(ms) => super::map::mouse_step(ms, &mut m.anchor, m.view.point, m.view.zoom),
@@ -1146,7 +1149,8 @@ fn line10(w: &World, id: usize, n: i32) -> String {
     w.battle
         .as_ref()
         .and_then(|b| b.group10(id))
-        .map_or(String::new(), |f| super::textcmd::printf(&f, &[n.to_string()]))
+        // With its width: the reconnaissance line is "Lv%2d ".
+        .map_or(String::new(), |f| super::select::printf(&f, &[&n.to_string()]))
 }
 
 /// The mode's info windows (sections R5): conquer1 / conq6sta / conq3pts, beseige1 / beseige2 / imperial, coloresu /

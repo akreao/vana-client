@@ -221,8 +221,8 @@ pub fn draw(p: &mut Panels, w: &mut World) {
                 lines.push(Box::new(move |ui: &mut Ui| {
                     heading(ui, m, &name);
                     pair(ui, m, "", &line);
-                    gauge(ui, m, "Prosperity", g[0], false, &format!("{:.0}%", g[0] * 100.0));
-                    gauge(ui, m, "Morale", g[1], false, &format!("{:.0}%", g[1] * 100.0));
+                    gauge(ui, m, "Morale", g[0], false, &format!("{:.0}%", g[0] * 100.0));
+                    gauge(ui, m, "Prosperity", g[1], false, &format!("{:.0}%", g[1] * 100.0));
                 }));
             }
             region::CampView::Area { holder: h, fort, res, influence, heroism } => {

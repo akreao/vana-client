@@ -419,6 +419,8 @@ pub struct MapWin {
     acc: f32,
     /// Cursor mode's mouse: where the game's pointer was last set (sprite cursor), the pointer warp asked of the app.
     anchor: Option<(f32, f32)>,
+    /// Ticks toward the next retail frame for the cursor keys (key_ticks).
+    key_acc: f32,
     pub warp: Option<(f32, f32)>,
     /// Mode 7 (+0xa4c / +0xa50 / +0xa51): the page's first image file, the image count, the one shown; and what the
     /// close asks next (LAB_101f7b90 the next image, LAB_101f7b40 back to guide01).
@@ -873,6 +875,7 @@ impl MapWin {
             rising: true,
             acc: 0.0,
             anchor: None,
+            key_acc: 0.0,
             warp: None,
             primer: None,
             primer_next: None,
@@ -1550,8 +1553,8 @@ impl MapWin {
         if let Some(mut cur) = cur {
             let (sw, sh) = self.screen;
             let dead = |v: f32| if (v * fast).abs() < 2.0 { 0.0 } else { v };
-            let v =
-                (dead(input.axis(0x9d) * 8.0) * fast * ticks * 0.5, dead(input.axis(0x9e) * 8.0) * fast * ticks * 0.5);
+            let kt = key_ticks(&mut self.key_acc, ticks);
+            let v = (dead(input.axis(0x9d) * 8.0) * fast * kt * 0.5, dead(input.axis(0x9e) * 8.0) * fast * kt * 0.5);
             let (bx, by) = ([sw / 512.0 * 40.0, sw - sw / 512.0 * 150.0], [sh / 448.0 * 65.0, sh - sh / 448.0 * 180.0]);
             let d = match mouse.filter(|_| v == (0.0, 0.0) && live) {
                 Some(ms) => mouse_step(ms, &mut self.anchor, cur, self.zoom),
@@ -2067,6 +2070,16 @@ const SCAN_ROWS: usize = 10;
 pub struct CursorMouse {
     pub at: (f32, f32),
     pub hardware: bool,
+}
+
+/// The cursor keys' ticks this update: retail steps the cursor once a retail frame (2 ticks) and keeps the whole
+/// pixels of each step, so at a higher frame rate the steps wait for a whole retail frame instead of being cut to
+/// a fraction of a pixel and lost (right and down never moved at 300 fps).
+pub(super) fn key_ticks(acc: &mut f32, ticks: f32) -> f32 {
+    *acc += ticks;
+    let n = (*acc / 2.0).floor().min(10.0);
+    *acc = (*acc - n * 2.0).min(2.0);
+    n * 2.0
 }
 
 /// FUN_101ef0a0's mouse step once the cursor axes are still: the pointer less the cursor point (hardware cursor), or,
@@ -3311,6 +3324,19 @@ mod tests {
 #[cfg(test)]
 mod cursor_tests {
     use super::{CursorMouse, cursor_move, mouse_step};
+
+    /// At 300 fps (0.2 ticks a frame) the keys step once every 10 frames, a whole retail frame's 2 ticks, so a right
+    /// step of 8 x 2 / 2 = 8 lands in full; at 30 fps every frame steps.
+    #[test]
+    fn keys_step_by_retail_frames() {
+        use super::key_ticks;
+        let mut acc = 0.0;
+        let steps: Vec<f32> = (0..20).map(|_| key_ticks(&mut acc, 0.2)).collect();
+        assert_eq!(steps.iter().filter(|&&t| t == 2.0).count(), 2, "{steps:?}");
+        assert!(steps.iter().all(|&t| t == 0.0 || t == 2.0));
+        let mut acc = 0.0;
+        assert!((0..5).all(|_| key_ticks(&mut acc, 2.0) == 2.0));
+    }
 
     #[test]
     fn cursor_moves_inside_the_box_and_steps_past_it() {

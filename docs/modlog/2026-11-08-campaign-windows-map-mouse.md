@@ -19,7 +19,7 @@
     (FUN_101efb20 / FUN_101efc00): framesus 149 and framesus 150 scaled by (byte 3 >> 1) % (heroism) at (x - 0x10, y +
     0xb), 0x1e higher when the label sits below (flag 0x40, place 1 / 6 / 7; the language picks byte +0xe / +0xf).
   - Ours: region.rs Camp, draw_campaign, info_view's CampView (modern/regioninfo.rs; the labels baked into retail's
-    frames are ours there: Controlled Areas by nation, Prosperity / Morale for the two army gauges *(inf)*,
+    frames are ours there: Controlled Areas by nation, Morale / Prosperity for the two army gauges (bits 18..24 / 25..31, MODLOG campsan),
     Fortifications, Resources, Heroism, influence by nation). LSB never sends 0x071 mode 2, so none of this can be seen
     on LSB; it is for retail servers.
 - The mouse in cursor mode (FUN_101ef0a0, cnqframe and the map's marker placing / scan narrowing): when the cursor
