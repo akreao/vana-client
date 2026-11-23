@@ -1,6 +1,6 @@
 //! Region Info's map windows (client/region.rs keeps the map, its markers and the rules): what retail's conquer1,
-//! conq6sta, beseige1 / beseige2, coloresu, colorank and the legend windows show, as one panel at the screen's edge
-//! away from the cursor. Retail's label sprites are named by their captions (fallbacks in English).
+//! conq6sta, beseige1 / beseige2, coloresu, colorank, campresu / campsan / camparea and the legend windows show, as
+//! one panel at the screen's edge away from the cursor. Retail's label sprites are named by their captions (fallbacks in English).
 
 use super::super::{World, region};
 use super::{Panels, Title};
@@ -87,6 +87,7 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         && v.colony.is_none()
         && v.coalitions.is_none()
         && v.legend.is_none()
+        && v.campaign.is_none()
     {
         return;
     }
@@ -192,6 +193,53 @@ pub fn draw(p: &mut Panels, w: &mut World) {
                 pair(ui, m, COALITIONS[k], &r.to_string());
             }
         }));
+    }
+    if let Some(c) = &v.campaign {
+        // Campaign's labels are baked into retail's frames (framesus 141 / 151 / 145); these are ours *(inf)*, the
+        // army names are framesus 142..144 / 155..158.
+        let holder = |k: u8| match k {
+            1..=3 => nation(k as usize - 1),
+            4 => nation(3),
+            _ => "None".to_string(),
+        };
+        match c {
+            region::CampView::Results(n) => {
+                let rows: Vec<(String, u32)> = (0..4).map(|k| (nation(k), n[k])).collect();
+                lines.push(Box::new(move |ui: &mut Ui| {
+                    heading(ui, m, "Controlled Areas");
+                    for (name, v) in &rows {
+                        pair(ui, m, name, &v.to_string());
+                    }
+                }));
+            }
+            region::CampView::Army { n, line, gauges } => {
+                let fallback =
+                    ["San d'Oria", "Bastok", "Windurst", "Orcish Army", "Quadav Army", "Yagudo Army", "Kindred"];
+                let k = n.clamp(&1, &7) - 1;
+                let name = caption(p, "menu    framesus", if *n <= 3 { 141 + n } else { 151 + n }, fallback[k]);
+                let (line, g) = (line.clone(), *gauges);
+                lines.push(Box::new(move |ui: &mut Ui| {
+                    heading(ui, m, &name);
+                    pair(ui, m, "", &line);
+                    gauge(ui, m, "Prosperity", g[0], false, &format!("{:.0}%", g[0] * 100.0));
+                    gauge(ui, m, "Morale", g[1], false, &format!("{:.0}%", g[1] * 100.0));
+                }));
+            }
+            region::CampView::Area { holder: h, fort, res, influence, heroism } => {
+                let (h, fort, res, influence, heroism) = (holder(*h), *fort, *res, *influence, *heroism);
+                let names: Vec<String> = (0..4).map(nation).collect();
+                lines.push(Box::new(move |ui: &mut Ui| {
+                    heading(ui, m, "Campaign Area");
+                    pair(ui, m, "Held by", &h);
+                    pair(ui, m, "Fortifications", &format!("{}/{}", fort.0, fort.1));
+                    pair(ui, m, "Resources", &format!("{}/{}", res.0, res.1));
+                    gauge(ui, m, "Heroism", heroism, false, &format!("{:.0}%", heroism * 100.0));
+                    for (k, f) in influence.iter().enumerate() {
+                        gauge(ui, m, &names[k], *f, false, &format!("{:.0}%", f * 100.0));
+                    }
+                }));
+            }
+        }
     }
     if let Some(value) = v.legend {
         let label = LEGENDS[v.mode.min(3)];
