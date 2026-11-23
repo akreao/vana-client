@@ -78,6 +78,7 @@ mod mapmark;
 mod modsui;
 mod myroom;
 pub mod net;
+pub mod neural;
 mod notes;
 mod packets;
 mod padcfg;
@@ -221,7 +222,6 @@ impl Task {
             Task::ZonePreloaded(..) => "zone preloaded",
             Task::AreaLoaded(..) => "area loaded",
             Task::SubAreaLoaded(..) => "sub-area loaded",
-            Task::SurfacePack(..) => "surface pack",
             Task::CharacterLoaded(..) => "model loaded",
             Task::GameUi(_) => "game ui",
             Task::Flyover(_) => "flyover",
@@ -346,9 +346,6 @@ enum Task {
     ),
     /// A sub-area (zone, id) off the loader thread.
     SubAreaLoaded(u16, u32, Result<subarea::Loaded>),
-    /// Surface Detail's pack for a scene loaded with the setting off (ZoneRenderer::surface_request): the scene, the
-    /// texture names asked for, the pack.
-    SurfacePack(u16, Vec<String>, std::collections::HashMap<String, crate::surface::Slopes>),
     /// A model by its source key, prepared for the GPU on the loader thread.
     CharacterLoaded(String, Result<Model>),
     GameUi(Result<GameUiData>),
@@ -816,8 +813,17 @@ struct Entity {
 }
 
 impl Entity {
+    /// `flags` bit 1 (+0x120 bit 14, HideFlag) and bit 2 (+0x120 bit 18, SleepFlag).
+    const HIDE: u8 = 2;
+    const SLEEP: u8 = 4;
+
+    /// Hidden or asleep by the server (+0x120 & 0x44000): not targetable, off the radar, marked for unloading.
+    fn server_hidden(&self) -> bool {
+        self.flags & (Self::HIDE | Self::SLEEP) != 0
+    }
+
     fn targetable(&self) -> bool {
-        self.flags & 6 == 0
+        !self.server_hidden()
     }
 
     /// FUN_10087dc0: an event's MonStat (ops 0x95 / 0x96) over the 0x00E one.
@@ -1957,9 +1963,9 @@ fn push_chat_line(world: &mut World, line: String, mode: u8, kind: u8, gm: bool,
     }
     let (colour, line, indent) = match world.battle.clone() {
         Some(bt) => {
-            // FUN_10129090: a line whose mode word's second byte has no low bits (every chat line) takes German's
-            // quotation marks after the expansion (its 0x800-byte buffer).
-            let line = crate::dat::font::german_quotes_str(&expand_phrases(world, &line), 0x800);
+            // German's quotation marks (FUN_10129090) are drawn by the log window (logwin::wrap_line); the line keeps
+            // the quotes as typed for the mods, copying and search.
+            let line = expand_phrases(world, &line);
             (bt.colour_in(mode, &world.game), line, bt.indents(mode))
         }
         None => (cfgapply::chat_colour(&world.game, kind), line, false),
@@ -2001,7 +2007,7 @@ fn draw_choice(
     for (k, (row, opt)) in rows.iter().zip(options.iter().skip(scroll)).enumerate() {
         gu.text(opt, qx + row[0] + 4.0, qy + row[1], 0, WHITE);
         if scroll + k == cursor {
-            gu.cursor(qx + row[0], qy + row[1]);
+            gu.cursor_on(name, k as u16 + 1, qx + row[0], qy + row[1], [qx + row[0], qy + row[1], row[2], row[3]]);
         }
     }
     let r = gu.window_rect(name, sw, sh)?;
@@ -2629,7 +2635,8 @@ fn anchor_point(world: &World, id: u32, which: usize) -> Option<Vec3> {
     let (pos, status) = if id == world.my_id {
         (drawn_pos(world), world.my_motion.status)
     } else {
-        world.entities.get(&id).map(|e| (e.pos, e.motion.status))?
+        // Actors not ours: the drawn place too (+0x678 follows +0x5fc), not the collision place it trails.
+        world.entities.get(&id).map(|e| (e.drawn.unwrap_or(e.pos), e.motion.status))?
     };
     let pos = event::pose(world, id).map_or(pos, |p| p.pos);
     // The drawn position (+0x678) has the mount offset; `coff` keeps the riding status.
@@ -2770,6 +2777,15 @@ fn world_hud(
     // The focused list's scroll bar and the wheel, before the windows see the press.
     // Game files from 30261102 on hold fe_main (client/celestite.rs).
     world.fe_menu = gu.layout(celestite::MAIN).is_some();
+    // The wheel over a mod window's open dropdown list is that list's alone: the game's lists see none of it.
+    let dropped;
+    let input = match input.pointer {
+        Some(p) if !world.modern && input.wheel != 0 && lua::wheel_classic(world, p, input.wheel) => {
+            dropped = UiInput { wheel: 0, events: input.events.clone(), ..*input };
+            &dropped
+        }
+        _ => input,
+    };
     let taken = scrollbar::frame(gu, world, input);
     let input = taken.as_ref().unwrap_or(input);
     // A middle click is this frame's only: one made while the HUD is down (downloading, hidden) is dropped.
@@ -4916,7 +4932,7 @@ fn world_hud(
             };
             gu.sprite(&lib, sprite, row[0], row[1], if k == m.sel { 0x8080_5020 } else { 0x8080_8080 });
             if k == m.sel && focused {
-                gu.cursor(row[0] - 2.0, row[1]);
+                gu.cursor_on("menu    mp_pmode", k as u16 + 1, row[0] - 2.0, row[1], *row);
             }
         }
         blockers.push(*r);
@@ -5013,6 +5029,8 @@ fn world_hud(
     if let Some(c) = event::choice(world).filter(|_| !world.modern) {
         let options: Vec<String> = c.options.iter().map(|o| o.1.clone()).collect();
         let (question, scroll, cursor) = (c.question.clone(), c.scroll, c.cursor);
+        // Each menu is a new window: one answered straight into the next takes the focus (and the pointer) again.
+        gu.renew_on("menu    query", c.serial);
         blockers.extend(draw_choice(
             gu,
             "menu    query",
@@ -5045,7 +5063,7 @@ fn world_hud(
             let (x, y) = (wx + r[0] + 20.0, wy + r[1]);
             gu.text(text, x, y, 0, *c);
             if k == m.sel {
-                gu.cursor(x - 2.0, y);
+                gu.cursor_on(myroom::WINDOW, *child as u16 + 1, x - 2.0, y, [wx + r[0], wy + r[1], r[2], r[3]]);
             }
         }
         blockers.extend(gu.window_rect(myroom::WINDOW, sw, sh));
@@ -5624,16 +5642,29 @@ pub fn downloading(gu: &mut GameUi, n: usize, sw: f32, sh: f32) {
     );
 }
 
+/// What FUN_10125b90's SetCursorPos did for a pointer put on a window's cursor child.
+enum OsWarp {
+    /// Not asked: the game's sprite cursor, a window mode other than 0 / 3, or the window not active. Only the game's
+    /// pointer moves until the mouse does (retail the same).
+    Skipped,
+    /// The Windows cursor went to this window position.
+    Moved((f64, f64)),
+    /// Asked, and the system refused (Wayland). Not retail's case: there the pointer stays with the visible arrow.
+    Refused,
+}
+
 /// FUN_10125b90's SetCursorPos for a pointer put on `at` (UI pixels, `k` UI pixels per window pixel): only when the
 /// Windows cursor is the one shown (config 0021), in full screen or borderless at the desktop size (DAT_10457c2c 0 /
-/// 3) and with the window active. Elsewhere (and where the system refuses, as Wayland does) only the game's pointer
-/// moves until the mouse does. The window position it went to, when it went.
-fn os_pointer_warp(cfg: &Config, k: (f32, f32), window: &Window, at: (f32, f32)) -> Option<(f64, f64)> {
+/// 3) and with the window active.
+fn os_pointer_warp(cfg: &Config, k: (f32, f32), window: &Window, at: (f32, f32)) -> OsWarp {
     if cfg.tool("0021") == 0 || !matches!(cfg.window_mode(), 0 | 3) || !window.has_focus() {
-        return None;
+        return OsWarp::Skipped;
     }
     let phys = ((at.0 / k.0) as f64, (at.1 / k.1) as f64);
-    window.set_cursor_position(winit::dpi::PhysicalPosition::new(phys.0, phys.1)).ok().map(|_| phys)
+    match window.set_cursor_position(winit::dpi::PhysicalPosition::new(phys.0, phys.1)) {
+        Ok(()) => OsWarp::Moved(phys),
+        Err(_) => OsWarp::Refused,
+    }
 }
 
 /// Logs a zone without a group 0x14 name once per zone.
@@ -6710,13 +6741,18 @@ fn drawn_pos(w: &World) -> Vec3 {
     if w.pos == w.step_to { w.draw_pos } else { w.pos }
 }
 
+/// FUN_100c8280's segment: from NOSE_FAR to NOSE_NEAR ahead, NOSE_UP in y (Y down).
+const NOSE_FAR: f32 = 1.1;
+const NOSE_NEAR: f32 = 0.8;
+const NOSE_UP: f32 = -1.0;
+
 /// FUN_100c8280 (own actor, riding, status 5 / 0x55): the segment from 1.1 to 0.8 ahead of the drawn place `d`
 /// (+0x5fc), 1 up (y -1), turned by the drawn rotation `yaw` (+0x620), is tested against the zone (FUN_10182b60); on a
 /// hit the drawn place moves by the hit less the segment's start in x and z.
 fn rider_nose(d: Vec3, yaw: f32, hit: impl Fn(Vec3, Vec3) -> Option<Vec3>) -> Vec3 {
     let f = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
-    let up = Vec3::new(0.0, -1.0, 0.0);
-    let (a, b) = (d + f * 1.1 + up, d + f * 0.8 + up);
+    let up = Vec3::new(0.0, NOSE_UP, 0.0);
+    let (a, b) = (d + f * NOSE_FAR + up, d + f * NOSE_NEAR + up);
     hit(a, b).map_or(d, |h| Vec3::new(d.x + h.x - a.x, d.y, d.z + h.z - a.z))
 }
 
@@ -6935,7 +6971,7 @@ fn slide_frame(
 /// FUN_100c63d0: the drawn rotation eases 0.125 a tick toward the actor's, or op 0x59's percent of 0.00125 during an
 /// event.
 fn turn_rate(a: &Actor, in_event: bool) -> f32 {
-    if in_event && a.turn_pct != 0 { (a.turn_pct as f32 * 0.00125).clamp(0.0, 1.0) } else { 0.125 }
+    if in_event && a.turn_pct != 0 { (a.turn_pct as f32 * 0.00125).clamp(0.0, 1.0) } else { DRAW_EASE }
 }
 
 /// An actor's place; a riding animal stands at its rider's (FUN_100c8ed0), a rider on a mount moves by its offset and
@@ -7142,7 +7178,7 @@ fn rig_camera(w: &World) -> Option<Camera> {
     let roll = m.x_axis.z * 60f32.to_radians();
     let focal = m.y_axis.y * 200.0;
     let up = crate::dat::title::up_of(eye, target, roll);
-    Some(Camera { eye, target, up, fov_y: crate::dat::title::fov_y(focal) })
+    Some(Camera { jitter: glam::Vec2::ZERO, eye, target, up, fov_y: crate::dat::title::fov_y(focal) })
 }
 
 fn attach_point(w: &World, places: &HashMap<u32, Place>, id: u32, k: u16) -> Option<Vec3> {
@@ -7641,23 +7677,13 @@ fn floor_list(zone: u32) -> Vec<(String, f32)> {
     crate::render::reflect::floor_textures(zone).iter().map(|(n, w)| (n.to_string(), *w)).collect()
 }
 
-/// Surface Detail's pack slopes for the scene's textures (surface.rs), from the enabled mods, when `on`.
-fn surface_pack(scene: &mut zone::ZoneScene, map_no: u32, on: bool) {
-    if on {
-        let names: Vec<String> = scene.textures.iter().map(|t| t.name.clone()).collect();
-        scene.surface = crate::surface::load(map_no, &names, &crate::config::enabled_mod_dirs());
-        scene.surface_tried = true;
-    }
-}
-
-/// Reads and builds a zone (on a loader thread): `bump` config 0017's bump maps, `detail` Surface Detail's pack,
-/// `need_global` DAT 0's effects too.
+/// Reads and builds a zone (on a loader thread): `bump` config 0017's bump maps, `need_global` DAT 0's effects too.
 fn load_zone_data(
     index: &DatIndex,
     keys: &zone::Keys,
     zone_id: u16,
     map_no: u16,
-    (bump, detail): (bool, bool),
+    bump: bool,
     need_global: bool,
 ) -> Result<ZoneData> {
     let file = index.read(crate::dat::zone::file_id(map_no as u32))?;
@@ -7667,7 +7693,6 @@ fn load_zone_data(
         scene.bumps =
             crate::dat::bump::parse(&index.read(crate::dat::bump::file_id(map_no as u32)).unwrap_or_default());
     }
-    surface_pack(&mut scene, map_no as u32, detail);
     let ground = ground::Ground::build(&scene);
     let weather =
         crate::dat::weather::ZoneWeather::parse(&file).map_err(|e| log::warn!("zone {zone_id} weather: {e:#}")).ok();
@@ -7771,6 +7796,10 @@ struct World {
     ui_hidden: bool,
     /// Key function 0x55 (Print Screen, UI hidden only): the screenshot to save this frame.
     shot_request: Option<std::path::PathBuf>,
+    /// /upcapture's request (ours), taken by the upscaler at its next frame.
+    pub(super) upscale_capture: Option<crate::render::upscale::capture::Request>,
+    /// /updebug's view (ours; u32::MAX: the next one), taken into config `upscale_debug` at the next frame.
+    pub(super) upscale_debug: Option<u32>,
     /// FUN_101d0ea0's same-second counter (the name's last letter, 'a' + n % 10) and the second it counts.
     shot_count: (u8, i8),
     /// Zone flag 0x100 (0x00A LoginState 1, 4 or 5): no grid position by the clock.
@@ -7789,6 +7818,8 @@ struct World {
     /// The actors whose model FUN_10095900 freed for an unload mark, and the look each is made from again
     /// (event::unload_models).
     unloaded: HashMap<u32, Option<Source>>,
+    /// This frame's unload marks (event::unload_models takes them once a frame; the hide pass reads them).
+    unload_marks: HashSet<u32>,
     /// CMoSkeletonElem models (fx MODEL_IDS): each one's place, from its element (position, rotation x / y / z).
     fx_models: HashMap<u32, (Vec3, Vec3)>,
     /// Other characters' costumes (0x00D @0x30), and the look each actor in costume would have without it.
@@ -8221,6 +8252,9 @@ struct World {
     /// The d_msg files of language slots 0x1d..0x21 (merit, job point, gift, alter ego point and Monstrosity names) and
     /// 0x26 (the maze rune texts).
     point_files: [Option<u32>; 6],
+    /// The name tables message codes read (event::point_texts), kept while their sources stay the same so the
+    /// point, Monstrosity and grammar tables load once.
+    point_texts: std::cell::RefCell<Option<Arc<event::EventTexts>>>,
     /// FUN_100964a0's message sources by number: the files of language slots 0x63..0x66, 0x68, 0x69 and 0x6a
     /// (sources 2..7 and 10, FUN_10095430); 1 and 8 are the zone's dialogue.
     msg_files: [Option<u32>; 11],
@@ -8266,6 +8300,9 @@ struct World {
     /// The weather objects, oldest first (FUN_1018a7a0 links the previous newest as the child): weather, when it came
     /// and its blend time (0x057 @0x0a Vana minutes x 2.4 s; 0 for the base).
     weather_chain: Vec<(u16, Instant, f32)>,
+    /// The ground's wetness in the rain (render/rain.rs), followed whether Wet Ground is on or not; a new login starts
+    /// it afresh.
+    wetness: crate::render::rain::Wetness,
     /// Scheduler op 0x7e's env (fx::EnvOp::Static), used where the zone has no env for the weather; a 0x7c or a
     /// zone change drops it.
     static_env: Option<crate::dat::weather::Env>,
@@ -9083,6 +9120,8 @@ pub struct App {
     /// A mod's recording (client.record), and the mods' post-process passes (render.shader).
     recorder: Option<record::Recorder>,
     post_fx: Option<crate::render::postfx::PostFx>,
+    /// The scene effects turned on (render/scenefx.rs); None while all are off.
+    scene_fx: Option<crate::render::scenefx::SceneFx>,
     /// The Lua HUD's portrait targets (client/portrait.rs).
     portraits: portrait::Portraits,
     /// Frames per second, 0 = unlimited (config frame_limit), and the present mode must be picked again.
@@ -9226,6 +9265,9 @@ pub struct App {
     ui_k: (f32, f32),
     /// The offscreen scene target and its scaling pass (background resolution other than the window's).
     scene_scale: Option<crate::render::scale::SceneScale>,
+    /// The temporal upscaler's frame state (config `upscaler`, render/upscale), and whether the device can run it.
+    upscale: Option<crate::render::upscale::Upscale>,
+    upscale_supported: Option<bool>,
     /// The top-left debug lines (position, zone, frame timing), toggled with F12.
     debug_overlay: bool,
     perf: perf::Perf,
@@ -9328,7 +9370,7 @@ fn strafe_lock_aim(draw_step: Vec3, displaced: Vec3) -> Option<Vec3> {
         Vec3::new(n.x, 0.0, n.z)
     };
     let (d, s) = (flat(displaced), flat(draw_step));
-    if d.dot(s) < 0.0 { Some(d) } else { drawn_aim(draw_step, 0.01) }
+    if d.dot(s) < 0.0 { Some(d) } else { drawn_aim(draw_step, AIM_MIN) }
 }
 
 /// FUN_100c63d0 (0x100c6591) for an actor not ours over `ticks`: the drawn place `drawn` (+0x5fc, None = at `from`,
@@ -9336,7 +9378,7 @@ fn strafe_lock_aim(draw_step: Vec3, displaced: Vec3) -> Option<Vec3> {
 /// eases 0.125 a tick toward the collision place `pos` (+0x5c4), or is set to it (`snap`). Returns the drawn step.
 fn ease_drawn(drawn: &mut Option<Vec3>, from: Vec3, pos: Vec3, ticks: f32, snap: bool) -> Vec3 {
     let was = drawn.unwrap_or(from);
-    let now = if snap { pos } else { was + (pos - was) * (1.0 - 0.875f32.powf(ticks)) };
+    let now = if snap { pos } else { was + (pos - was) * draw_ease(ticks) };
     *drawn = (!snap && now.distance_squared(pos) > 1e-10).then_some(now);
     now - was
 }
@@ -9371,8 +9413,15 @@ fn strafe_lock_turn(
 /// The actor update's 0.125 a tick over one retail frame of `ticks` (its loop runs once per whole tick,
 /// FUN_10014cf0): 1 - 0.875^2 at the game's 30 frames a second.
 fn draw_ease(ticks: f32) -> f32 {
-    1.0 - 0.875f32.powf(ticks)
+    1.0 - (1.0 - DRAW_EASE).powf(ticks)
 }
+
+/// The share of the way the drawn place and rotation ease each tick (_DAT_1032b3bc).
+const DRAW_EASE: f32 = 0.125;
+/// A drawn step under this a retail frame aims nothing (FUN_100c63d0's 0.01 tests).
+const AIM_MIN: f32 = 0.01;
+/// A step under this a tick counts as standing for the walk / run motion (FUN_100c8930).
+const STAND_MAX: f32 = 0.01;
 
 /// A dir angle eased one retail frame of `ticks` toward `to` the short way round (+0x61c's ease, wrapped at +-pi).
 fn ease_yaw(yaw: f32, to: f32, ticks: f32) -> f32 {
@@ -9476,6 +9525,7 @@ impl App {
             lobby_mods: Default::default(),
             recorder: None,
             post_fx: None,
+            scene_fx: None,
             portraits: Default::default(),
             frame_limit,
             present_dirty: false,
@@ -9540,6 +9590,8 @@ impl App {
             exit_requested: false,
             close_asked: false,
             scene_scale: None,
+            upscale: None,
+            upscale_supported: None,
             cursor_in: false,
             cursor_hid_at: None,
             login_error: None,
@@ -9579,6 +9631,10 @@ impl App {
     /// Puts changed settings into effect: window size and mode, frame limit, anisotropy (new samplers), volumes.
     /// The background resolution is read every frame.
     fn apply_settings(&mut self) {
+        // Scene effects all turned off: their targets go now, not at the next world frame (the lobby draws none).
+        if !crate::render::scenefx::Want::from_config(&self.cfg).any() {
+            self.scene_fx = None;
+        }
         self.frame_limit = self.cfg.frame_limit();
         ground::set_move_rate(self.cfg.move_rate);
         self.present_dirty = true;
@@ -10437,7 +10493,6 @@ impl App {
                 | Task::Actions(_)
                 | Task::AreaLoaded(..)
                 | Task::SubAreaLoaded(..)
-                | Task::SurfacePack(..)
                 | Task::LobbyBack(_)
         ) {
             self.busy = false;
@@ -10929,6 +10984,7 @@ impl App {
                             jp_tables: None,
                             ae_ui: None,
                             ae_tables: None,
+                            point_texts: Default::default(),
                             point_files: self.point_files,
                             msg_files: self.msg_files,
                             msg_texts: HashMap::new(),
@@ -10950,6 +11006,7 @@ impl App {
                             client_version: self.cfg.client_version.clone(),
                             weather: 1,
                             weather_chain: Vec::new(),
+                            wetness: Default::default(),
                             static_env: None,
                             zone_weather: None,
                             light_ease: Default::default(),
@@ -10986,6 +11043,8 @@ impl App {
                             my_face: None,
                             ui_hidden: false,
                             shot_request: None,
+                            upscale_capture: None,
+                            upscale_debug: None,
                             shot_count: (0, -1),
                             mogdoor: None,
                             gmtell: Default::default(),
@@ -10995,6 +11054,7 @@ impl App {
                             event_voices: false,
                             event_looks: Vec::new(),
                             unloaded: HashMap::new(),
+                            unload_marks: HashSet::new(),
                             fx_models: HashMap::new(),
                             costumes: HashMap::new(),
                             costume_base: HashMap::new(),
@@ -11295,6 +11355,9 @@ impl App {
                                 w.index = Some(index.clone());
                             }
                             let dll = crate::dat::ffximain(&self.cfg.ffxi_dir());
+                            // The process's language, as retail's global, set once here: the dictionary loading
+                            // next reads it, and so do its blocks and German's quotes after.
+                            crate::dat::lang::set(self.cfg.client_language());
                             let tx = self.tasks_tx.clone();
                             let idx = index.clone();
                             std::thread::spawn(move || {
@@ -11396,14 +11459,6 @@ impl App {
                         log::warn!("sub-area {id}: {e:#}");
                         doors::reapply(w);
                     }
-                }
-            }
-            Task::SurfacePack(map, names, pack) => {
-                let Phase::World(world) = &mut self.phase else { return };
-                if world.area.shown.or(world.scene) == Some(map)
-                    && let (Some(r), Some(gfx)) = (world.renderer.as_mut(), self.gfx.as_ref())
-                {
-                    r.attach_surface(&gfx.gpu, &pack, &names);
                 }
             }
             Task::AreaLoaded(area, result) => {
@@ -11949,7 +12004,6 @@ impl App {
         w.area.loading = true;
         // A background load like the select scene's: not through spawn, which marks the app busy.
         let bump = self.cfg.tool("0017") != 0 && area != 182;
-        let detail = self.cfg.surface_detail > 0;
         match self.game_data() {
             Ok((index, keys)) => {
                 let tx = self.tasks_tx.clone();
@@ -11965,7 +12019,6 @@ impl App {
                                     &index.read(crate::dat::bump::file_id(area as u32)).unwrap_or_default(),
                                 );
                             }
-                            surface_pack(&mut scene, area as u32, detail);
                             let ground = ground::Ground::build(&scene);
                             let weather = crate::dat::weather::ZoneWeather::parse(&file)
                                 .map_err(|e| log::warn!("area {area} weather: {e:#}"))
@@ -11994,6 +12047,8 @@ impl App {
 
     fn poll_network(&mut self) {
         let mut took: Option<(u16, u16, preload::Ready, Instant)> = None;
+        // The coming frame's time, as `frame_clock` measures it after this.
+        let ready_dt = self.frame_dt();
         let Phase::World(world) = &mut self.phase else { return };
         world.net.stats.rate_ms.store(self.cfg.send_interval, std::sync::atomic::Ordering::Relaxed);
         world.net.stats.gm_window.store(self.cfg.gm_window, std::sync::atomic::Ordering::Relaxed);
@@ -13380,6 +13435,9 @@ impl App {
                 }
             }
         }
+        // FUN_10096640: the event check (a queued event's actor walk) runs ahead of the hide and model passes.
+        let queued: HashSet<u32> = looks.iter().map(|l| l.0).collect();
+        event::ready(world, ready_dt, &queued);
         // FUN_10095900: models under an unload mark are freed, the ones whose mark is gone are asked for again.
         // Their looks go first: a newer one that came with the update that ended the mark wins.
         let back = event::unload_models(world);
@@ -13510,13 +13568,12 @@ impl App {
         if let Some((zone_id, map_no)) = want {
             let need_global = matches!(&self.phase, Phase::World(w) if !w.effects.has_global());
             let bump = self.cfg.tool("0017") != 0 && map_no != 182;
-            let detail = self.cfg.surface_detail > 0;
             if let Ok((index, keys)) = self.game_data() {
                 self.spawn(move || {
                     Task::ZonePreloaded(
                         zone_id,
                         map_no,
-                        load_zone_data(&index, &keys, zone_id, map_no, (bump, detail), need_global).map(Box::new),
+                        load_zone_data(&index, &keys, zone_id, map_no, bump, need_global).map(Box::new),
                     )
                 });
             }
@@ -13529,13 +13586,12 @@ impl App {
             };
             // Config 0017 (FUN_10171360 / FUN_101720a0): the zone's bump maps, never in zone 182 (Walk of Echoes).
             let bump = self.cfg.tool("0017") != 0 && map_no != 182;
-            let detail = self.cfg.surface_detail > 0;
             match self.game_data() {
                 Ok((index, keys)) => self.spawn(move || {
                     Task::ZoneLoaded(
                         zone_id,
                         map_no,
-                        load_zone_data(&index, &keys, zone_id, map_no, (bump, detail), need_global).map(Box::new),
+                        load_zone_data(&index, &keys, zone_id, map_no, bump, need_global).map(Box::new),
                     )
                 }),
                 Err(e) => self.status = format!("{e:#}"),
@@ -14199,7 +14255,6 @@ impl App {
                 e.floor_noted = far;
             }
             // The actor is drawn at the slide (+0x34 = +4).
-            let step = e.slide - start;
             e.pos = e.slide;
             carry(eid, e);
             // Characters in a lift shaft stand at its height (FUN_100a4ed0 runs for every collision actor).
@@ -14224,18 +14279,24 @@ impl App {
                 || e.door != 0
                 || e.lift.is_some()
                 || matches!(e.sub_kind, 2..=4);
+            // The drawn step (fStack_26c). A jump over 12 and a 0x1c / 0x1f rider have +0x5fc set to the new place
+            // before the actor update (FUN_100929a0 / FUN_10092c20 in FUN_1008cd90), so it is 0 there: no turn
+            // toward the jump or the carrier's move. A lift sets it in the update (+0x5e2): the whole step.
             let dstep = ease_drawn(&mut e.drawn, start, e.pos, ticks, snap);
-            // A step under 0.01 a tick counts as standing (motion).
-            let flat = Vec3::new(step.x, 0.0, step.z);
-            let moved = if flat.length() < 0.01 * ticks { 0.0 } else { flat.length() };
+            let dstep = if snap && !lifted { Vec3::ZERO } else { dstep };
+            // The walk / run motion from the drawn step too (FUN_100c83c0 -> FUN_100c8930 takes its length for an
+            // actor not ours), so an actor gliding to a stop keeps its feet moving; under 0.01 a tick is standing.
+            let flat = Vec3::new(dstep.x, 0.0, dstep.z);
+            let moved = if flat.length() < STAND_MAX * ticks { 0.0 } else { flat.length() };
             // FUN_100c63d0's turn for an actor not ours: toward the drawn step when it reaches 0.01 a retail frame
-            // (flat, or 3D while falling) and moves 0.01 in x or z; else toward the heading (+0x39).
-            let want = drawn_aim(dstep, 0.01 * ticks / ground::frame_ticks())
+            // (flat, or 3D while falling) and moves 0.01 in x or z; else toward the heading (+0x39). The retail
+            // frame is ours (frame_ticks, Movement Rate): retail at 60 runs every actor's update once a tick.
+            let want = drawn_aim(dstep, AIM_MIN * ticks / ground::frame_ticks())
                 .map_or_else(|| event::rad_of(e.dir), |a| (-a.z).atan2(a.x));
             let tau = std::f32::consts::TAU;
             let diff = (want - e.yaw + std::f32::consts::PI).rem_euclid(tau) - std::f32::consts::PI;
             // Scheduler op 0x2f: the drawn facing stays while the effect runs (FUN_100c63d0 skips the ease).
-            let rate = world.actors.get(eid).map_or(0.125, |a| turn_rate(a, in_event));
+            let rate = world.actors.get(eid).map_or(DRAW_EASE, |a| turn_rate(a, in_event));
             // A camera rig (op 0xb9, vt+0x154) skips that block of FUN_100c63d0 too.
             let rig = world.actors.get(eid).is_some_and(|a| a.camera_rig);
             if !rig && world.face_locks.get(eid).is_none_or(|t| Instant::now() >= *t) {
@@ -14911,7 +14972,7 @@ impl App {
                 let ds = drawn - world.draw_from;
                 let kind = match aimed {
                     None => "none",
-                    Some(_) if strafe_lock_aim(ds, next - from) == drawn_aim(ds, 0.01) => "drawn",
+                    Some(_) if strafe_lock_aim(ds, next - from) == drawn_aim(ds, AIM_MIN) => "drawn",
                     Some(_) => "moved",
                 };
                 log::info!(
@@ -15147,7 +15208,7 @@ impl App {
             (Some([a, b]), _) => Some(a + wrap_angle(b - a) * frac),
             (None, Some(cur)) if !in_event && !world.unsettled && pin.is_none() => {
                 let d = (target - cur + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
-                Some(cur + d * (1.0 - 0.875f32.powf(dt * 60.0)))
+                Some(cur + d * draw_ease(dt * 60.0))
             }
             (None, _) => Some(target),
         };
@@ -16003,9 +16064,11 @@ impl App {
             && (ctx.is_pointer_over_egui() || ctx.egui_is_using_pointer()));
         let input = ctx.input(|i| UiInput {
             wheel: if mine { notches as i32 } else { 0 },
-            pointer: match &self.ptr_warp {
-                Some(pw) => pw.shifted(ptr_dy).pointer(),
-                None => i.pointer.hover_pos().map(|p| (p.x * ppp * k.0, p.y * ppp * k.1 + ptr_dy)),
+            // No pointer while the mouse is outside the window, warped or not.
+            pointer: match (&self.ptr_warp, i.pointer.hover_pos()) {
+                (_, None) => None,
+                (Some(pw), Some(_)) => pw.shifted(ptr_dy).pointer(),
+                (None, Some(p)) => Some((p.x * ppp * k.0, p.y * ppp * k.1 + ptr_dy)),
             },
             moved: i.pointer.delta() != egui::Vec2::ZERO,
             clicked: i.pointer.primary_clicked() && !swallow && mine,
@@ -17670,6 +17733,7 @@ impl App {
                                             .extend(),
                                         );
                                     }
+                                    perf::graph(ui, &mut self.perf, self.gpu_time.as_ref().map(|t| &t.hist));
                                 },
                             );
                         });
@@ -18337,22 +18401,19 @@ impl App {
             w.sounds.push(crate::audio::Ui::Select as u32);
         }
         let mut save = false;
-        if let Some(rate) = p.save_move_rate.take() {
-            cfg.move_rate = rate;
-            ground::set_move_rate(rate);
-            save = true;
-            if let Some(s) = w.settings.as_mut() {
-                s.s.move_rate = rate;
-            }
-        }
         let p = &mut w.padcfg;
         if let Some(on) = p.save_rumble.take() {
             cfg.gamepad_rumble = on;
         }
-        if let Some((guid, xinput, sliders, hat)) = p.save_device.take() {
-            (cfg.gamepad_padguid, cfg.gamepad_xinput, cfg.gamepad_sliders, cfg.gamepad_hat) =
-                (guid, Some(xinput), Some(sliders), Some(hat));
+        if let Some(guid) = p.save_device.take() {
+            cfg.gamepad_padguid = guid;
             save = true;
+        }
+        for (k, on) in std::mem::take(&mut p.save_flags).into_iter().enumerate() {
+            if let Some(on) = on {
+                *[&mut cfg.gamepad_xinput, &mut cfg.gamepad_sliders, &mut cfg.gamepad_hat][k] = Some(on);
+                save = true;
+            }
         }
         if let Some((padsin, padexsin, on, bg, dead)) = p.save.take() {
             (cfg.gamepad_padsin, cfg.gamepad_padexsin) = (padsin, padexsin);
@@ -18381,9 +18442,8 @@ impl App {
             }
         }
         let p = &mut w.padcfg;
-        p.set = Some(gamepad::settings(cfg, gp.retail()));
+        p.set = Some(gamepad::settings(cfg, gp.retail()).for_dinput(gp.plays_dinput()));
         p.dead = (cfg.gamepad_deadzone * 100.0).round() as u32;
-        p.move_rate = cfg.move_rate;
         p.retail = gp.retail().map(|r| r.source.clone());
         p.pads = gp.pads();
         p.di = gp.plays_dinput();
@@ -18617,6 +18677,8 @@ impl App {
     /// The frame's work before any drawing: finished loader tasks, the network, area switches, then the world's
     /// (or the lobby's) per-frame updates and the mods' frame.
     fn frame_updates(&mut self) {
+        // Material Maps: the pack follows the setting before any load starts, so the first zone's textures get maps.
+        crate::material::set_enabled(self.cfg.material_maps != 0);
         while let Ok(t) = self.tasks.try_recv() {
             let name = t.name();
             perf::timed(|| format!("task {name}"), || self.handle_task(t));
@@ -18676,19 +18738,23 @@ impl App {
         true
     }
 
-    /// The frame's time (dt, sped up by a mod's cutscene speed) and the work that runs on it before the input: the
-    /// test drive's step (true when it wants a screenshot), key functions, movement and the lobby fades.
-    fn frame_clock(&mut self) -> (bool, f32) {
-        let shoot = self.step_drive();
+    /// The time since the last frame, sped up by a Lua mod's cutscene speed while an event plays.
+    fn frame_dt(&self) -> f32 {
         let dt = self.last_frame.elapsed().as_secs_f32().min(0.1);
-        self.last_frame = Instant::now();
-        // A Lua mod's cutscene speed: the whole frame runs faster while an event plays.
-        let dt = match &self.phase {
+        match &self.phase {
             Phase::World(w) if w.opts.cutscene_speed > 1.0 && event::active(w) => {
                 (dt * w.opts.cutscene_speed).min(0.25)
             }
             _ => dt,
-        };
+        }
+    }
+
+    /// The frame's time (dt, sped up by a mod's cutscene speed) and the work that runs on it before the input: the
+    /// test drive's step (true when it wants a screenshot), key functions, movement and the lobby fades.
+    fn frame_clock(&mut self) -> (bool, f32) {
+        let shoot = self.step_drive();
+        let dt = self.frame_dt();
+        self.last_frame = Instant::now();
         self.key_functions(dt);
         perf::timed(|| "movement".into(), || self.update_movement(dt));
         if matches!(&self.phase, Phase::Characters { screen: LobbyScreen::Create, .. })
@@ -18717,7 +18783,7 @@ impl App {
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
         // egui-winit passes the texture limit in its first input only; lost, egui assumes 2048 and the modern atlases
         // (status_0@2x is 2184 wide) fail its debug check.
-        raw.max_texture_side = Some(gfx.gpu.device.limits().max_texture_dimension_2d as usize);
+        raw.max_texture_side = Some(gfx.gpu.max_texture_2d as usize);
         if let Phase::World(w) = &mut self.phase {
             w.lua.synth_enter = self
                 .synth_events
@@ -19151,8 +19217,21 @@ impl App {
         } else {
             (bg, aspect)
         };
+        // FSR 1 (config `upscaler`, not retail): the world draws at the quality's render size and the scaling pass
+        // takes it up to the window (render/fsr1.rs); Background is not used then (it would only be upscaled to be
+        // shrunk again). The effects and screen passes size themselves by the scene target. FSR 3.1 (upscaler 1) falls
+        // back to it on a device that can't run FSR 3.1 (GL / GLES, small limits) or once FSR 3.1 has failed.
+        let fsr3_fallback =
+            self.cfg.upscaler == 1 && (!self.upscale_ready() || self.upscale.as_ref().is_some_and(|u| !u.usable(1)));
+        let fsr1 = matches!(self.phase, Phase::World(_))
+            && !lcd
+            && (self.cfg.upscaler == crate::render::fsr1::FSR1 || fsr3_fallback);
+        let bg = if fsr1 { crate::render::fsr1::render_size(size, self.cfg.upscale_quality.clamp(1, 4)) } else { bg };
+        if !fsr1 && let Some(s) = self.scene_scale.as_mut() {
+            s.drop_fsr1();
+        }
         // Within the device's texture size (4096 on some GLES parts), the aspect kept.
-        let bg = crate::render::scale::fit(bg, gfx.gpu.device.limits().max_texture_dimension_2d);
+        let bg = crate::render::scale::fit(bg, gfx.gpu.max_texture_2d);
         if lcd {
             self.lcd_frame = (self.lcd_frame + 1) % 4;
         }
@@ -19177,6 +19256,41 @@ impl App {
             || self.cfg.grading != 0
             // Reflections read a copy of the scene, which the window's own surface may not allow.
             || self.cfg.reflections;
+        // The upscaler (not retail): the world draws at the render size with a jitter and the upscaler takes it to the
+        // window's size (a Background above it would only be upscaled to be shrunk again). The frame's bg is then the
+        // render size: the effects and screen passes size themselves by the scene target.
+        // Neural rendering (config `neural`) runs in the same frame, with Upscaling off too.
+        // FSR 1 is not the temporal upscaler: neural rendering is left out with it.
+        let neural = self.cfg.neural && !fsr1 && crate::render::upscale::neural_status().is_ok();
+        let upscaling = world_phase
+            && !lcd
+            && !fsr1
+            && (matches!(self.cfg.upscaler, 1 | 2) || neural)
+            && self.upscale_ready()
+            && self.upscale.as_ref().is_none_or(|u| u.usable(self.cfg.upscaler));
+        if !matches!(self.cfg.upscaler, 1 | 2) && !neural {
+            self.upscale = None;
+        }
+        let (mut target_size, mut jitter, mut snaps, mut motion) = (bg, glam::Vec2::ZERO, None, None);
+        if upscaling {
+            let up = self.upscale.get_or_insert_with(|| crate::render::upscale::Upscale::new(&gfx.gpu));
+            (target_size, jitter) = up.begin(
+                &gfx.gpu,
+                size,
+                self.cfg.upscale_quality,
+                gfx.config.format,
+                matches!(self.cfg.upscaler, 1 | 2),
+            );
+            snaps = up.targets.as_ref().map(|t| [t.snap_opaque.clone(), t.snap_blend.clone(), t.snap_pre_fx.clone()]);
+            motion = up.motion_target();
+        }
+        // The texture LOD bias while an upscaler draws the world below the window's size (render::lod_bias).
+        crate::render::set_lod_bias(if fsr1 || (upscaling && matches!(self.cfg.upscaler, 1 | 2)) {
+            crate::render::upscale::lod_bias(target_size[0], size[0], !fsr1)
+        } else {
+            0.0
+        });
+        let bg = target_size;
         let (scene_view, scene_depth, scene_tex) = if scaled {
             self.scene_scale
                 .get_or_insert_with(|| crate::render::scale::SceneScale::new(&gfx.gpu, gfx.config.format))
@@ -19200,6 +19314,7 @@ impl App {
             bg,
             aspect,
             lcd,
+            fsr1,
             gamma,
             scaled,
             scene_view,
@@ -19211,6 +19326,11 @@ impl App {
             m_actors,
             counts,
             drew_world,
+            upscaling,
+            jitter,
+            snaps,
+            frame_camera: None,
+            motion,
         }
     }
 
@@ -19226,9 +19346,9 @@ impl App {
             screen_fx_zone: &mut self.screen_fx_zone,
             effects_gpu: &mut self.effects_gpu,
             post_fx: &mut self.post_fx,
+            scene_fx: &mut self.scene_fx,
             audio: &mut self.audio,
             fx_census: &mut self.fx_census,
-            tasks_tx: &self.tasks_tx,
         };
         world_frame(&mut cx, gfx, g, w, dt);
     }
@@ -19384,6 +19504,11 @@ impl App {
 
     /// The scene finished: the lobby's fade over it, then the scaling pass into the window (gamma, 3D LCD Mode,
     /// anti-aliasing, grading); the 2D layer's and the scene's levels.
+    /// Whether the device can run the upscaler (render::upscale::status, worked out when the device was made).
+    fn upscale_ready(&mut self) -> bool {
+        *self.upscale_supported.get_or_insert_with(|| crate::render::upscale::status(1).is_ok())
+    }
+
     fn finish_scene(&mut self, gfx: &Gfx, g: &mut FrameGpu, size: [u32; 2]) -> (f32, f32) {
         let (bg, gamma, lcd, scaled) = (g.bg, g.gamma, g.lcd, g.scaled);
         let (scene_view, view) = (g.scene_view.clone(), g.view.clone());
@@ -19402,6 +19527,37 @@ impl App {
                 .get_or_insert_with(|| crate::render::screenfx::ScreenFx::new(&gfx.gpu, gfx.config.format));
             fx.draw(&gfx.gpu, encoder, &scene_view, bg, None, [scene_level; 3]);
         }
+        let upscaled = match (&mut self.phase, self.upscale.as_mut()) {
+            (Phase::World(w), Some(up)) if g.upscaling && g.drew_world => {
+                // F12 / FFXI_PERF: the scene, then the upscaler.
+                if let Some(t) = g.gpu_time.as_mut() {
+                    t.mark(encoder, "scene");
+                }
+                up.frame_camera = g.frame_camera;
+                up.zone(w.zone);
+                if let Some(req) = w.upscale_capture.take() {
+                    up.capture = Some(req);
+                }
+                if let Some(d) = w.upscale_debug.take() {
+                    self.cfg.upscale_debug = if d == u32::MAX { (self.cfg.upscale_debug + 1) % 5 } else { d.min(4) };
+                }
+                let out = up.run(
+                    &gfx.gpu,
+                    encoder,
+                    &g.scene_raw,
+                    &g.scene_depth,
+                    self.cfg.upscaler,
+                    self.cfg.upscale_sharpness,
+                    self.cfg.upscale_debug,
+                    self.cfg.neural,
+                );
+                if let Some(t) = g.gpu_time.as_mut() {
+                    t.mark(encoder, "upscale");
+                }
+                out
+            }
+            _ => None,
+        };
         if g.drew_world
             && scaled
             && let Some(sc) = &mut self.scene_scale
@@ -19415,6 +19571,8 @@ impl App {
                 lcd.then_some((LCD_SHIFT, self.lcd_frame % 2 == 1)),
                 self.cfg.antialias != 0,
                 self.cfg.grading,
+                g.fsr1.then_some(self.cfg.upscale_sharpness),
+                upscaled.as_ref().map(|(v, s)| (v, *s)),
             );
         }
         (ui_level, scene_level)
@@ -19445,15 +19603,25 @@ impl App {
         {
             lu.open_ticks = if no_zoom { 0.0 } else { 25.0 };
             lu.end_frame(dt);
+            // FUN_10125b90 does nothing during a drag (mouse kinds 3..6: the scroll thumb, a move or camera drag, the
+            // autoscroll); ours sets kinds 4 / 5 and keeps the thumb drag on the bar's hold.
+            use mousecur::{AUTOSCROLL, CAMERA_DRAG, MOVE_DRAG, SCROLL_DRAG};
+            let dragging = matches!(self.mouse.kind, SCROLL_DRAG | MOVE_DRAG | CAMERA_DRAG | AUTOSCROLL)
+                || lu.bar_hold.as_ref().is_some_and(|h| h.dragging());
             if let Some(at) = lu.take_focus_warp()
-                && !(3..=6).contains(&self.mouse.kind)
+                && !dragging
             {
                 let k = self.ui_k;
                 let mouse = self.last_cursor.map(|(x, y)| (x as f32 * k.0, y as f32 * k.1 + dy));
                 let drawn = self.ptr_warp.map(|pw| pw.shifted(dy).drawn).or(mouse).unwrap_or(at);
-                self.ptr_warp = Some(ptrwarp::PtrWarp::new(at, drawn, dy));
-                if let Some(phys) = os_pointer_warp(&self.cfg, k, &gfx.window, at) {
-                    self.last_cursor = Some(phys);
+                match os_pointer_warp(&self.cfg, k, &gfx.window, at) {
+                    OsWarp::Skipped => self.ptr_warp = Some(ptrwarp::PtrWarp::new(at, drawn, dy)),
+                    OsWarp::Moved(phys) => {
+                        self.ptr_warp = Some(ptrwarp::PtrWarp::new(at, drawn, dy));
+                        self.last_cursor = Some(phys);
+                    }
+                    // The arrow stayed: so does the windows' pointer, which is where the arrow is.
+                    OsWarp::Refused => {}
                 }
             }
             if let Some(pw) = &mut self.ptr_warp {
@@ -19649,7 +19817,7 @@ impl App {
             buf
         });
         if let Some(t) = gpu_time.as_mut() {
-            t.finish(&mut encoder);
+            t.finish(&mut encoder, self.perf.seq());
         }
         perf::timed(|| "submit".into(), || gfx.gpu.queue.submit(extra.into_iter().chain([encoder.finish()])));
         if let Some(t) = gpu_time.as_mut() {
@@ -19657,6 +19825,9 @@ impl App {
         }
         if let Some(r) = self.recorder.as_mut() {
             r.after_submit(&gfx.gpu);
+        }
+        if let Some(u) = self.upscale.as_mut() {
+            u.after_submit(&gfx.gpu);
         }
         self.gpu_time = gpu_time;
         if let (Some(eg), Phase::World(w)) = (&mut self.effects_gpu, &mut self.phase) {
@@ -19778,6 +19949,8 @@ struct FrameGpu {
     bg: [u32; 2],
     aspect: f32,
     lcd: bool,
+    /// FSR 1 upscales the world this frame (`bg` is its render size).
+    fsr1: bool,
     gamma: [f32; 3],
     scaled: bool,
     scene_view: wgpu::TextureView,
@@ -19791,6 +19964,14 @@ struct FrameGpu {
     drew_world: bool,
     /// The refracting actors draw_scene found shown; draw_effects draws them among the effects.
     refracting: Vec<u32>,
+    /// The upscaler runs this frame: the projection's jitter, the colour snapshots' targets (after the opaque
+    /// scenery, after the blended, before the effects) and the camera the world drew with.
+    upscaling: bool,
+    jitter: glam::Vec2,
+    snaps: Option<[wgpu::Texture; 3]>,
+    frame_camera: Option<crate::render::upscale::FrameCamera>,
+    /// The actor motion pass's target for this frame's camera.
+    motion: Option<crate::render::upscale::MotionTarget>,
 }
 
 /// What the world's frame uses of the app besides the world, borrowed beside it: its steps take the world and its
@@ -19803,10 +19984,9 @@ struct WorldDraw<'a> {
     screen_fx_zone: &'a mut Option<crate::render::screenfx::ScreenFx>,
     effects_gpu: &'a mut Option<crate::render::effects::EffectsGpu>,
     post_fx: &'a mut Option<crate::render::postfx::PostFx>,
+    scene_fx: &'a mut Option<crate::render::scenefx::SceneFx>,
     audio: &'a mut Option<crate::audio::Audio>,
     fx_census: &'a mut Option<Instant>,
-    /// Ours: the Surface Detail pack's loader answers here.
-    tasks_tx: &'a Sender<Task>,
 }
 
 /// The world's frame (App::draw_world): the actors posed and drawn, the scene, the effects, plates, shadows, lamps
@@ -19819,7 +19999,19 @@ fn world_frame(cx: &mut WorldDraw, gfx: &mut Gfx, g: &mut FrameGpu, w: &mut Worl
         c.tick(dt * 60.0);
     }
     world_prepare(cx, gfx, g, w, &mut wf, dt);
+    if g.upscaling {
+        wf.camera.jitter = g.jitter;
+        g.frame_camera = Some(crate::render::upscale::FrameCamera { camera: wf.camera, aspect: g.aspect });
+    }
     if let Some(mut r) = w.renderer.take() {
+        r.snaps = g.snaps.clone().map(|s| (g.scene_tex.clone(), s));
+        r.motion_target = g.motion.take().map(|mut m| {
+            m.vp = wf.camera.steady().view_proj(g.aspect);
+            if m.prev_vp.is_nan() {
+                m.prev_vp = m.vp;
+            }
+            m
+        });
         world_uploads(gfx, g, w, &mut r, &wf);
         world_lighting(cx, w, &mut r, &wf);
         cross_capture(cx, gfx, g, w, &mut r, &wf);
@@ -20251,6 +20443,14 @@ fn cross_capture(cx: &mut WorldDraw, gfx: &Gfx, fg: &FrameGpu, w: &mut World, r:
                     fog_color,
                     fog,
                 );
+            }
+            // The scene effects on it as on the frames around it, so they fade out with the shot.
+            let want = crate::render::scenefx::Want::from_config(cx.cfg);
+            if want.any() {
+                let sfx = cx.scene_fx.get_or_insert_with(|| crate::render::scenefx::SceneFx::new(scene_fmt));
+                sfx.prepare(&gfx.gpu, want, bg);
+                let frame = crate::render::scenefx::Frame::new(&cam, aspect, r.lighting.as_ref());
+                sfx.draw(&gfx.gpu, &mut enc, target, &scene_depth, &frame);
             }
             gfx.gpu.queue.submit([enc.finish()]);
         }
@@ -21029,6 +21229,8 @@ fn shadow_setup(
     r.prepare_ssao(&gfx.gpu, cx.cfg.ssao, bg);
     // Water reflections (ours, render/reflect.rs).
     r.prepare_reflections(&gfx.gpu, cx.cfg.reflections, cx.cfg.reflect_floors);
+    // World sun shadows (ours, render/worldshadow.rs).
+    r.prepare_world_shadow(&gfx.gpu, cx.cfg.world_shadows);
     // Lamp shadows (ours, render/lampshadow.rs): with Real shadows, the point lights nearest our character
     // (the zone's data lights, and with Real lamp lights the lamps) are cut behind it, one shadow each.
     // Only ours casts them (with our mount while riding); others keep their sun or retail shadow. The lights
@@ -21187,16 +21389,9 @@ fn draw_scene(
     r.bump_mode = cx.cfg.tool("0017") != 0 && w.zone != Some(182);
     // Light Shading (ours): Smooth lights the scenery's lamps per pixel, Retail per vertex.
     r.smooth_lights = cx.cfg.smooth_lights;
-    // Surface Detail (ours): relief from the scenery textures on the sun's light, 0 off.
-    r.surface_detail = cx.cfg.surface_detail.min(2);
-    // Switched on after the zone loaded: its pack, read off the frame.
-    if let (Some(names), Some(map)) = (r.surface_request(), w.area.shown.or(w.scene)) {
-        let tx = cx.tasks_tx.clone();
-        std::thread::spawn(move || {
-            let pack = crate::surface::load(map as u32, &names, &crate::config::enabled_mod_dirs());
-            let _ = tx.send(Task::SurfacePack(map, names, pack));
-        });
-    }
+    // Material Maps (ours): the pack (App::frame_updates) gives maps to textures loaded while it is open.
+    r.material_maps = cx.cfg.material_maps != 0 && crate::material::available();
+    r.material_strength = cx.cfg.material_maps as f32;
     // Windowed (0034 != 0, no gamma ramp): lights boosted by the channels' ramps (render::light_boost),
     // gamma base 0028 + 1 + Gameplay R / G / B / 100 (FUN_101aa650).
     r.light_boost = if cx.cfg.window_mode() != 0 {
@@ -21299,10 +21494,13 @@ fn draw_effects(
     let (scene_depth, scene_tex, scene_raw) = (fg.scene_depth.clone(), fg.scene_tex.clone(), fg.scene_raw.clone());
     let (dt, ev_clock) = (wf.dt, wf.ev_clock);
     let WorldFrame { camera, model_hidden, places, drops, new_lamps, .. } = wf;
+    if let Some((scene, s)) = &r.snaps {
+        crate::render::upscale::snap(&mut fg.encoder, scene, &s[2]);
+    }
     // Effect generators: CPU emission, the GPU update pass, then the elements over the scene.
     // Its pipelines are made while the zone still goes up (behind the loading indicator), not on the
     // first shown frame.
-    let eg = cx.effects_gpu.get_or_insert_with(|| crate::render::effects::EffectsGpu::new(&gfx.gpu, scene_fmt));
+    let Some(eg) = crate::render::effects::kept(cx.effects_gpu, &gfx.gpu, scene_fmt) else { return };
     if let Some(l) = &new_lamps {
         eg.set_lamps(&gfx.gpu, &l.iter().map(|l| (l.pos, l.slot, l.template, l.colour)).collect::<Vec<_>>());
     }
@@ -21503,6 +21701,22 @@ fn world_overlays(
     let (bg, scene_fmt) = (fg.bg, fg.scene_fmt);
     let (scene_depth, scene_tex, scene_raw) = (fg.scene_depth.clone(), fg.scene_tex.clone(), fg.scene_raw.clone());
     let WorldFrame { camera, .. } = wf;
+    // The scene effects (ours, render/scenefx.rs) over the finished 3D scene, under the shapes, mods' passes and
+    // fades: only those turned on, and nothing made while all are off.
+    // The ground soaks while it rains on us (render/rain.rs) and dries off after; a new zone starts as its weather.
+    // Followed with the effect off too, so turning it on after a shower finds the ground as wet as it is.
+    w.wetness.step(crate::render::rain::rains(event::weather(w)), wf.dt, w.zone);
+    let want = crate::render::scenefx::Want::from_config(cx.cfg);
+    if want.any() {
+        let fx = cx.scene_fx.get_or_insert_with(|| crate::render::scenefx::SceneFx::new(scene_fmt));
+        fx.prepare(&gfx.gpu, want, bg);
+        fx.set_rain(w.wetness);
+        let frame = crate::render::scenefx::Frame::new(camera, fg.aspect, r.lighting.as_ref());
+        fx.draw(&gfx.gpu, &mut fg.encoder, &scene_raw, &scene_depth, &frame);
+        fg.mark("scene fx");
+    } else {
+        *cx.scene_fx = None;
+    }
     // The Lua mods' world shapes, then layout mode's overlay over the finished scene.
     r.render_world_shapes(&mut fg.encoder, &scene_raw, &scene_depth);
     r.render_lines(&mut fg.encoder, &scene_raw);
@@ -21616,9 +21830,8 @@ impl ApplicationHandler for App {
         #[cfg(windows)]
         windpi::keep_size(&window);
         // A first start (no config yet): Menu Size and Interface Size from the screen's size (client/screen.rs).
-        if std::mem::take(&mut self.cfg.first_start)
-            && let Some(m) = window.current_monitor().or_else(|| monitor.clone())
-        {
+        let first_start = std::mem::take(&mut self.cfg.first_start);
+        if first_start && let Some(m) = window.current_monitor().or_else(|| monitor.clone()) {
             screen::size_ui(&mut self.cfg, &m);
             if let Err(e) = self.cfg.save() {
                 log::warn!("saving the config: {e:#}");
@@ -21634,27 +21847,19 @@ impl ApplicationHandler for App {
         self.gpus = crate::render::adapter_names(&instance, Some(&surface));
         let gpu = Gpu::with_adapter(instance, Some(&surface), &self.cfg.gpu).expect("opening the GPU");
         let size = window.inner_size();
-        // A low-spec GPU (GL / GLES, no BC textures, a software rasterizer): the first time, the settings still at
-        // their defaults take cheaper values (Config::low_spec_defaults).
+        // A low-spec GPU (GL / GLES, no BC textures, a software rasterizer) on a first start (no config file yet):
+        // cheaper values than the defaults (Config::low_spec_defaults). An existing config is never rewritten, so an
+        // upgrade or one run on another backend (WGPU_BACKEND=gl) leaves the player's settings alone.
         let class = crate::render::GpuClass::of(&gpu.adapter.get_info(), gpu.adapter.features());
-        if class != crate::render::GpuClass::Capable && !self.cfg.low_spec_seen {
-            self.cfg.low_spec_seen = true;
-            // Builds before this halved the background and set anisotropy 1 for a software rasterizer once
-            // (software_gpu_seen): what the player made of those two stays.
-            let legacy = class == crate::render::GpuClass::Software && self.cfg.software_gpu_seen;
-            self.cfg.software_gpu_seen |= class == crate::render::GpuClass::Software;
+        if class != crate::render::GpuClass::Capable && first_start {
             // The game window's size, not the installer's (bootstrap opens a fixed one; the configured window follows
             // when setup is done, window_dirty, in the mode set here). Wayland has no current monitor for a window
             // not yet shown: the one picked for it then.
             let game = if bootstrap { self.cfg.window_size() } else { [size.width, size.height] };
             let screen = window.current_monitor().or_else(|| monitor.clone());
             let was_mode = self.cfg.window_mode();
-            let changes = self.cfg.low_spec_defaults(
-                class,
-                game,
-                screen.as_ref().map(|m| [m.size().width, m.size().height]),
-                legacy,
-            );
+            let changes =
+                self.cfg.low_spec_defaults(class, game, screen.as_ref().map(|m| [m.size().width, m.size().height]));
             log::info!("low-spec GPU ({class:?}), first start: {}", changes.join(", "));
             crate::render::ANISOTROPY.store(self.cfg.anisotropy, std::sync::atomic::Ordering::Relaxed);
             self.frame_limit = self.cfg.frame_limit();
@@ -21687,7 +21892,7 @@ impl ApplicationHandler for App {
             &window,
             Some(window.scale_factor() as f32),
             None,
-            Some(gpu.device.limits().max_texture_dimension_2d as usize),
+            Some(gpu.max_texture_2d as usize),
         );
         let egui_renderer = egui_wgpu::Renderer::new(&gpu.device, config.format, Default::default());
         // Zone, posing and mip pipelines are compiled now, off this thread.
@@ -21859,7 +22064,11 @@ impl ApplicationHandler for App {
                 self.cursor_in = true;
                 self.mouse.invalidate();
             }
-            WindowEvent::CursorLeft { .. } => self.cursor_in = false,
+            WindowEvent::CursorLeft { .. } => {
+                self.cursor_in = false;
+                // The windows see no pointer once the mouse is out; a warp does not hold one there.
+                self.ptr_warp = None;
+            }
             // Config-tool 0035 = 0: no sound while the window is not focused (no DSBCAPS_GLOBALFOCUS).
             WindowEvent::Focused(f) => {
                 if !f {
@@ -21921,8 +22130,11 @@ impl ApplicationHandler for App {
                     if at.is_some_and(|p| minimap::wheel(world, p, d)) {
                         return;
                     }
-                    // A focused list takes the wheel (FUN_10125360: 0x16 / 0x17 to the focus window).
-                    if self.game_ui.as_ref().is_some_and(|g| g.wants_wheel()) {
+                    // A focused list takes the wheel (FUN_10125360: 0x16 / 0x17 to the focus window), and so does a mod
+                    // window's open dropdown list under the pointer.
+                    if self.game_ui.as_ref().is_some_and(|g| g.wants_wheel())
+                        || !world.modern && at.is_some_and(|p| lua::wheel_classic(world, p, 0))
+                    {
                         self.list_wheel += d;
                         return;
                     }

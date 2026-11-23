@@ -95,6 +95,9 @@ mod dll {
     /// xinput1_3 as retail's xinputdll.dll links it. *(Not retail: xinput1_4 and xinput9_1_0 when it is missing; it
     /// comes with the DirectX redistributable, which a Windows without retail installed may lack.)*
     const DLLS: [&str; 3] = ["xinput1_3.dll", "xinput1_4.dll", "xinput9_1_0.dll"];
+    /// How often an empty slot is read again, outside retail's pick.
+    const EMPTY_POLL: std::time::Duration = std::time::Duration::from_secs(1);
+
     pub struct XInput {
         name: &'static str,
         module: HMODULE,
@@ -108,6 +111,8 @@ mod dll {
         /// The motors' level, and XInputEnable's last value.
         motor: u16,
         enabled: Option<bool>,
+        /// An empty slot is read again from then on, not every frame (below).
+        next_poll: Option<std::time::Instant>,
     }
 
     impl XInput {
@@ -137,7 +142,18 @@ mod dll {
                     )
                 };
                 log::info!("gamepad: XInput ({name})");
-                return Ok(XInput { name, module, slot: 0, get, set, enable, state: None, motor: 0, enabled: None });
+                return Ok(XInput {
+                    name,
+                    module,
+                    slot: 0,
+                    get,
+                    set,
+                    enable,
+                    state: None,
+                    motor: 0,
+                    enabled: None,
+                    next_poll: None,
+                });
             }
             Err("no XInput DLL".into())
         }
@@ -146,16 +162,24 @@ mod dll {
         pub fn set_slot(&mut self, slot: u32) {
             if slot != self.slot {
                 self.motors(0);
-                (self.slot, self.state) = (slot, None);
+                (self.slot, self.state, self.next_poll) = (slot, None, None);
             }
         }
 
-        /// FUN_10005a40's poll (FUN_10008ea0): the slot's state, every frame.
-        pub fn update(&mut self) {
+        /// FUN_10005a40's poll (FUN_10008ea0): the slot's state, every frame when retail's pick found an XInput pad
+        /// (`picked`) or a pad is there. *(Not retail: the slot-0 fallback with nothing picked reads an empty slot
+        /// once a second, as Microsoft advises (a read of a disconnected slot is slow on some XInput versions);
+        /// retail reads XInput only once its DirectInput pick found an XInput pad.)*
+        pub fn update(&mut self, picked: bool) {
+            let now = std::time::Instant::now();
+            if self.next_poll.is_some_and(|t| now < t) {
+                return;
+            }
             let mut s = State::default();
             // ERROR_SUCCESS; anything else (ERROR_DEVICE_NOT_CONNECTED) is no pad.
-            let now = (unsafe { (self.get)(self.slot, &mut s) } == 0).then_some(s.pad);
-            match (self.state.is_some(), now.is_some()) {
+            let pad = (unsafe { (self.get)(self.slot, &mut s) } == 0).then_some(s.pad);
+            self.next_poll = (pad.is_none() && !picked).then(|| now + EMPTY_POLL);
+            match (self.state.is_some(), pad.is_some()) {
                 (false, true) => log::info!("gamepad (XInput) {} connected through {}", self.slot + 1, self.name),
                 (true, false) => {
                     log::info!("gamepad (XInput) {} disconnected", self.slot + 1);
@@ -163,7 +187,7 @@ mod dll {
                 }
                 _ => {}
             }
-            self.state = now;
+            self.state = pad;
         }
 
         /// The pad, as gamepad.rs reads one.

@@ -134,55 +134,47 @@ pub fn char_len(b: u8) -> usize {
 }
 
 /// FUN_10191710 in a German client (language 2, not the European-as-English flag): each lone '"' becomes 85 44, the
-/// next 85 53, by turns (inf: German's „ and “; the font's glyphs are not checked); `room` is the caller's buffer, and a line of half of it or more stays as it is. The
-/// walk steps by `char_len` and stops at a NUL.
-pub fn german_quotes(text: &[u8], room: usize) -> Vec<u8> {
-    quotes_in(super::lang::files() == super::items::Lang::De, text, room)
+/// next 85 53, by turns (inf: German's „ and “; the font's glyphs are not checked), kept as PAIR_BASE chars; every other
+/// char stays as it is. `room` is the caller's buffer, and a line of half of it or more (in Shift-JIS bytes) stays as
+/// it is. Borrowed when nothing changes.
+pub fn german_quotes_str(text: &str, room: usize) -> std::borrow::Cow<'_, str> {
+    quotes_if(super::lang::files() == super::items::Lang::De, text, room)
 }
 
-fn quotes_in(german: bool, text: &[u8], room: usize) -> Vec<u8> {
-    if !german || text.len() >= room / 2 {
-        return text.to_vec();
+fn quotes_if(german: bool, text: &str, room: usize) -> std::borrow::Cow<'_, str> {
+    match german && text.contains('"') && encode_sjis(text).len() < room / 2 {
+        true => std::borrow::Cow::Owned(quotes_str(text, &mut false)),
+        false => std::borrow::Cow::Borrowed(text),
     }
-    let mut out = Vec::with_capacity(text.len() * 2);
-    let mut open = false;
-    let mut i = 0;
-    while i < text.len() {
-        let n = char_len(text[i]);
-        if n == 0 {
-            break;
-        }
-        if text[i] == b'"' {
-            out.extend([0x85, if open { b'S' } else { b'D' }]);
-            open = !open;
+}
+
+/// The quotes of `text` as German's marks by turns, `open` carried from the text before it; a NUL ends the text.
+fn quotes_str(text: &str, open: &mut bool) -> String {
+    let mark = |close: bool| char::from_u32(PAIR_BASE + if close { 0x8553 } else { 0x8544 }).unwrap();
+    let mut out = String::with_capacity(text.len() + 8);
+    for c in text.chars().take_while(|&c| c != '\0') {
+        if c == '"' {
+            out.push(mark(*open));
+            *open = !*open;
         } else {
-            out.extend(text.iter().skip(i).take(n));
+            out.push(c);
         }
-        i += n;
     }
     out
 }
 
-/// `german_quotes` on a decoded line.
-pub fn german_quotes_str(text: &str, room: usize) -> String {
-    if super::lang::files() != super::items::Lang::De || !text.contains('"') {
-        return text.to_string();
-    }
-    decode_sjis(&german_quotes(&encode_sjis(text), room))
-}
-
-/// `german_quotes` on a line drawn in parts (the quotes alternate across them): each part keeps its chars (a quote
-/// stays one char).
+/// `german_quotes` on a line drawn in parts (the quotes alternate across them), in place; nothing to do (no German, no
+/// quote) costs one check per part.
 pub fn german_quotes_parts(parts: &mut [&mut String], room: usize) {
-    let whole: String = parts.iter().map(|p| p.as_str()).collect();
-    let done = german_quotes_str(&whole, room);
-    if done == whole {
+    if super::lang::files() != super::items::Lang::De || !parts.iter().any(|p| p.contains('"')) {
         return;
     }
-    let mut chars = done.chars();
+    if parts.iter().map(|p| encode_sjis(p).len()).sum::<usize>() >= room / 2 {
+        return;
+    }
+    let mut open = false;
     for p in parts.iter_mut() {
-        let n = p.chars().count();
-        **p = chars.by_ref().take(n).collect();
+        **p = quotes_str(p, &mut open);
     }
 }
 
@@ -730,11 +722,21 @@ mod tests {
     /// FUN_10191710: the quotes by turns, a phrase block stepped over whole, a line of half the buffer left alone.
     #[test]
     fn german_quote_marks() {
-        assert_eq!(quotes_in(true, b"a \"b\" \"c", 0x200), b"a \x85Db\x85S \x85Dc");
-        assert_eq!(quotes_in(false, b"\"b\"", 0x200), b"\"b\"");
-        assert_eq!(quotes_in(true, b"\xfd\x02\x02\"\x01\xfd\"", 0x200), b"\xfd\x02\x02\"\x01\xfd\x85D");
-        assert_eq!(quotes_in(true, b"\"0123", 10), b"\"0123");
-        assert_eq!(quotes_in(true, b"\"0123", 12), b"\x85D0123");
+        let (d, s) = (decode_sjis(&[0x85, b'D']), decode_sjis(&[0x85, b'S']));
+        assert_eq!(quotes_if(true, "a \"b\" \"c", 0x200), format!("a {d}b{s} {d}c"));
+        assert_eq!(quotes_if(false, "\"b\"", 0x200), "\"b\"");
+        // A phrase block's chars are never a quote.
+        let block = decode_sjis(b"\xfd\x02\x02\"\x01\xfd");
+        assert_eq!(quotes_if(true, &format!("{block}\""), 0x200), format!("{block}{d}"));
+        // Half the room or more (Shift-JIS bytes) stays as it is.
+        assert_eq!(quotes_if(true, "\"0123", 10), "\"0123");
+        assert_eq!(quotes_if(true, "\"0123", 12), format!("{d}0123"));
+        // The decoded line: only the quotes change, a char Shift-JIS lacks stays (no round trip through it).
+        let (d, s) = (decode_sjis(&[0x85, b'D']), decode_sjis(&[0x85, b'S']));
+        assert_eq!(quotes_str("\"hi\" \u{2192} ok \u{20ac}", &mut false), format!("{d}hi{s} \u{2192} ok \u{20ac}"));
+        let mut open = false;
+        let (a, b) = (quotes_str("a \"b", &mut open), quotes_str(" c\" d", &mut open));
+        assert_eq!((a, b), (format!("a {d}b"), format!(" c{s} d")));
         assert_eq!(char_len(0x82), 2);
         assert_eq!(char_len(b'\n'), 1);
     }

@@ -406,6 +406,8 @@ pub struct ConfigUi {
     pub m_row: usize,
     /// Ours: the topic and row recall_modern brought back, kept until the topic is next chosen (same topic: that row).
     pub m_recall: Option<(usize, usize)>,
+    /// The button the cursor is on in a topic page's row of buttons (our action rows).
+    pub m_col: usize,
     /// The modern page's category (Log, Font Colors).
     pub m_cat: usize,
     /// The modern page's key assignment list (k1assign / k2assign) open over its page, and its row.
@@ -874,7 +876,7 @@ impl ConfigUi {
                 );
                 gu.text("Settings", bx + 44.0, by, 1, [0x80; 4]);
                 if on {
-                    gu.cursor(bx, by);
+                    gu.cursor_on(&w.full(), SETTINGS, bx, by, r);
                 }
                 rects.push(r);
             }
@@ -1011,7 +1013,7 @@ pub fn draw_page(ui: &ConfigUi, w: &Win, top: bool, gu: &mut GameUi, v: &Values,
             super::settings::button(gu, [x + r[0] + d, y + r[1] + d, r[2], r[3]], tint);
             gu.label(label, x + r[0] + 5.0 + d, y + r[1] + 1.0 + d, tint, true);
             if on && top {
-                gu.cursor(x + r[0], y + r[1]);
+                gu.cursor_on(&name, id, x + r[0], y + r[1], [x + r[0], y + r[1], r[2], r[3]]);
             }
         }
     }
@@ -1037,7 +1039,7 @@ pub fn draw_page(ui: &ConfigUi, w: &Win, top: bool, gu: &mut GameUi, v: &Values,
                 super::settings::marker(gu, x + r[0], y + r[1], r[2]);
             }
             if on && top {
-                gu.cursor(x + r[0], y + r[1]);
+                gu.cursor_on(&name, c, x + r[0], y + r[1], [x + r[0], y + r[1], r[2], r[3]]);
             }
         }
     }
@@ -1046,7 +1048,8 @@ pub fn draw_page(ui: &ConfigUi, w: &Win, top: bool, gu: &mut GameUi, v: &Values,
         && w.cursor != SETTINGS
         && let Some((_, cx, cy, ..)) = kids.iter().find(|k| k.0 == w.cursor)
     {
-        gu.cursor(*cx, *cy);
+        let id = w.cursor;
+        gu.cursor_child(&name, id, *cx, *cy, x, y);
     }
 }
 

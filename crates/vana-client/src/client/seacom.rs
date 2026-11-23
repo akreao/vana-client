@@ -61,8 +61,8 @@ pub fn open_bazaar(w: &mut World) {
 
 /// Mode 3 (type 0x73) edits the linkshell message's lines, block 3. Nothing opens it: retail's only opener,
 /// menu_comment_fn (FUN_101e7530), is called from case 4 of link2 / link3's handlers, the caption's number, and the
-/// submenus carry registry flag 0x200000, so their caption never takes the cursor. The mode's store and close are kept
-/// as the window class has them.
+/// caption is in state 0x10 from the window's open (registry flag 0x200000, `GameUi::caption`), so the cursor is
+/// never on it. The mode's store and close are kept as the window class has them.
 fn store(w: &mut World, mode: u8) -> &mut Store {
     match mode {
         0 => &mut w.bazaar_msg,
@@ -375,7 +375,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         let (x, y) = (x0 + dx, y0 + 4.0 + 16.0 * k as f32);
         if k == e.line {
             // The live box (FUN_101c76b0) and the drawn lines (0x200 bytes) take German's quotation marks.
-            let l = german_quotes_str(&super::fep::plain(w, l), 0x41a);
+            let l = german_quotes_str(&super::fep::plain(w, l), 0x41a).into_owned();
             let caret = if (w.started.elapsed().as_secs_f32() * 60.0) as u32 % 30 < 20 { "|" } else { "" };
             gu.text(&format!("{l}{caret}"), x, y, 0, [0x80; 4]);
         } else {

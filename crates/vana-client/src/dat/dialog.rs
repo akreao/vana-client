@@ -17,6 +17,7 @@ pub fn file_id(zone: u16) -> u32 {
     }
 }
 
+#[derive(Default)]
 pub struct Dialog {
     entries: Vec<Vec<u8>>,
 }
@@ -857,7 +858,7 @@ pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// Zone 5 7410: `7f ac 0` the Vana'diel date and time of num[0], `7f ab 0` the long Earth date (group 10 rows).
@@ -1018,7 +1019,8 @@ mod tests {
         assert_eq!(file_id(2000), 68511);
     }
 
-    struct Stub;
+    /// Every name as its kind and id; shared with battle.rs's tests.
+    pub(crate) struct Stub;
 
     impl Texts for Stub {
         fn kind(&self, kind: u8, id: u32) -> Option<Vec<u8>> {

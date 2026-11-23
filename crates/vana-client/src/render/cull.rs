@@ -56,7 +56,7 @@ pub fn reach(own: Option<f32>, door: bool) -> [f32; 2] {
 }
 
 /// What the culling needs of a geometry, built with it (ZoneGeometry::build_keyed).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct CullData {
     /// Per instance: its mesh's box in model space, centre then half extents; the fourth words its reach().
     bounds: Vec<[f32; 8]>,
@@ -689,7 +689,13 @@ mod tests {
             b
         };
         let instances = buf(bytemuck::cast_slice(&insts), wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX);
-        let cam = crate::render::Camera { eye: Vec3::ZERO, target: Vec3::Z, up: Vec3::NEG_Y, fov_y: 0.8 };
+        let cam = crate::render::Camera {
+            jitter: glam::Vec2::ZERO,
+            eye: Vec3::ZERO,
+            target: Vec3::Z,
+            up: Vec3::NEG_Y,
+            fov_y: 0.8,
+        };
         let mut u = crate::render::Uniforms::zeroed();
         u.view_proj = cam.view_proj(1.0).to_cols_array_2d();
         u.voyage = Mat4::IDENTITY.to_cols_array_2d();
@@ -699,18 +705,15 @@ mod tests {
         let [lights, areas, parts, deltas] = [(); 4].map(|_| buf(&zeros, wgpu::BufferUsages::STORAGE));
         let lamp = buf(&zeros, wgpu::BufferUsages::UNIFORM);
         let clamp = crate::render::clamp_sampler(device);
-        let mut entries = [&uniforms, &lights, &areas, &parts, &deltas, &lamp]
-            .iter()
-            .enumerate()
-            .map(|(k, b)| wgpu::BindGroupEntry { binding: k as u32, resource: b.as_entire_binding() })
-            .collect::<Vec<_>>();
-        // Binding 6: the '#' placements' clamped sampler (custom).
-        entries.push(wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(&clamp) });
-        let globals = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &p.globals_layout,
-            entries: &entries,
-        });
+        let off = super::super::worldshadow::Off::new(&gpu);
+        let globals = super::super::globals_group(
+            device,
+            &p.globals_layout,
+            [&uniforms, &lights, &areas, &parts, &deltas, &lamp],
+            None,
+            &off,
+            &clamp,
+        );
         let c = Cull::new(&gpu, Some(layout), &data, &instances).expect("a GPU culling");
         let read = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
@@ -745,7 +748,13 @@ mod tests {
     /// a moving one skips the frustum test.
     #[test]
     fn cpu_visible_follows_cull_visible() {
-        let cam = crate::render::Camera { eye: Vec3::ZERO, target: Vec3::Z, up: Vec3::NEG_Y, fov_y: 0.8 };
+        let cam = crate::render::Camera {
+            jitter: glam::Vec2::ZERO,
+            eye: Vec3::ZERO,
+            target: Vec3::Z,
+            up: Vec3::NEG_Y,
+            fov_y: 0.8,
+        };
         let view = View { view_proj: cam.view_proj(1.0), eye: Vec3::ZERO, voyage: Mat4::IDENTITY, clip: [100.0, 1.0] };
         let planes = frustum(&view);
         // A unit box; no own distance (the zone's D), or its own 30 (900 squared, flag 1).
@@ -794,7 +803,13 @@ mod tests {
             mapped_at_creation: false,
         });
         gpu.queue.put(&src, 0, bytemuck::cast_slice(&insts));
-        let cam = crate::render::Camera { eye: Vec3::ZERO, target: Vec3::Z, up: Vec3::NEG_Y, fov_y: 0.8 };
+        let cam = crate::render::Camera {
+            jitter: glam::Vec2::ZERO,
+            eye: Vec3::ZERO,
+            target: Vec3::Z,
+            up: Vec3::NEG_Y,
+            fov_y: 0.8,
+        };
         let view = View { view_proj: cam.view_proj(1.0), eye: Vec3::ZERO, voyage: Mat4::IDENTITY, clip: [100.0, 1.0] };
         let read = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: None,

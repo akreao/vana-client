@@ -1,10 +1,11 @@
 -- The set builder's picks. For a set at the player's level:
 --   1. the reference is the set's best piece per slot at the level cap (75 or 99): a curated list where one exists,
 --      else the best-scoring piece in the whole item list the job and race can wear at the cap;
---   2. each slot gets the owned piece, wearable now, that gives the most of that reference's weighted stats (its share);
+--   2. each slot gets the reference itself when we hold it, else the owned piece, wearable now, that gives the most
+--      of that reference's weighted stats (its share);
 --   3. below MIN_SHARE (nothing close to it) the slot takes the owned piece the set's weights score highest;
 --   4. separately, "worth getting": the best piece by the same rule from every item wearable at this level, if it
---      beats the owned pick.
+--      beats the owned pick (worth_bag: the bag it is kept in when we hold it where it cannot be worn from).
 -- Weapons (main, sub, range) are picked only in sets that swap them (mages' idle and casting sets); the others keep
 -- what is worn.
 
@@ -263,7 +264,31 @@ function M.build(ctx, set, set_name)
     local list = owned[slot]
     local r = ref[slot]
     local pick, share, how
-    if list and r and M.score(r.s, set) > 0 then
+    -- The best in slot itself, when we hold it: another piece with more of its stats does not take its place. Another
+    -- item of its name (an early stage of a relic) only when it is no worse than the share's pick.
+    if list and r then
+      -- Of several copies of it (their own augments), the best; one that adds nothing to the set leaves the slot to
+      -- the picks below.
+      local named, nv, exact, ev
+      for _, c in ipairs(list) do
+        if not (c.key and used[c.key]) then
+          if c.id == r.id then
+            local v = M.score(c.s, set)
+            if not ev or v > ev then exact, ev = c, v end
+          elseif c.rec and r.rec and c.rec.name == r.rec.name and (not nv or M.score(c.s, set) > nv) then
+            named, nv = c, M.score(c.s, set)
+          end
+        end
+      end
+      if exact and ev > 0 then pick, share, how = exact, 1, "bis" end
+      if not pick and named then
+        local alt = M.score(r.s, set) > 0 and by_share(list, r.s, set, used)
+        if not alt or nv >= M.score(alt.s, set) then
+          pick, share, how = named, (M.share(named.s, r.s, set)), "bis"
+        end
+      end
+    end
+    if not pick and list and r and M.score(r.s, set) > 0 then
       pick, share = by_share(list, r.s, set, used)
       how = pick and "bis" or nil
     end
@@ -312,7 +337,11 @@ function M.build(ctx, set, set_name)
         end
         w = best
       end
-      if w and (not o.pick or M.score(w.s, set) > M.score(o.pick.s, set)) then o.worth = w end
+      if w and (not o.pick or M.score(w.s, set) > M.score(o.pick.s, set)) then
+        o.worth = w
+        -- Held, but in a bag it cannot be worn from: the window says where, not to get it.
+        o.worth_bag = ctx.kept and ctx.kept[w.id] or nil
+      end
     end
   end
 

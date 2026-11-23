@@ -2,13 +2,14 @@
 //! (Config-tool values 0003 / 0004; the UI and text stay at window size). Downscaling averages the destination
 //! pixel's footprint, upscaling is Catmull-Rom. With anti-aliasing on (config `antialias`, not retail) SMAA
 //! (render/smaa.rs) runs on the scene first whenever it is not being downscaled (downscaling is already
-//! supersampling), and this pass reads its output.
+//! supersampling), and this pass reads its output. With FSR 1 on (config `upscaler`, render/fsr1.rs) the scene is
+//! taken to the window's size by EASU first and this pass sharpens it (RCAS) in place of the Catmull-Rom.
 
 use super::Gpu;
 use super::Put;
 
 const SHADER: &str = r#"
-struct U { src: vec2<f32>, dst: vec2<f32>, gamma: vec4<f32>, lcd: vec4<f32>, grade: vec4<f32> };
+struct U { src: vec2<f32>, dst: vec2<f32>, gamma: vec4<f32>, lcd: vec4<f32>, grade: vec4<f32>, fsr: vec4<f32> };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var tex: texture_2d<f32>;
 @group(0) @binding(2) var samp: sampler;
@@ -62,6 +63,20 @@ fn grade(c: vec3<f32>) -> vec3<f32> {
     g = g + vec3<f32>(u.grade.z, 0.0, -u.grade.z) * min(l * 4.0, 1.0);
     return clamp(g, vec3<f32>(0.0), vec3<f32>(1.0));
 }
+// fsr.y: an sRGB surface. The scene's view decodes what it reads and the surface encodes what is written, so the
+// grading and the gamma (made for gamma-space values) work on re-encoded values and the result is decoded last; the
+// picture then matches a plain surface's.
+fn srgb_encode(c: vec3<f32>) -> vec3<f32> {
+    let x = max(c, vec3<f32>(0.0));
+    return select(1.055 * pow(x, vec3<f32>(1.0 / 2.4)) - 0.055, x * 12.92, x <= vec3<f32>(0.0031308));
+}
+fn srgb_decode(c: vec3<f32>) -> vec3<f32> {
+    return select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
+}
+fn finish(c: vec3<f32>) -> vec4<f32> {
+    let o = pow(clamp(grade(c), vec3<f32>(0.0), vec3<f32>(1.0)), 1.0 / u.gamma.rgb);
+    return vec4<f32>(select(o, srgb_decode(o), u.fsr.y > 0.5), 1.0);
+}
 // Gamma: c^(1 / g) per channel (FUN_10016400's ramp exponent).
 // 3D LCD Mode (lcd.x = 1, config 0030): the scene was drawn 0.6 % wider (lcd.z = its extra share, 0.006); eye 0
 // (projection shifted -0.006 in NDC x) squeezed into the left half, eye 1 (+0.006) into the right, bilinear
@@ -77,8 +92,8 @@ fn grade(c: vec3<f32>) -> vec3<f32> {
         let left = i.uv.x < 0.5;
         let x = select(i.uv.x - 0.5, i.uv.x, left) * 2.0;
         let ux = select(x, x + u.lcd.z, left) / (1.0 + u.lcd.z);
-        let e = grade(tap(vec2<f32>(ux, i.uv.y)));
-        return vec4<f32>(pow(clamp(e, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0 / u.gamma.rgb), 1.0);
+        let e = tap(vec2<f32>(ux, i.uv.y));
+        return finish(select(e, srgb_encode(e), u.fsr.y > 0.5));
     }
     var c: vec3<f32>;
     if (u.src.x > u.dst.x || u.src.y > u.dst.y) {
@@ -86,8 +101,24 @@ fn grade(c: vec3<f32>) -> vec3<f32> {
     } else {
         c = up(i.uv);
     }
-    c = grade(c);
-    return vec4<f32>(pow(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0 / u.gamma.rgb), 1.0);
+    // lcd.w: the source is the upscaler's linear output (render/upscale), filtered linear and encoded here.
+    if (u.lcd.w > 0.5) {
+        c = pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2));
+    } else if (u.fsr.y > 0.5) {
+        c = srgb_encode(c);
+    }
+    return finish(c);
+}
+// FSR 1's second half: `tex` is EASU's output at the window's size, sharpened by RCAS (u.fsr.x, 0 = off), then the
+// grading and gamma as above.
+@fragment fn fs_rcas(i: VOut) -> @location(0) vec4<f32> {
+    let p = vec2<i32>(i.clip.xy);
+    var c = textureLoad(tex, p, 0).rgb;
+    if (u.fsr.x > 0.0) {
+        c = rcas(p, u.fsr.x);
+    }
+    // EASU's output is gamma space on either surface (it encodes as it loads on an sRGB one).
+    return finish(c);
 }
 "#;
 
@@ -124,6 +155,8 @@ pub fn fit(size: [u32; 2], max: u32) -> [u32; 2] {
 
 pub struct SceneScale {
     pipeline: wgpu::RenderPipeline,
+    /// FSR 1's RCAS and final pass (`fs_rcas`), over EASU's output.
+    rcas: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     uniform: wgpu::Buffer,
@@ -132,6 +165,11 @@ pub struct SceneScale {
     smaa: Option<super::smaa::Smaa>,
     /// The scale pass's group over the SMAA output, by that view.
     smaa_group: super::BindCache<wgpu::TextureView>,
+    /// FSR 1's EASU pass, made on first use and dropped when it is off, and this pass's group over its output.
+    easu: Option<super::fsr1::Easu>,
+    easu_group: super::BindCache<wgpu::TextureView>,
+    /// Its group over the upscaler's output, by that view.
+    upscaled_group: super::BindCache<wgpu::TextureView>,
 }
 
 impl SceneScale {
@@ -139,7 +177,7 @@ impl SceneScale {
         let device = &gpu.device;
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scene scale"),
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+            source: wgpu::ShaderSource::Wgsl([SHADER, super::fsr1::RCAS].concat().into()),
         });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("scene scale"),
@@ -177,27 +215,34 @@ impl SceneScale {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scene scale"),
-            layout: Some(&pl),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
-            depth_stencil: None,
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let make = |fs: &str| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("scene scale"),
+                layout: Some(&pl),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+                depth_stencil: None,
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(fs),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let (pipeline, rcas) = (make("fs"), make("fs_rcas"));
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
@@ -207,11 +252,24 @@ impl SceneScale {
         });
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("scene scale"),
-            size: 64,
+            size: 80,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        Self { pipeline, layout, sampler, uniform, format, target: None, smaa: None, smaa_group: Default::default() }
+        Self {
+            pipeline,
+            rcas,
+            layout,
+            sampler,
+            uniform,
+            format,
+            target: None,
+            smaa: None,
+            smaa_group: Default::default(),
+            easu: None,
+            easu_group: Default::default(),
+            upscaled_group: Default::default(),
+        }
     }
 
     /// The offscreen colour and depth views at `size`, made on first use or a size change, and the colour texture.
@@ -253,6 +311,12 @@ impl SceneScale {
         (t.view.clone(), t.depth.clone(), t.tex.clone())
     }
 
+    /// Drops FSR 1's window-size target (FSR 1 off, or a frame that skips the scaling pass, as an unscaled lobby).
+    pub fn drop_fsr1(&mut self) {
+        self.easu = None;
+        self.easu_group.clear();
+    }
+
     /// The scene texture through a plain (not sRGB) view: written and blended in gamma space.
     pub fn raw_view(&self) -> Option<wgpu::TextureView> {
         Some(self.target.as_ref()?.raw.clone())
@@ -262,6 +326,10 @@ impl SceneScale {
     /// 3D LCD Mode's side-by-side eyes (the scene `extra` wider) and whether this frame carries the strip. `smaa`: the
     /// anti-aliasing filter (not retail; skipped in 3D LCD Mode and when downscaling). The SMAA passes are made on
     /// first use; turning it off leaves them idle. `grading`: the colour grading preset (`grading`, 0 off).
+    /// `fsr1`: FSR 1's RCAS sharpness in percent (`upscale_sharpness`) when it upscales this frame (render/fsr1.rs);
+    /// it takes over from the Catmull-Rom only when the scene is smaller than `dst` and not in 3D LCD Mode.
+    /// `upscaled`: the temporal upscaler's linear output and its size, read in place of the scene (no SMAA or FSR 1).
+    #[allow(clippy::too_many_arguments)]
     pub fn blit(
         &mut self,
         gpu: &Gpu,
@@ -272,10 +340,27 @@ impl SceneScale {
         lcd: Option<(f32, bool)>,
         smaa: bool,
         grading: u32,
+        fsr1: Option<u32>,
+        upscaled: Option<(&wgpu::TextureView, [u32; 2])>,
     ) {
         let Some(t) = &self.target else { return };
         let dst_size = [dst_size[0].max(1), dst_size[1].max(1)];
-        let smaa = smaa && lcd.is_none() && t.size[0] <= dst_size[0] && t.size[1] <= dst_size[1];
+        let smaa = smaa && upscaled.is_none() && lcd.is_none() && t.size[0] <= dst_size[0] && t.size[1] <= dst_size[1];
+        let fsr1 = fsr1.filter(|_| {
+            upscaled.is_none()
+                && lcd.is_none()
+                && t.size[0] <= dst_size[0]
+                && t.size[1] <= dst_size[1]
+                && t.size != dst_size
+        });
+        if upscaled.is_none() {
+            self.upscaled_group.clear();
+        }
+        let src_size = upscaled.map_or(t.size, |u| u.1);
+        if fsr1.is_none() {
+            self.easu = None;
+            self.easu_group.clear();
+        }
         if !smaa {
             // Off: its targets and the scene texture it holds go (the kept group binds its output too).
             self.smaa = None;
@@ -283,8 +368,8 @@ impl SceneScale {
         }
         let (on, strip, extra) = lcd.map_or((0.0, 0.0, 0.0), |(e, s)| (1.0, s as u32 as f32, e));
         let mut u = [
-            t.size[0] as f32,
-            t.size[1] as f32,
+            src_size[0] as f32,
+            src_size[1] as f32,
             dst_size[0] as f32,
             dst_size[1] as f32,
             gamma[0],
@@ -294,25 +379,62 @@ impl SceneScale {
             on,
             strip,
             extra,
-            0.0,
+            upscaled.is_some() as u32 as f32,
             0.0,
             0.0,
             0.0,
             0.0,
         ];
         u[12..16].copy_from_slice(&grade(grading));
+        let srgb = if self.format.is_srgb() { 1.0 } else { 0.0 };
+        let fsr = [fsr1.map_or(0.0, super::fsr1::rcas_sharpness), srgb, 0.0, 0.0];
         gpu.queue.put(&self.uniform, 0, bytemuck::cast_slice(&u));
-        let smaa_group = smaa.then(|| {
+        gpu.queue.put(&self.uniform, 64, bytemuck::cast_slice(&fsr));
+        let smaa_out = smaa.then(|| {
             let (tex, size) = (t.tex.clone(), t.size);
             let s = self.smaa.get_or_insert_with(|| super::smaa::Smaa::new(gpu, self.format));
-            let out = s.run(gpu, encoder, &tex, size).clone();
+            s.run(gpu, encoder, &tex, size).clone()
+        });
+        let smaa_group = smaa_out.as_ref().filter(|_| fsr1.is_none()).map(|out| {
             self.smaa_group.get(out.clone(), || {
                 gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("scene scale smaa"),
                     layout: &self.layout,
                     entries: &[
                         wgpu::BindGroupEntry { binding: 0, resource: self.uniform.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(out) },
+                        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                    ],
+                })
+            })
+        });
+        // FSR 1: EASU from the scene (or SMAA's output) to the window's size; this pass then reads that.
+        let easu_group = fsr1.map(|_| {
+            let t = self.target.as_ref().unwrap();
+            let (scene, size) = (t.view.clone(), t.size);
+            let src = smaa_out.unwrap_or(scene);
+            let e = self.easu.get_or_insert_with(|| super::fsr1::Easu::new(gpu, self.format));
+            let out = e.run(gpu, encoder, &src, size, dst_size);
+            self.easu_group.get(out.clone(), || {
+                gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("scene scale easu"),
+                    layout: &self.layout,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: self.uniform.as_entire_binding() },
                         wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&out) },
+                        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                    ],
+                })
+            })
+        });
+        let up_group = upscaled.map(|(view, _)| {
+            self.upscaled_group.get(view.clone(), || {
+                gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("scene scale upscaled"),
+                    layout: &self.layout,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: self.uniform.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(view) },
                         wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sampler) },
                     ],
                 })
@@ -332,8 +454,13 @@ impl SceneScale {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, smaa_group.as_ref().unwrap_or(&t.group), &[]);
+        if let Some(g) = &easu_group {
+            pass.set_pipeline(&self.rcas);
+            pass.set_bind_group(0, g, &[]);
+        } else {
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, up_group.as_ref().or(smaa_group.as_ref()).unwrap_or(&t.group), &[]);
+        }
         pass.draw(0..3, 0..1);
     }
 }
@@ -373,6 +500,208 @@ mod tests {
         (0..h).flat_map(|y| d[(y * row) as usize..(y * row + w * 4) as usize].to_vec()).collect()
     }
 
+    /// Scales a `src`-size picture (RGBA rows) to `dst` with FSR 1 at `sharp` percent, or the Catmull-Rom (None).
+    fn upscale(gpu: &Gpu, s: &mut SceneScale, pic: &[u8], src: [u32; 2], dst: [u32; 2], fsr: Option<u32>) -> Vec<u8> {
+        s.target(gpu, src);
+        let tex = &s.target.as_ref().unwrap().tex;
+        gpu.queue.write_texture(
+            tex.as_image_copy(),
+            pic,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(src[0] * 4), rows_per_image: Some(src[1]) },
+            wgpu::Extent3d { width: src[0], height: src[1], depth_or_array_layers: 1 },
+        );
+        let out = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d { width: dst[0], height: dst[1], depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let mut enc = gpu.device.create_command_encoder(&Default::default());
+        s.blit(gpu, &mut enc, &out.create_view(&Default::default()), dst, [1.0; 3], None, false, 0, fsr, None);
+        gpu.queue.submit([enc.finish()]);
+        read(gpu, &out, dst[0], dst[1])
+    }
+
+    /// On an sRGB surface FSR 1 filters the same gamma-space values as on a plain one: a midtone gradient with an edge
+    /// through it comes out within rounding of the plain surface's picture.
+    #[test]
+    fn fsr1_same_on_srgb_surfaces() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        // The scene target's plain view needs view formats (not on GL, where the surface is plain anyway).
+        if !gpu.adapter.get_downlevel_capabilities().flags.contains(wgpu::DownlevelFlags::VIEW_FORMATS) {
+            return;
+        }
+        let (src, dst) = ([16u32, 16], [32u32, 32]);
+        let pic: Vec<u8> = (0..src[1])
+            .flat_map(|y| {
+                (0..src[0]).flat_map(move |x| {
+                    let v = (60 + x * 6 + y * 2) as u8;
+                    if x * 2 + y / 4 >= 16 { [v, v / 2, 200, 255] } else { [v / 3, v, 40, 255] }
+                })
+            })
+            .collect();
+        let run = |format: wgpu::TextureFormat, fsr1: Option<u32>, grading: u32, dst: [u32; 2]| {
+            let mut s = SceneScale::new(&gpu, format);
+            s.target(&gpu, src);
+            let tex = &s.target.as_ref().unwrap().tex;
+            // The world writes gamma-space bytes through the plain view; the bytes are the same either way.
+            gpu.queue.write_texture(
+                tex.as_image_copy(),
+                &pic,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(src[0] * 4),
+                    rows_per_image: Some(src[1]),
+                },
+                wgpu::Extent3d { width: src[0], height: src[1], depth_or_array_layers: 1 },
+            );
+            let out = gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d { width: dst[0], height: dst[1], depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let mut enc = gpu.device.create_command_encoder(&Default::default());
+            let dst_view = out.create_view(&Default::default());
+            s.blit(&gpu, &mut enc, &dst_view, dst, [1.1, 1.0, 0.9], None, false, grading, fsr1, None);
+            gpu.queue.submit([enc.finish()]);
+            read(&gpu, &out, dst[0], dst[1])
+        };
+        // FSR 1 with grading and a gamma; the plain pass at the scene's size too (scaled, it filters decoded values
+        // on an sRGB surface, as it always has).
+        for (fsr1, grading, dst) in [(Some(75), 0, dst), (Some(75), 1, dst), (None, 4, src)] {
+            let plain = run(wgpu::TextureFormat::Rgba8Unorm, fsr1, grading, dst);
+            let srgb = run(wgpu::TextureFormat::Rgba8UnormSrgb, fsr1, grading, dst);
+            let worst = plain.iter().zip(&srgb).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
+            // 8-bit sRGB round trips in the darks cost up to 3; filtering decoded values instead differs by over 30.
+            assert!(worst <= 3, "{fsr1:?} grading {grading}: sRGB differs from plain by up to {worst}");
+        }
+    }
+
+    /// The temporal upscaler's linear output comes out as the same bytes on an sRGB surface as on a plain one (not
+    /// encoded twice).
+    #[test]
+    fn upscaled_same_on_srgb_surfaces() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        // The sRGB scene target needs view formats (not on GL, where the surface is plain anyway).
+        if !gpu.adapter.get_downlevel_capabilities().flags.contains(wgpu::DownlevelFlags::VIEW_FORMATS) {
+            return;
+        }
+        let size = [8u32, 8];
+        let up = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let texel: Vec<u8> = [0.05f32, 0.2, 0.6, 1.0].iter().flat_map(|v| half_bits(*v).to_le_bytes()).collect();
+        let pic: Vec<u8> = (0..size[0] * size[1]).flat_map(|_| texel.clone()).collect();
+        gpu.queue.write_texture(
+            up.as_image_copy(),
+            &pic,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(size[0] * 8), rows_per_image: Some(size[1]) },
+            wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+        );
+        let view = up.create_view(&Default::default());
+        let run = |format: wgpu::TextureFormat, grading: u32, gamma: [f32; 3]| {
+            let mut s = SceneScale::new(&gpu, format);
+            s.target(&gpu, size);
+            let out = gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let mut enc = gpu.device.create_command_encoder(&Default::default());
+            let dst = out.create_view(&Default::default());
+            s.blit(&gpu, &mut enc, &dst, size, gamma, None, false, grading, None, Some((&view, size)));
+            gpu.queue.submit([enc.finish()]);
+            read(&gpu, &out, size[0], size[1])
+        };
+        // Grading and gamma (made for gamma-space values) too.
+        for (grading, gamma) in [(0, [1.0; 3]), (1, [1.0; 3]), (4, [1.25, 1.0, 0.85])] {
+            let plain = run(wgpu::TextureFormat::Rgba8Unorm, grading, gamma);
+            let srgb = run(wgpu::TextureFormat::Rgba8UnormSrgb, grading, gamma);
+            if grading == 0 {
+                // pow(x, 1 / 2.2) as bytes: 65, 124, 202.
+                assert!((plain[0] as i32 - 65).abs() <= 1 && (plain[2] as i32 - 202).abs() <= 1, "{:?}", &plain[..4]);
+            }
+            let worst = plain.iter().zip(&srgb).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
+            assert!(worst <= 1, "grading {grading}: sRGB differs from plain by up to {worst}");
+        }
+    }
+
+    fn half_bits(v: f32) -> u16 {
+        let b = v.to_bits();
+        let (s, e, m) = ((b >> 16) & 0x8000, ((b >> 23) & 0xff) as i32 - 127 + 15, (b >> 13) & 0x3ff);
+        (s | ((e.max(0) as u32) << 10) | m) as u16
+    }
+
+    /// FSR 1 keeps a flat colour flat, sharpened or not, at 1.5x and 2x.
+    #[test]
+    fn fsr1_keeps_flat_colour() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        let mut s = SceneScale::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
+        for (src, dst) in [([16, 16], [24, 24]), ([16, 12], [32, 24])] {
+            let pic: Vec<u8> = (0..src[0] * src[1]).flat_map(|_| [153u8, 102, 51, 255]).collect();
+            for sharp in [0, 50, 100] {
+                for p in upscale(&gpu, &mut s, &pic, src, dst, Some(sharp)).as_chunks::<4>().0 {
+                    assert!(
+                        (p[0] as i32 - 153).abs() <= 1
+                            && (p[1] as i32 - 102).abs() <= 1
+                            && (p[2] as i32 - 51).abs() <= 1,
+                        "{src:?} -> {dst:?} at {sharp}: {p:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A black-to-white step at 2x: FSR 1 rings nowhere (each row only rises, within black and white, as EASU's
+    /// dering and RCAS's limiter promise) and its edge is no wider than the Catmull-Rom's; RCAS narrows it further.
+    #[test]
+    fn fsr1_edges_sharper_without_ringing() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        let mut s = SceneScale::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
+        let (src, dst) = ([16u32, 16], [32u32, 32]);
+        // A slanted edge, so EASU's direction is not just the axis.
+        let pic: Vec<u8> = (0..src[1])
+            .flat_map(|y| (0..src[0]).flat_map(move |x| if x * 2 + y / 4 >= 16 { [255u8; 4] } else { [0, 0, 0, 255] }))
+            .collect();
+        let soft = |px: &[u8]| px.as_chunks::<4>().0.iter().filter(|p| p[0] > 20 && p[0] < 235).count();
+        let cr = upscale(&gpu, &mut s, &pic, src, dst, None);
+        let easu = upscale(&gpu, &mut s, &pic, src, dst, Some(0));
+        let sharp = upscale(&gpu, &mut s, &pic, src, dst, Some(100));
+        for px in [&easu, &sharp] {
+            for row in px.chunks(dst[0] as usize * 4) {
+                let r: Vec<u8> = row.as_chunks::<4>().0.iter().map(|p| p[0]).collect();
+                assert!(r.windows(2).all(|w| w[1] as i32 + 1 >= w[0] as i32), "rings: {r:?}");
+            }
+        }
+        assert!(soft(&easu) <= soft(&cr), "EASU {} vs Catmull-Rom {}", soft(&easu), soft(&cr));
+        assert!(soft(&sharp) <= soft(&easu), "RCAS {} vs EASU {}", soft(&sharp), soft(&easu));
+        // Off (None) drops the EASU target.
+        assert!(s.easu.is_some());
+        upscale(&gpu, &mut s, &pic, src, dst, None);
+        assert!(s.easu.is_none());
+    }
+
     /// A flat colour survives both directions; a 2x downscale of a checker averages to grey.
     #[test]
     fn scales_both_ways() {
@@ -410,7 +739,7 @@ mod tests {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             });
-            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), dst, [1.0; 3], None, false, 0);
+            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), dst, [1.0; 3], None, false, 0, None, None);
             gpu.queue.submit([enc.finish()]);
             let px = read(&gpu, &out, dst[0], dst[1]);
             for p in px.as_chunks::<4>().0 {
@@ -444,7 +773,7 @@ mod tests {
             view_formats: &[],
         });
         let mut enc = gpu.device.create_command_encoder(&Default::default());
-        s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [4, 4], [1.0; 3], None, false, 0);
+        s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [4, 4], [1.0; 3], None, false, 0, None, None);
         gpu.queue.submit([enc.finish()]);
         for p in read(&gpu, &out, 4, 4).as_chunks::<4>().0 {
             assert!((p[0] as i32 - 128).abs() <= 3, "{p:?}");
@@ -479,7 +808,7 @@ mod tests {
                 wgpu::Extent3d { width: n, height: n, depth_or_array_layers: 1 },
             );
             let mut enc = gpu.device.create_command_encoder(&Default::default());
-            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [n, n], [1.0; 3], None, smaa, 0);
+            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [n, n], [1.0; 3], None, smaa, 0, None, None);
             gpu.queue.submit([enc.finish()]);
             read(&gpu, &out, n, n)
         };
@@ -545,7 +874,18 @@ mod tests {
                     multiview_mask: None,
                 });
             }
-            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [4, 4], [1.0; 3], None, false, preset);
+            s.blit(
+                &gpu,
+                &mut enc,
+                &out.create_view(&Default::default()),
+                [4, 4],
+                [1.0; 3],
+                None,
+                false,
+                preset,
+                None,
+                None,
+            );
             gpu.queue.submit([enc.finish()]);
             let px = read(&gpu, &out, 4, 4);
             [px[0] as i32, px[1] as i32, px[2] as i32]
@@ -576,7 +916,18 @@ mod tests {
                     multiview_mask: None,
                 });
             }
-            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), [4, 4], [1.0; 3], None, false, preset);
+            s.blit(
+                &gpu,
+                &mut enc,
+                &out.create_view(&Default::default()),
+                [4, 4],
+                [1.0; 3],
+                None,
+                false,
+                preset,
+                None,
+                None,
+            );
             gpu.queue.submit([enc.finish()]);
             let px = read(&gpu, &out, 4, 4);
             assert_eq!(&px[..3], &[0, 0, 0], "preset {preset}");

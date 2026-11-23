@@ -1069,6 +1069,7 @@ mod tests {
         let mut r = Reflections::new(&gpu, format, std::sync::Arc::new(water), Default::default(), Default::default());
         let n = 32u32;
         let cam = crate::render::Camera {
+            jitter: glam::Vec2::ZERO,
             eye: Vec3::new(0.0, -3.0, -20.0),
             target: Vec3::new(0.0, 0.0, 0.0),
             up: Vec3::NEG_Y,
@@ -1151,6 +1152,7 @@ mod tests {
         let format = wgpu::TextureFormat::Rgba8Unorm;
         let n = 32u32;
         let cam = crate::render::Camera {
+            jitter: glam::Vec2::ZERO,
             eye: Vec3::new(0.0, -1.6, -6.0),
             target: Vec3::new(0.0, -1.0, 0.0),
             up: Vec3::NEG_Y,
@@ -1261,6 +1263,7 @@ mod tests {
         let format = wgpu::TextureFormat::Rgba8Unorm;
         let n = 32u32;
         let cam = crate::render::Camera {
+            jitter: glam::Vec2::ZERO,
             eye: Vec3::new(0.0, -1.6, -6.0),
             target: Vec3::new(0.0, -1.0, 0.0),
             up: Vec3::NEG_Y,
@@ -1337,11 +1340,9 @@ mod tests {
     #[test]
     fn gpu_fx_water_pipelines() {
         let Ok(gpu) = Gpu::headless() else { return };
-        if crate::render::effects::fits(&gpu).is_err() {
-            return;
-        }
         let format = wgpu::TextureFormat::Rgba8Unorm;
-        let eg = crate::render::effects::EffectsGpu::new(&gpu, format);
+        // A GPU short of what the effects need has no effect water either.
+        let Ok(eg) = crate::render::effects::EffectsGpu::new(&gpu, format) else { return };
         let depth = crate::render::depth_view(&gpu.device, 8, 8);
         let mut none = Reflections::new(&gpu, format, Default::default(), Default::default(), Default::default());
         assert!(none.fx_water(&gpu, eg.tex_layout(), eg.outs(), &depth).is_none());

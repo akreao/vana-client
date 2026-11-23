@@ -46,6 +46,26 @@ fn rel(path: &str) -> mlua::Result<PathBuf> {
 }
 
 /// Where a path lives: "shared/..." is the shared area (files.shared), anything else the mod's data folder.
+/// `fs.write`: the text goes to a sibling temporary file that then replaces `p`, so a failed write (a full disk)
+/// leaves the old file whole instead of truncated.
+fn write_whole(p: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut name = p.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{}.tmp", std::process::id()));
+    let tmp = p.with_file_name(name);
+    let r = (|| {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, p)
+    })();
+    if r.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r
+}
+
 fn place(lua: &Lua, data: &Path, path: &str) -> mlua::Result<PathBuf> {
     let r = rel(path)?;
     match r.strip_prefix("shared") {
@@ -147,7 +167,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
                         .open(&p)
                         .and_then(|mut f| f.write_all(&text.as_bytes()))
                 } else {
-                    std::fs::write(&p, &*text.as_bytes())
+                    write_whole(&p, &text.as_bytes())
                 };
                 r.map_err(|e| io_err(&path, e))
             })?,
@@ -404,7 +424,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
                     if g.title.to_lowercase().trim_matches(|c| c == '【' || c == '】') == want.as_str() {
                         return Some(crate::dat::autotrans::id_block(g.kind, 0));
                     }
-                    g.words.iter().find(|p| p.1.to_lowercase() == want).map(|p| p.0)
+                    g.words().find(|p| p.1.to_lowercase() == want).map(|p| p.0)
                 })
             });
             Ok(hit.map(phrase))
@@ -690,6 +710,25 @@ fn call(lua: &Lua, id: &str, name: &str, args: mlua::Variadic<Value>) -> mlua::R
 
 #[cfg(test)]
 mod tests {
+    /// fs.write replaces the file whole and leaves no temporary file; a write that cannot finish (here: the place is a
+    /// directory) leaves what was there.
+    #[test]
+    fn write_whole_replaces() {
+        let d = std::env::temp_dir().join(format!("vana-lua-write-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("a.json");
+        super::write_whole(&f, b"first, the longer text").unwrap();
+        super::write_whole(&f, b"second").unwrap();
+        assert_eq!(std::fs::read(&f).unwrap(), b"second");
+        let sub = d.join("dir");
+        std::fs::create_dir_all(sub.join("x")).unwrap();
+        assert!(super::write_whole(&sub, b"nope").is_err());
+        assert!(sub.join("x").is_dir());
+        let left: Vec<_> = std::fs::read_dir(&d).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert_eq!(left.len(), 2, "{left:?}");
+        std::fs::remove_dir_all(&d).ok();
+    }
+
     /// fs.lock's lock: a second holder waits, then is refused, until the first lets go.
     #[test]
     fn lock_takes_turns() {
