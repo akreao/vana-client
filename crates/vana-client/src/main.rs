@@ -1184,6 +1184,9 @@ impl std::io::Write for Tee {
 }
 
 fn main() -> Result<()> {
+    // A `dlss` build: where NGX looks for the downloaded DLSS runtime (render/upscale/dlss.rs), set while the process
+    // has one thread.
+    render::upscale::dlss::point_ngx_at_data();
     #[cfg(windows)]
     unsafe {
         windows_sys::Win32::System::Console::AttachConsole(windows_sys::Win32::System::Console::ATTACH_PARENT_PROCESS);

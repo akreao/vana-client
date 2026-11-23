@@ -177,7 +177,7 @@ enum Val {
     Antialias,
     Grading,
     /// The upscaler and its quality in one: 0 off, 1..5 FSR 3.1 at quality 0..4, 6 the external engine, 7..10 FSR 1
-    /// at quality 1..4.
+    /// at quality 1..4, 11..15 DLSS at quality 0..4.
     Upscaler,
     UpscaleSharpness,
     /// Config `neural`: Unavailable (and left as it is) while upscale::neural_status says it cannot run.
@@ -259,7 +259,8 @@ impl From<&SRow> for Row {
 }
 
 /// Whether a row's choice is offered on this device: Upscaling leaves out FSR 3.1 (1..5) and External (6) where they
-/// can't run (GL / GLES, small limits, no engine), so FSR 1 is what such a device gets.
+/// can't run (GL / GLES, small limits, no engine), so FSR 1 is what such a device gets, and DLSS (11..15) but on an
+/// NVIDIA RTX GPU on Vulkan with the runtime, in a `dlss` build.
 fn offered(v: Val, x: u32) -> bool {
     !matches!(v, Val::Upscaler) || offered_on(&crate::render::upscale::availability(), x)
 }
@@ -268,6 +269,7 @@ fn offered_on(can: &crate::render::upscale::Availability, upscaling: u32) -> boo
     match upscaling {
         1..=5 => can.fsr3.is_ok(),
         6 => can.external.is_ok(),
+        11..=15 => can.dlss.is_ok(),
         _ => true,
     }
 }
@@ -700,7 +702,7 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
     const UPSCALING: &[SRow] = &[
         row(
             "Upscaling",
-            "Draws the 3D world at a lower resolution and rebuilds the detail. FSR (AMD FidelityFX Super Resolution 3.1) rebuilds it from the frames before; where the graphics card can't run it, FSR 1 is used instead. FSR 1 only sharpens the frame back up, and runs on every graphics card. Quality draws at 67% of the window size, Balanced 59%, Performance 50%, Ultra Performance 33%; Native AA keeps the full size and only smooths edges. External hands the frames to an upscaling engine installed beside the game. Menus and text stay sharp, and Background is not used while it is on (not retail).",
+            "Draws the 3D world at a lower resolution and rebuilds the detail. FSR (AMD FidelityFX Super Resolution 3.1) rebuilds it from the frames before; where the graphics card can't run it, FSR 1 is used instead. FSR 1 only sharpens the frame back up, and runs on every graphics card. Quality draws at 67% of the window size, Balanced 59%, Performance 50%, Ultra Performance 33%; Native AA keeps the full size and only smooths edges. DLSS (NVIDIA Deep Learning Super Sampling) rebuilds the detail with NVIDIA's neural network, on NVIDIA RTX graphics cards; the first time it is chosen the client downloads NVIDIA's DLSS runtime (59 MB). DLSS Native AA is DLAA. External hands the frames to an upscaling engine installed beside the game. Menus and text stay sharp, and Background is not used while it is on (not retail).",
             Upscaler,
             &[
                 (0, "Off"),
@@ -714,6 +716,11 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
                 (8, "FSR 1 Balanced"),
                 (9, "FSR 1 Performance"),
                 (10, "FSR 1 Ultra Perf."),
+                (11, "DLSS Native AA"),
+                (12, "DLSS Quality"),
+                (13, "DLSS Balanced"),
+                (14, "DLSS Performance"),
+                (15, "DLSS Ultra Perf."),
             ],
             Now,
         ),
@@ -1072,6 +1079,8 @@ impl SettingsUi {
                     0 => 0,
                     1 if can.fsr3.is_ok() => 1 + self.s.upscale_quality.min(4),
                     1 | crate::render::fsr1::FSR1 => 6 + self.s.upscale_quality.clamp(1, 4),
+                    crate::render::upscale::dlss::DLSS if can.dlss.is_ok() => 11 + self.s.upscale_quality.min(4),
+                    crate::render::upscale::dlss::DLSS => 0,
                     _ if can.external.is_ok() => 6,
                     _ => 0,
                 }
@@ -1121,6 +1130,7 @@ impl SettingsUi {
                 0 => self.s.upscaler = 0,
                 1..=5 => (self.s.upscaler, self.s.upscale_quality) = (1, x - 1),
                 7..=10 => (self.s.upscaler, self.s.upscale_quality) = (crate::render::fsr1::FSR1, x - 6),
+                11..=15 => (self.s.upscaler, self.s.upscale_quality) = (crate::render::upscale::dlss::DLSS, x - 11),
                 _ => self.s.upscaler = 2,
             },
             Val::UpscaleSharpness => self.s.upscale_sharpness = x,
@@ -1671,10 +1681,22 @@ impl SettingsUi {
         let warn = if self.warns(r) { format!("{WARNING} ") } else { String::new() };
         let why = match (r.val, crate::render::upscale::neural_status()) {
             (Val::Neural, Err(e)) => format!(" Unavailable here: {e}."),
-            (Val::Upscaler, _) => match crate::render::upscale::availability().fsr3 {
-                Err(e) => format!(" FSR 3.1 can't run here ({e}), so FSR 1 is offered."),
-                Ok(()) => String::new(),
-            },
+            (Val::Upscaler, _) => {
+                use crate::render::upscale::dlss::{Fetch, fetch_state};
+                let fsr = match crate::render::upscale::availability().fsr3 {
+                    Err(e) => format!(" FSR 3.1 can't run here ({e}), so FSR 1 is offered."),
+                    Ok(()) => String::new(),
+                };
+                let dlss = match fetch_state() {
+                    Fetch::Running => {
+                        " Downloading NVIDIA's DLSS runtime (59 MB); the picture is scaled plainly until it is in."
+                            .to_string()
+                    }
+                    Fetch::Failed(e) => format!(" The DLSS runtime download failed ({e})."),
+                    Fetch::Idle | Fetch::Done => String::new(),
+                };
+                fsr + &dlss
+            }
             _ => String::new(),
         };
         format!("{warn}{}{when}{why}", r.help)
@@ -2387,16 +2409,24 @@ pub(super) fn marker(gu: &mut GameUi, x: f32, y: f32, w: f32) {
 mod tests {
     use super::*;
 
-    /// Upscaling offers FSR 3.1 and External only where they run; FSR 1 and Off always.
+    /// Upscaling offers FSR 3.1, External and DLSS only where they run; FSR 1 and Off always.
     #[test]
     fn upscaling_choices_by_device() {
         use crate::render::upscale::Availability;
-        let shown = |can: Availability| (0..=10).filter(|&x| offered_on(&can, x)).collect::<Vec<u32>>();
+        let shown = |can: Availability| (0..=15).filter(|&x| offered_on(&can, x)).collect::<Vec<u32>>();
         let no = || Err("no".to_string());
-        assert_eq!(shown(Availability { fsr3: Ok(()), external: Ok(()) }), (0..=10).collect::<Vec<u32>>());
-        assert_eq!(shown(Availability { fsr3: Ok(()), external: no() }), [0, 1, 2, 3, 4, 5, 7, 8, 9, 10]);
+        assert_eq!(
+            shown(Availability { fsr3: Ok(()), external: Ok(()), dlss: Ok(()) }),
+            (0..=15).collect::<Vec<u32>>()
+        );
+        assert_eq!(shown(Availability { fsr3: Ok(()), external: no(), dlss: no() }), [0, 1, 2, 3, 4, 5, 7, 8, 9, 10]);
+        // An NVIDIA RTX card with the DLSS runtime and no engine.
+        assert_eq!(
+            shown(Availability { fsr3: Ok(()), external: no(), dlss: Ok(()) }),
+            [0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        );
         // GL / GLES: FSR 1 alone.
-        assert_eq!(shown(Availability { fsr3: no(), external: no() }), [0, 7, 8, 9, 10]);
+        assert_eq!(shown(Availability { fsr3: no(), external: no(), dlss: no() }), [0, 7, 8, 9, 10]);
     }
 
     /// A page's frame holds 7 rows; at the title the Client page leaves out UI Setup and nothing else.

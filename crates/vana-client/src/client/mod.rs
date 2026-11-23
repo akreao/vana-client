@@ -92,7 +92,7 @@ mod subarea;
 mod suggest;
 mod swkbd;
 mod target;
-mod updater;
+pub(crate) mod updater;
 mod widescan;
 pub use lamps::Lamps;
 mod aepoints;
@@ -19004,10 +19004,10 @@ impl App {
         let upscaling = world_phase
             && !lcd
             && !fsr1
-            && (matches!(self.cfg.upscaler, 1 | 2) || neural)
+            && (crate::render::upscale::temporal(self.cfg.upscaler) || neural)
             && self.upscale_ready()
             && self.upscale.as_ref().is_none_or(|u| u.usable(self.cfg.upscaler));
-        if !matches!(self.cfg.upscaler, 1 | 2) && !neural {
+        if !crate::render::upscale::temporal(self.cfg.upscaler) && !neural {
             self.upscale = None;
         }
         let (mut target_size, mut jitter, mut snaps, mut motion) = (bg, glam::Vec2::ZERO, None, None);
@@ -19018,13 +19018,13 @@ impl App {
                 size,
                 self.cfg.upscale_quality,
                 gfx.config.format,
-                matches!(self.cfg.upscaler, 1 | 2),
+                crate::render::upscale::temporal(self.cfg.upscaler),
             );
             snaps = up.targets.as_ref().map(|t| [t.snap_opaque.clone(), t.snap_blend.clone(), t.snap_pre_fx.clone()]);
             motion = up.motion_target();
         }
         // The texture LOD bias while an upscaler draws the world below the window's size (zone.wgsl u.modes.z).
-        let lod_bias = if fsr1 || (upscaling && matches!(self.cfg.upscaler, 1 | 2)) {
+        let lod_bias = if fsr1 || (upscaling && crate::render::upscale::temporal(self.cfg.upscaler)) {
             crate::render::upscale::lod_bias(target_size[0], size[0], !fsr1)
         } else {
             0.0

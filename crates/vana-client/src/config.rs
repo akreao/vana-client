@@ -222,7 +222,8 @@ pub struct Config {
     pub grading: u32,
     /// The scene's upscaler: 0 off (the scaling pass alone), 1 AMD FSR 3.1 (render/upscale), 2 an external engine fed
     /// the same inputs (the neural pass, through the raw Vulkan handles), 3 AMD FSR 1 (render/fsr1.rs: spatial, every
-    /// backend; FSR 3.1 falls back to it where the device can't run it). Not a retail option.
+    /// backend; FSR 3.1 falls back to it where the device can't run it), 4 NVIDIA DLSS (render/upscale/dlss.rs: the
+    /// `dlss` build, an NVIDIA RTX GPU on Vulkan with the runtime). Not a retail option.
     pub upscaler: u32,
     /// The upscaler's quality mode, the output-to-render ratio: 0 Native AA (1.0), 1 Quality (1.5), 2 Balanced (1.7),
     /// 3 Performance (2.0), 4 Ultra Performance (3.0).

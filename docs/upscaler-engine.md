@@ -34,6 +34,39 @@ The upscaled output is `Rgba16Float`, linear, at the window size.
   little-endian f32, row-major with the top row first, and `inputs.json` with the sizes, the jitter, the reset flag
   and the scalars. The upscaler must be on (any mode).
 
+## NVIDIA DLSS (Upscaling: DLSS)
+
+DLSS Super Resolution (`upscaler` 4, `upscale_quality` 0 Native AA = DLAA .. 4 Ultra Performance) is the temporal
+upscaler of NVIDIA RTX cards, run through NVIDIA's NGX SDK over Vulkan (crate `dlss_wgpu`;
+`render/upscale/dlss.rs`). It takes the colour, depth, motion and jitter above, in DLSS's HDR mode (the colour is
+linear; DLSS's LDR mode wants sRGB-encoded colour), with exposure 1, and writes linear colour at the output size like
+FSR 3.1, so the scaling pass grades and encodes it the same way.
+
+- **Build**: only with the cargo feature `dlss` (off by default). It needs NVIDIA's DLSS SDK
+  (github.com/NVIDIA/DLSS, tag v310.9.1, NVIDIA RTX SDK licence, not in this repository) for the NGX headers and
+  static library: `DLSS_SDK` set to its absolute path, `VULKAN_SDK` to the Vulkan headers' prefix (`/usr` on Linux),
+  and clang. CI's `dlss` job fetches the headers and the Linux library and checks the feature.
+
+  ```sh
+  git clone --depth 1 --branch v310.9.1 https://github.com/NVIDIA/DLSS.git /path/to/DLSS
+  DLSS_SDK=/path/to/DLSS VULKAN_SDK=/usr cargo build --release --features dlss
+  ```
+
+- **Run**: on an NVIDIA GPU on the Vulkan backend the device is made with NGX's Vulkan extensions; anything else
+  gets the usual device, and Settings leaves the DLSS choices out. The DLSS runtime is not shipped: the first time
+  DLSS is chosen, the client downloads it from NVIDIA's repository at the SDK's tag
+  (`raw.githubusercontent.com/NVIDIA/DLSS/v310.9.1/lib/<platform>/rel/nvngx_dlss.dll` on Windows,
+  `libnvidia-ngx-dlss.so.310.9.1` on Linux; about 59 MB), checks it against the SDK's SHA-256 and keeps it in the data
+  folder under `dlss/lib/<platform>/rel/`. Until it is in, the frame is scaled plainly; then NGX starts. NGX is
+  pointed there through `DLSS_SDK` (set at start when unset; a build run against a real SDK keeps that SDK's runtime).
+  A runtime beside the executable is used too. If NGX refuses the GPU (not an RTX card, an old driver), the DLSS
+  choices are withdrawn.
+- **GPUs**: GeForce RTX 20 series and newer (and RTX workstation cards) with a current driver, Windows and Linux.
+- **Shipping a `dlss` build** carries the SDK licence's terms (the NGX library is linked in): the notices of section
+  9.5 of the SDK's `doc/DLSS_Programming_Guide_Release.pdf`, and the use of DLSS credited where the licence's
+  trademark exhibit says (splash screen, about box, credits).
+- `zone-shot` takes `FFXI_FSR3=0..4 FFXI_UPSCALER=4` for a still frame through DLSS at that quality.
+
 ## The engine library (Upscaling: External, Neural Rendering)
 
 A native library is given the inputs as Vulkan handles and records its work into a command buffer of its own. It is

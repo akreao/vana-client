@@ -65,3 +65,32 @@ jobs:
           rm -rf warp-tmp
       - name: Test
         run: cargo test --profile ci-test --locked
+
+  # The `dlss` feature (NVIDIA DLSS, render/upscale/dlss.rs) links NVIDIA's NGX static library, so it needs the DLSS
+  # SDK, which can't live in this repository: its headers and the Linux library (under 1 MB of the 1.6 GB repo) are
+  # fetched from NVIDIA's GitHub at the tag dlss_wgpu is made for. Clippy type-checks the feature; the upscale tests
+  # link it.
+  dlss:
+    name: ubuntu-24.04 (dlss feature)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpipewire-0.3-dev libclang-dev clang libvulkan-dev libasound2-dev libudev-dev pkg-config
+      - name: DLSS SDK (headers and the Linux NGX library)
+        run: |
+          git clone --quiet --depth 1 --branch v310.9.1 --filter=blob:none --no-checkout https://github.com/NVIDIA/DLSS.git "$RUNNER_TEMP/dlss"
+          git -C "$RUNNER_TEMP/dlss" sparse-checkout set --no-cone /include/ /lib/Linux_x86_64/libnvsdk_ngx.a /LICENSE.txt
+          git -C "$RUNNER_TEMP/dlss" checkout --quiet
+          echo "DLSS_SDK=$RUNNER_TEMP/dlss" >> "$GITHUB_ENV"
+          echo "VULKAN_SDK=/usr" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: dlss
+      - name: Clippy
+        run: cargo clippy --release --locked --all-targets --features dlss
+      - name: Test
+        run: cargo test --profile ci-test --locked --features dlss upscale

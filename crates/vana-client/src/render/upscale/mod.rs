@@ -4,10 +4,11 @@
 //! scalars), runs the upscaler, and hands the scaling pass its output at background size. The UI draws after, at
 //! window size. Off, none of it runs and the scaling pass reads the scene as before.
 //!
-//! Upscalers: AMD FSR 3.1 (fsr.rs, FidelityFX SDK, MIT) and an external engine fed the same inputs through raw
-//! Vulkan handles (external.rs). `capture` dumps one frame's inputs for offline work.
+//! Upscalers: AMD FSR 3.1 (fsr.rs, FidelityFX SDK, MIT), NVIDIA DLSS (dlss.rs, cargo feature `dlss`) and an
+//! external engine fed the same inputs through raw Vulkan handles (external.rs). `capture` dumps one frame's inputs for offline work.
 
 pub mod capture;
+pub mod dlss;
 pub mod external;
 pub mod fsr;
 #[cfg(any(target_os = "linux", windows))]
@@ -37,6 +38,8 @@ pub fn neural_status() -> Result<(), String> {
 pub struct Availability {
     pub fsr3: Result<(), String>,
     pub external: Result<(), String>,
+    /// DLSS: an NVIDIA GPU on Vulkan with the runtime, NGX started (dlss::status).
+    pub dlss: Result<(), String>,
 }
 
 static AVAILABLE: std::sync::Mutex<Option<Availability>> = std::sync::Mutex::new(None);
@@ -56,20 +59,26 @@ pub fn set_availability(gpu: &Gpu) {
         log::info!("FSR 3.1 unavailable, FSR 1 instead: {e}");
     }
     if let Ok(mut a) = AVAILABLE.lock() {
-        *a = Some(Availability { fsr3, external });
+        *a = Some(Availability { dlss: fsr3.clone().and_then(|()| dlss::status()), fsr3, external });
     }
 }
 
 pub fn availability() -> Availability {
-    AVAILABLE
-        .lock()
-        .ok()
-        .and_then(|a| a.clone())
-        .unwrap_or_else(|| Availability { fsr3: Err("no device yet".into()), external: Err("no device yet".into()) })
+    AVAILABLE.lock().ok().and_then(|a| a.clone()).unwrap_or_else(|| Availability {
+        fsr3: Err("no device yet".into()),
+        external: Err("no device yet".into()),
+        dlss: Err("no device yet".into()),
+    })
+}
+
+/// Whether config `upscaler` `kind` is a temporal upscaler (jittered, run by `Upscale`): FSR 3.1, the external engine,
+/// DLSS. FSR 1 (3) is spatial, in the scaling pass.
+pub fn temporal(kind: u32) -> bool {
+    matches!(kind, 1 | 2 | dlss::DLSS)
 }
 
 /// The texture LOD bias for a render width below the display's, as AMD's guides give it: log2(render / display) - 1
-/// for a temporal upscaler (FSR 3.1, the external engine; they rebuild the detail from the frames before, so the extra
+/// for a temporal upscaler (FSR 3.1, DLSS, the external engine; they rebuild the detail from the frames before, so the extra
 /// -1), log2(render / display) for FSR 1. Textures then keep about the display size's mip level.
 pub fn lod_bias(render: u32, display: u32, temporal: bool) -> f32 {
     (render.max(1) as f32 / display.max(1) as f32).log2() - if temporal { 1.0 } else { 0.0 }
@@ -421,7 +430,7 @@ impl Upscale {
         lib.as_ref().ok().cloned()
     }
 
-    /// The upscaler for config `kind` (1 FSR, 2 external), made when it changes.
+    /// The upscaler for config `kind` (1 FSR, 2 external, 4 DLSS), made when it changes.
     fn engine(&mut self, gpu: &Gpu, kind: u32) -> Option<&mut Box<dyn Upscaler>> {
         if self.kind != kind {
             self.failed = None;
@@ -436,6 +445,7 @@ impl Upscale {
                     Some(lib) => external::External::new(lib).map(|e| Box::new(e) as Box<dyn Upscaler>),
                     None => Err("no engine library".into()),
                 },
+                dlss::DLSS => dlss::new(gpu),
                 _ => Err("off".into()),
             }
             .inspect(|e| log::info!("upscaler: {}", e.name()))
