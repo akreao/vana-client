@@ -23,6 +23,7 @@ pub mod points;
 pub mod portrait;
 pub mod postfx;
 pub mod rain;
+pub mod reflect;
 pub mod scale;
 pub mod scenefx;
 pub mod screenfx;
@@ -698,6 +699,11 @@ pub struct ZoneRenderer {
     list_mask: Option<(Vec<bool>, Vec<bool>, f32)>,
     /// Ambient occlusion on the scenery (render/ssao.rs; prepare_ssao).
     ssao: Option<ssao::Ssao>,
+    /// Water reflections (ours, render/reflect.rs): the zone's water faces, and the pass while the option is on.
+    water: std::sync::Arc<reflect::WaterSurface>,
+    floors: std::sync::Arc<reflect::WaterSurface>,
+    levels: std::sync::Arc<Vec<reflect::Level>>,
+    reflections: Option<reflect::Reflections>,
     /// Lamp shadows (render/lampshadow.rs): the maps (always made) and this frame's lamps (light slot, matrix,
     /// position; empty = none), which the client sets.
     lamp_shadow: lampshadow::LampShadows,
@@ -800,6 +806,8 @@ pub struct ZoneRenderer {
     /// The sway deltas (globals binding 4), and each portrait's uniforms and globals (render_portrait).
     deltas_gpu: wgpu::Buffer,
     portrait_globals: Vec<(wgpu::Buffer, wgpu::BindGroup)>,
+    /// The mirrored characters' uniforms, one per reflecting plane a frame (render/reflect.rs).
+    mirror_globals: Vec<(wgpu::Buffer, wgpu::BindGroup)>,
     /// Door parts: slots by door id, their base matrices, their animations (CPU copy of the GPU table) and the tick
     /// they run against.
     pub door_parts: HashMap<u32, Vec<u32>>,
@@ -1425,7 +1433,7 @@ pub const POSE_PER_BONE: usize = 3;
 const POSE_BINDING: u64 = ((POSE_HEAD + POSE_PER_BONE * (MAX_BONES + 1) + 2 * MAX_CLOTH) * 16) as u64;
 
 /// Strip to list, dropping the degenerate triangles that join strips.
-fn strip_to_list(strip: &[u16]) -> Vec<u16> {
+pub(crate) fn strip_to_list(strip: &[u16]) -> Vec<u16> {
     let mut out = Vec::with_capacity(strip.len() * 3);
     for i in 0..strip.len().saturating_sub(2) {
         let (a, b, c) = (strip[i], strip[i + 1], strip[i + 2]);
@@ -2548,6 +2556,12 @@ pub struct ZoneGeometry {
     sway_curves: crate::dat::zone::SwayCurves,
     /// Config 0017: the normal maps the bumped draws use.
     bumps: Vec<(u32, u32, Vec<u8>)>,
+    /// The water faces reflections draw on (render/reflect.rs); empty for a sub-area.
+    water: std::sync::Arc<reflect::WaterSurface>,
+    /// The polished floors' upward faces in world space (the scene's `floors`).
+    floors: std::sync::Arc<reflect::WaterSurface>,
+    /// The collision's water levels (render/reflect.rs); empty for a sub-area.
+    levels: std::sync::Arc<Vec<reflect::Level>>,
 }
 
 impl ZoneGeometry {
@@ -2684,6 +2698,19 @@ impl ZoneGeometry {
             (!t.is_empty()).then(|| bump_keys.iter().position(|k| *k == t)).flatten()
         };
         let mut bumps: Vec<(u32, u32, Vec<u8>)> = Vec::new();
+        // Reflecting floors (render/reflect.rs): a listed texture's strength, by its name past the 8-byte prefix.
+        let floor_of = |texture: &str| -> Option<f32> {
+            let t = texture.get(8..)?.trim_end_matches([' ', '\0']);
+            scene.floors.iter().find(|(n, _)| n == t).map(|f| f.1)
+        };
+        let mut floor_faces: Vec<reflect::Face> = Vec::new();
+        // The collision's water levels and the scenery water on them (render/reflect.rs); none for a sub-area.
+        let levels = match (&scene.collision, animate) {
+            (Some(c), true) => reflect::water_levels(c),
+            _ => Vec::new(),
+        };
+        let mut water_faces: Vec<reflect::Face> = Vec::new();
+        let mut tex_mean: HashMap<String, [u8; 4]> = HashMap::new();
         let mut bump_used: HashMap<usize, usize> = HashMap::new();
         for mesh in &scene.meshes {
             let Some(mut mats) = by_mesh.remove(mesh.name.as_str()) else { continue };
@@ -2731,6 +2758,91 @@ impl ZoneGeometry {
             // FUN_1017a... placement +0xd6 = 2 for a '#' name: FUN_1017c9c0 draws it with stage 0's ADDRESSU / ADDRESSV
             // CLAMP and no alpha test (vertex flag bit 2).
             let clamp_uv = (mesh.name.starts_with('#') as u32) << 2;
+            // A listed floor's upward faces in world space, from each placement drawn at full detail (or always),
+            // not a door part or a voyage's world. Only the listed textures' triangles are walked.
+            for model in mesh.models.iter().filter(|_| animate) {
+                let Some(strength) = floor_of(&model.texture) else { continue };
+                let indices = if model.strip { strip_to_list(&model.indices) } else { model.indices.clone() };
+                for inst in matrices[start as usize..]
+                    .iter()
+                    .filter(|i| i.band[0] <= 0.0 && i.band[2] == 0.0 && i.band[3] == 0.0)
+                {
+                    let m = Mat4::from_cols_array_2d(&inst.model);
+                    for t in indices.as_chunks::<3>().0 {
+                        let Some(v) = t.iter().map(|&k| model.vertices.get(k as usize)).collect::<Option<Vec<_>>>()
+                        else {
+                            continue;
+                        };
+                        if reflect::faces_up(&m, [v[0].normal, v[1].normal, v[2].normal]) {
+                            floor_faces.push(reflect::Face {
+                                corners: std::array::from_fn(|k| m.transform_point3(Vec3::from(v[k].pos))),
+                                kind: strength,
+                                color: [0; 4],
+                            });
+                        }
+                    }
+                }
+            }
+            // Scenery water (render/reflect.rs is_water): each model placed at full detail whose faces lie on the
+            // collision's water levels, its upward faces with its colour. Only placements whose box reaches a level
+            // are walked.
+            for model in mesh.models.iter().filter(|_| animate && levels.iter().any(|l| l.exact)) {
+                let indices = if model.strip { strip_to_list(&model.indices) } else { model.indices.clone() };
+                for inst in matrices[start as usize..]
+                    .iter()
+                    .filter(|i| i.band[0] <= 0.0 && i.band[2] == 0.0 && i.band[3] == 0.0)
+                {
+                    let m = Mat4::from_cols_array_2d(&inst.model);
+                    let (ylo, yhi) = (0..8).fold((f32::MAX, f32::MIN), |(a, b), k| {
+                        let c = Vec3::new(
+                            if k & 1 == 0 { lo.x } else { hi.x },
+                            if k & 2 == 0 { lo.y } else { hi.y },
+                            if k & 4 == 0 { lo.z } else { hi.z },
+                        );
+                        let y = m.transform_point3(c).y;
+                        (a.min(y), b.max(y))
+                    });
+                    if !levels.iter().any(|l| l.exact && (l.holds(ylo) || l.holds(yhi) || (ylo < l.y && yhi > l.y))) {
+                        continue;
+                    }
+                    let tris: Vec<([Vec3; 3], [usize; 3])> = indices
+                        .as_chunks::<3>()
+                        .0
+                        .iter()
+                        .filter(|t| t.iter().all(|&k| (k as usize) < model.vertices.len()))
+                        .map(|t| {
+                            let k = t.map(|k| k as usize);
+                            (k.map(|k| m.transform_point3(Vec3::from(model.vertices[k].pos))), k)
+                        })
+                        .collect();
+                    let corners: Vec<[Vec3; 3]> = tris.iter().map(|t| t.0).collect();
+                    if !reflect::is_water(&corners, &levels) {
+                        continue;
+                    }
+                    let tex = *tex_mean.entry(model.texture.clone()).or_insert_with(|| {
+                        scene
+                            .textures
+                            .iter()
+                            .find(|t| t.name == model.texture)
+                            .map_or([128, 128, 128, 255], |t| reflect::mean_rgba(t.rgba()))
+                    });
+                    // Opaque unless blended (bit 0x8000: drawn after the opaque scenery, no depth written).
+                    let kind = if model.blending & 0x8000 != 0 { reflect::SEE_THROUGH } else { reflect::OPAQUE };
+                    for (c, k) in tris {
+                        if reflect::faces_up(&m, k.map(|k| model.vertices[k].normal)) {
+                            let rgba = k.map(|k| {
+                                let [b, g, r, a] = model.vertices[k].color.to_le_bytes();
+                                [r, g, b, a]
+                            });
+                            water_faces.push(reflect::Face {
+                                corners: c,
+                                kind,
+                                color: reflect::water_color(tex, rgba),
+                            });
+                        }
+                    }
+                }
+            }
             for (mi, model) in mesh.models.iter().enumerate() {
                 let indices = if model.strip { strip_to_list(&model.indices) } else { model.indices.clone() };
                 if indices.is_empty() || model.vertices.is_empty() {
@@ -2864,6 +2976,9 @@ impl ZoneGeometry {
             sway_insts,
             sway_curves,
             bumps,
+            water: std::sync::Arc::new(reflect::WaterSurface::from_faces(water_faces)),
+            floors: std::sync::Arc::new(reflect::WaterSurface::from_faces(floor_faces)),
+            levels: std::sync::Arc::new(levels),
         }
     }
 
@@ -3179,6 +3294,10 @@ impl ZoneRenderer {
             list_mask: None,
             sun_shadow: None,
             ssao: None,
+            water: geo.water.clone(),
+            floors: geo.floors.clone(),
+            levels: geo.levels.clone(),
+            reflections: None,
             lamp_shadow,
             clamp_sampler,
             lamp_shadows: Vec::new(),
@@ -3232,6 +3351,7 @@ impl ZoneRenderer {
             areas,
             deltas_gpu: deltas,
             portrait_globals: Vec::new(),
+            mirror_globals: Vec::new(),
             door_parts: geo.door_parts.clone(),
             door_bases: geo.door_bases.clone(),
             parts: vec![PartGpu::default(); PARTS],
@@ -5429,6 +5549,183 @@ impl ZoneRenderer {
         self.ssao.get_or_insert_with(|| ssao::Ssao::new(gpu, format)).resize(gpu, size);
     }
 
+    /// Water reflections (ours) on or off; made at the first use in a zone with water.
+    pub fn prepare_reflections(&mut self, gpu: &Gpu, on: bool, floors: bool) {
+        if !on || (self.water.is_empty() && self.levels.is_empty() && (!floors || self.floors.is_empty())) {
+            self.reflections = None;
+            return;
+        }
+        let r = self.reflections.get_or_insert_with(|| {
+            reflect::Reflections::new(
+                gpu,
+                self.color_format,
+                self.water.clone(),
+                self.floors.clone(),
+                self.levels.clone(),
+            )
+        });
+        r.floors = floors;
+    }
+
+    /// Water reflections over `color` (the scene, after the actors; `color_tex` its texture when it can be copied).
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_reflections(
+        &mut self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        color: &wgpu::TextureView,
+        color_tex: Option<&wgpu::Texture>,
+        depth: &wgpu::TextureView,
+        camera: &Camera,
+        aspect: f32,
+        actors: &[&ActorGpu],
+    ) {
+        let Some(mut r) = self.reflections.take() else { return };
+        let mirrored = self.mirror_actors(gpu, encoder, &mut r, color_tex, camera, aspect, actors);
+        let (u, _) = self.frame_uniforms(camera, aspect);
+        let params = reflect::Params {
+            view_proj: u.view_proj,
+            proj: camera.proj(aspect).to_cols_array_2d(),
+            view_inv: camera.view().inverse().to_cols_array_2d(),
+            eye: u.eye,
+            forward: (camera.target - camera.eye).normalize_or_zero().extend(0.0).to_array(),
+            info: [u.sky_info[0], self.encode_gamma as u32 as f32, self.now / 60.0, 0.0],
+            clear: u.clear,
+            fog_color: u.fog_color,
+            fog: [u.fog[0], u.fog[1], NEAR, FAR],
+            sky_colors: u.sky_colors,
+            sky_stops: u.sky_stops,
+            mirror_heights: [reflect::NO_PLANE; 4],
+            levels: [[0.0; 4]; reflect::MAX_LEVELS],
+            counts: [0.0; 4],
+        };
+        r.draw(gpu, encoder, color, color_tex, depth, params, self.encode_gamma, mirrored);
+        self.reflections = Some(r);
+    }
+
+    /// The effect water for this frame's effects draw (after render_reflections; render/reflect.rs FxWater), handed
+    /// to `eg.water`. None with reflections off or no water level in the zone.
+    pub fn fx_water(
+        &mut self,
+        gpu: &Gpu,
+        eg: &effects::EffectsGpu,
+        depth: &wgpu::TextureView,
+    ) -> Option<reflect::FxWater> {
+        self.reflections.as_mut()?.fx_water(gpu, eg.tex_layout(), eg.outs(), depth)
+    }
+
+    /// Characters mirrored in the reflecting plane under their feet (ours, render/reflect.rs): those within
+    /// reflect::MIRROR_REACH of the eye over a plane (`PlaneGrid::under`, one cell lookup each), at most
+    /// reflect::MIRROR_PLANES planes a frame taken nearest character first, each plane's drawn again through its
+    /// mirrored camera into its own half-size layer, which only surfaces at that height read. Fading characters and
+    /// shine overlays are left out (a solid reflection of a fading character would show more than the character).
+    /// Linear apart from sorting the few characters in reach; nothing is drawn when none stands over a plane. The
+    /// layers' heights when any holds this frame's.
+    #[allow(clippy::too_many_arguments)]
+    fn mirror_actors(
+        &mut self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        r: &mut reflect::Reflections,
+        color_tex: Option<&wgpu::Texture>,
+        camera: &Camera,
+        aspect: f32,
+        actors: &[&ActorGpu],
+    ) -> Option<[f32; 4]> {
+        let (Some(t), Some((_, pose_group, _))) = (color_tex, &self.pose_gpu) else { return None };
+        let done = gpu.mips_done();
+        let reach = reflect::MIRROR_REACH * reflect::MIRROR_REACH;
+        let mut near: Vec<(f32, &ActorGpu)> = actors
+            .iter()
+            .copied()
+            .filter(|a| {
+                a.mips <= done
+                    && a.refract.is_none()
+                    && a.alpha >= 1.0
+                    && a.skin.as_ref().is_some_and(|s| s.frame == self.pose_frame)
+            })
+            .map(|a| (a.origin.distance_squared(camera.eye), a))
+            .filter(|(d, _)| *d < reach)
+            .collect();
+        near.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+        let mut planes: Vec<(f32, Vec<&ActorGpu>)> = Vec::new();
+        for (_, a) in near {
+            let Some(h) = r.planes.under(a.origin, r.floors) else { continue };
+            if let Some(p) = planes.iter_mut().find(|p| (p.0 - h).abs() < 0.1) {
+                p.1.push(a);
+            } else if planes.len() < reflect::MIRROR_PLANES {
+                planes.push((h, vec![a]));
+            }
+        }
+        if planes.is_empty() {
+            return None;
+        }
+        while self.mirror_globals.len() < planes.len() {
+            let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("mirror uniforms"),
+                size: std::mem::size_of::<Uniforms>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            // Mirrored actors are lit as the zone is, without its world shadows (as portraits).
+            let group = globals_group(
+                &gpu.device,
+                &self.globals_layout,
+                [&buf, &self.lights, &self.areas, &self.parts_gpu, &self.deltas_gpu, &self.lamp_shadow.uniform],
+                None,
+                &self.world_off,
+                &self.clamp_sampler,
+            );
+            self.mirror_globals.push((buf, group));
+        }
+        let (mut u, _) = self.frame_uniforms(camera, aspect);
+        let vp = Mat4::from_cols_array_2d(&u.view_proj);
+        for (k, (h, _)) in planes.iter().enumerate() {
+            u.view_proj = (vp * reflect::mirror(*h)).to_cols_array_2d();
+            gpu.queue.put(&self.mirror_globals[k].0, 0, bytemuck::bytes_of(&u));
+        }
+        let (colours, depth) = r.layer(gpu, [t.width(), t.height()], self.color_format);
+        let mut heights = [reflect::NO_PLANE; 4];
+        for (k, (h, list)) in planes.iter().enumerate() {
+            heights[k] = *h;
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("mirrored actors"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &colours[k],
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.skin_pipeline);
+            pass.set_bind_group(0, &self.mirror_globals[k].1, &[]);
+            for a in list {
+                let Some(skin) = a.skin.as_ref() else { continue };
+                pass.set_bind_group(2, pose_group, &[skin.offset]);
+                pass.set_vertex_buffer(0, skin.vertices.slice(..));
+                for (tex, range, wep) in &a.draws {
+                    if *wep != NO_WEP && a.hidden_weps & (1 << wep) != 0 {
+                        continue;
+                    }
+                    pass.set_bind_group(1, &a.textures[*tex], &[]);
+                    pass.draw(range.clone(), 0..1);
+                }
+            }
+        }
+        Some(heights)
+    }
+
     /// Real character shadows (ours) on or off with a `size` map; made at the first use or a size change. render draws
     /// them only with a lit sun or moon.
     pub fn prepare_sun_shadow(&mut self, gpu: &Gpu, on: bool, size: u32) {
@@ -6206,6 +6503,7 @@ mod faded_tests {
             list_base: 0,
             sway: Default::default(),
             bumps: vec![],
+            floors: vec![],
         };
         let format = wgpu::TextureFormat::Rgba8Unorm;
         let mut r = super::ZoneRenderer::new(&gpu, &scene, format);

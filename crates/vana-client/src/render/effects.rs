@@ -481,6 +481,24 @@ struct GpuMesh {
     groups: Vec<(Option<(usize, usize)>, std::ops::Range<u32>, bool)>,
     mmb: bool,
     dist: Vec<std::ops::Range<u32>>,
+    /// Flat (render/reflect.rs is_flat): it may be water, which reflections check per vertex (`water`).
+    flat: bool,
+}
+
+/// Whether an effect mesh (triangle list) lies flat in its own space: nearly all of its area faces straight up or
+/// down, as a sheet of sea does. Water reflections (render/reflect.rs) only look at these.
+pub fn is_flat(verts: &[crate::fx::lib::MeshVertex]) -> bool {
+    let (mut all, mut flat) = (0.0f32, 0.0f32);
+    for t in verts.as_chunks::<3>().0 {
+        let [a, b, c] = t.map(|v| glam::Vec3::from(v.pos));
+        let n = (b - a).cross(c - a);
+        let area = n.length();
+        all += area;
+        if area > 0.0 && n.y.abs() >= 0.95 * area {
+            flat += area;
+        }
+    }
+    all > 0.0 && flat >= 0.9 * all
 }
 
 /// A staging buffer for the readback and whether it is free (0), copied (1) or mapping (2).
@@ -605,6 +623,9 @@ pub struct EffectsGpu {
     gp_vb: Option<(wgpu::Buffer, u64, HashMap<u32, (u32, u32)>)>,
     elems: wgpu::Buffer,
     outs: wgpu::Buffer,
+    /// Water reflections (ours, render/reflect.rs) for this frame's draw: each flat mesh of a zone effect is drawn
+    /// again with them right after itself. The caller sets it before the draw and takes it after.
+    pub water: Option<crate::render::reflect::FxWater>,
     back: wgpu::Buffer,
     parts: wgpu::Buffer,
     staging: Vec<Staging>,
@@ -1280,7 +1301,18 @@ impl EffectsGpu {
             count: 0,
             linearize: format.is_srgb(),
             light: None,
+            water: None,
         })
+    }
+
+    /// The texture group's layout (group 1 of the mesh draws), for water reflections.
+    pub fn tex_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.tex_layout
+    }
+
+    /// The per-element output of the update pass (OUT_WORDS each), as the draws read it.
+    pub fn outs(&self) -> &wgpu::Buffer {
+        &self.outs
     }
 
     pub fn has_dmgnum(&self) -> bool {
@@ -1820,7 +1852,8 @@ impl EffectsGpu {
         for t in groups.iter().filter_map(|g| g.0) {
             self.texture(gpu, fx, t);
         }
-        self.meshes[id as usize] = Some(GpuMesh { vb, groups, mmb: m.mmb, dist: m.dist.clone() });
+        let flat = is_flat(&m.verts);
+        self.meshes[id as usize] = Some(GpuMesh { vb, groups, mmb: m.mmb, dist: m.dist.clone(), flat });
     }
 
     /// Draws the live elements over the scene (same targets, depth tested, back to front). `color_tex` is the
@@ -2339,6 +2372,36 @@ impl EffectsGpu {
                         pass.set_bind_group(1, tex.and_then(|t| self.textures.get(&t)).unwrap_or(&self.white), &[]);
                         pass.draw(range.clone(), base + variant..base + variant + 1);
                     }
+                    // Water reflections (ours): a flat mesh of the zone's own effects, over itself, before anything
+                    // nearer draws.
+                    let near_level =
+                        |w: &crate::render::reflect::FxWater| c.back.is_none_or(|b| w.near_level(b.world.y));
+                    if let Some(wr) = self.water.as_ref().filter(|w| m.flat && near_level(w) && fx.zone_owned(c.inst)) {
+                        drop(pass);
+                        let mut wp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("effects water reflection"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: color,
+                                depth_slice: None,
+                                resolve_target: None,
+                                ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                            })],
+                            depth_stencil_attachment: None,
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                            multiview_mask: None,
+                        });
+                        wp.set_pipeline(&wr.pipes[key.2 as usize]);
+                        wp.set_bind_group(0, &wr.group, &[]);
+                        wp.set_vertex_buffer(0, m.vb.slice(..));
+                        for (tex, range, _) in &m.groups {
+                            wp.set_bind_group(1, tex.and_then(|t| self.textures.get(&t)).unwrap_or(&self.white), &[]);
+                            wp.draw(range.clone(), e..e + 1);
+                        }
+                        drop(wp);
+                        pass = new_pass(encoder);
+                        bound = None;
+                    }
                 }
                 Draw::Sprite(id) if fx.reg.sprite_is_flare(id) => {
                     pass.set_pipeline(&self.flare_pipe);
@@ -2438,6 +2501,18 @@ mod tests {
             }
         }
         assert_eq!(w.len(), 2 * (1 + desc.len() + keys.len()));
+    }
+
+    /// A sheet lying flat is flat (either facing); a box, or a sheet with a large wall, is not.
+    #[test]
+    fn flat_meshes_for_water() {
+        let v = |x: f32, y: f32, z: f32| crate::fx::lib::MeshVertex { pos: [x, y, z], ..Default::default() };
+        let sheet = [v(0.0, 0.0, 0.0), v(10.0, 0.0, 0.0), v(0.0, 0.0, 10.0)];
+        let flipped = [sheet[0], sheet[2], sheet[1]];
+        let wall = [v(0.0, 0.0, 0.0), v(10.0, 0.0, 0.0), v(0.0, 10.0, 0.0)];
+        assert!(super::is_flat(&sheet) && super::is_flat(&flipped));
+        assert!(!super::is_flat(&[sheet, wall].concat()));
+        assert!(!super::is_flat(&[]));
     }
 
     /// A faded actor at view depth 10 between effects at 30, 12 (behind it) and 8, 2 (in front): it goes after the
