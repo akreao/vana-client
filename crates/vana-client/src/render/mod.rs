@@ -34,6 +34,7 @@ pub mod sway;
 pub mod ui;
 pub mod upload;
 pub mod upscale;
+pub mod worldshadow;
 
 use crate::dat::zone::ZoneScene;
 use anyhow::{Context, Result};
@@ -665,6 +666,17 @@ pub struct ZoneRenderer {
     sun_depth: Option<[wgpu::RenderPipeline; 2]>,
     lamp_depth_pipeline: wgpu::RenderPipeline,
     sun_shadow: Option<sunshadow::SunShadow>,
+    /// World sun shadows (render/worldshadow.rs; prepare_world_shadow): their depth pipelines, their maps and cache,
+    /// the bindings in their place while they are off, and the globals with those (the depth pass's: its map can't
+    /// be bound while drawn into; `globals` is these too while they are off).
+    world_depth: [wgpu::RenderPipeline; 2],
+    world_shadow: Option<worldshadow::WorldShadow>,
+    world_off: worldshadow::Off,
+    globals_plain: wgpu::BindGroup,
+    /// The scenery's culling data and instances as built, from which the world shadows' own CPU culling is made at
+    /// their first use (shadow_cull; dropped with them).
+    shadow_src: Option<Box<(cull::CullData, Vec<u8>)>>,
+    shadow_cull: std::sync::OnceLock<Option<cull::CpuCull>>,
     /// Ambient occlusion on the scenery (render/ssao.rs; prepare_ssao).
     ssao: Option<ssao::Ssao>,
     /// Lamp shadows (render/lampshadow.rs): the maps (always made) and this frame's lamps (light slot, matrix,
@@ -795,6 +807,9 @@ struct SubGeometry {
     cull: Option<cull::Cull>,
     /// Culled on the CPU where the GPU's can't run (render/cull.rs CpuCull).
     cpu_cull: Option<cull::CpuCull>,
+    /// The world shadows' culling, as the zone's (ZoneRenderer::shadow_src).
+    shadow_src: Option<Box<(cull::CullData, Vec<u8>)>>,
+    shadow_cull: std::sync::OnceLock<Option<cull::CpuCull>>,
     draws: Vec<Draw>,
     tex_base: usize,
     link: u32,
@@ -1317,6 +1332,8 @@ pub struct ZonePipes {
     /// their feet heights, in PipeCache::feet; plain and lamp lit; None where no feet format renders) and from a lamp.
     sun_depth: Option<[wgpu::RenderPipeline; 2]>,
     lamp_depth_pipeline: wgpu::RenderPipeline,
+    /// World sun shadows (render/worldshadow.rs): the scenery's depth, opaque and cut out.
+    world_depth: [wgpu::RenderPipeline; 2],
     /// The scenery's frustum culling (render/cull.rs): its group 3 layout, the visibility and compaction passes; None
     /// where it can't run (cull::on_gpu: GLES, or too few storage buffers), which culls on the CPU instead.
     cull: Option<(wgpu::BindGroupLayout, [wgpu::ComputePipeline; 2])>,
@@ -1328,6 +1345,7 @@ impl ZonePipes {
             label: Some("zone"),
             source: wgpu::ShaderSource::Wgsl(include_str!("zone.wgsl").into()),
         });
+        let [ws6, ws7, ws8, ws9] = worldshadow::layout_entries();
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("globals"),
             entries: &[
@@ -1392,6 +1410,11 @@ impl ZonePipes {
                     },
                     count: None,
                 },
+                // World sun shadows (render/worldshadow.rs): their uniform, the two cascades' maps, the comparison.
+                ws6,
+                ws7,
+                ws8,
+                ws9,
             ],
         });
         let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1852,6 +1875,43 @@ impl ZonePipes {
             ]
         });
         let lamp_depth_pipeline = shadow_depth("lamp shadow depth", None, "vs_skinned_silhouette");
+        // World sun shadows (render/worldshadow.rs): the scenery's depth through the cascade's matrix at group 3, both
+        // sides (single-sided walls and roofs still cast), the opaque without a fragment stage and the cut-outs with
+        // their alpha test.
+        let world_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("world shadow depth"),
+            bind_group_layouts: &[Some(&globals_layout), Some(&texture_layout), None, Some(&sil_layout)],
+            immediate_size: 0,
+        });
+        let world_depth = [None, Some("fs_world_cut")].map(|fragment| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("world shadow depth"),
+                layout: Some(&world_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_world_sun"),
+                    compilation_options: Default::default(),
+                    buffers: &vertex_layouts,
+                },
+                primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: Default::default(),
+                    bias: wgpu::DepthBiasState { constant: 4, slope_scale: 2.0, clamp: 0.0 },
+                }),
+                multisample: Default::default(),
+                fragment: fragment.map(|entry| wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(entry),
+                    compilation_options: Default::default(),
+                    targets: &[],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        });
         // The shine overlay (FUN_10024e10's second pass): additive (SRCALPHA / ONE), z tested (as drawn) but not written.
         let shine_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("shine"),
@@ -2227,6 +2287,7 @@ impl ZonePipes {
             faded_clear_pipeline,
             sun_depth,
             lamp_depth_pipeline,
+            world_depth,
             color_format,
             line_pipeline,
             world_pipelines,
@@ -2782,18 +2843,14 @@ impl ZoneRenderer {
             gpu.queue.put(&deltas, 0, bytemuck::cast_slice(&geo.deltas));
         }
         let lamp_shadow = lampshadow::LampShadows::new(gpu, &p.sil_layout, color_format);
-        let globals = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("globals"),
-            layout: &p.globals_layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: uniforms.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: lights.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: areas.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: parts_gpu.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: deltas.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: lamp_shadow.uniform.as_entire_binding() },
-            ],
-        });
+        let world_off = worldshadow::Off::new(gpu);
+        let globals = globals_group(
+            device,
+            &p.globals_layout,
+            [&uniforms, &lights, &areas, &parts_gpu, &deltas, &lamp_shadow.uniform],
+            None,
+            &world_off,
+        );
         let sampler = mip_sampler(device);
         // Slot 0 is plain white for models whose texture lives elsewhere; the others fill in as they go up.
         let white = texture_bind_group(gpu, &p.texture_layout, &sampler, 1, 1, &[255, 255, 255, 255]);
@@ -2908,7 +2965,7 @@ impl ZoneRenderer {
             texture_layout: p.texture_layout,
             sampler,
             uniforms,
-            globals,
+            globals: globals.clone(),
             textures: vec![white; textures + 1],
             magenta,
             instances,
@@ -2950,6 +3007,12 @@ impl ZoneRenderer {
             shadows: None,
             sun_depth: p.sun_depth,
             lamp_depth_pipeline: p.lamp_depth_pipeline,
+            world_depth: p.world_depth,
+            globals_plain: globals.clone(),
+            world_shadow: None,
+            world_off,
+            shadow_src: Some(Box::new((geo.cull.clone(), geo.parts()[2].to_vec()))),
+            shadow_cull: Default::default(),
             sun_shadow: None,
             ssao: None,
             lamp_shadow,
@@ -3297,6 +3360,8 @@ impl ZoneRenderer {
             instances,
             cull,
             cpu_cull,
+            shadow_src: Some(Box::new((geo.cull.clone(), m.to_vec()))),
+            shadow_cull: Default::default(),
             draws,
             tex_base,
             link,
@@ -3376,6 +3441,8 @@ impl ZoneRenderer {
                 // A few pieces that layout mode moves: drawn unculled.
                 cull: None,
                 cpu_cull: None,
+                shadow_src: None,
+                shadow_cull: Default::default(),
                 draws,
                 tex_base,
                 link: 0,
@@ -4408,6 +4475,8 @@ impl ZoneRenderer {
             Some(SubGeometry { cpu_cull: Some(c), instances, .. }) => cpu(c, instances),
             _ => Vec::new(),
         };
+        // World sun shadows (render/worldshadow.rs): the stale cascades drawn again, the shaders' strength.
+        self.world_shadow_pass(gpu, encoder, camera);
         // Real character shadows (render/sunshadow.rs): the actors' depth from the zone's sun, laid on the scenery
         // below after all the scenery (the blended too) and before the actors.
         let sun = match (&self.sun_shadow, self.sun_shadow_light(camera.target), &self.pose_gpu) {
@@ -4539,7 +4608,11 @@ impl ZoneRenderer {
                     upscale::snap(encoder, scene, &s[if mode == 2 { 0 } else { 1 }]);
                 }
                 if let Some((s, m, d, st, _)) = sun.as_ref().filter(|_| sun_now) {
-                    s.receive(gpu, encoder, color, depth, vp, *m, *d, *st, camera.eye, self.shadow_soft);
+                    let world = match &self.world_shadow {
+                        Some(w) => (&w.uniform, &w.maps[0], w.far()),
+                        None => (&self.world_off.uniform, &self.world_off.map, &self.world_off.map),
+                    };
+                    s.receive(gpu, encoder, color, depth, vp, *m, *d, *st, camera.eye, self.shadow_soft, world);
                 }
                 if sun_now {
                     self.lamp_shadow.receive(gpu, encoder, color, depth, vp, lamps, camera.eye, &self.lights);
@@ -4780,18 +4853,14 @@ impl ZoneRenderer {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("portrait globals"),
-                layout: &self.globals_layout,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: buf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: self.lights.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: self.areas.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: self.parts_gpu.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 4, resource: self.deltas_gpu.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 5, resource: self.lamp_shadow.uniform.as_entire_binding() },
-                ],
-            });
+            // Portraits are lit as the zone is, without its world shadows.
+            let group = globals_group(
+                &gpu.device,
+                &self.globals_layout,
+                [&buf, &self.lights, &self.areas, &self.parts_gpu, &self.deltas_gpu, &self.lamp_shadow.uniform],
+                None,
+                &self.world_off,
+            );
             self.portrait_globals.push((buf, group));
         }
         let (u, _) = self.frame_uniforms(camera, aspect);
@@ -5020,6 +5089,127 @@ impl ZoneRenderer {
             a.refract.is_some(),
             a.shadow_off
         )
+    }
+
+    /// World sun shadows (ours) at `level` (config `world_shadows`: 0 off, 1 Low, 2 High); made at the first use or
+    /// a level change, dropped with their culling when off. render draws them only with an outdoor sun or moon.
+    pub fn prepare_world_shadow(&mut self, gpu: &Gpu, level: u32) {
+        let level = level.min(2);
+        if self.world_shadow.as_ref().map_or(0, |w| w.level) == level {
+            return;
+        }
+        self.world_shadow = (level > 0).then(|| worldshadow::WorldShadow::new(gpu, &self.sil_layout, level));
+        if level == 0 {
+            self.shadow_cull = Default::default();
+            if let Some(s) = &mut self.sub {
+                s.shadow_cull = Default::default();
+            }
+        }
+        self.globals = globals_group(
+            &gpu.device,
+            &self.globals_layout,
+            [&self.uniforms, &self.lights, &self.areas, &self.parts_gpu, &self.deltas_gpu, &self.lamp_shadow.uniform],
+            self.world_shadow.as_ref(),
+            &self.world_off,
+        );
+    }
+
+    /// The world shadows' strength this frame and how many cascades render drew again (diagnostics, the benchmark);
+    /// None while they are off.
+    pub fn world_shadow_stats(&self) -> Option<(f32, usize)> {
+        self.world_shadow.as_ref().map(|w| w.stats())
+    }
+
+    /// What the scenery shows that the world shadows' maps depend on: the sub-area and whether it shows, the hidden
+    /// link, the link-999 placements.
+    fn shown_key(&self) -> u64 {
+        let sub = self.sub.as_ref().map_or(0, |s| (s.tex_base as u64) << 2 | (s.shown as u64) << 1 | 1);
+        sub ^ (self.hidden as u64) << 32 ^ (self.link999_off as u64) << 63
+    }
+
+    /// The world shadows' frame (render/worldshadow.rs): off without an outdoor light strong enough (night's change,
+    /// dusk, a fixed indoor light); otherwise each stale cascade drawn again from the scenery the light's box holds
+    /// (culled on the CPU through the cascade's matrix: a cached map is drawn rarely), a voyage's moving world every
+    /// frame.
+    fn world_shadow_pass(&self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, camera: &Camera) {
+        let Some(ws) = &self.world_shadow else { return };
+        let light = self.lighting.as_ref().filter(|l| !l.fixed).and_then(|l| {
+            let st = worldshadow::strength(l.diffuse, self.shadow_level);
+            (st > 0.0).then_some((worldshadow::direction(l.dir)?, st))
+        });
+        let Some((d, st)) = light else {
+            ws.set(gpu, 0.0);
+            return;
+        };
+        let force = self.voyage != Mat4::IDENTITY || std::env::var_os("FFXI_WS_REDRAW").is_some();
+        for (k, vp) in ws.stale(gpu, d, camera.target, force, self.shown_key()) {
+            let view = cull::View { view_proj: vp, eye: camera.eye, voyage: self.voyage, clip: self.clip };
+            fn culled<'a>(
+                gpu: &Gpu,
+                src: &Option<Box<(cull::CullData, Vec<u8>)>>,
+                lock: &'a std::sync::OnceLock<Option<cull::CpuCull>>,
+                instances: &wgpu::Buffer,
+                encoder: &mut wgpu::CommandEncoder,
+                view: &cull::View,
+            ) -> Option<(&'a cull::CpuCull, Vec<std::ops::Range<u32>>)> {
+                let c = lock.get_or_init(|| src.as_ref().and_then(|s| cull::CpuCull::new(gpu, &s.0, &s.1))).as_ref()?;
+                let placed = c.run(encoder, instances, view, &c.runs_shown(view.view_proj, view.eye, view.clip));
+                Some((c, placed))
+            }
+            let zone = culled(gpu, &self.shadow_src, &self.shadow_cull, &self.instances, encoder, &view);
+            let sub = self
+                .sub
+                .as_ref()
+                .filter(|s| s.shown)
+                .map(|s| (s, culled(gpu, &s.shadow_src, &s.shadow_cull, &s.instances, encoder, &view)));
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("world shadow depth"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &ws.maps[k],
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_bind_group(0, &self.globals_plain, &[]);
+            pass.set_bind_group(1, &self.textures[0], &[]);
+            pass.set_bind_group(3, &ws.matrix_group, &[256 * k as u32]);
+            let geos = [
+                Some((&self.vertices, &self.indices, &self.instances, &self.draws, zone)),
+                sub.map(|(s, c)| (&s.vertices, &s.indices, &s.instances, &s.draws, c)),
+            ];
+            for (vertices, indices, instances, draws, culled) in geos.into_iter().flatten() {
+                pass.set_vertex_buffer(1, culled.as_ref().map_or(instances, |(c, _)| &c.out).slice(..));
+                pass.set_vertex_buffer(0, vertices.slice(..));
+                pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint16);
+                let mut pipe = usize::MAX;
+                // The opaque and the cut-outs cast; plain blended meshes (water, glass, ground layers) don't.
+                for d in draws.iter().filter(|d| d.mode != 2) {
+                    let cut = (d.mode != 0) as usize;
+                    for (a, (_, range)) in d.runs().into_iter().enumerate() {
+                        let range = match &culled {
+                            Some((c, placed)) => placed[c.run_of(d.args[a])].clone(),
+                            None => range,
+                        };
+                        if range.is_empty() {
+                            continue;
+                        }
+                        if pipe != cut {
+                            pass.set_pipeline(&self.world_depth[cut]);
+                            pipe = cut;
+                        }
+                        if cut == 1 {
+                            pass.set_bind_group(1, &self.textures[d.texture], &[]);
+                        }
+                        pass.draw_indexed(d.first_index..d.first_index + d.index_count, d.base_vertex, range);
+                    }
+                }
+            }
+        }
+        ws.set(gpu, st);
     }
 
     /// Ambient occlusion (ours) on or off at the scene's `size`; made at the first use.
@@ -5324,6 +5514,33 @@ fn neural_device(adapter: &wgpu::Adapter, desc: &wgpu::DeviceDescriptor) -> Opti
     }
 }
 
+/// The zone shader's group 0 (zone.wgsl): uniforms, point lights, areas, door parts, sway deltas, lamp shadows, then
+/// the world shadows' uniform, maps and comparison (`world`'s, or `off`'s in their place).
+fn globals_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    buffers: [&wgpu::Buffer; 6],
+    world: Option<&worldshadow::WorldShadow>,
+    off: &worldshadow::Off,
+) -> wgpu::BindGroup {
+    let (uniform, near, far) = match world {
+        Some(w) => (&w.uniform, &w.maps[0], w.far()),
+        None => (&off.uniform, &off.map, &off.map),
+    };
+    let mut entries: Vec<wgpu::BindGroupEntry> = buffers
+        .iter()
+        .enumerate()
+        .map(|(k, b)| wgpu::BindGroupEntry { binding: k as u32, resource: b.as_entire_binding() })
+        .collect();
+    entries.extend([
+        wgpu::BindGroupEntry { binding: 6, resource: uniform.as_entire_binding() },
+        wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(near) },
+        wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::TextureView(far) },
+        wgpu::BindGroupEntry { binding: 9, resource: wgpu::BindingResource::Sampler(&off.cmp) },
+    ]);
+    device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("globals"), layout, entries: &entries })
+}
+
 pub fn depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
     device
         .create_texture(&wgpu::TextureDescriptor {
@@ -5401,6 +5618,11 @@ pub fn render_pngs_post(
     // A plain (not sRGB) target: the scene is written and blended in gamma space, as D3D8 did; its bytes are the PNG's.
     let format = wgpu::TextureFormat::Rgba8Unorm;
     let mut renderer = ZoneRenderer::new(&gpu, scene, format);
+    // FFXI_WORLD_SHADOWS=1|2 (ours): world sun shadows at Low / High (render/worldshadow.rs); FFXI_WS_REDRAW draws
+    // their maps every frame (their cost when the cache refreshes).
+    if let Some(level) = std::env::var("FFXI_WORLD_SHADOWS").ok().and_then(|v| v.parse::<u32>().ok()) {
+        renderer.prepare_world_shadow(&gpu, level);
+    }
     let actors = setup(&gpu, &mut renderer);
     let actor_refs: Vec<&ActorGpu> = actors.iter().collect();
     let target = gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -5565,6 +5787,9 @@ pub fn render_pngs_post(
         }
         if let Some(c) = &renderer.cpu_cull {
             println!("cull (CPU): {} instances drawn", c.drawn());
+        }
+        if let Some((st, redrawn)) = renderer.world_shadow_stats() {
+            println!("world shadows: strength {st:.2}, {redrawn} cascades drawn in the last frame");
         }
     }
     for (camera, path, lighting) in frames {

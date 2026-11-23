@@ -20970,6 +20970,8 @@ fn shadow_setup(
     r.prepare_sun_shadow(&gfx.gpu, cx.cfg.actor_shadows != 0 && w.game.get(0x3a) != 1, cx.cfg.shadow_map);
     // Ambient occlusion on the scenery (ours, render/ssao.rs), at the scene's size.
     r.prepare_ssao(&gfx.gpu, cx.cfg.ssao, bg);
+    // World sun shadows (ours, render/worldshadow.rs).
+    r.prepare_world_shadow(&gfx.gpu, cx.cfg.world_shadows);
     // Lamp shadows (ours, render/lampshadow.rs): with Real shadows, the point lights nearest our character
     // (the zone's data lights, and with Real lamp lights the lamps) are cut behind it, one shadow each.
     // Only ours casts them (with our mount while riding); others keep their sun or retail shadow. The lights
