@@ -59,16 +59,19 @@ pub fn set_availability(gpu: &Gpu) {
         log::info!("FSR 3.1 unavailable, FSR 1 instead: {e}");
     }
     if let Ok(mut a) = AVAILABLE.lock() {
-        *a = Some(Availability { dlss: fsr3.clone().and_then(|()| dlss::status()), fsr3, external });
+        *a = Some(Availability { dlss: Err("read live".into()), fsr3, external });
     }
 }
 
 pub fn availability() -> Availability {
-    AVAILABLE.lock().ok().and_then(|a| a.clone()).unwrap_or_else(|| Availability {
+    let mut a = AVAILABLE.lock().ok().and_then(|a| a.clone()).unwrap_or_else(|| Availability {
         fsr3: Err("no device yet".into()),
         external: Err("no device yet".into()),
         dlss: Err("no device yet".into()),
-    })
+    });
+    // DLSS's live: NGX may refuse the GPU only once the runtime is downloaded, after the device was made.
+    a.dlss = a.fsr3.clone().and_then(|()| dlss::status());
+    a
 }
 
 /// Whether config `upscaler` `kind` is a temporal upscaler (jittered, run by `Upscale`): FSR 3.1, the external engine,

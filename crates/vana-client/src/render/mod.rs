@@ -5441,6 +5441,16 @@ pub fn render_pngs_post(
         .and_then(|v| v.parse::<u32>().ok())
         .filter(|k| upscale::temporal(*k))
         .unwrap_or(1);
+    // DLSS for a shot needs NGX running now: no plainly scaled frame passed off as DLSS.
+    if fsr3_q.is_some() && up_kind == upscale::dlss::DLSS {
+        upscale::dlss::status().map_err(|e| anyhow::anyhow!("DLSS: {e}"))?;
+        if !upscale::dlss::runtime_present() {
+            anyhow::bail!(
+                "DLSS: no runtime in {} (choose DLSS in the client once to download it)",
+                upscale::dlss::runtime_dir().display()
+            );
+        }
+    }
     let mut fsr3 = fsr3_q.map(|_| upscale::Upscale::new(&gpu));
     let mut scale = (up.is_some() || fsr3.is_some()).then(|| scale::SceneScale::new(&gpu, format));
     let (rw, rh) = match (up, fsr3_q) {
@@ -5646,6 +5656,9 @@ pub fn render_pngs_post(
             f.frame_camera = Some(upscale::FrameCamera { camera: **camera, aspect });
             f.run(&gpu, &mut encoder, &raw, &depth, up_kind, sharp, 0, false)
         });
+        if fsr3_q.is_some() && up_kind == upscale::dlss::DLSS && out.is_none() {
+            anyhow::bail!("DLSS gave no frame (see the log)");
+        }
         scale_up(&mut encoder, out.as_ref().map(|(v, sz)| (v, *sz)));
         let (width, height) = if up.is_some() || fsr3.is_some() { (out_size[0], out_size[1]) } else { (width, height) };
         encoder.copy_texture_to_buffer(

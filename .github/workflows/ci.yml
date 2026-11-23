@@ -68,8 +68,8 @@ jobs:
 
   # The `dlss` feature (NVIDIA DLSS, render/upscale/dlss.rs) links NVIDIA's NGX static library, so it needs the DLSS
   # SDK, which can't live in this repository: its headers and the Linux library (under 1 MB of the 1.6 GB repo) are
-  # fetched from NVIDIA's GitHub at the tag dlss_wgpu is made for. Clippy type-checks the feature; the upscale tests
-  # link it.
+  # fetched from NVIDIA's GitHub at the tag dlss_wgpu is made for. Clippy type-checks the feature; the upscaler's and
+  # the Upscaling setting's tests (filter "upscal") link it.
   dlss:
     name: ubuntu-24.04 (dlss feature)
     runs-on: ubuntu-24.04
@@ -93,4 +93,4 @@ jobs:
       - name: Clippy
         run: cargo clippy --release --locked --all-targets --features dlss
       - name: Test
-        run: cargo test --profile ci-test --locked --features dlss upscale
+        run: cargo test --profile ci-test --locked --features dlss upscal

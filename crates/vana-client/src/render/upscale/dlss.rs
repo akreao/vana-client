@@ -333,6 +333,14 @@ mod imp {
                     .inspect_err(|e| log::warn!("DLSS: creating the feature at {:?}: {e}", inp.output))
                     .ok()?;
                 let range = sr.render_resolution_range();
+                let (lo, hi) = (*range.start(), *range.end());
+                if (0..2).any(|i| inp.render[i] < lo[i] || inp.render[i] > hi[i]) {
+                    // Outside what NGX takes for this mode: DLSS is withdrawn and the world draws at full size.
+                    let e = format!("render size {:?} outside DLSS's {lo:?}..={hi:?}", inp.render);
+                    log::warn!("DLSS: {e}");
+                    set_status(Err(e));
+                    return None;
+                }
                 log::info!(
                     "DLSS {:?} at {}x{}: render {}x{} (DLSS takes {:?}..={:?})",
                     MODES[mode],
