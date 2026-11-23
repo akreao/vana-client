@@ -194,8 +194,9 @@ fn surface(in: VertexOut) -> Surface {
     // Less the map's average tilt (its last mip, 4 x 4): ground tiles are placed at different turns, and a tilt
     // turned with them lit each tile apart, a checkerboard.
     let mean = textureSampleLevel(mat_normal, samp, in.uv, 16.0).rg * 2.0 - 1.0;
-    let m = textureSample(mat_normal, samp, in.uv).rg * 2.0 - 1.0 - mean;
-    let rm = textureSample(mat_rm, samp, in.uv).rg;
+    // The upscaler's LOD bias as the base texture takes it (u.lod.x), so the bumps keep the colour's detail.
+    let m = textureSampleBias(mat_normal, samp, in.uv, u.lod.x).rg * 2.0 - 1.0 - mean;
+    let rm = textureSampleBias(mat_rm, samp, in.uv, u.lod.x).rg;
     // PBRify rates nearly every texture 0.3..0.6 rough: stretched so that grass, earth and stone read matte. Metal
     // keeps the map's.
     s.rough = mix(mix(0.6, 1.0, saturate((rm.x - 0.3) / 0.3)), rm.x, rm.y);
