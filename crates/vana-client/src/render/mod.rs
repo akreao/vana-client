@@ -22,6 +22,7 @@ pub mod occlusion;
 pub mod points;
 pub mod portrait;
 pub mod postfx;
+pub mod rain;
 pub mod scale;
 pub mod scenefx;
 pub mod screenfx;
@@ -5464,6 +5465,8 @@ pub fn render_pngs_post(
     let mut scene_fx = fx_want.any().then(|| scenefx::SceneFx::new(format));
     if let Some(fx) = scene_fx.as_mut() {
         fx.prepare(&gpu, fx_want, [width, height]);
+        // FFXI_WET_GROUND's frames are soaked, the ripples caught at a fixed moment (the same picture each run).
+        fx.set_rain(1.0, 1.3);
     }
     // FFXI_BENCH=N: the first view N more times after a warm-up, its time a frame printed (GPU-bound offscreen).
     if let (Some(n), Some((camera, _, lighting))) =

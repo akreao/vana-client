@@ -21427,6 +21427,8 @@ fn world_overlays(
     if want.any() {
         let fx = cx.scene_fx.get_or_insert_with(|| crate::render::scenefx::SceneFx::new(scene_fmt));
         fx.prepare(&gfx.gpu, want, bg);
+        // The ground soaks while it rains on us (render/rain.rs) and dries off after; a new zone starts as its weather.
+        fx.step_rain(crate::render::rain::rains(event::weather(w)), wf.dt, w.zone);
         let frame = crate::render::scenefx::Frame::new(camera, fg.aspect, r.lighting.as_ref());
         fx.draw(&gfx.gpu, &mut fg.encoder, &scene_raw, &scene_depth, &frame);
         fg.mark("scene fx");
