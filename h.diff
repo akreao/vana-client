@@ -1,0 +1,13 @@
+diff --git a/crates/vana-client/src/client/net.rs b/crates/vana-client/src/client/net.rs
+index 35e6a5c5..119e1adb 100644
+--- a/crates/vana-client/src/client/net.rs
++++ b/crates/vana-client/src/client/net.rs
+@@ -3174,7 +3182,7 @@ mod tests {
+             ],
+         );
+         let s = event_start(&p);
+-        assert_eq!((s.target, s.index, s.zone, s.event, s.mode, s.zone2), (0x010e_607e, 0x7e, 230, 615, 8, 230));
++        assert_eq!((s.target, s.index, s.zone, s.event, s.mode, s.zone2), (0x010e_607e, 0x7e, 230, 615, 0x2008, 230));
+         let p = sub(
+             0x034,
+             0x34,
