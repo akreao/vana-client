@@ -197,6 +197,11 @@ pub fn create(w: &mut World, l: &Loaded) -> Option<Mat4> {
         log::info!("ship {:#x}: model now file {}, mesh {}", l.entity, l.file, l.mesh);
         // FUN_100c4290 clears +0x778 / +0x779 / +0x77a: the new file's 'init' waits for the second update again.
         (a.file, a.smooth, a.shown, a.updated, a.init) = (l.file, smooth, false, false, l.init);
+        // FUN_100c42f0 drops what ran on the old model; the new file's own start as at creation.
+        w.effects.stop_furniture(l.entity);
+        if !smooth {
+            w.effects.on_furniture(l.entity, l.file);
+        }
         return Some(a.matrix);
     }
     let (ship, start) = w.entities.get(&l.entity)?.ship?;
@@ -233,6 +238,11 @@ pub fn create(w: &mut World, l: &Loaded) -> Option<Mat4> {
     );
     let bound = super::event::active(w) && w.doors.event.contains_key(&l.entity);
     start_seq(w, l.entity, if bound { 0 } else { start });
+    // FUN_100c4410 -> FUN_100c46b0 (the generic MMB branch only): the file's time-window schedulers (op 0xa2: bells,
+    // chimes, the showcase) start on the prop.
+    if !smooth {
+        w.effects.on_furniture(l.entity, l.file);
+    }
     Some(matrix)
 }
 

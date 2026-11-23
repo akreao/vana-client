@@ -32,6 +32,8 @@ pub struct Settings {
     pub actor_shadows: u32,
     pub shadow_map: u32,
     pub ssao: bool,
+    pub reflections: bool,
+    pub reflect_floors: bool,
     pub bloom: u32,
     pub height_fog: u32,
     pub god_rays: u32,
@@ -87,6 +89,8 @@ impl Settings {
             actor_shadows: c.actor_shadows,
             shadow_map: c.shadow_map,
             ssao: c.ssao,
+            reflections: c.reflections,
+            reflect_floors: c.reflect_floors,
             bloom: c.bloom,
             height_fog: c.height_fog,
             god_rays: c.god_rays,
@@ -138,6 +142,8 @@ impl Settings {
         c.actor_shadows = self.actor_shadows;
         c.shadow_map = self.shadow_map;
         c.ssao = self.ssao;
+        c.reflections = self.reflections;
+        c.reflect_floors = self.reflect_floors;
         c.bloom = self.bloom;
         c.height_fog = self.height_fog;
         c.god_rays = self.god_rays;
@@ -201,6 +207,7 @@ enum Val {
     ActorShadows,
     ShadowMap,
     Ssao,
+    Reflections,
     Bloom,
     HeightFog,
     GodRays,
@@ -776,6 +783,13 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
             Now,
         ),
         row(
+            "Reflections",
+            "Water reflects the sky, the scenery and characters around it; with Floors, polished floors in a few towns do too (not retail).",
+            Reflections,
+            &[(0, "Off"), (1, "Water"), (2, "Water and Floors")],
+            Now,
+        ),
+        row(
             "Colour Grading",
             "Gives the 3D world a colour tint. Menus and text keep their colours (not retail).",
             Grading,
@@ -1254,6 +1268,7 @@ impl SettingsUi {
             Val::ActorShadows => self.s.actor_shadows,
             Val::ShadowMap => self.s.shadow_map,
             Val::Ssao => self.s.ssao as u32,
+            Val::Reflections => self.s.reflections as u32 + (self.s.reflections && self.s.reflect_floors) as u32,
             Val::Bloom => self.s.bloom,
             Val::HeightFog => self.s.height_fog,
             Val::GodRays => self.s.god_rays,
@@ -1344,6 +1359,7 @@ impl SettingsUi {
             Val::ActorShadows => self.s.actor_shadows = x,
             Val::ShadowMap => self.s.shadow_map = x,
             Val::Ssao => self.s.ssao = x != 0,
+            Val::Reflections => (self.s.reflections, self.s.reflect_floors) = (x != 0, x >= 2),
             Val::Bloom => self.s.bloom = x,
             Val::HeightFog => self.s.height_fog = x,
             Val::GodRays => self.s.god_rays = x,
