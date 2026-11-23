@@ -506,20 +506,16 @@ pub(super) fn body(
             Elem::Gauge { label, value, text, row: true, dim, .. } => {
                 let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
                 let colour = if *dim { muted } else { text_c };
-                ui.painter().text(
-                    pos2(rect.min.x, rect.min.y + 2.0),
-                    Align2::LEFT_TOP,
-                    label,
-                    FontId::proportional(m.theme.small),
-                    colour,
-                );
-                ui.painter().text(
+                let count = ui.painter().text(
                     pos2(rect.max.x, rect.min.y + 2.0),
                     Align2::RIGHT_TOP,
                     text,
                     FontId::monospace(m.theme.small),
                     colour,
                 );
+                let room = count.min.x - 8.0 - rect.min.x;
+                let (label, font) = super::kit::fit(ui, label, &FontId::proportional(m.theme.small), room, 0.85);
+                ui.painter().text(pos2(rect.min.x, rect.min.y + 2.0), Align2::LEFT_TOP, label, font, colour);
                 let bar = Rect::from_min_max(pos2(rect.min.x, rect.max.y - 6.0), pos2(rect.max.x, rect.max.y - 2.0));
                 ui.painter().rect_filled(bar, 2.0, m.theme.color("charcoal"));
                 if *value > 0.0 {

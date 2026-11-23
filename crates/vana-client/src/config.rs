@@ -230,8 +230,7 @@ pub struct Config {
     /// FSR's RCAS sharpening, 0 (off) .. 100.
     pub upscale_sharpness: u32,
     /// The upscaler's input shown in place of the scene: 0 none, 1 motion vectors, 2 depth, 3 reactive mask,
-    /// 4 transparency and composition mask. Set by `/updebug` for this run only: never saved, so a debug view can't
-    /// come back at the next launch with no setting to turn it off.
+    /// 4 transparency and composition mask. Set by /updebug for the session, never saved.
     #[serde(skip)]
     pub upscale_debug: u32,
     /// Neural rendering by the engine library (vana_nr_dispatch) on the render-size colour before the upscale, with
@@ -259,6 +258,9 @@ pub struct Config {
     /// Not retail (Settings' Light Shading Smooth): the scenery's point lights per pixel with a soft edge, in place of
     /// retail's per-vertex lights with a hard cut at the range.
     pub smooth_lights: bool,
+    /// Not retail (Settings' Material Maps): normal / roughness / metal maps from the material pack (material.rs); 0
+    /// off, 1..3 Low / Medium / High, their strength.
+    pub material_maps: u32,
     /// Character shadows: 0 retail's (blob / silhouette), 1 real (a shadow map from the sun, render/sunshadow.rs,
     /// retail's where there is no sun). Not a retail option.
     pub actor_shadows: u32,
@@ -334,8 +336,8 @@ pub struct Config {
     pub monitor: String,
     /// The graphics adapter by name (empty = the high-performance one); read at start-up. Not retail.
     pub gpu: String,
-    /// Set once a software adapter was first seen, by builds before `low_spec_seen` (kept so their configs load).
-    /// Not retail.
+    /// Set by builds that halved the background the first time a software adapter (WARP, llvmpipe) was seen; no
+    /// longer read (low_spec_defaults runs on a first start only), kept so those configs load. Not retail.
     pub software_gpu_seen: bool,
     /// Set once a low-spec GPU (GL / GLES, no BC textures, software) was first seen and `low_spec_defaults` ran.
     /// Not retail.
@@ -638,7 +640,7 @@ impl Default for Config {
             neural: false,
             draw_distance: 0,
             send_interval: 400,
-            move_rate: 30,
+            move_rate: crate::client::ground::MOVE_RATE_GAME,
             party_tp: true,
             window_opacity: Default::default(),
             gm_window: false,
@@ -646,6 +648,7 @@ impl Default for Config {
             notes_seen: env!("CARGO_PKG_VERSION").into(),
             lamp_lights: true,
             smooth_lights: false,
+            material_maps: 0,
             actor_shadows: 0,
             shadow_map: 2048,
             ssao: false,
@@ -741,6 +744,10 @@ impl Config {
         }
         c.modern_modes.split_timers();
         c.follow_applied_version();
+        // Movement Rate has two values; a hand-edited other one runs at the game's and is saved as it.
+        if c.move_rate != crate::client::ground::MOVE_RATE_TICK {
+            c.move_rate = crate::client::ground::MOVE_RATE_GAME;
+        }
         c
     }
 
@@ -867,46 +874,30 @@ impl Config {
         }
     }
 
-    /// The first start on a low-spec GPU (render::GpuClass): each setting still at its default takes the cheaper
-    /// value, the changes as log lines. `window`: the window's size; `monitor`: its screen's, when known.
+    /// The first start (no config file yet, so every setting is at its default) on a low-spec GPU
+    /// (render::GpuClass): cheaper values, the changes as log lines. `window`: the window's size; `monitor`: its
+    /// screen's, when known.
     /// - bump mapping 0017 off: FFXiMain's own default; per-pixel lighting is the costliest fill on these GPUs.
-    /// - anisotropy 1 (retail samples without it) and the frame limit 30 (retail's rate).
+    /// - anisotropy 1 (retail samples without it). The frame limit keeps its default (300).
     /// - Draw Distance Retail (100) rather than Unlimited.
     /// - the background (0003 / 0004): half the window on a software rasterizer, three quarters on a GPU with a
     ///   window over 960 wide; the UI stays at the window's size.
     /// - a window larger than its screen (a 640x480 or 720x720 handheld) goes borderless at the screen's size.
-    ///
-    /// `legacy_software`: a software rasterizer the older block already saw (software_gpu_seen), which set the
-    /// background and anisotropy then: those two stay as the player left them.
     pub fn low_spec_defaults(
         &mut self,
         class: crate::render::GpuClass,
         window: [u32; 2],
         monitor: Option<[u32; 2]>,
-        legacy_software: bool,
     ) -> Vec<String> {
         use crate::render::GpuClass;
         let mut out = Vec::new();
         if class == GpuClass::Capable {
             return out;
         }
-        let default = Config::default();
-        if !self.tool.contains_key("0017") {
-            self.set_tool("0017", 0);
-            out.push("bump mapping off".to_string());
-        }
-        if self.anisotropy == default.anisotropy && !legacy_software {
-            self.anisotropy = 1;
-            out.push("anisotropic filtering 1x".to_string());
-        }
-        if self.frame_limit == default.frame_limit {
-            self.frame_limit = 30;
-            out.push("frame limit 30".to_string());
-        }
-        if self.draw_distance == default.draw_distance {
-            self.draw_distance = 100;
-            out.push("draw distance Retail".to_string());
-        }
+        self.set_tool("0017", 0);
+        self.anisotropy = 1;
+        self.draw_distance = 100;
+        out.extend(["bump mapping off", "anisotropic filtering 1x", "draw distance Retail"].map(String::from));
         let mut window = window;
         // Already borderless: the scene's size is the screen's.
         if let Some(m) = monitor.filter(|_| self.window_mode() == 3) {
@@ -914,23 +905,21 @@ impl Config {
         }
         if let Some([mw, mh]) = monitor
             && (window[0] > mw || window[1] > mh)
-            && !self.tool.contains_key("0034")
+            && self.window_mode() != 3
         {
             self.set_tool("0034", 3);
             window = [mw, mh];
             out.push(format!("borderless at the screen's {mw}x{mh}"));
         }
-        if !self.tool.contains_key("0003") && !self.tool.contains_key("0004") && !legacy_software {
-            let (num, den) = match class {
-                GpuClass::Software => (1, 2),
-                _ if window[0] > 960 => (3, 4),
-                _ => (1, 1),
-            };
-            if num != den {
-                self.set_tool("0003", (window[0] * num / den).max(320));
-                self.set_tool("0004", (window[1] * num / den).max(240));
-                out.push(format!("background {}x{}", self.tool("0003"), self.tool("0004")));
-            }
+        let (num, den) = match class {
+            GpuClass::Software => (1, 2),
+            _ if window[0] > 960 => (3, 4),
+            _ => (1, 1),
+        };
+        if num != den {
+            self.set_tool("0003", (window[0] * num / den).max(320));
+            self.set_tool("0004", (window[1] * num / den).max(240));
+            out.push(format!("background {}x{}", self.tool("0003"), self.tool("0004")));
         }
         out
     }
@@ -977,45 +966,32 @@ impl Config {
 mod tests {
     use super::*;
 
-    /// A capable GPU keeps every default; a low-spec one takes the cheaper values, a handheld screen smaller than the
-    /// window goes borderless at its size, and settings the player already changed stay.
+    /// A capable GPU keeps every default; a low-spec one takes the cheaper values, a software rasterizer half the
+    /// window, and a handheld screen smaller than the window goes borderless at its size.
     #[test]
-    fn low_spec_defaults_only_touch_defaults() {
+    fn low_spec_defaults_on_first_start() {
         use crate::render::GpuClass;
         let mut c = Config::default();
-        assert!(c.low_spec_defaults(GpuClass::Capable, [1280, 800], Some([1920, 1080]), false).is_empty());
+        assert!(c.low_spec_defaults(GpuClass::Capable, [1280, 800], Some([1920, 1080])).is_empty());
         assert_eq!(c.tool, Config::default().tool);
 
         let mut c = Config::default();
-        c.low_spec_defaults(GpuClass::LowSpec, [1280, 800], Some([1920, 1080]), false);
-        assert_eq!((c.tool("0017"), c.anisotropy, c.frame_limit, c.draw_distance), (0, 1, 30, 100));
+        c.low_spec_defaults(GpuClass::LowSpec, [1280, 800], Some([1920, 1080]));
+        assert_eq!((c.tool("0017"), c.anisotropy, c.frame_limit, c.draw_distance), (0, 1, 300, 100));
         assert_eq!((c.tool("0003"), c.tool("0004"), c.window_mode()), (960, 600, 1));
 
         let mut c = Config::default();
-        c.low_spec_defaults(GpuClass::LowSpec, [1280, 800], Some([640, 480]), false);
+        c.low_spec_defaults(GpuClass::LowSpec, [1280, 800], Some([640, 480]));
         assert_eq!((c.window_mode(), c.tool("0003"), c.tool("0004")), (3, 0, 0));
 
         let mut c = Config::default();
-        c.low_spec_defaults(GpuClass::Software, [1280, 800], None, false);
+        c.low_spec_defaults(GpuClass::Software, [1280, 800], None);
         assert_eq!((c.tool("0003"), c.tool("0004")), (640, 400));
-
-        let mut c = Config { anisotropy: 8, frame_limit: 60, ..Config::default() };
-        c.tool.insert("0017".into(), 1);
-        c.set_tool("0003", 1024);
-        c.low_spec_defaults(GpuClass::LowSpec, [1280, 800], None, false);
-        assert_eq!((c.tool("0017"), c.anisotropy, c.frame_limit, c.tool("0003"), c.tool("0004")), (1, 8, 60, 1024, 0));
-
-        // A software rasterizer the older block saw: background and anisotropy as the player left them (here back at
-        // the defaults), the rest still applied.
-        let mut c = Config { software_gpu_seen: true, ..Config::default() };
-        c.low_spec_defaults(GpuClass::Software, [1280, 800], None, true);
-        assert_eq!((c.anisotropy, c.tool("0003"), c.tool("0004")), (16, 0, 0));
-        assert_eq!((c.tool("0017"), c.frame_limit, c.draw_distance), (0, 30, 100));
 
         // Borderless already on a 720x720 screen: the background is worked out from the screen, not the saved window.
         let mut c = Config::default();
         c.set_tool("0034", 3);
-        c.low_spec_defaults(GpuClass::LowSpec, [1280, 800], Some([720, 720]), false);
+        c.low_spec_defaults(GpuClass::LowSpec, [1280, 800], Some([720, 720]));
         assert_eq!((c.tool("0003"), c.tool("0004")), (0, 0));
     }
 

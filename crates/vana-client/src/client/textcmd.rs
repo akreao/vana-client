@@ -3016,7 +3016,7 @@ fn find_spell(w: &World, name: &str, kind: u16) -> Result<u16, ()> {
     let (id, acts) = (spell_named(w, name, kind).ok_or(())?, w.actions.as_ref().ok_or(())?);
     let learned = spell_learned(w, id);
     let st = w.stats.as_ref().ok_or(())?;
-    if !learned || !acts.can_cast(id, st.main, st.sub, 0) {
+    if !learned || !acts.can_cast(id, st.main, st.sub, super::jobpoints::main_spent(w)) {
         log::info!("spell {id}: learned {learned}, jobs {:?} / {:?}", st.main, st.sub);
         return Err(());
     }

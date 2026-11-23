@@ -111,6 +111,127 @@ pub fn probe() -> Result<(bool, bool), String> {
     Err("the engine runs on Vulkan only (Linux, Windows)".into())
 }
 
+/// The engine's calls for the player (no device; safe beside vana_nr_dispatch): its release, the model's state,
+/// checking NVIDIA's DLL and making the model from it. Each loads the library at `library_path` for the call. The
+/// engine's sentences come back as it wrote them.
+#[cfg(any(target_os = "linux", windows))]
+pub mod tools {
+    use super::library_path;
+
+    /// The sentence buffer's size.
+    const MSG: usize = 1024;
+
+    type Version = unsafe extern "C" fn() -> *const std::ffi::c_char;
+    type Status = unsafe extern "C" fn(*mut std::ffi::c_char, u32) -> i32;
+    type Check = unsafe extern "C" fn(*const std::ffi::c_char, *mut std::ffi::c_char, u32) -> i32;
+    type Progress = unsafe extern "C" fn(f32, *mut std::ffi::c_void);
+    type Make = unsafe extern "C" fn(
+        *const std::ffi::c_char,
+        Option<Progress>,
+        *mut std::ffi::c_void,
+        *mut std::ffi::c_char,
+        u32,
+    ) -> i32;
+
+    fn open() -> Result<libloading::Library, String> {
+        let path = library_path();
+        if !path.exists() {
+            return Err(format!("no engine at {}", path.display()));
+        }
+        // Safety: loading runs the library's initialisers; the path is the user's engine.
+        unsafe { libloading::Library::new(&path) }.map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    fn sentence(buf: &[u8]) -> String {
+        let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        String::from_utf8_lossy(&buf[..end]).trim().to_string()
+    }
+
+    fn c_path(path: &std::path::Path) -> Result<std::ffi::CString, String> {
+        let s = path.to_str().ok_or_else(|| format!("{} is not UTF-8", path.display()))?;
+        std::ffi::CString::new(s).map_err(|_| format!("{} has a NUL", path.display()))
+    }
+
+    /// `vana_nr_version()` ("vana-client/1.0.16"); None without a library or without the export (a player's build).
+    pub fn version() -> Option<String> {
+        let lib = open().ok()?;
+        // Safety: the export's signature (docs/upscaler-engine.md); it returns a static string.
+        unsafe {
+            let f = lib.get::<Version>(b"vana_nr_version\0").ok()?;
+            let p = f();
+            (!p.is_null()).then(|| std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned())
+        }
+    }
+
+    /// `vana_nr_model_status`: 0 ready, 1 no model, 2 its files can't be written; with the engine's sentence.
+    pub fn model_status() -> Result<(i32, String), String> {
+        let lib = open()?;
+        let mut buf = vec![0u8; MSG];
+        // Safety: the export's signature; the buffer is MSG bytes.
+        let code = unsafe {
+            let f = lib.get::<Status>(b"vana_nr_model_status\0").map_err(|e| e.to_string())?;
+            f(buf.as_mut_ptr().cast(), MSG as u32)
+        };
+        Ok((code, sentence(&buf)))
+    }
+
+    /// `vana_nr_check_dll`: whether the file can make the model, with the engine's sentence.
+    pub fn check_dll(path: &std::path::Path) -> Result<(bool, String), String> {
+        let lib = open()?;
+        let p = c_path(path)?;
+        let mut buf = vec![0u8; MSG];
+        // Safety: the export's signature; the path is NUL-terminated and the buffer MSG bytes.
+        let code = unsafe {
+            let f = lib.get::<Check>(b"vana_nr_check_dll\0").map_err(|e| e.to_string())?;
+            f(p.as_ptr(), buf.as_mut_ptr().cast(), MSG as u32)
+        };
+        Ok((code == 0, sentence(&buf)))
+    }
+
+    unsafe extern "C" fn tick(fraction: f32, user: *mut std::ffi::c_void) {
+        // Safety: `user` is make_model's `&mut &mut dyn FnMut(f32)` for the call's length.
+        let f = unsafe { &mut *(user as *mut &mut dyn FnMut(f32)) };
+        f(fraction);
+    }
+
+    /// `vana_nr_make_model`: makes the model from the file (blocks for seconds), `progress` with 0..1; whether it was
+    /// made, with the engine's sentence. Off the render thread.
+    pub fn make_model(path: &std::path::Path, progress: &mut dyn FnMut(f32)) -> Result<(bool, String), String> {
+        let lib = open()?;
+        let p = c_path(path)?;
+        let mut buf = vec![0u8; MSG];
+        let mut cb: &mut dyn FnMut(f32) = progress;
+        // Safety: the export's signature; `tick` gets `cb` back as user data while the call runs.
+        let code = unsafe {
+            let f = lib.get::<Make>(b"vana_nr_make_model\0").map_err(|e| e.to_string())?;
+            f(p.as_ptr(), Some(tick), (&mut cb as *mut &mut dyn FnMut(f32)).cast(), buf.as_mut_ptr().cast(), MSG as u32)
+        };
+        Ok((code == 0, sentence(&buf)))
+    }
+}
+
+/// No engine off Linux and Windows.
+#[cfg(not(any(target_os = "linux", windows)))]
+pub mod tools {
+    const NONE: &str = "the engine runs on Vulkan only (Linux, Windows)";
+
+    pub fn version() -> Option<String> {
+        None
+    }
+
+    pub fn model_status() -> Result<(i32, String), String> {
+        Err(NONE.into())
+    }
+
+    pub fn check_dll(_: &std::path::Path) -> Result<(bool, String), String> {
+        Err(NONE.into())
+    }
+
+    pub fn make_model(_: &std::path::Path, _: &mut dyn FnMut(f32)) -> Result<(bool, String), String> {
+        Err(NONE.into())
+    }
+}
+
 impl Engine {
     #[cfg(any(target_os = "linux", windows))]
     pub fn load(gpu: &Gpu) -> Result<Self, String> {
@@ -326,5 +447,34 @@ impl Upscaler for External {
         }
         let out = self.output.as_ref()?;
         self.engine.run(gpu, encoder, inp, out, f).then(|| out.create_view(&Default::default()))
+    }
+}
+
+#[cfg(all(test, any(target_os = "linux", windows)))]
+mod tests {
+    /// The engine's player calls on a real engine and DLL (VANA_NR_TEST_SO: a copy of the engine in a scratch folder,
+    /// its nr/ written beside it; VANA_NR_TEST_DLL: nvngx_dlssnr.dll or its zip). Skipped without them.
+    #[test]
+    fn engine_tools() {
+        let (Some(so), Some(dll)) = (std::env::var_os("VANA_NR_TEST_SO"), std::env::var_os("VANA_NR_TEST_DLL")) else {
+            return;
+        };
+        // Safety: set before the calls read it; only this test sets it.
+        unsafe { std::env::set_var("VANA_UPSCALE_ENGINE", &so) };
+        let v = super::tools::version().expect("vana_nr_version");
+        assert!(v.starts_with("vana-client/"), "{v}");
+        let (code, msg) = super::tools::model_status().unwrap();
+        eprintln!("before: {code} {msg}");
+        let (ok, msg) = super::tools::check_dll(std::path::Path::new(&dll)).unwrap();
+        assert!(ok, "{msg}");
+        let (bad, why) = super::tools::check_dll(std::path::Path::new(&so)).unwrap();
+        assert!(!bad && !why.is_empty(), "{why}");
+        let mut seen = Vec::new();
+        let (made, msg) = super::tools::make_model(std::path::Path::new(&dll), &mut |f| seen.push(f)).unwrap();
+        assert!(made, "{msg}");
+        assert!(!seen.is_empty() && seen.windows(2).all(|w| w[0] <= w[1]), "{seen:?}");
+        let (code, msg) = super::tools::model_status().unwrap();
+        assert_eq!(code, 0, "{msg}");
+        eprintln!("version {v}; check: {msg}; progress {} calls", seen.len());
     }
 }

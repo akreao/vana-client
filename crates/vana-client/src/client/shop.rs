@@ -563,9 +563,9 @@ fn scroll_spell(w: &World, arg: u16) -> Option<u16> {
 
 /// The buy name colour (FUN_1020f740 / FUN_101ec800): gear green when worn, else yellow when the job can wear it now;
 /// a scroll (type 7, teach kind 1 at record +0x1554, spell at +0x1558) green when learned (s2c 0x0AA), else yellow when
-/// the main or sub job can learn it (FUN_1022b7d0; job points not parsed); an automaton attachment (kind 3, any type
-/// but 7) green when unlocked (FUN_102092b0); white else. Not done: dice (kind 2, green only with Monstrosity data,
-/// which LSB never sends).
+/// the main or sub job can learn it (FUN_1022b7d0, the main job's spent points from s2c 0x063 sub 5);
+/// an automaton attachment (kind 3, any type but 7) green when unlocked (FUN_102092b0); white else. Not done: dice
+/// (kind 2, green only with Monstrosity data, which LSB never sends).
 pub(super) fn name_tint(w: &World, id: u16) -> u32 {
     if let Some(t) = w.lua.item_tint(id) {
         return t;
@@ -591,7 +591,7 @@ pub(super) fn name_tint(w: &World, id: u16) -> u32 {
             return crate::inventory::TINT_EQUIPPED;
         }
         if let (Some(acts), Some(st)) = (w.actions.as_ref(), w.stats.as_ref())
-            && acts.can_cast(spell, st.main, st.sub, 0)
+            && acts.can_cast(spell, st.main, st.sub, super::jobpoints::main_spent(w))
         {
             return YELLOW;
         }

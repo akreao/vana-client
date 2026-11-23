@@ -426,6 +426,23 @@ pub fn elide(ui: &Ui, s: &str, font: &FontId, w: f32) -> String {
     format!("{}…", chars[..lo].iter().collect::<String>().trim_end())
 }
 
+/// `s` fitted to `w`: `font` shrunk as far as `min_scale` of its size, then cut with an ellipsis.
+/// The size steps snap to a few values, so a fitted text keeps its size while the room beside it changes a little (and
+/// the glyph atlas gets no new size each frame).
+pub fn fit(ui: &Ui, s: &str, font: &FontId, w: f32, min_scale: f32) -> (String, FontId) {
+    let width = ui.fonts_mut(|f| f.layout_no_wrap(s.to_string(), font.clone(), Color32::WHITE).size().x);
+    if width <= w {
+        return (s.to_string(), font.clone());
+    }
+    let mut steps = FIT_STEPS.iter().copied().filter(|&k| k > min_scale).chain([min_scale]);
+    let scale = steps.find(|&k| width * k <= w).unwrap_or(min_scale);
+    let small = FontId::new(font.size * scale, font.family.clone());
+    (elide(ui, s, &small, w), small)
+}
+
+/// `fit`'s sizes between whole and its floor.
+const FIT_STEPS: [f32; 2] = [0.9, 0.8];
+
 /// A click of the left button inside a row's rect this frame: the row is to take the cursor.
 pub fn row_clicked(ui: &Ui, r: Rect) -> bool {
     ui.rect_contains_pointer(r) && ui.input(|i| i.pointer.primary_clicked())

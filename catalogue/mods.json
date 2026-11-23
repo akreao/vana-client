@@ -2572,13 +2572,13 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "62ab4a17f3ebeabf686fbd81c18c168523866e31b397bdc3e79f3f77296b4cbe",
-          "size": 9762,
+          "sha256": "aac481dc0f7c9df1bd425207d9a5b15a82f66c470f1da9371723c036b4bd7325",
+          "size": 9918,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/rdm-buffs/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "cd093ed880f9b325a76049a6d7749b8dfa7496bdd19919ec925f7faea939e471",
+          "sha256": "7f6bacede342fdb4054ddb87f11f775e7361cb82825d523499590c9072b82c84",
           "size": 2235,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/rdm-buffs/mod.toml"
         }
@@ -2586,7 +2586,7 @@
       "id": "rdm-buffs",
       "kind": "lua",
       "name": "RDM Buffs",
-      "version": "1.0.2"
+      "version": "1.0.3"
     },
     {
       "authors": [],

@@ -70,6 +70,8 @@ pub struct PipeCache {
     zone: std::sync::Mutex<HashMap<wgpu::TextureFormat, ZonePipes>>,
     /// The sun shadow's feet target format here (sunshadow::feet_format; None: no character shadows).
     feet: Option<wgpu::TextureFormat>,
+    /// The material maps of a texture without any: a flat normal, roughness 1, metal 0.
+    flat_material: std::sync::OnceLock<(wgpu::TextureView, wgpu::TextureView)>,
 }
 
 impl PipeCache {
@@ -142,7 +144,7 @@ const NEEDED: wgpu::Limits = wgpu::Limits {
 fn wanted_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
     wgpu::Limits {
         max_storage_buffers_per_shader_stage: adapter.max_storage_buffers_per_shader_stage.min(16),
-        // FSR 3.1's shading change pyramid binds 6 storage textures (default 4); not in NEEDED, as FSR 1 needs none.
+        // FSR's shading change pyramid binds 6 storage textures (default 4).
         max_storage_textures_per_shader_stage: adapter.max_storage_textures_per_shader_stage.min(16),
         ..Default::default()
     }
@@ -291,6 +293,7 @@ impl Gpu {
             required_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
             std::sync::atomic::Ordering::Relaxed,
         );
+        crate::material::set_gpu_support(required_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC));
         set_uncompressed(uncompressed());
         let required_limits = wanted_limits(&adapter_limits(&adapter));
         log::info!("device limits {required_limits:?}");
@@ -316,6 +319,7 @@ impl Gpu {
             cloth: Default::default(),
             zone: Default::default(),
             feet: sunshadow::feet_format(&adapter),
+            flat_material: Default::default(),
         });
         if pipes.feet.is_none() {
             log::warn!(
@@ -333,7 +337,7 @@ impl Gpu {
             pipes,
             max_texture_2d,
         };
-        upscale::set_availability(&gpu);
+        upscale::set_status(upscale::supported(&gpu));
         Ok(gpu)
     }
 
@@ -427,10 +431,12 @@ pub struct Uniforms {
     /// Config 0017 off (FUN_10181b50): the sun and the moon as two lights, (direction, colour) each.
     two: [[f32; 4]; 4],
     /// x: 1 with bump mapping on (one eased light, vertex fog), 0 off (two lights, table fog); y: Light Shading
-    /// Smooth; z: the texture LOD bias (an upscaler's, ours).
+    /// Smooth; z: 1 with Material Maps, w their strength.
     modes: [f32; 4],
     /// Windowed mode's light boost (light_boost): rgb factors, w = 1 on.
     boost: [f32; 4],
+    /// x: the textures' LOD bias (lod_bias).
+    lod: [f32; 4],
 }
 
 /// Windowed mode's light boost (FUN_1000be50, the SetLight wrapper FUN_1000bf30's helper; only while config 0034 !=
@@ -618,9 +624,11 @@ pub struct ZoneRenderer {
     /// Settings' Light Shading (ours): false Retail (the scenery's point lights per vertex, hard cut at the range),
     /// true Smooth (per pixel, soft edge; not retail).
     pub smooth_lights: bool,
-    /// The texture LOD bias (zone.wgsl `u.modes.z`): negative while the world draws below the window's size for an
-    /// upscaler (ours), 0 otherwise.
-    pub lod_bias: f32,
+    /// Settings' Material Maps (ours, material.rs): textures' normal / roughness / metal maps light the scenery and
+    /// actors.
+    pub material_maps: bool,
+    /// Their strength: the normal maps' tilt and the relief they put on the baked light (1 = as generated).
+    pub material_strength: f32,
     /// Windowed mode's light boost (light_boost; zero = off).
     pub light_boost: [f32; 4],
     /// The zone's scenery culled on the GPU (render/cull.rs) when the device draws indirectly, and its passes.
@@ -882,6 +890,18 @@ static UNCOMPRESSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBo
 /// Whether the device samples BC textures.
 static BC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// The textures' LOD bias while the world draws below the window's size for an upscaler (AMD's FSR 3.1 notes:
+/// log2(render / display) - 1), else 0; set each frame, read by the scenery, actor and effect shaders.
+static LOD_BIAS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn set_lod_bias(b: f32) {
+    LOD_BIAS.store(b.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn lod_bias() -> f32 {
+    f32::from_bits(LOD_BIAS.load(std::sync::atomic::Ordering::Relaxed))
+}
+
 /// Config-tool 0018 = 2; with the device's BC support, whether loaders decode DXT to RGBA up front.
 pub fn set_uncompressed(on: bool) {
     use std::sync::atomic::Ordering::Relaxed;
@@ -1000,14 +1020,99 @@ fn view_bind_group(
     sampler: &wgpu::Sampler,
     view: &wgpu::TextureView,
 ) -> wgpu::BindGroup {
+    material_bind_group(gpu, layout, sampler, view, None)
+}
+
+fn material_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+/// A texture's group with its material maps (material.rs; uploaded once per map, by its TexUp when streamed), or the
+/// flat ones (no maps, or a GPU without BC).
+fn material_bind_group(
+    gpu: &Gpu,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    view: &wgpu::TextureView,
+    material: Option<&crate::material::Material>,
+) -> wgpu::BindGroup {
+    let own = material
+        .filter(|_| crate::material::gpu_supported())
+        .map(|m| m.gpu.get_or_init(|| upload_material(gpu, m)).clone());
+    let (normal, rm) = match &own {
+        Some((n, r)) => (n, r),
+        None => {
+            let f = flat_material(gpu);
+            (&f.0, &f.1)
+        }
+    };
     gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout,
         entries: &[
             wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
             wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
+            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(normal) },
+            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(rm) },
         ],
     })
+}
+
+fn flat_material(gpu: &Gpu) -> &(wgpu::TextureView, wgpu::TextureView) {
+    gpu.pipes.flat_material.get_or_init(|| {
+        let one = |rg: [u8; 2]| {
+            let t = gpu.device.create_texture_with_data(
+                &gpu.queue,
+                &wgpu::TextureDescriptor {
+                    label: Some("flat material"),
+                    size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rg8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                },
+                wgpu::util::TextureDataOrder::LayerMajor,
+                &rg,
+            );
+            t.create_view(&Default::default())
+        };
+        (one([128, 128]), one([255, 0]))
+    })
+}
+
+/// The two BC5 chains as they are stored.
+fn upload_material(gpu: &Gpu, m: &crate::material::Material) -> (wgpu::TextureView, wgpu::TextureView) {
+    let one = |data: &[u8]| {
+        let t = gpu.device.create_texture_with_data(
+            &gpu.queue,
+            &wgpu::TextureDescriptor {
+                label: Some("material"),
+                size: wgpu::Extent3d { width: m.width, height: m.height, depth_or_array_layers: 1 },
+                mip_level_count: m.levels,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Bc5RgUnorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            data,
+        );
+        TEXTURE_BYTES.fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        t.create_view(&Default::default())
+    };
+    (one(&m.normal), one(&m.rough_metal))
 }
 
 /// Which shadow depth pass draw_actor_depth draws.
@@ -1439,6 +1544,9 @@ impl ZonePipes {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // Material maps (material.rs): the normal map and roughness / metal.
+                material_entry(2),
+                material_entry(3),
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -2950,7 +3058,8 @@ impl ZoneRenderer {
             bump_groups,
             bump_mode: true,
             smooth_lights: false,
-            lod_bias: 0.0,
+            material_maps: false,
+            material_strength: 1.0,
             light_boost: [0.0; 4],
             scenery_bump: p.scenery_bump,
             scenery: p.scenery,
@@ -3734,7 +3843,8 @@ impl ZoneRenderer {
         view: &wgpu::TextureView,
         seq: u64,
     ) {
-        self.textures[slot] = view_bind_group(gpu, &self.texture_layout, &self.sampler, view);
+        self.textures[slot] =
+            material_bind_group(gpu, &self.texture_layout, &self.sampler, view, t.material.as_deref());
         self.mips_seq = self.mips_seq.max(seq);
         self.tex_bytes.1 += (t.width * t.height * 4) as u64;
         self.tex_bytes.2 += 1;
@@ -3815,8 +3925,9 @@ impl ZoneRenderer {
                 let up = up.get_or_insert_with(|| upload::TexUp::new(gpu, t, true));
                 let Some(seq) = up.step(gpu, t, false) else { break };
                 let view = up.texture.create_view(&Default::default());
-                let (slot, _, _) = m.pending.pop_front().unwrap();
-                m.textures[slot] = view_bind_group(gpu, &self.texture_layout, &self.sampler, &view);
+                let (slot, t, _) = m.pending.pop_front().unwrap();
+                m.textures[slot] =
+                    material_bind_group(gpu, &self.texture_layout, &self.sampler, &view, t.material.as_deref());
                 m.mips = m.mips.max(seq);
             }
             m.up = m.pending.is_empty() && gpu.mips_done() >= m.mips;
@@ -3864,7 +3975,8 @@ impl ZoneRenderer {
             let up = b.cur.get_or_insert_with(|| upload::TexUp::new(gpu, t, true));
             let Some(seq) = up.step(gpu, t, false) else { return false };
             let view = up.texture.create_view(&Default::default());
-            b.actor.textures[b.tex + 1] = view_bind_group(gpu, &self.texture_layout, &self.sampler, &view);
+            b.actor.textures[b.tex + 1] =
+                material_bind_group(gpu, &self.texture_layout, &self.sampler, &view, t.material.as_deref());
             b.actor.mips = b.actor.mips.max(seq);
             b.cur = None;
             b.tex += 1;
@@ -4199,14 +4311,14 @@ impl ZoneRenderer {
                     if range.is_empty() {
                         continue;
                     }
-                    match &culled {
+                    match culled {
                         Some(Culled::Gpu(c, a, shown)) if shown[c.run_of(d.args[k])] => {
                             pass.draw_indexed_indirect(a, d.args[k] as u64 * 20)
                         }
                         Some(Culled::Cpu(c, placed)) => {
-                            let placed = placed[c.run_of(d.args[k])].clone();
-                            if !placed.is_empty() {
-                                pass.draw_indexed(d.first_index..d.first_index + d.index_count, d.base_vertex, placed)
+                            let run = placed[c.run_of(d.args[k])].clone();
+                            if !run.is_empty() {
+                                pass.draw_indexed(d.first_index..d.first_index + d.index_count, d.base_vertex, run);
                             }
                         }
                         Some(_) => {}
@@ -4249,7 +4361,7 @@ impl ZoneRenderer {
             slot.entry(t.name.clone()).or_insert(textures.len());
             let (view, seq) = upload_texture_seq(gpu, t, true);
             mips = mips.max(seq);
-            textures.push(view_bind_group(gpu, &self.texture_layout, &self.sampler, &view));
+            textures.push(material_bind_group(gpu, &self.texture_layout, &self.sampler, &view, t.material.as_deref()));
         }
         let instance = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("actor instance"),
@@ -4366,8 +4478,14 @@ impl ZoneRenderer {
             area_info: [0.0; 4],
             voyage: self.voyage.to_cols_array_2d(),
             two: [[0.0; 4]; 4],
-            modes: [self.bump_mode as u32 as f32, self.smooth_lights as u32 as f32, self.lod_bias, 0.0],
+            modes: [
+                self.bump_mode as u32 as f32,
+                self.smooth_lights as u32 as f32,
+                self.material_maps as u32 as f32,
+                self.material_strength,
+            ],
             boost: self.light_boost,
+            lod: [lod_bias(), 0.0, 0.0, 0.0],
         };
         let mut clear = self.fog_color;
         if let Some(l) = &self.lighting {
@@ -5524,7 +5642,9 @@ impl ZoneRenderer {
 /// The device with the neural rendering engine's Vulkan features, when an engine with vana_nr_dispatch is installed
 /// and the device has them (render/upscale/vkdevice.rs); None for the usual device. Sets upscale::neural_status.
 fn neural_device(adapter: &wgpu::Adapter, desc: &wgpu::DeviceDescriptor) -> Option<(wgpu::Device, wgpu::Queue)> {
+    upscale::set_vulkan(adapter.get_info().backend == wgpu::Backend::Vulkan);
     let status = match upscale::external::probe() {
+        _ if upscale::engine_outdated() => Err("the engine is from another release".to_string()),
         Ok((_, true)) if adapter.get_info().backend == wgpu::Backend::Vulkan => Ok(()),
         Ok((_, true)) => Err("neural rendering needs the Vulkan backend".to_string()),
         Ok(_) => Err("the engine has no vana_nr_dispatch".to_string()),
@@ -5699,7 +5819,7 @@ pub fn render_pngs_post(
     };
     // The texture LOD bias the client gives the upscalers (FFXI_LODBIAS=0: none, to compare).
     if std::env::var("FFXI_LODBIAS").as_deref() != Ok("0") && (up.is_some_and(|u| u.1) || fsr3.is_some()) {
-        renderer.lod_bias = upscale::lod_bias(rw, width, fsr3.is_some());
+        set_lod_bias(upscale::lod_bias(rw, width, fsr3.is_some()));
     }
     let (view, depth, scene_target) = match scale.as_mut() {
         Some(s) => s.target(&gpu, [rw, rh]),

@@ -1,5 +1,5 @@
 name = "RDM Buffs"
-version = "1.0.2"
+version = "1.0.3"
 description = "Lists the Red Mage self-buffs that are down or wearing off in an edge window; Cast All (or /buffs) casts them."
 permissions = ["actions"]
 

@@ -154,6 +154,9 @@ pub struct Task {
     pub ended: bool,
     /// +0x145.
     pub dying: bool,
+    /// The end op's wait (dat::sched::end_wait), in ticks before speed: the ended task waits it out before
+    /// FUN_10057c20.
+    pub end_wait: f32,
     /// +0x140 (op 0x52): the countdown runs on the Vana'diel clock (1/60 Vana'diel seconds).
     pub vana: bool,
     /// +0x22: paused while an actor of it is hidden (FUN_10074a30); no op progress, no time.
@@ -198,6 +201,7 @@ impl Task {
             parent: None,
             early: 0.0,
             waiting: false,
+            end_wait: 0.0,
             stop_at: None,
             stack: Vec::new(),
             loop_at: None,

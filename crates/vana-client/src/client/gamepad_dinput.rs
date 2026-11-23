@@ -207,6 +207,12 @@ impl Pick {
     }
 }
 
+/// Whether FUN_100083d0's enumeration would pick something among the `attached` controllers: with no padguid000 any
+/// one (the first, DirectInput or XInput), else that one. The rescan runs the setup only then.
+pub fn would_pick(want: &Guid, attached: &[Guid]) -> bool {
+    if want.is_nil() { !attached.is_empty() } else { attached.contains(want) }
+}
+
 /// A controller DirectInput lists (FFXiPadConfig's list: attached game controllers).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Listed {
@@ -260,6 +266,28 @@ mod win {
     /// A COM method: the object's vtable slot `i`.
     unsafe fn method(obj: *mut c_void, i: usize) -> usize {
         unsafe { *(*(obj as *const *const usize)).add(i) }
+    }
+
+    /// The attached game controllers' instance GUIDs, through an IDirectInput8 of the calling thread's own.
+    pub fn attached() -> Vec<Guid> {
+        let mut di = std::ptr::null_mut();
+        let hr = unsafe {
+            DirectInput8Create(
+                GetModuleHandleW(std::ptr::null()),
+                0x800,
+                &IID_IDIRECTINPUT8W,
+                &mut di,
+                std::ptr::null_mut(),
+            )
+        };
+        if hr < 0 || di.is_null() {
+            return Vec::new();
+        }
+        let mut list = Vec::new();
+        let mut ctx = Ctx { pad: std::ptr::null_mut(), want: Guid::default(), list: Some(&mut list) };
+        enum_devices(di, DIEDFL_ATTACHEDONLY, &mut ctx);
+        unsafe { release(di) };
+        list.into_iter().map(|l| l.guid).collect()
     }
 
     unsafe fn release(obj: *mut c_void) {
@@ -337,6 +365,8 @@ mod win {
         polled: bool,
         lost: u32,
         hwnd: HWND,
+        /// The rescan's enumeration on its thread (probe), until it answers.
+        probe: Option<std::sync::mpsc::Receiver<Vec<Guid>>>,
         /// The data format's objects, kept while `df` points at them.
         _format: Format,
         df: DIDATAFORMAT,
@@ -467,6 +497,7 @@ mod win {
                 polled: false,
                 lost: 0,
                 hwnd: hwnd as HWND,
+                probe: None,
                 _format: format,
                 df,
             }))
@@ -664,6 +695,7 @@ mod win {
         pub fn reset(&mut self) {
             self.close();
             self.pick = Pick::default();
+            self.probe = None;
         }
 
         /// FUN_100087d0 on WM_ACTIVATE: the device is acquired again (it fails in the background unless
@@ -674,6 +706,36 @@ mod win {
                     let f: unsafe extern "system" fn(*mut c_void) -> HRESULT = std::mem::transmute(method(self.dev, 7));
                     f(self.dev);
                 }
+            }
+        }
+
+        /// The rescan's enumeration (FUN_100083d0's EnumDevices), on a thread of its own with its own DirectInput
+        /// interface: EnumDevices can take tens to hundreds of milliseconds. *(Not retail: retail enumerates on its
+        /// frame; the timing is retail's, the setup runs on the frame only once a controller it would pick is
+        /// attached (would_pick).)*
+        pub fn probe(&mut self) {
+            if self.probe.is_none() {
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    let _ = tx.send(attached());
+                });
+                self.probe = Some(rx);
+            }
+        }
+
+        /// The probe's answer, once it is in.
+        pub fn probed(&mut self) -> Option<Vec<Guid>> {
+            let found = self.probe.as_ref()?.try_recv();
+            match found {
+                Ok(v) => {
+                    self.probe = None;
+                    Some(v)
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.probe = None;
+                    None
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
             }
         }
 
@@ -751,6 +813,17 @@ mod win {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The rescan sets up only when the pick would find something: any controller without padguid000, else it.
+    #[test]
+    fn rescan_picks() {
+        let g = Guid::parse("{55DDF31E-8F9C-11F1-8001-000044455354}");
+        let other = Guid::parse("{00000001-0000-0000-0000-000000000000}");
+        assert!(!would_pick(&Guid::default(), &[]));
+        assert!(would_pick(&Guid::default(), &[other]));
+        assert!(!would_pick(&g, &[other]));
+        assert!(would_pick(&g, &[other, g]));
+    }
 
     #[test]
     fn guid_text_round_trip() {
