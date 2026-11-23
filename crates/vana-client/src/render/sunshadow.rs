@@ -80,8 +80,10 @@ struct World {
 @group(0) @binding(6) var world1: texture_depth_2d;
 @group(0) @binding(7) var<uniform> wsu: World;
 
-// The part of the sun's direct light the world shadows take off the point (zone.wgsl world_lit's, the same taps,
-// cascade blend, edge fade and strength): 0 lit (or the world shadows off), up to their strength.
+// How much of the point the world shadows cover (zone.wgsl world_lit's taps, cascade blend and edge fade, without
+// its strength): 0 lit (or the world shadows off), 1 wholly in a building's or tree's shade. A character's shadow
+// there would darken the ground's painted shade, which the world shadows leave alone, so it is scaled by what is
+// left uncovered; at dusk both are equally faint (each takes the twilight level).
 fn world_pcf0(lp: vec3<f32>) -> f32 {
     let uv = vec2<f32>(lp.x * 0.5 + 0.5, 0.5 - lp.y * 0.5);
     let t = 0.75 * wsu.misc.x;
@@ -126,7 +128,7 @@ fn world_shade(p: vec3<f32>, n: vec3<f32>) -> f32 {
         s = mix(near, far, k);
         fade = 1.0 - smoothstep(0.8, 0.98, m1);
     }
-    return wsu.info.x * (1.0 - s) * fade;
+    return (1.0 - s) * fade;
 }
 
 struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
@@ -759,12 +761,11 @@ mod tests {
             for p in run(floor_lz - 20.0 / DEPTH, -1.0).as_chunks::<4>().0 {
                 assert!((p[0] as i32 - dark).abs() <= 3, "caster a step above {p:?} want {dark} ({feet:?})");
             }
-            // A floor already in the world's shadow takes the character's shadow only from the sun left on it:
-            // fully (0.85 taken) and partly (dusk's 0.3).
+            // A floor wholly in the world's shadow takes no character shadow on top (its painted shade is kept), at
+            // full strength and at dusk's.
             for r in [0.85f32, 0.3] {
-                let want = (0.8 * (1.0 - STRENGTH * (1.0 - r)) * 255.0).round() as i32;
                 for p in run_in(floor_lz - 1.0 / DEPTH, 0.0, r).as_chunks::<4>().0 {
-                    assert!((p[0] as i32 - want).abs() <= 3, "in the world's shadow ({r}) {p:?} want {want}");
+                    assert!((p[0] as i32 - lit).abs() <= 2, "in the world's shadow ({r}) {p:?}");
                 }
             }
         }

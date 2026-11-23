@@ -5145,16 +5145,23 @@ impl ZoneRenderer {
             (st > 0.0).then_some((worldshadow::direction(l.dir)?, st))
         });
         // Not before the zone's geometry, textures and mips are all up: a map drawn from placeholders would stay.
-        let ready = self.geo_pending.is_none() && self.pending.is_empty() && gpu.mips_done() >= self.mips_seq;
-        let (Some((d, st)), true) = (light, ready) else {
+        let Some((d, st)) = light else {
             ws.set(gpu, 0.0, Vec3::Y);
             return;
         };
+        let dir = self.lighting.map_or(d, |l| l.dir);
+        // Not drawn while geometry, textures or mips are still going up (a map drawn from placeholders would stay):
+        // before the first map the shadows wait; a sub-area uploading keeps the maps already drawn, which its
+        // finished textures (shown_key) then draw again.
+        let ready = self.geo_pending.is_none() && self.pending.is_empty() && gpu.mips_done() >= self.mips_seq;
+        if !ready {
+            ws.set(gpu, if ws.drawn() { st } else { 0.0 }, dir);
+            return;
+        }
         let force = self.voyage != Mat4::IDENTITY || std::env::var_os("FFXI_WS_REDRAW").is_some();
         // Door and lift parts moving (move_part): drawn each frame they move, and once more as they stop.
         let moving = self.now <= self.parts_busy;
-        let dir = self.lighting.map_or(d, |l| l.dir);
-        for (k, vp) in ws.stale(gpu, d, camera.target, force, self.shown_key(), moving) {
+        for (k, vp) in ws.stale(gpu, d, camera.target, camera.eye, force, self.shown_key(), moving) {
             let view = cull::View { view_proj: vp, eye: camera.eye, voyage: self.voyage, clip: self.clip };
             fn culled<'a>(
                 gpu: &Gpu,

@@ -23,6 +23,9 @@ const MIN_ELEVATION: f32 = 25.0;
 const RECENTRE: f32 = 0.25;
 /// ... or the sun has turned more than this (radians; 0.2 degrees, about 2 s of game time at noon).
 const TURN: f32 = 0.2 * std::f32::consts::PI / 180.0;
+/// How far the camera's eye may move from where the maps were drawn before they are drawn again (an orbit about the
+/// target: the LOD bands and the camera list's reach go by the eye).
+const EYE_STEP: f32 = 4.0;
 /// The most a shadow takes off the sun's direct term (a little of it is kept: the sky's light, which the game's
 /// ambient term does not carry).
 pub const STRENGTH: f32 = 0.85;
@@ -249,6 +252,9 @@ struct State {
     shown: u64,
     /// Whether door parts were moving at the last frame: their final pose is drawn once more after they stop.
     moving: bool,
+    /// The camera's eye when the maps were drawn: the casters' LOD bands and the camera list's reach are measured
+    /// from it, so an orbit far enough draws them again.
+    eye: Vec3,
     /// The last frame's strength and how many cascades it drew (the diagnostics and the benchmark).
     strength: f32,
     redrawn: usize,
@@ -299,11 +305,21 @@ impl WorldShadow {
     }
 
     /// The cascades to draw this frame (index, matrix) for light direction `d` around `target`: plan()'s, all of
-    /// them when `all`, what is shown (`shown`) changed, door parts are `moving` or just stopped. Their matrices are
-    /// written for the depth pass.
-    pub fn stale(&self, gpu: &Gpu, d: Vec3, target: Vec3, all: bool, shown: u64, moving: bool) -> Vec<(usize, Mat4)> {
+    /// them when `all`, what is shown (`shown`) changed, door parts are `moving` or just stopped, or the `eye` has
+    /// moved EYE_STEP. Their matrices are written for the depth pass.
+    #[allow(clippy::too_many_arguments)]
+    pub fn stale(
+        &self,
+        gpu: &Gpu,
+        d: Vec3,
+        target: Vec3,
+        eye: Vec3,
+        all: bool,
+        shown: u64,
+        moving: bool,
+    ) -> Vec<(usize, Mat4)> {
         let mut s = self.state();
-        let all = all || s.shown != shown || moving || s.moving;
+        let all = all || s.shown != shown || moving || s.moving || s.eye.distance(eye) > EYE_STEP;
         s.shown = shown;
         s.moving = moving;
         let out: Vec<(usize, Mat4)> = plan(&mut s.drawn, halves(self.level), d, target, all)
@@ -313,8 +329,16 @@ impl WorldShadow {
         for (k, vp) in &out {
             super::Put::put(&gpu.queue, &self.matrix, 256 * *k as u64, bytemuck::cast_slice(&vp.to_cols_array()));
         }
+        if !out.is_empty() {
+            s.eye = eye;
+        }
         s.redrawn = out.len();
         out
+    }
+
+    /// Whether every cascade has been drawn (a map the shaders can keep reading while a sub-area uploads).
+    pub fn drawn(&self) -> bool {
+        self.state().drawn.iter().all(Option::is_some)
     }
 
     /// Writes the shaders' uniform for this frame at `strength` (0 = off), the light travelling along `dir`.
@@ -386,6 +410,40 @@ mod tests {
         assert!(plan(&mut drawn, h, turn(0.1), t, false).is_empty());
         assert_eq!(plan(&mut drawn, h, turn(0.5), t, false), vec![0, 1]);
         assert_eq!(plan(&mut drawn, h, turn(0.5), t, true), vec![0, 1]);
+    }
+
+    /// The cache: drawn once, kept while nothing changes, all drawn again when the eye orbits past EYE_STEP, parts
+    /// move (and once more as they stop) or what is shown changes.
+    #[test]
+    fn stale_redraws_on_orbit_parts_and_shown() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        let sil = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: true,
+                    min_binding_size: wgpu::BufferSize::new(64),
+                },
+                count: None,
+            }],
+        });
+        let ws = WorldShadow::new(&gpu, &sil, 2);
+        let d = direction(Vec3::new(0.3, 1.0, 0.2)).unwrap();
+        let t = Vec3::ZERO;
+        let eye = Vec3::new(0.0, -3.0, 6.0);
+        let n = |eye: Vec3, shown: u64, moving: bool| ws.stale(&gpu, d, t, eye, false, shown, moving).len();
+        assert!(!ws.drawn());
+        assert_eq!(n(eye, 0, false), 2);
+        assert!(ws.drawn());
+        assert_eq!(n(eye, 0, false), 0);
+        assert_eq!(n(eye + Vec3::X * 2.0, 0, false), 0);
+        assert_eq!(n(Vec3::new(6.0, -3.0, 0.0), 0, false), 2);
+        let eye = Vec3::new(6.0, -3.0, 0.0);
+        assert_eq!((n(eye, 0, true), n(eye, 0, true), n(eye, 0, false), n(eye, 0, false)), (2, 2, 2, 0));
+        assert_eq!((n(eye, 7, false), n(eye, 7, false)), (2, 0));
     }
 
     #[test]
