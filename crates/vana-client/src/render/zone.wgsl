@@ -189,6 +189,9 @@ fn part_matrix_at(slot: u32, now: f32) -> mat4x4<f32> {
 // without maps get a flat normal and roughness 1.
 @group(1) @binding(2) var mat_normal: texture_2d<f32>;
 @group(1) @binding(3) var mat_rm: texture_2d<f32>;
+// Binding 0's texture again, sampled only through samp_clamp ('#' placements, tex0): GLSL gives each texture a
+// single sampler.
+@group(1) @binding(4) var tex_clamp: texture_2d<f32>;
 
 struct VertexIn {
     @location(0) pos: vec3<f32>,
@@ -850,7 +853,7 @@ fn tex0(in: VertexOut) -> vec4<f32> {
     if ((in.area & 0x4000u) != 0u) {
         // The LOD bias as a scale of the derivatives (a gradient sample takes no bias).
         let k = exp2(u.lod.x);
-        return textureSampleGrad(tex, samp_clamp, in.uv, dx * k, dy * k);
+        return textureSampleGrad(tex_clamp, samp_clamp, in.uv, dx * k, dy * k);
     }
     return t;
 }
