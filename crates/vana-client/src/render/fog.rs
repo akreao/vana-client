@@ -227,6 +227,7 @@ mod tests {
     fn frame(fog: Option<FogFrame>) -> (Frame, crate::render::Camera) {
         // Looking level along +z from 2 units above the reference (y down: eye y = -2, target y = 0).
         let cam = crate::render::Camera {
+            jitter: glam::Vec2::ZERO,
             eye: Vec3::new(0.0, -2.0, 0.0),
             target: Vec3::new(0.0, 0.0, 10.0),
             up: Vec3::NEG_Y,

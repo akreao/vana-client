@@ -689,7 +689,13 @@ mod tests {
             b
         };
         let instances = buf(bytemuck::cast_slice(&insts), wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX);
-        let cam = crate::render::Camera { eye: Vec3::ZERO, target: Vec3::Z, up: Vec3::NEG_Y, fov_y: 0.8 };
+        let cam = crate::render::Camera {
+            jitter: glam::Vec2::ZERO,
+            eye: Vec3::ZERO,
+            target: Vec3::Z,
+            up: Vec3::NEG_Y,
+            fov_y: 0.8,
+        };
         let mut u = crate::render::Uniforms::zeroed();
         u.view_proj = cam.view_proj(1.0).to_cols_array_2d();
         u.voyage = Mat4::IDENTITY.to_cols_array_2d();
@@ -741,7 +747,13 @@ mod tests {
     /// a moving one skips the frustum test.
     #[test]
     fn cpu_visible_follows_cull_visible() {
-        let cam = crate::render::Camera { eye: Vec3::ZERO, target: Vec3::Z, up: Vec3::NEG_Y, fov_y: 0.8 };
+        let cam = crate::render::Camera {
+            jitter: glam::Vec2::ZERO,
+            eye: Vec3::ZERO,
+            target: Vec3::Z,
+            up: Vec3::NEG_Y,
+            fov_y: 0.8,
+        };
         let view = View { view_proj: cam.view_proj(1.0), eye: Vec3::ZERO, voyage: Mat4::IDENTITY, clip: [100.0, 1.0] };
         let planes = frustum(&view);
         // A unit box; no own distance (the zone's D), or its own 30 (900 squared, flag 1).
@@ -790,7 +802,13 @@ mod tests {
             mapped_at_creation: false,
         });
         gpu.queue.put(&src, 0, bytemuck::cast_slice(&insts));
-        let cam = crate::render::Camera { eye: Vec3::ZERO, target: Vec3::Z, up: Vec3::NEG_Y, fov_y: 0.8 };
+        let cam = crate::render::Camera {
+            jitter: glam::Vec2::ZERO,
+            eye: Vec3::ZERO,
+            target: Vec3::Z,
+            up: Vec3::NEG_Y,
+            fov_y: 0.8,
+        };
         let view = View { view_proj: cam.view_proj(1.0), eye: Vec3::ZERO, voyage: Mat4::IDENTITY, clip: [100.0, 1.0] };
         let read = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: None,

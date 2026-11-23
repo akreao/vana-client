@@ -33,6 +33,7 @@ pub mod sunshadow;
 pub mod sway;
 pub mod ui;
 pub mod upload;
+pub mod upscale;
 
 use crate::dat::zone::ZoneScene;
 use anyhow::{Context, Result};
@@ -139,6 +140,8 @@ const NEEDED: wgpu::Limits = wgpu::Limits {
 fn wanted_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
     wgpu::Limits {
         max_storage_buffers_per_shader_stage: adapter.max_storage_buffers_per_shader_stage.min(16),
+        // FSR 3.1's shading change pyramid binds 6 storage textures (default 4); not in NEEDED, as FSR 1 needs none.
+        max_storage_textures_per_shader_stage: adapter.max_storage_textures_per_shader_stage.min(16),
         ..Default::default()
     }
     .or_worse_values_from(adapter)
@@ -260,7 +263,13 @@ impl Gpu {
             | wgpu::Features::TIMESTAMP_QUERY
             | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS
             | wgpu::Features::INDIRECT_FIRST_INSTANCE
-            | wgpu::Features::POLYGON_MODE_LINE;
+            | wgpu::Features::POLYGON_MODE_LINE
+            // The upscaler's inputs and FSR's passes: read-write storage in R8 / R16F / RG16F and others, R32F filtered,
+            // coherent storage buffers (SPD's cross-workgroup reads; render/upscale).
+            | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+            | wgpu::Features::FLOAT32_FILTERABLE
+            | wgpu::Features::MEMORY_DECORATION_COHERENT
+            | wgpu::Features::CLEAR_TEXTURE;
         // FFXI_NO_GPU_TIME / FFXI_NO_CULL: without the timestamps or the culling's indirect draws (driver checks).
         if std::env::var_os("FFXI_NO_GPU_TIME").is_some() {
             wanted.remove(wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS);
@@ -293,11 +302,11 @@ impl Gpu {
         if !short.is_empty() && surface.is_some() && std::env::var_os("FFXI_LOW_LIMITS").is_none() {
             anyhow::bail!("{} ({:?}) can't run the client: {}", info.name, info.backend, short.join("; "));
         }
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_features,
-            required_limits,
-            ..Default::default()
-        }))?;
+        let desc = wgpu::DeviceDescriptor { required_features, required_limits, ..Default::default() };
+        let (device, queue) = match neural_device(&adapter, &desc) {
+            Some(made) => made,
+            None => pollster::block_on(adapter.request_device(&desc))?,
+        };
         let pipes = std::sync::Arc::new(PipeCache {
             device: device.clone(),
             mips: Default::default(),
@@ -312,7 +321,7 @@ impl Gpu {
             );
         }
         let max_texture_2d = device.limits().max_texture_dimension_2d;
-        Ok(Self {
+        let gpu = Self {
             instance,
             adapter,
             device,
@@ -321,7 +330,9 @@ impl Gpu {
             uploads: Default::default(),
             pipes,
             max_texture_2d,
-        })
+        };
+        upscale::set_availability(&gpu);
+        Ok(gpu)
     }
 
     /// Makes the shared pipelines on a worker thread, so no frame compiles them later.
@@ -413,7 +424,8 @@ pub struct Uniforms {
     voyage: [[f32; 4]; 4],
     /// Config 0017 off (FUN_10181b50): the sun and the moon as two lights, (direction, colour) each.
     two: [[f32; 4]; 4],
-    /// x: 1 with bump mapping on (one eased light, vertex fog), 0 off (two lights, table fog).
+    /// x: 1 with bump mapping on (one eased light, vertex fog), 0 off (two lights, table fog); y: Light Shading
+    /// Smooth; z: the texture LOD bias (an upscaler's, ours).
     modes: [f32; 4],
     /// Windowed mode's light boost (light_boost): rgb factors, w = 1 on.
     boost: [f32; 4],
@@ -541,6 +553,8 @@ pub struct Camera {
     pub target: Vec3,
     pub up: Vec3,
     pub fov_y: f32,
+    /// Ours: the upscaler's sub-pixel jitter, as an NDC offset (zero when it is off).
+    pub jitter: glam::Vec2,
 }
 
 impl Camera {
@@ -553,7 +567,16 @@ impl Camera {
     }
 
     pub fn proj(&self, aspect: f32) -> Mat4 {
-        glam::camera::rh::proj::directx::perspective(self.fov_y, aspect, NEAR, FAR)
+        let mut m = glam::camera::rh::proj::directx::perspective(self.fov_y, aspect, NEAR, FAR);
+        // clip.w = -z view, so the NDC offset goes into the z column negated.
+        m.z_axis.x -= self.jitter.x;
+        m.z_axis.y -= self.jitter.y;
+        m
+    }
+
+    /// The camera without the upscaler's jitter (motion vectors and the UI's projections).
+    pub fn steady(&self) -> Camera {
+        Camera { jitter: glam::Vec2::ZERO, ..*self }
     }
 }
 
@@ -593,6 +616,9 @@ pub struct ZoneRenderer {
     /// Settings' Light Shading (ours): false Retail (the scenery's point lights per vertex, hard cut at the range),
     /// true Smooth (per pixel, soft edge; not retail).
     pub smooth_lights: bool,
+    /// The texture LOD bias (zone.wgsl `u.modes.z`): negative while the world draws below the window's size for an
+    /// upscaler (ours), 0 otherwise.
+    pub lod_bias: f32,
     /// Windowed mode's light boost (light_boost; zero = off).
     pub light_boost: [f32; 4],
     /// The zone's scenery culled on the GPU (render/cull.rs) when the device draws indirectly, and its passes.
@@ -685,6 +711,21 @@ pub struct ZoneRenderer {
     /// Faded actors are composited later, by render_faded_after (the world: after the effects, as retail's sorted
     /// transparent list puts them over what is behind them); others draw them at the end of render.
     pub defer_faded: bool,
+    /// The upscaler's actor motion (render/upscale): this frame's target and matrices, last frame's poses (with
+    /// the groups over them and over this frame's), and the pose frame they were copied in.
+    pub motion_target: Option<upscale::MotionTarget>,
+    motion_layout: wgpu::BindGroupLayout,
+    motion_pipeline: wgpu::RenderPipeline,
+    motion_scenery_pipeline: wgpu::RenderPipeline,
+    motion_prev: Option<MotionPrev>,
+    motion_copied: std::cell::Cell<u64>,
+    /// The part clock until which a door or lift part moves, and last frame's clock and voyage matrix (the moving
+    /// scenery's motion).
+    parts_busy: f32,
+    motion_last: std::cell::Cell<(f32, Mat4)>,
+    /// The upscaler's colour snapshots (render/upscale): the scene texture, then the copies taken after the opaque
+    /// scenery and after the blended scenery (and, by the world, before the effects).
+    pub snaps: Option<(wgpu::Texture, [wgpu::Texture; 3])>,
     /// The shine slots render used, for render_faded_after's.
     faded_slot: std::cell::Cell<u64>,
     pending: std::collections::VecDeque<(usize, crate::dat::zone::Texture, Option<upload::TexUp>)>,
@@ -1203,6 +1244,18 @@ struct Skinned {
     /// Dynamic offset of this frame's pose region, and the pose frame it was written in.
     offset: u32,
     frame: u64,
+    /// The region's offset in the frame before, when the actor was posed then (the upscaler's motion vectors).
+    prev_offset: Option<u32>,
+}
+
+/// The upscaler's copy of last frame's poses, the motion groups over it and over this frame's buffer, and the
+/// uniform with the matrices.
+struct MotionPrev {
+    cap: u64,
+    buffer: wgpu::Buffer,
+    prev_group: wgpu::BindGroup,
+    cur_group: wgpu::BindGroup,
+    uniform: wgpu::Buffer,
 }
 
 /// Bones a pose region holds; influences on later bones read the identity slot after them.
@@ -1240,6 +1293,10 @@ pub struct ZonePipes {
     actor_pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
     skin_pipeline: wgpu::RenderPipeline,
+    /// The upscaler's actor motion pass: its group 3 (last frame's poses, the matrices) and pipeline.
+    motion_layout: wgpu::BindGroupLayout,
+    motion_pipeline: wgpu::RenderPipeline,
+    motion_scenery_pipeline: wgpu::RenderPipeline,
     shine_layout: wgpu::BindGroupLayout,
     shine_wrap_layout: wgpu::BindGroupLayout,
     shine_pipeline: wgpu::RenderPipeline,
@@ -1456,6 +1513,107 @@ impl ZonePipes {
                 targets: &[Some(wgpu::ColorTargetState {
                     format: color_format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        let motion_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("actor motion"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 20,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(POSE_BINDING),
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 21,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let motion_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("actor motion"),
+            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("actor motion"),
+                bind_group_layouts: &[
+                    Some(&globals_layout),
+                    Some(&texture_layout),
+                    Some(&pose_layout),
+                    Some(&motion_layout),
+                ],
+                immediate_size: 0,
+            })),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_skinned_motion"),
+                compilation_options: Default::default(),
+                buffers: &skin_buffers,
+            },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            // The scene's depth from the actor pass: its own surface passes, nearer scenery hides it.
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: Default::default(),
+                bias: wgpu::DepthBiasState { constant: -16, slope_scale: -0.5, clamp: 0.0 },
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_actor_motion"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: upscale::OBJECT_MOTION_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        let motion_scenery_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("scenery motion"),
+            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("scenery motion"),
+                bind_group_layouts: &[Some(&globals_layout), None, None, Some(&motion_layout)],
+                immediate_size: 0,
+            })),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_scenery_motion"),
+                compilation_options: Default::default(),
+                buffers: &vertex_layouts,
+            },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: Default::default(),
+                bias: wgpu::DepthBiasState { constant: -16, slope_scale: -0.5, clamp: 0.0 },
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_motion"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: upscale::OBJECT_MOTION_FORMAT,
+                    blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -2057,6 +2215,9 @@ impl ZonePipes {
             actor_pipeline,
             sky_pipeline,
             skin_pipeline,
+            motion_layout,
+            motion_pipeline,
+            motion_scenery_pipeline,
             shine_layout,
             shine_wrap_layout,
             shine_pipeline,
@@ -2729,6 +2890,7 @@ impl ZoneRenderer {
             bump_groups,
             bump_mode: true,
             smooth_lights: false,
+            lod_bias: 0.0,
             light_boost: [0.0; 4],
             scenery_bump: p.scenery_bump,
             scenery: p.scenery,
@@ -2770,6 +2932,14 @@ impl ZoneRenderer {
             indices: buffer("scenery indices", i, wgpu::BufferUsages::INDEX),
             draws: geo.draws.clone(),
             skin_pipeline: p.skin_pipeline,
+            motion_target: None,
+            motion_layout: p.motion_layout.clone(),
+            motion_pipeline: p.motion_pipeline.clone(),
+            motion_scenery_pipeline: p.motion_scenery_pipeline.clone(),
+            motion_prev: None,
+            parts_busy: f32::MIN,
+            motion_last: std::cell::Cell::new((0.0, Mat4::IDENTITY)),
+            motion_copied: std::cell::Cell::new(u64::MAX),
             shine_pipeline: p.shine_pipeline,
             shine_buf,
             shine_wrap_layout: p.shine_wrap_layout.clone(),
@@ -2807,6 +2977,7 @@ impl ZoneRenderer {
             builds: Vec::new(),
             budgeted,
             defer_faded: false,
+            snaps: None,
             faded_slot: Default::default(),
             pending: std::collections::VecDeque::new(),
             geo_pending: None,
@@ -2863,6 +3034,7 @@ impl ZoneRenderer {
         *from = [cur[0], cur[1], cur[2], 0.0];
         *dst = [to[0], to[1], to[2], 0.0];
         *time = [now, ticks.max(0.0), 0.0, 0.0];
+        self.parts_busy = self.parts_busy.max(now + ticks.max(0.0));
         let at = slot as u64 * std::mem::size_of::<PartGpu>() as u64;
         gpu.queue.put(&self.parts_gpu, at, bytemuck::bytes_of(&*p));
     }
@@ -3649,6 +3821,7 @@ impl ZoneRenderer {
             sim: mesh.sim.clone(),
             offset: 0,
             frame: u64::MAX,
+            prev_offset: None,
         });
         a
     }
@@ -3706,6 +3879,7 @@ impl ZoneRenderer {
                     sim: mesh.sim.clone(),
                     offset: 0,
                     frame: u64::MAX,
+                    prev_offset: None,
                 }),
                 alpha: 1.0,
                 shadow_off: false,
@@ -3771,6 +3945,7 @@ impl ZoneRenderer {
         while !self.poses.len().is_multiple_of(16) {
             self.poses.push([0.0; 4]);
         }
+        skin.prev_offset = (skin.frame.wrapping_add(1) == self.pose_frame).then_some(skin.offset);
         skin.offset = (self.poses.len() * 16) as u32;
         skin.frame = self.pose_frame;
         self.poses.extend(model.to_cols_array_2d());
@@ -3820,7 +3995,8 @@ impl ZoneRenderer {
             let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("poses"),
                 size: cap,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                // COPY_SRC: the upscaler's motion pass keeps a copy as the next frame's previous poses.
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             });
             let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -3837,12 +4013,157 @@ impl ZoneRenderer {
             });
             self.pose_gpu = Some((buf, group, cap));
         }
+        self.motion_buffers(gpu);
         if let Some((buf, _, _)) = &self.pose_gpu {
             gpu.queue.put(buf, 0, bytemuck::cast_slice(&self.poses));
             self.anim.dispatch(gpu, encoder, buf, !self.budgeted);
             self.cloth.dispatch(gpu, encoder, buf, !self.budgeted);
             self.points.run(gpu, encoder, buf);
         }
+    }
+
+    /// The motion pass's buffers while the upscaler wants it, sized as the pose buffer (a new one holds no
+    /// previous frame yet).
+    fn motion_buffers(&mut self, gpu: &Gpu) {
+        let (Some(_), Some((pose, _, cap))) = (&self.motion_target, &self.pose_gpu) else {
+            if self.motion_target.is_none() {
+                self.motion_prev = None;
+            }
+            return;
+        };
+        if self.motion_prev.as_ref().is_some_and(|m| m.cap == *cap) {
+            return;
+        }
+        let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("previous poses"),
+            size: *cap,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let uniform = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("actor motion"),
+            size: 208,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let group = |b: &wgpu::Buffer| {
+            gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("actor motion"),
+                layout: &self.motion_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 20,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: b,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(POSE_BINDING),
+                        }),
+                    },
+                    wgpu::BindGroupEntry { binding: 21, resource: uniform.as_entire_binding() },
+                ],
+            })
+        };
+        let (prev_group, cur_group) = (group(&buffer), group(pose));
+        self.motion_prev = Some(MotionPrev { cap: *cap, buffer, prev_group, cur_group, uniform });
+        self.motion_copied.set(u64::MAX);
+    }
+
+    /// The upscaler's actor motion: each solid skinned actor drawn over the scene depth into the object motion
+    /// target, then this frame's poses copied for the next frame's.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_motion(
+        &self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        depth: &wgpu::TextureView,
+        actors: &[&ActorGpu],
+        done: u64,
+        zone: (&wgpu::Buffer, Option<Culled>),
+    ) {
+        let Some(t) = &self.motion_target else { return };
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("actor motion"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &t.view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth,
+                depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        let (Some((pose, group, _)), Some(m)) = (&self.pose_gpu, &self.motion_prev) else { return };
+        let prev_ok = self.motion_copied.get().wrapping_add(1) == self.pose_frame;
+        let (last_now, last_voyage) = if prev_ok { self.motion_last.get() } else { (self.now, self.voyage) };
+        self.motion_last.set((self.now, self.voyage));
+        let mut u = Vec::with_capacity(52);
+        u.extend_from_slice(&t.vp.to_cols_array());
+        u.extend_from_slice(&t.prev_vp.to_cols_array());
+        u.extend_from_slice(&[t.size[0] as f32, t.size[1] as f32, last_now, 0.0]);
+        u.extend_from_slice(&last_voyage.to_cols_array());
+        gpu.queue.put(&m.uniform, 0, bytemuck::cast_slice(&u));
+        // Moving scenery, only while a part moves (or moved last frame) or the voyage matrix changes.
+        if last_now <= self.parts_busy || last_voyage != self.voyage {
+            let (inst, culled) = zone;
+            pass.set_pipeline(&self.motion_scenery_pipeline);
+            pass.set_bind_group(0, &self.globals, &[]);
+            pass.set_bind_group(3, &m.cur_group, &[0]);
+            pass.set_vertex_buffer(1, inst.slice(..));
+            pass.set_vertex_buffer(0, self.vertices.slice(..));
+            pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint16);
+            for d in self.draws.iter().filter(|d| d.mode <= 1) {
+                let runs = d.runs();
+                for (k, (_, range)) in runs.into_iter().enumerate() {
+                    if range.is_empty() {
+                        continue;
+                    }
+                    match &culled {
+                        Some(Culled::Gpu(c, a, shown)) if shown[c.run_of(d.args[k])] => {
+                            pass.draw_indexed_indirect(a, d.args[k] as u64 * 20)
+                        }
+                        Some(Culled::Cpu(c, placed)) => {
+                            let placed = placed[c.run_of(d.args[k])].clone();
+                            if !placed.is_empty() {
+                                pass.draw_indexed(d.first_index..d.first_index + d.index_count, d.base_vertex, placed)
+                            }
+                        }
+                        Some(_) => {}
+                        None => pass.draw_indexed(d.first_index..d.first_index + d.index_count, d.base_vertex, range),
+                    }
+                }
+            }
+        }
+        pass.set_pipeline(&self.motion_pipeline);
+        pass.set_bind_group(0, &self.globals, &[]);
+        for a in actors.iter().filter(|a| a.mips <= done && a.refract.is_none() && a.alpha >= 1.0) {
+            let Some(skin) = a.skin.as_ref().filter(|s| s.frame == self.pose_frame) else { continue };
+            let (g3, off) = match skin.prev_offset {
+                Some(o) if prev_ok => (&m.prev_group, o),
+                _ => (&m.cur_group, skin.offset),
+            };
+            pass.set_bind_group(2, group, &[skin.offset]);
+            pass.set_bind_group(3, g3, &[off]);
+            pass.set_vertex_buffer(0, skin.vertices.slice(..));
+            for (tex, range, wep) in &a.draws {
+                if *wep != NO_WEP && a.hidden_weps & (1 << wep) != 0 {
+                    continue;
+                }
+                pass.set_bind_group(1, &a.textures[*tex], &[]);
+                pass.draw(range.clone(), 0..1);
+            }
+        }
+        drop(pass);
+        encoder.copy_buffer_to_buffer(pose, 0, &m.buffer, 0, m.cap);
+        self.motion_copied.set(self.pose_frame);
     }
 
     pub fn new_actor(&self, gpu: &Gpu, ch: &crate::dat::character::Character) -> ActorGpu {
@@ -3972,7 +4293,7 @@ impl ZoneRenderer {
             area_info: [0.0; 4],
             voyage: self.voyage.to_cols_array_2d(),
             two: [[0.0; 4]; 4],
-            modes: [self.bump_mode as u32 as f32, self.smooth_lights as u32 as f32, 0.0, 0.0],
+            modes: [self.bump_mode as u32 as f32, self.smooth_lights as u32 as f32, self.lod_bias, 0.0],
             boost: self.light_boost,
         };
         let mut clear = self.fog_color;
@@ -4207,10 +4528,15 @@ impl ZoneRenderer {
             // reads the ground under them. Then the pass resumes.
             let ssao_now = mode == 2 && self.ssao.is_some();
             let sun_now = mode == 4 && (sun.is_some() || !lamps.is_empty());
-            if ssao_now || sun_now {
+            // The upscaler's snapshots: after the opaque scenery (and its occlusion), and after the blended.
+            let snap_now = (mode == 2 || mode == 4) && self.snaps.is_some();
+            if ssao_now || sun_now || snap_now {
                 drop(pass);
                 if let Some(a) = self.ssao.as_ref().filter(|_| ssao_now) {
                     a.draw(gpu, encoder, color, depth, vp, camera.eye);
+                }
+                if let Some((scene, s)) = self.snaps.as_ref().filter(|_| snap_now) {
+                    upscale::snap(encoder, scene, &s[if mode == 2 { 0 } else { 1 }]);
                 }
                 if let Some((s, m, d, st, _)) = sun.as_ref().filter(|_| sun_now) {
                     s.receive(gpu, encoder, color, depth, vp, *m, *d, *st, camera.eye, self.shadow_soft);
@@ -4388,6 +4714,7 @@ impl ZoneRenderer {
             }
         }
         drop(pass);
+        self.draw_motion(gpu, encoder, depth, actors, done, (zone_inst, zone_args));
         if self.defer_faded {
             self.faded_slot.set(slot);
             return;
@@ -4969,6 +5296,34 @@ impl ZoneRenderer {
     }
 }
 
+/// The device with the neural rendering engine's Vulkan features, when an engine with vana_nr_dispatch is installed
+/// and the device has them (render/upscale/vkdevice.rs); None for the usual device. Sets upscale::neural_status.
+fn neural_device(adapter: &wgpu::Adapter, desc: &wgpu::DeviceDescriptor) -> Option<(wgpu::Device, wgpu::Queue)> {
+    let status = match upscale::external::probe() {
+        Ok((_, true)) if adapter.get_info().backend == wgpu::Backend::Vulkan => Ok(()),
+        Ok((_, true)) => Err("neural rendering needs the Vulkan backend".to_string()),
+        Ok(_) => Err("the engine has no vana_nr_dispatch".to_string()),
+        Err(e) => Err(e),
+    };
+    #[cfg(any(target_os = "linux", windows))]
+    let made = status.and_then(|()| upscale::vkdevice::open(adapter, desc));
+    #[cfg(not(any(target_os = "linux", windows)))]
+    let made: Result<(wgpu::Device, wgpu::Queue), String> = status.and(Err("Vulkan only".to_string()));
+    match made {
+        Ok(d) => {
+            upscale::set_neural_status(Ok(()));
+            Some(d)
+        }
+        Err(e) => {
+            if upscale::external::library_path().exists() {
+                log::warn!("neural rendering unavailable: {e}");
+            }
+            upscale::set_neural_status(Err(e));
+            None
+        }
+    }
+}
+
 pub fn depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
     device
         .create_texture(&wgpu::TextureDescriptor {
@@ -5068,18 +5423,37 @@ pub fn render_pngs_post(
     let env_q = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u32>().ok()).filter(|q| (1..=4).contains(q));
     let up = env_q("FFXI_FSR1").map(|q| (q, true)).or_else(|| env_q("FFXI_CATROM").map(|q| (q, false)));
     let sharp = std::env::var("FFXI_FSR1_SHARP").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(50);
-    let mut scale = up.map(|_| scale::SceneScale::new(&gpu, format));
-    let (rw, rh) = up.map_or((width, height), |(q, _)| {
-        let r = fsr1::render_size([width, height], q);
-        (r[0], r[1])
-    });
+    // FFXI_FSR3=0..4 (ours): FSR 3.1 at that quality (0 Native AA), FFXI_FSR3_FRAMES (default 32) jittered frames
+    // of the still camera accumulated, the last one written; sharpness FFXI_FSR1_SHARP.
+    let fsr3_q = std::env::var("FFXI_FSR3").ok().and_then(|v| v.parse::<u32>().ok()).filter(|q| *q <= 4);
+    let fsr3_frames = std::env::var("FFXI_FSR3_FRAMES").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(32).max(1);
+    let mut fsr3 = fsr3_q.map(|_| upscale::Upscale::new(&gpu));
+    let mut scale = (up.is_some() || fsr3.is_some()).then(|| scale::SceneScale::new(&gpu, format));
+    let (rw, rh) = match (up, fsr3_q) {
+        (_, Some(q)) => {
+            let r = upscale::render_size([width, height], q);
+            (r[0], r[1])
+        }
+        (Some((q, _)), None) => {
+            let r = fsr1::render_size([width, height], q);
+            (r[0], r[1])
+        }
+        (None, None) => (width, height),
+    };
+    // The texture LOD bias the client gives the upscalers (FFXI_LODBIAS=0: none, to compare).
+    if std::env::var("FFXI_LODBIAS").as_deref() != Ok("0") && (up.is_some_and(|u| u.1) || fsr3.is_some()) {
+        renderer.lod_bias = upscale::lod_bias(rw, width, fsr3.is_some());
+    }
     let (view, depth, scene_target) = match scale.as_mut() {
         Some(s) => s.target(&gpu, [rw, rh]),
         None => (out_view.clone(), depth_view(&gpu.device, width, height), target.clone()),
     };
-    let mut scale_up = |encoder: &mut wgpu::CommandEncoder| {
-        if let (Some(s), Some((_, fsr))) = (scale.as_mut(), up) {
-            s.blit(&gpu, encoder, &out_view, [width, height], [1.0; 3], None, false, 0, fsr.then_some(sharp));
+    // The scene's own view, for FSR 3.1.
+    let raw = scale.as_ref().and_then(|s| s.raw_view()).unwrap_or_else(|| view.clone());
+    let mut scale_up = |encoder: &mut wgpu::CommandEncoder, upscaled: Option<(&wgpu::TextureView, [u32; 2])>| {
+        if let Some(s) = scale.as_mut() {
+            let fsr1 = up.and_then(|(_, fsr)| fsr.then_some(sharp));
+            s.blit(&gpu, encoder, &out_view, [width, height], [1.0; 3], None, false, 0, fsr1, upscaled);
         }
     };
     let out_size = [width, height];
@@ -5117,12 +5491,33 @@ pub fn render_pngs_post(
                 if let Some(q) = q {
                     encoder.write_timestamp(q, f * 2);
                 }
-                renderer.render(&gpu, &mut encoder, &view, &depth, camera, width as f32 / height as f32, &actor_refs);
+                let aspect = width as f32 / height as f32;
+                // FSR 3.1 (FFXI_FSR3): the jittered frame, its snapshots and the upscaler, as the shot does.
+                let mut cam = **camera;
+                if let (Some(f), Some(q)) = (fsr3.as_mut(), fsr3_q) {
+                    cam.jitter = f.begin(&gpu, out_size, q, format, true).1;
+                    renderer.snaps = f.targets.as_ref().map(|t| {
+                        (scene_target.clone(), [t.snap_opaque.clone(), t.snap_blend.clone(), t.snap_pre_fx.clone()])
+                    });
+                    renderer.motion_target = f.motion_target().map(|mut m| {
+                        m.vp = cam.steady().view_proj(aspect);
+                        m.prev_vp = m.vp;
+                        m
+                    });
+                }
+                renderer.render(&gpu, &mut encoder, &view, &depth, &cam, aspect, &actor_refs);
+                if let Some((scene, s)) = renderer.snaps.as_ref().filter(|_| fsr3.is_some()) {
+                    upscale::snap(&mut encoder, scene, &s[2]);
+                }
                 if let Some(fx) = &scene_fx {
-                    let frame = scenefx::Frame::new(camera, width as f32 / height as f32, lighting.as_ref());
+                    let frame = scenefx::Frame::new(&cam, aspect, lighting.as_ref());
                     fx.draw(&gpu, &mut encoder, &view, &depth, &frame);
                 }
-                scale_up(&mut encoder);
+                let out = fsr3.as_mut().and_then(|f| {
+                    f.frame_camera = Some(upscale::FrameCamera { camera: cam, aspect });
+                    f.run(&gpu, &mut encoder, &raw, &depth, 1, sharp, 0, false)
+                });
+                scale_up(&mut encoder, out.as_ref().map(|(v, sz)| (v, *sz)));
                 if let Some(q) = q {
                     encoder.write_timestamp(q, f * 2 + 1);
                 }
@@ -5181,6 +5576,36 @@ pub fn render_pngs_post(
             mapped_at_creation: false,
         });
         renderer.update_leak(&gpu, camera, width as f32 / height as f32);
+        let aspect = width as f32 / height as f32;
+        // FSR 3.1: the frames before the written one, each jittered, accumulated into the upscaler's history.
+        let mut jittered = **camera;
+        if let (Some(f), Some(q)) = (fsr3.as_mut(), fsr3_q) {
+            for k in 0..fsr3_frames {
+                let mut encoder = gpu.device.create_command_encoder(&Default::default());
+                let (_, jitter) = f.begin(&gpu, out_size, q, format, true);
+                jittered.jitter = jitter;
+                renderer.snaps = f.targets.as_ref().map(|t| {
+                    (scene_target.clone(), [t.snap_opaque.clone(), t.snap_blend.clone(), t.snap_pre_fx.clone()])
+                });
+                renderer.motion_target = f.motion_target().map(|mut m| {
+                    m.vp = jittered.steady().view_proj(aspect);
+                    m.prev_vp = m.vp;
+                    m
+                });
+                if k + 1 == fsr3_frames {
+                    break;
+                }
+                renderer.render(&gpu, &mut encoder, &view, &depth, &jittered, aspect, &actor_refs);
+                if let Some((scene, s)) = &renderer.snaps {
+                    upscale::snap(&mut encoder, scene, &s[2]);
+                }
+                f.frame_camera = Some(upscale::FrameCamera { camera: jittered, aspect });
+                f.run(&gpu, &mut encoder, &raw, &depth, 1, sharp, 0, false);
+                gpu.queue.submit([encoder.finish()]);
+                f.after_submit(&gpu);
+            }
+        }
+        let camera = &&jittered;
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         renderer.render(&gpu, &mut encoder, &view, &depth, camera, width as f32 / height as f32, &actor_refs);
         renderer.render_refraction(
@@ -5195,12 +5620,20 @@ pub fn render_pngs_post(
         );
         // An error (a GPU short of what the pass needs) stops before the frame is written over an older one.
         post(&gpu, &mut encoder, (&view, &scene_target), &depth, camera, lighting.as_ref(), &mut renderer)?;
+        // FSR 3.1: the snapshot before the effects, as the client takes it.
+        if let Some((scene, s)) = renderer.snaps.as_ref().filter(|_| fsr3.is_some()) {
+            upscale::snap(&mut encoder, scene, &s[2]);
+        }
         if let Some(fx) = &scene_fx {
             let frame = scenefx::Frame::new(camera, width as f32 / height as f32, lighting.as_ref());
             fx.draw(&gpu, &mut encoder, &view, &depth, &frame);
         }
-        scale_up(&mut encoder);
-        let (width, height) = up.map_or((width, height), |_| (out_size[0], out_size[1]));
+        let out = fsr3.as_mut().and_then(|f| {
+            f.frame_camera = Some(upscale::FrameCamera { camera: **camera, aspect });
+            f.run(&gpu, &mut encoder, &raw, &depth, 1, sharp, 0, false)
+        });
+        scale_up(&mut encoder, out.as_ref().map(|(v, sz)| (v, *sz)));
+        let (width, height) = if up.is_some() || fsr3.is_some() { (out_size[0], out_size[1]) } else { (width, height) };
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &target,
@@ -5331,6 +5764,7 @@ mod faded_tests {
         });
         let depth = super::depth_view(&gpu.device, 8, 8);
         let camera = super::Camera {
+            jitter: glam::Vec2::ZERO,
             eye: glam::Vec3::new(0.0, -2.0, 5.0),
             target: glam::Vec3::ZERO,
             up: glam::Vec3::NEG_Y,
@@ -5381,7 +5815,11 @@ mod limits_tests {
         let desktop = wgpu::Limits { max_storage_buffers_per_shader_stage: 1_000_000, ..wgpu::Limits::unlimited() };
         assert_eq!(
             super::wanted_limits(&desktop),
-            wgpu::Limits { max_storage_buffers_per_shader_stage: 16, ..Default::default() }
+            wgpu::Limits {
+                max_storage_buffers_per_shader_stage: 16,
+                max_storage_textures_per_shader_stage: 16,
+                ..Default::default()
+            }
         );
         let pi = wgpu::Limits {
             max_inter_stage_shader_variables: 15,

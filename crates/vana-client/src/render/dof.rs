@@ -259,6 +259,7 @@ mod tests {
     #[test]
     fn focus_is_the_target_distance() {
         let cam = crate::render::Camera {
+            jitter: glam::Vec2::ZERO,
             eye: Vec3::new(0.0, -2.0, 0.0),
             target: Vec3::new(0.0, -2.0, 8.0),
             up: Vec3::NEG_Y,
@@ -274,8 +275,13 @@ mod tests {
     fn near_sharp_far_soft() {
         let Ok(gpu) = Gpu::headless() else { return };
         let n = 32u32;
-        let cam =
-            crate::render::Camera { eye: Vec3::ZERO, target: Vec3::new(0.0, 0.0, 5.0), up: Vec3::NEG_Y, fov_y: 0.8 };
+        let cam = crate::render::Camera {
+            jitter: glam::Vec2::ZERO,
+            eye: Vec3::ZERO,
+            target: Vec3::new(0.0, 0.0, 5.0),
+            up: Vec3::NEG_Y,
+            fov_y: 0.8,
+        };
         let f = Frame { view_proj: cam.view_proj(1.0), eye: cam.eye, target: cam.target, fog: None, sun: None };
         let mut dof = Dof::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
         dof.resize(&gpu, [n, n]);

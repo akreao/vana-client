@@ -289,7 +289,13 @@ mod tests {
         let n = 32u32;
         // Looking straight at a sun up and ahead (y down).
         let toward = Vec3::new(0.0, -0.5, 1.0).normalize();
-        let cam = crate::render::Camera { eye: Vec3::ZERO, target: toward * 10.0, up: Vec3::NEG_Y, fov_y: 0.8 };
+        let cam = crate::render::Camera {
+            jitter: glam::Vec2::ZERO,
+            eye: Vec3::ZERO,
+            target: toward * 10.0,
+            up: Vec3::NEG_Y,
+            fov_y: 0.8,
+        };
         let sun = SunFrame { dir: (-toward).to_array(), color: [1.0; 3], moon: false };
         let fr = Frame { view_proj: cam.view_proj(1.0), eye: cam.eye, target: cam.target, fog: None, sun: Some(sun) };
         let mut rays = GodRays::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
@@ -327,7 +333,13 @@ mod tests {
         let Ok(gpu) = Gpu::headless() else { return };
         let n = 32u32;
         let toward = Vec3::new(0.0, -0.5, 1.0).normalize();
-        let cam = crate::render::Camera { eye: Vec3::ZERO, target: toward * 10.0, up: Vec3::NEG_Y, fov_y: 0.8 };
+        let cam = crate::render::Camera {
+            jitter: glam::Vec2::ZERO,
+            eye: Vec3::ZERO,
+            target: toward * 10.0,
+            up: Vec3::NEG_Y,
+            fov_y: 0.8,
+        };
         let sun = SunFrame { dir: (-toward).to_array(), color: [1.0; 3], moon: false };
         let fr = Frame { view_proj: cam.view_proj(1.0), eye: cam.eye, target: cam.target, fog: None, sun: Some(sun) };
         let mut rays = GodRays::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
@@ -368,7 +380,13 @@ mod tests {
         let Ok(gpu) = Gpu::headless() else { return };
         let n = 32u32;
         let toward = Vec3::new(0.0, -0.5, 1.0).normalize();
-        let cam = crate::render::Camera { eye: Vec3::ZERO, target: toward * 10.0, up: Vec3::NEG_Y, fov_y: 0.8 };
+        let cam = crate::render::Camera {
+            jitter: glam::Vec2::ZERO,
+            eye: Vec3::ZERO,
+            target: toward * 10.0,
+            up: Vec3::NEG_Y,
+            fov_y: 0.8,
+        };
         let sun = SunFrame { dir: (-toward).to_array(), color: [1.0; 3], moon: false };
         let fr = Frame { view_proj: cam.view_proj(1.0), eye: cam.eye, target: cam.target, fog: None, sun: Some(sun) };
         let mut rays = GodRays::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
@@ -417,7 +435,8 @@ mod tests {
     }
 
     fn frame(sun: Option<SunFrame>, target: Vec3) -> Frame {
-        let cam = crate::render::Camera { eye: Vec3::ZERO, target, up: Vec3::NEG_Y, fov_y: 0.8 };
+        let cam =
+            crate::render::Camera { jitter: glam::Vec2::ZERO, eye: Vec3::ZERO, target, up: Vec3::NEG_Y, fov_y: 0.8 };
         Frame { view_proj: cam.view_proj(16.0 / 9.0), eye: cam.eye, target: cam.target, fog: None, sun }
     }
 
