@@ -429,7 +429,7 @@ pub struct Uniforms {
     /// Config 0017 off (FUN_10181b50): the sun and the moon as two lights, (direction, colour) each.
     two: [[f32; 4]; 4],
     /// x: 1 with bump mapping on (one eased light, vertex fog), 0 off (two lights, table fog); y: Light Shading
-    /// Smooth; z: the texture LOD bias (an upscaler's, ours).
+    /// Smooth; z: 1 with Material Maps, w their strength.
     modes: [f32; 4],
     /// Windowed mode's light boost (light_boost): rgb factors, w = 1 on.
     boost: [f32; 4],
