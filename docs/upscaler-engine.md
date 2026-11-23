@@ -54,7 +54,10 @@ FSR 3.1, so the scaling pass grades and encodes it the same way.
 
 - **Run**: on an NVIDIA GPU on the Vulkan backend the device is made with NGX's Vulkan extensions; anything else
   gets the usual device, and Settings leaves the DLSS choices out. The DLSS runtime is not shipped: the first time
-  DLSS is chosen, the client downloads it from NVIDIA's repository at the SDK's tag
+  DLSS is chosen, the client first looks for the same file already on the computer (Steam's libraries, Epic's and
+  GOG's game folders, NVIDIA's NGX update cache, ~/Games on Linux; a file of the runtime's name and size whose SHA-256
+  is the SDK's, so the same version) and copies it, leaving it where it is; else it downloads it from NVIDIA's
+  repository at the SDK's tag
   (`raw.githubusercontent.com/NVIDIA/DLSS/v310.9.1/lib/<platform>/rel/nvngx_dlss.dll` on Windows,
   `libnvidia-ngx-dlss.so.310.9.1` on Linux; about 59 MB), checks it against the SDK's SHA-256 and keeps it in the data
   folder under `dlss/lib/<platform>/rel/`. Until it is in, the frame is scaled plainly; then NGX starts. NGX is

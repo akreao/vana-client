@@ -79,6 +79,95 @@ fn runtime_file() -> (&'static str, &'static str, &'static str) {
     }
 }
 
+/// The runtime's size in bytes at SDK_TAG: files of another size are not hashed in the search for a copy.
+#[cfg_attr(not(feature = "dlss"), allow(dead_code))]
+fn runtime_size() -> u64 {
+    if cfg!(windows) { 58_956_912 } else { 59_481_944 }
+}
+
+/// Folders other software keeps game files in, where a copy of the same runtime may already sit: Steam's libraries
+/// (from its libraryfolders.vdf), Epic's and GOG's game folders, NVIDIA's NGX update cache (its files carry other
+/// names), and Heroic / Lutris's ~/Games on Linux. Each is (folder, any file name counts).
+#[cfg_attr(not(feature = "dlss"), allow(dead_code))]
+fn search_roots() -> Vec<(std::path::PathBuf, bool)> {
+    use std::path::PathBuf;
+    let env = |k: &str| std::env::var_os(k).map(PathBuf::from);
+    let home = dirs::home_dir();
+    let mut steam: Vec<PathBuf> = if cfg!(windows) {
+        [env("ProgramFiles(x86)"), env("ProgramFiles")].into_iter().flatten().map(|p| p.join("Steam")).collect()
+    } else {
+        home.iter()
+            .flat_map(|h| {
+                [".steam/steam", ".local/share/Steam", ".var/app/com.valvesoftware.Steam/.local/share/Steam"]
+                    .map(|r| h.join(r))
+            })
+            .collect()
+    };
+    // Each Steam install's other libraries ("path" lines of steamapps/libraryfolders.vdf).
+    let mut libs = Vec::new();
+    for s in &steam {
+        if let Ok(t) = std::fs::read_to_string(s.join("steamapps").join("libraryfolders.vdf")) {
+            for l in t.lines() {
+                let mut q = l.split('"').filter(|x| !x.trim().is_empty());
+                if q.next() == Some("path")
+                    && let Some(p) = q.next()
+                {
+                    libs.push(PathBuf::from(p.replace("\\\\", "\\")));
+                }
+            }
+        }
+    }
+    steam.extend(libs);
+    let mut roots: Vec<(PathBuf, bool)> = steam.iter().map(|s| (s.join("steamapps").join("common"), false)).collect();
+    if cfg!(windows) {
+        roots.extend(env("ProgramFiles").map(|p| (p.join("Epic Games"), false)));
+        roots.extend(env("ProgramFiles(x86)").map(|p| (p.join("GOG Galaxy").join("Games"), false)));
+        roots.extend(env("ProgramData").map(|p| (p.join("NVIDIA").join("NGX").join("models"), true)));
+    } else {
+        roots.extend(home.iter().map(|h| (h.join("Games"), false)));
+    }
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+/// The first file under `roots` (at most `depth` folders down, symlinks not followed, at most 500,000 entries in all; Unreal games keep it about 8 down)
+/// named `name` (any name under a root marked so), of `size` bytes, whose SHA-256 is `sha`. Only reads.
+#[cfg_attr(not(feature = "dlss"), allow(dead_code))]
+fn find_copy(
+    roots: &[(std::path::PathBuf, bool)],
+    name: &str,
+    size: u64,
+    sha: &str,
+    depth: usize,
+) -> Option<std::path::PathBuf> {
+    let mut budget = 500_000usize;
+    for (root, any_name) in roots {
+        let mut stack = vec![(root.clone(), 0usize)];
+        while let Some((dir, d)) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            for e in rd.flatten() {
+                budget = budget.checked_sub(1)?;
+                let Ok(ft) = e.file_type() else { continue };
+                let path = e.path();
+                if ft.is_dir() {
+                    if d < depth {
+                        stack.push((path, d + 1));
+                    }
+                } else if ft.is_file()
+                    && (*any_name || e.file_name().to_str().is_some_and(|n| n.eq_ignore_ascii_case(name)))
+                    && e.metadata().is_ok_and(|m| m.len() == size)
+                    && std::fs::read(&path)
+                        .is_ok_and(|b| hex::encode(ring::digest::digest(&ring::digest::SHA256, &b)) == sha)
+                {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// The folder NGX searches for the runtime: DLSS_SDK's `lib/<platform>/rel` (dlss_wgpu hands NGX only that path). The
 /// client sets DLSS_SDK to `<data folder>/dlss` at start when it is unset (`point_ngx_at_data`), so the downloaded
 /// runtime goes there; a build run against a real SDK keeps that SDK's.
@@ -145,21 +234,30 @@ fn start_fetch() {
     });
 }
 
-/// Downloads the runtime from NVIDIA's DLSS repository at SDK_TAG into `runtime_dir`, kept only when its SHA-256 is
-/// the SDK's.
+/// Puts the runtime in `runtime_dir`: copied from a copy already on this computer with the SDK's exact SHA-256 (the
+/// same file, so the same version; found by `find_copy`, left where it is), else downloaded from NVIDIA's DLSS
+/// repository at SDK_TAG and kept only when its SHA-256 is the SDK's.
 #[cfg_attr(not(feature = "dlss"), allow(dead_code))]
 fn fetch_runtime() -> anyhow::Result<()> {
     let (plat, name, sha) = runtime_file();
-    let url = format!("https://raw.githubusercontent.com/NVIDIA/DLSS/{SDK_TAG}/lib/{plat}/rel/{name}");
     let dir = runtime_dir();
     std::fs::create_dir_all(&dir)?;
     let tmp = dir.join(format!("{name}.download"));
-    log::info!("DLSS: downloading the runtime from {url}");
-    crate::client::updater::download(&url, &tmp, &|_, _| {})?;
+    match find_copy(&search_roots(), name, runtime_size(), sha, 9) {
+        Some(found) => {
+            log::info!("DLSS: the runtime is already at {}; copying it", found.display());
+            std::fs::copy(&found, &tmp)?;
+        }
+        None => {
+            let url = format!("https://raw.githubusercontent.com/NVIDIA/DLSS/{SDK_TAG}/lib/{plat}/rel/{name}");
+            log::info!("DLSS: downloading the runtime from {url}");
+            crate::client::updater::download(&url, &tmp, &|_, _| {})?;
+        }
+    }
     let got = hex::encode(ring::digest::digest(&ring::digest::SHA256, &std::fs::read(&tmp)?));
     if got != sha {
         let _ = std::fs::remove_file(&tmp);
-        anyhow::bail!("{url}: SHA-256 {got}, expected {sha}");
+        anyhow::bail!("the runtime's SHA-256 is {got}, expected {sha}");
     }
     // The notices first: the runtime counts as installed once it is in place, and comes with them.
     #[cfg(feature = "dlss")]
@@ -441,6 +539,32 @@ mod tests {
                 assert_eq!(super::mode_of(super::super::render_size(out, q), out), q as usize, "{out:?} quality {q}");
             }
         }
+    }
+
+    /// The search finds a file of the right name, size and hash a few folders down, skips one whose bytes differ, and
+    /// takes any name under a root marked so (NGX's cache).
+    #[test]
+    fn finds_a_matching_copy() {
+        let base = std::env::temp_dir().join(format!("vana-dlss-find-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let good = b"runtime bytes".to_vec();
+        let sha = hex::encode(ring::digest::digest(&ring::digest::SHA256, &good));
+        let put = |rel: &str, b: &[u8]| {
+            let p = base.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, b).unwrap();
+            p
+        };
+        put("steam/GameA/bin/nvngx_dlss.dll", b"other bytes!!");
+        let want = put("steam/GameB/x64/bin/NVNGX_DLSS.DLL", &good);
+        let cached = put("ngx/dlss/versions/1/files/160_x.bin", &good);
+        let n = good.len() as u64;
+        let roots = |r: &[(&str, bool)]| r.iter().map(|(p, a)| (base.join(p), *a)).collect::<Vec<_>>();
+        assert_eq!(super::find_copy(&roots(&[("steam", false)]), "nvngx_dlss.dll", n, &sha, 6), Some(want));
+        assert_eq!(super::find_copy(&roots(&[("steam", false)]), "nvngx_dlss.dll", n, &sha, 1), None);
+        assert_eq!(super::find_copy(&roots(&[("ngx", true)]), "nvngx_dlss.dll", n, &sha, 6), Some(cached));
+        assert_eq!(super::find_copy(&roots(&[("ngx", false)]), "nvngx_dlss.dll", n, &sha, 6), None);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// A size NGX's range left out stops DLSS for that window size and mode only: another size, or the same size in
