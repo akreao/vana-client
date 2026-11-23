@@ -704,6 +704,7 @@ mod tests {
         let zeros = vec![0u8; 4096];
         let [lights, areas, parts, deltas] = [(); 4].map(|_| buf(&zeros, wgpu::BufferUsages::STORAGE));
         let lamp = buf(&zeros, wgpu::BufferUsages::UNIFORM);
+        let clamp = crate::render::clamp_sampler(device);
         let off = super::super::worldshadow::Off::new(&gpu);
         let globals = super::super::globals_group(
             device,
@@ -711,6 +712,7 @@ mod tests {
             [&uniforms, &lights, &areas, &parts, &deltas, &lamp],
             None,
             &off,
+            &clamp,
         );
         let c = Cull::new(&gpu, Some(layout), &data, &instances).expect("a GPU culling");
         let read = device.create_buffer(&wgpu::BufferDescriptor {
