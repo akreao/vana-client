@@ -90,6 +90,10 @@ fn grade(c: vec3<f32>) -> vec3<f32> {
     // lcd.w: the source is the upscaler's linear output (render/upscale), filtered linear and encoded here.
     if (u.lcd.w > 0.5) {
         c = pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2));
+        // fsr.y: an sRGB surface encodes what is written; the scene's path hands it decoded values, so decode to match.
+        if (u.fsr.y > 0.5) {
+            c = select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
+        }
     }
     c = grade(c);
     return vec4<f32>(pow(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0 / u.gamma.rgb), 1.0);
@@ -559,7 +563,18 @@ mod tests {
                 view_formats: &[],
             });
             let mut enc = gpu.device.create_command_encoder(&Default::default());
-            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), dst, [1.0; 3], None, false, 0, Some(75));
+            s.blit(
+                &gpu,
+                &mut enc,
+                &out.create_view(&Default::default()),
+                dst,
+                [1.0; 3],
+                None,
+                false,
+                0,
+                Some(75),
+                None,
+            );
             gpu.queue.submit([enc.finish()]);
             read(&gpu, &out, dst[0], dst[1])
         };
@@ -568,6 +583,67 @@ mod tests {
         let worst = plain.iter().zip(&srgb).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
         // 8-bit sRGB round trips in the darks cost up to 3; filtering decoded values instead differs by over 30.
         assert!(worst <= 3, "sRGB differs from plain by up to {worst}");
+    }
+
+    /// The temporal upscaler's linear output comes out as the same bytes on an sRGB surface as on a plain one (not
+    /// encoded twice).
+    #[test]
+    fn upscaled_same_on_srgb_surfaces() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        // The sRGB scene target needs view formats (not on GL, where the surface is plain anyway).
+        if !gpu.adapter.get_downlevel_capabilities().flags.contains(wgpu::DownlevelFlags::VIEW_FORMATS) {
+            return;
+        }
+        let size = [8u32, 8];
+        let up = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let texel: Vec<u8> = [0.05f32, 0.2, 0.6, 1.0].iter().flat_map(|v| half_bits(*v).to_le_bytes()).collect();
+        let pic: Vec<u8> = (0..size[0] * size[1]).flat_map(|_| texel.clone()).collect();
+        gpu.queue.write_texture(
+            up.as_image_copy(),
+            &pic,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(size[0] * 8), rows_per_image: Some(size[1]) },
+            wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+        );
+        let view = up.create_view(&Default::default());
+        let run = |format: wgpu::TextureFormat| {
+            let mut s = SceneScale::new(&gpu, format);
+            s.target(&gpu, size);
+            let out = gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let mut enc = gpu.device.create_command_encoder(&Default::default());
+            let dst = out.create_view(&Default::default());
+            s.blit(&gpu, &mut enc, &dst, size, [1.0; 3], None, false, 0, None, Some((&view, size)));
+            gpu.queue.submit([enc.finish()]);
+            read(&gpu, &out, size[0], size[1])
+        };
+        let (plain, srgb) = (run(wgpu::TextureFormat::Rgba8Unorm), run(wgpu::TextureFormat::Rgba8UnormSrgb));
+        // pow(x, 1 / 2.2) as bytes: 65, 124, 202.
+        assert!((plain[0] as i32 - 65).abs() <= 1 && (plain[2] as i32 - 202).abs() <= 1, "{:?}", &plain[..4]);
+        let worst = plain.iter().zip(&srgb).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
+        assert!(worst <= 1, "sRGB differs from plain by up to {worst}");
+    }
+
+    fn half_bits(v: f32) -> u16 {
+        let b = v.to_bits();
+        let (s, e, m) = ((b >> 16) & 0x8000, ((b >> 23) & 0xff) as i32 - 127 + 15, (b >> 13) & 0x3ff);
+        (s | ((e.max(0) as u32) << 10) | m) as u16
     }
 
     /// FSR 1 keeps a flat colour flat, sharpened or not, at 1.5x and 2x.
