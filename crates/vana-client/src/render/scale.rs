@@ -102,6 +102,10 @@ fn grade(c: vec3<f32>) -> vec3<f32> {
     if (u.fsr.x > 0.0) {
         c = rcas(p, u.fsr.x);
     }
+    // fsr.y: an sRGB surface, where the other path's values are linear (the scene's view decodes): decode to match.
+    if (u.fsr.y > 0.5) {
+        c = select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
+    }
     c = grade(c);
     return vec4<f32>(pow(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0 / u.gamma.rgb), 1.0);
 }
@@ -296,6 +300,12 @@ impl SceneScale {
         (t.view.clone(), t.depth.clone(), t.tex.clone())
     }
 
+    /// Drops FSR 1's window-size target (FSR 1 off, or a frame that skips the scaling pass, as an unscaled lobby).
+    pub fn drop_fsr1(&mut self) {
+        self.easu = None;
+        self.easu_group.clear();
+    }
+
     /// The scene texture through a plain (not sRGB) view: written and blended in gamma space.
     pub fn raw_view(&self) -> Option<wgpu::TextureView> {
         Some(self.target.as_ref()?.raw.clone())
@@ -365,7 +375,8 @@ impl SceneScale {
             0.0,
         ];
         u[12..16].copy_from_slice(&grade(grading));
-        let fsr = [fsr1.map_or(0.0, super::fsr1::rcas_sharpness), 0.0, 0.0, 0.0];
+        let srgb = if self.format.is_srgb() { 1.0 } else { 0.0 };
+        let fsr = [fsr1.map_or(0.0, super::fsr1::rcas_sharpness), srgb, 0.0, 0.0];
         gpu.queue.put(&self.uniform, 0, bytemuck::cast_slice(&u));
         gpu.queue.put(&self.uniform, 64, bytemuck::cast_slice(&fsr));
         let smaa_out = smaa.then(|| {
@@ -502,6 +513,61 @@ mod tests {
         s.blit(gpu, &mut enc, &out.create_view(&Default::default()), dst, [1.0; 3], None, false, 0, fsr, None);
         gpu.queue.submit([enc.finish()]);
         read(gpu, &out, dst[0], dst[1])
+    }
+
+    /// On an sRGB surface FSR 1 filters the same gamma-space values as on a plain one: a midtone gradient with an edge
+    /// through it comes out within rounding of the plain surface's picture.
+    #[test]
+    fn fsr1_same_on_srgb_surfaces() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        // The scene target's plain view needs view formats (not on GL, where the surface is plain anyway).
+        if !gpu.adapter.get_downlevel_capabilities().flags.contains(wgpu::DownlevelFlags::VIEW_FORMATS) {
+            return;
+        }
+        let (src, dst) = ([16u32, 16], [32u32, 32]);
+        let pic: Vec<u8> = (0..src[1])
+            .flat_map(|y| {
+                (0..src[0]).flat_map(move |x| {
+                    let v = (60 + x * 6 + y * 2) as u8;
+                    if x * 2 + y / 4 >= 16 { [v, v / 2, 200, 255] } else { [v / 3, v, 40, 255] }
+                })
+            })
+            .collect();
+        let run = |format: wgpu::TextureFormat| {
+            let mut s = SceneScale::new(&gpu, format);
+            s.target(&gpu, src);
+            let tex = &s.target.as_ref().unwrap().tex;
+            // The world writes gamma-space bytes through the plain view; the bytes are the same either way.
+            gpu.queue.write_texture(
+                tex.as_image_copy(),
+                &pic,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(src[0] * 4),
+                    rows_per_image: Some(src[1]),
+                },
+                wgpu::Extent3d { width: src[0], height: src[1], depth_or_array_layers: 1 },
+            );
+            let out = gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d { width: dst[0], height: dst[1], depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let mut enc = gpu.device.create_command_encoder(&Default::default());
+            s.blit(&gpu, &mut enc, &out.create_view(&Default::default()), dst, [1.0; 3], None, false, 0, Some(75));
+            gpu.queue.submit([enc.finish()]);
+            read(&gpu, &out, dst[0], dst[1])
+        };
+        let plain = run(wgpu::TextureFormat::Rgba8Unorm);
+        let srgb = run(wgpu::TextureFormat::Rgba8UnormSrgb);
+        let worst = plain.iter().zip(&srgb).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
+        // 8-bit sRGB round trips in the darks cost up to 3; filtering decoded values instead differs by over 30.
+        assert!(worst <= 3, "sRGB differs from plain by up to {worst}");
     }
 
     /// FSR 1 keeps a flat colour flat, sharpened or not, at 1.5x and 2x.

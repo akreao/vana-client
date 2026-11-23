@@ -2017,7 +2017,7 @@ fn main() -> Result<()> {
                         eg.draw(
                             gpu,
                             enc,
-                            (color, depth, [1600, 900]),
+                            (color, depth, [color_tex.width(), color_tex.height()]),
                             Some(color_tex),
                             &fx,
                             (cam.proj(1600.0 / 900.0), cam.view(), cam.eye),
@@ -4032,7 +4032,7 @@ fn fx_shot(
         eg.draw(
             gpu,
             enc,
-            (color, depth, [1600, 900]),
+            (color, depth, [color_tex.width(), color_tex.height()]),
             Some(color_tex),
             &fx,
             (cam.proj(1600.0 / 900.0), cam.view(), cam.eye),

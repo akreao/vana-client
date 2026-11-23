@@ -18968,6 +18968,9 @@ impl App {
             && !lcd
             && (self.cfg.upscaler == crate::render::fsr1::FSR1 || fsr3_fallback);
         let bg = if fsr1 { crate::render::fsr1::render_size(size, self.cfg.upscale_quality.clamp(1, 4)) } else { bg };
+        if !fsr1 && let Some(s) = self.scene_scale.as_mut() {
+            s.drop_fsr1();
+        }
         // Within the device's texture size (4096 on some GLES parts), the aspect kept.
         let bg = crate::render::scale::fit(bg, gfx.gpu.max_texture_2d);
         if lcd {
