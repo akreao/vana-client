@@ -86,6 +86,9 @@ pub struct Inventory {
     /// Containers whose view added or dropped a row since Auto-sort last looked (bit = container): FUN_1021c5b0 and
     /// FUN_1021c680 set the view record's +8 to 0x52 (0x1021c654 / 0x1021c764), above any free-slot count.
     pub view_changed: u32,
+    /// View 3 per container, the plain one gardening and layout mode list from: FUN_1021c7e0(mask 0, 3, ..) rebuilds
+    /// it in slot order when those lists open; in between the same upkeep as `order` keeps it.
+    pub view3: BTreeMap<u8, Vec<u8>>,
 }
 
 impl Inventory {
@@ -103,10 +106,15 @@ impl Inventory {
         if self.viewed_ids.get(&(container, index)) == Some(&id)
             && self.order.get(&container).is_some_and(|o| o.contains(&index))
         {
+            let v3 = self.view3.entry(container).or_default();
+            if !v3.contains(&index) {
+                v3.push(index);
+            }
             return false;
         }
         self.unlist(container, index);
         self.order.entry(container).or_default().push(index);
+        self.view3.entry(container).or_default().push(index);
         self.viewed_ids.insert((container, index), id);
         self.mark_changed(container);
         true
@@ -129,6 +137,9 @@ impl Inventory {
     /// FUN_1021c680: drops the slot's row.
     fn unlist(&mut self, container: u8, index: u8) {
         self.viewed_ids.remove(&(container, index));
+        if let Some(o) = self.view3.get_mut(&container) {
+            o.retain(|&i| i != index);
+        }
         if let Some(o) = self.order.get_mut(&container)
             && let Some(p) = o.iter().position(|&i| i == index)
         {
@@ -141,6 +152,19 @@ impl Inventory {
         if container < 32 {
             self.view_changed |= 1 << container;
         }
+    }
+
+    /// FUN_1021c7e0(0, 3, 0x12, 0): view 3 rebuilt from slots 1..80 in slot order.
+    pub fn rebuild_view3(&mut self, container: u8) {
+        let v = self.slots.range((container, 1)..=(container, 80)).map(|(&(_, i), _)| i).collect();
+        self.view3.insert(container, v);
+    }
+
+    /// The occupied slots in view 3's order.
+    pub fn viewed3(&self, container: u8) -> Vec<Slot> {
+        let slots = self.slots_of(container);
+        let o = self.view3.get(&container).map(Vec::as_slice).unwrap_or_default();
+        o.iter().filter_map(|i| slots.iter().find(|s| s.index == *i).cloned()).collect()
     }
 
     /// The item id in a slot.
@@ -2364,6 +2388,29 @@ mod charged_tests {
         assert!(super::charged_ready(&e));
         e[0] = 2;
         assert!(!super::charged_ready(&e));
+    }
+}
+
+#[cfg(test)]
+mod view_tests {
+    /// FUN_1021c210's upkeep: new and replaced slots go to the end of every view, a count change stays, an emptied slot
+    /// leaves; FUN_1021c7e0(0, 3, ..) puts view 3 back in slot order.
+    #[test]
+    fn upkeep_appends_and_rebuild_restores_slot_order() {
+        let mut inv = super::Inventory::default();
+        for (i, id) in [(1, 572), (2, 573), (3, 4096)] {
+            inv.set(9, i, id, 1);
+        }
+        inv.set(9, 1, 2235, 1);
+        inv.set(9, 2, 573, 5);
+        inv.set(9, 5, 574, 1);
+        inv.set(9, 3, 0, 0);
+        let order = |inv: &super::Inventory| inv.viewed3(9).iter().map(|s| s.index).collect::<Vec<_>>();
+        assert_eq!(order(&inv), [2, 1, 5]);
+        assert_eq!(inv.order[&9], [2, 1, 5]);
+        inv.rebuild_view3(9);
+        assert_eq!(order(&inv), [1, 2, 5]);
+        assert_eq!(inv.order[&9], [2, 1, 5]);
     }
 }
 

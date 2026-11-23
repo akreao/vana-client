@@ -82,7 +82,8 @@ pub struct Garden {
     table: Arc<FurnTable>,
     map: u16,
     floor: u8,
-    /// FUN_101d5fe0: a room with furniture (the camera, the hidden player); else the moogle goes over.
+    /// A house with floors (FUN_100f9650, session +0x40db0 bit 0x1000; FUN_101d5fe0 is its negation): the camera,
+    /// the hidden player; else the moogle goes over.
     furnished: bool,
     /// myroom +0x1c: 2 the Safe's bankmenu, 3 gardening.
     mode: u8,
@@ -99,8 +100,12 @@ pub struct Garden {
     /// The saved rows: the pot list's (+0xa), the seed and crystal lists' (+8); their containers.
     saved: [usize; 3],
     src_c: [u8; 2],
-    /// A plnt window (1..6) and its cursor row.
+    /// The top plnt window (1..6) and its cursor row.
     win: Option<(u8, u16)>,
+    /// plnt windows under it, oldest first: the walk suspends them (one group, 4) and resumes the next one, its
+    /// cursor kept, when the top one closes. A prompt answer leaves the plnt window open (FUN_102070c0 /
+    /// FUN_102071e0 only bring the pot list back), so a later pot's window can stack on it.
+    under: Vec<(u8, u16)>,
     /// FUN_101cda60's +0x2a: each pot's last stage.
     stages: std::collections::HashMap<(u8, u8), u8>,
 }
@@ -118,11 +123,14 @@ fn is_pot(w: &World, c: u8, slot: u8, id: u16) -> bool {
     item_type(w, id) == POT && ext(w, c, slot)[1] & 0x40 != 0
 }
 
-/// A source's rows in slot order (container view 3), the locked ones grey (LockFlg not 0 / 5 / 0x1b): installed pots,
+/// A source's rows in container view 3's order, the locked ones grey (LockFlg not 0 / 5 / 0x1b): installed pots,
 /// seeds (item type 11, FUN_10207130), crystals (0x1000..0x1007, FUN_10207250).
 fn list_rows(w: &World, src: Src, c: u8) -> Vec<(Slot, u32)> {
-    (1..=80u8)
-        .filter_map(|s| w.inv.slots.get(&(c, s)).map(|&(id, count)| (s, id, count)))
+    w.inv
+        .viewed3(c)
+        .into_iter()
+        .filter(|s| (1..=80).contains(&s.index))
+        .map(|s| (s.index, s.id, s.count))
         .filter(|&(s, id, _)| match src {
             Src::Pots => is_pot(w, c, s, id),
             Src::Seeds => item_type(w, id) == SEED,
@@ -240,6 +248,7 @@ pub fn start(w: &mut World) {
         saved: [0; 3],
         src_c: [1, 1],
         win: None,
+        under: Vec::new(),
         stages,
     });
     log::info!("garden: started, floor {}, furnished {}", r.floor, super::myroom::has_floors(&r));
@@ -342,6 +351,10 @@ fn open_list(w: &mut World, g: &mut Garden, src: Src) {
         Src::Seeds => (1, g.src_c[0]),
         Src::Crystals => (2, g.src_c[1]),
     };
+    // The open hooks rebuild view 3: the pot source its own container's (0x102073f0); the seed and crystal sources
+    // always the Mog Safe's (0x101d1be0 / 0x101d1c70), so a Safe 2 list shows Safe 2's view as last rebuilt, with
+    // the slots changed since appended at the end (as read).
+    w.inv.rebuild_view3(if src == Src::Pots { c } else { 1 });
     let (top, cur) = restore_top(g.saved[k], list_rows(w, src, c).len());
     g.list = Some((src, top, cur));
     if src == Src::Pots {
@@ -365,11 +378,36 @@ fn close_list(g: &mut Garden) {
     g.list_up = false;
 }
 
-/// "→ list": the pot list back on its saved row, the plnt window closed.
+/// "→ list": the pot list back on its saved row, the plnt window closed (the one under it resumes).
 fn back_to_pots(w: &mut World, g: &mut Garden) {
-    g.win = None;
+    close_win(g);
     close_list(g);
     open_list(w, g, Src::Pots);
+}
+
+/// FUN_1015e350(plnt n, 1, 0): an open one (the top or a suspended one) runs its open hook again (row 1) and comes
+/// to the top; else it opens over the top one, which the walk suspends.
+fn open_win(g: &mut Garden, win: u8) {
+    raise(&mut g.win, &mut g.under, win);
+}
+
+fn raise(top: &mut Option<(u8, u16)>, under: &mut Vec<(u8, u16)>, win: u8) {
+    under.retain(|&(n, _)| n != win);
+    if let Some(t) = top.filter(|&(n, _)| n != win) {
+        under.push(t);
+    }
+    *top = Some((win, 1));
+}
+
+/// The top plnt window closes (FUN_1015e910 of its own name); the walk resumes the one under it.
+fn close_win(g: &mut Garden) {
+    g.win = g.under.pop();
+}
+
+/// plnt1..6 all closed (the crystal list's and the pot list's Escape, a stage change).
+fn close_wins(g: &mut Garden) {
+    g.win = None;
+    g.under.clear();
 }
 
 /// The current pot (container, slot, item).
@@ -410,7 +448,7 @@ pub fn update(w: &mut World, dt: f32) {
             && g.mode == 3
             && pot(&g).is_some_and(|p| (p.0, p.1) == k)
         {
-            g.win = None;
+            close_wins(&mut g);
             if matches!(w.confirm, Some((super::Confirm::Garden(_), _))) {
                 w.confirm = None;
             }
@@ -551,7 +589,7 @@ fn list_key(w: &mut World, g: &mut Garden, key: egui::Key) {
             Src::Pots => {
                 w.sounds.push(Ui::Cancel as u32);
                 close_list(g);
-                g.win = None;
+                close_wins(g);
                 if !g.furnished || g.floor != 0 {
                     moogle_away(w, false, g.floor);
                 }
@@ -561,7 +599,7 @@ fn list_key(w: &mut World, g: &mut Garden, key: egui::Key) {
             Src::Seeds | Src::Crystals => {
                 w.sounds.push(Ui::Cancel as u32);
                 if src == Src::Crystals {
-                    g.win = None;
+                    close_wins(g);
                 }
                 close_list(g);
                 open_list(w, g, Src::Pots);
@@ -580,7 +618,7 @@ fn list_key(w: &mut World, g: &mut Garden, key: egui::Key) {
                     g.cur = Some((s.index, s.id));
                     w.sounds.push(Ui::Select as u32);
                     match window_for(e[0], e[1] & 0x80 != 0) {
-                        Some(win) => g.win = Some((win, 1)),
+                        Some(win) => open_win(g, win),
                         None => g.ending = true,
                     }
                 }
@@ -641,10 +679,10 @@ fn win_key(w: &mut World, g: &mut Garden, win: u8, row: u16, key: egui::Key) {
                 }
                 Row::Seeds => g.bank = Some((1, For::Seeds)),
                 Row::Crystal => g.bank = Some((1, For::Crystals)),
-                Row::Exit if win == 5 => g.win = None,
+                Row::Exit if win == 5 => close_win(g),
                 Row::Exit => back_to_pots(w, g),
                 r @ (Row::Harvest | Row::Dry | Row::Throw) => {
-                    g.win = None;
+                    close_win(g);
                     let (ask, lines) = match r {
                         Row::Harvest => (Ask::Harvest, [0x4e, 0x55]),
                         Row::Dry => (Ask::Dry, [0x4d, 0x56]),
@@ -662,7 +700,8 @@ fn win_key(w: &mut World, g: &mut Garden, win: u8, row: u16, key: egui::Key) {
 }
 
 /// A prompt answered (Yes `yes`, else No or Escape): Yes sends its packet for the pot as it is now; either way the pot
-/// list comes back on its saved row.
+/// list comes back on its saved row (FUN_102070c0 / FUN_102071e0 / FUN_102069f0 / FUN_10206930), the plnt windows as
+/// they are: the seed / crystal flow's stays open under the list (a stage change from the Yes closes it).
 pub fn confirmed(w: &mut World, a: Ask, yes: bool) {
     let Some(mut g) = w.garden.take() else { return };
     if yes && let Some(p) = pot(&g) {
@@ -674,7 +713,8 @@ pub fn confirmed(w: &mut World, a: Ask, yes: bool) {
         }
     }
     if g.mode == 3 {
-        back_to_pots(w, &mut g);
+        close_list(&mut g);
+        open_list(w, &mut g, Src::Pots);
     }
     w.garden = Some(g);
 }
@@ -944,6 +984,18 @@ mod tests {
         assert!((look - Vec3::new(4.5, -0.9, -3.9)).length() < 1e-5);
         assert!((eye - Vec3::new(3.36647, -0.9, -2.9176)).length() < 1e-4, "{eye}");
         assert_eq!(restore_top(3, 40), (3, 0));
+        // plnt1 left open by a seed prompt's No (cursor on row 2), then a stage-9 pot's plnt4: plnt1 is suspended
+        // and comes back with its row when plnt4 closes; plnt1 opened again comes to the top on row 1.
+        let (mut top, mut under) = (Some((1, 2)), Vec::new());
+        raise(&mut top, &mut under, 4);
+        assert_eq!((top, under.clone()), (Some((4, 1)), vec![(1, 2)]));
+        assert_eq!(under.pop(), Some((1, 2)));
+        let (mut top, mut under) = (Some((4, 3)), vec![(1, 2)]);
+        raise(&mut top, &mut under, 1);
+        assert_eq!((top, under), (Some((1, 1)), vec![(4, 3)]));
+        let (mut top, mut under) = (Some((1, 2)), Vec::new());
+        raise(&mut top, &mut under, 1);
+        assert_eq!((top, under), (Some((1, 1)), vec![]));
         assert_eq!(
             restore_top(38, 40),
             (40 - crate::inventory::VISIBLE_ROWS, 38 - (40 - crate::inventory::VISIBLE_ROWS))
