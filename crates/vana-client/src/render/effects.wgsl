@@ -1271,9 +1271,10 @@ fn vs_flare(@builtin(vertex_index) k: u32, @builtin(instance_index) inst: u32) -
 // 2 x diffuse x texture, then x TFACTOR x 2. Stage 2 is not set: what a grouped specular draw left there adds.
 @fragment
 fn fs_flare(i: VOut) -> @location(0) vec4<f32> {
-    let t = textureSample(tex, samp, i.uv);
+    let t = textureSampleBias(tex, samp, i.uv, d.lod.x);
     let lk = leak_texel(i.lk, textureSample(leak2d, leak_samp, i.uv).rgb, textureSample(leakcopy, leak_samp, i.uv).rgb);
-    let a = sat(2.0 * sat(2.0 * i.color.a * t.a) * i.tf.a);
+    // The texture's alpha comes doubled from the upload (0x80 = 1.0), so stage 0's MODULATE2X is `t.a` here.
+    let a = sat(2.0 * sat(i.color.a * t.a) * i.tf.a);
     var rgb = sat3(sat3(2.0 * i.color.rgb * t.rgb) + a * lk);
     if (d.fog.z > 0.5) { rgb = pow(rgb, vec3<f32>(2.2)); }
     return vec4<f32>(rgb, a);
