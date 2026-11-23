@@ -192,17 +192,22 @@ impl MatUp {
             })
         };
         let tex = [make(), make()];
-        super::TEXTURE_BYTES.fetch_add((m.normal.len() * 2) as u64, std::sync::atomic::Ordering::Relaxed);
         MatUp { m, tex, at: (0, 0, 0) }
     }
 
     /// Writes as the budget allows (all when `all`); true once both chains are in (their views kept on the material).
     fn step(&mut self, gpu: &Gpu, all: bool) -> bool {
         let m = &self.m;
+        // Another texture sharing these maps (pack copies of one image) got them up first: theirs serve both.
+        if m.gpu.get().is_some() {
+            self.at.0 = 2;
+            return true;
+        }
         while self.at.0 < 2 && (all || gpu.upload_room() > 0) {
             let (chain, level, done) = self.at;
             let (w, h) = (m.width >> level, m.height >> level);
-            let (row, rows) = ((w / 4 * 16) as u64, h / 4);
+            // Blocks per row and block rows rounded up, as level_size counts them (a mip need not be a multiple of 4).
+            let (row, rows) = ((w.div_ceil(4) * 16) as u64, h.div_ceil(4));
             let start: usize = (0..level).map(|l| crate::material::level_size(m.width >> l, m.height >> l)).sum();
             let data = if chain == 0 { &m.normal } else { &m.rough_metal };
             let left = (rows - done) as u64;
@@ -219,7 +224,7 @@ impl MatUp {
                     },
                     &data[at..at + len],
                     wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row as u32), rows_per_image: Some(n) },
-                    wgpu::Extent3d { width: w, height: n * 4, depth_or_array_layers: 1 },
+                    wgpu::Extent3d { width: w.div_ceil(4) * 4, height: n * 4, depth_or_array_layers: 1 },
                 )
             });
             self.at.2 += n;
@@ -231,7 +236,15 @@ impl MatUp {
             return false;
         }
         let view = |t: &wgpu::Texture| t.create_view(&Default::default());
-        m.gpu.get_or_init(|| (view(&self.tex[0]), view(&self.tex[1])));
+        // Counted only when these are the views kept (a copy that lost the race to another texture is dropped).
+        let mut kept = false;
+        m.gpu.get_or_init(|| {
+            kept = true;
+            (view(&self.tex[0]), view(&self.tex[1]))
+        });
+        if kept {
+            super::TEXTURE_BYTES.fetch_add((m.normal.len() * 2) as u64, std::sync::atomic::Ordering::Relaxed);
+        }
         true
     }
 }
@@ -255,4 +268,41 @@ pub fn buffer_step(gpu: &Gpu, buf: &wgpu::Buffer, data: &[u8], at: &mut u64) -> 
         *at += n;
     }
     *at >= total
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Material maps whose mips are not a multiple of 4 (12 x 12: level 1 is 6 x 6, two blocks a side) stream
+    /// without a validation error, and a second texture sharing the maps reuses the first one's upload.
+    #[test]
+    fn material_maps_odd_mips_and_shared() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        if !gpu.device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
+            return;
+        }
+        let (w, h, levels) = (12, 12, 2);
+        let n = crate::material::Material::chain_size(w, h, levels);
+        assert_eq!(n, 9 * 16 + 4 * 16);
+        let m = std::sync::Arc::new(crate::material::Material {
+            width: w,
+            height: h,
+            levels,
+            normal: vec![0x80; n],
+            rough_metal: vec![0xff; n],
+            gpu: Default::default(),
+        });
+        let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut a = MatUp::new(&gpu, m.clone());
+        let mut b = MatUp::new(&gpu, m.clone());
+        assert!(a.step(&gpu, true));
+        let kept = m.gpu.get().map(|v| v.0.clone()).expect("views kept");
+        // The second copy stops at once and leaves the first one's views.
+        assert!(b.step(&gpu, true));
+        assert_eq!(b.at.0, 2);
+        assert!(m.gpu.get().unwrap().0 == kept);
+        gpu.queue.submit([]);
+        assert!(pollster::block_on(scope.pop()).is_none());
+    }
 }
