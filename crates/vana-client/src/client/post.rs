@@ -360,6 +360,9 @@ fn blocked(w: &World, recv: bool) -> bool {
         || w.map.is_some()
         || w.config.is_some()
         || w.mogdoor.is_some()
+        // The magic and ability lists are menu windows too: open over them, the box would not get the keys.
+        || w.magic.is_some()
+        || w.ability.is_some()
         || if recv { send_open(w) } else { recv_open(w) };
     main || super::target::sub_up(w)
 }
