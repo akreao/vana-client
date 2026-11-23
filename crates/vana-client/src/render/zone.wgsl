@@ -90,6 +90,72 @@ struct LampShadowU {
 // Config 0011: the animated meshes' vertex deltas (vertex flags >> 8, minus 1); the instance's sway is area.y.
 @group(0) @binding(4) var<storage, read> deltas: array<vec4<f32>>;
 
+// World sun shadows (ours, render/worldshadow.rs; Settings' World Shadows, off by default): the scenery's depth from
+// the zone's sun in one or two cached cascades. Only the sun's direct term is darkened (lit_zone, fs_bump, lit_actor),
+// so the painted vertex shade is not doubled. info.x 0 (off, night, indoors) leaves every term as retail's.
+struct WorldShadowU {
+    vp0: mat4x4<f32>,
+    vp1: mat4x4<f32>,
+    // x: strength (0 = off); y: cascades (1 or 2); z, w: each cascade's normal offset in world units.
+    info: vec4<f32>,
+    // x: one map texel in uv; yzw: the direction the map's light travels.
+    misc: vec4<f32>,
+};
+@group(0) @binding(6) var<uniform> wsh: WorldShadowU;
+@group(0) @binding(7) var wsh_map0: texture_depth_2d;
+@group(0) @binding(8) var wsh_map1: texture_depth_2d;
+@group(0) @binding(9) var wsh_cmp: sampler_comparison;
+
+// Four bilinear comparisons around the point (a 3 x 3 texel footprint): 1 lit, 0 shadowed.
+fn wsh_pcf0(lp: vec3<f32>) -> f32 {
+    let uv = vec2<f32>(lp.x * 0.5 + 0.5, 0.5 - lp.y * 0.5);
+    let t = 0.75 * wsh.misc.x;
+    return 0.25 * (textureSampleCompareLevel(wsh_map0, wsh_cmp, uv + vec2<f32>(-t, -t), lp.z)
+        + textureSampleCompareLevel(wsh_map0, wsh_cmp, uv + vec2<f32>(t, -t), lp.z)
+        + textureSampleCompareLevel(wsh_map0, wsh_cmp, uv + vec2<f32>(-t, t), lp.z)
+        + textureSampleCompareLevel(wsh_map0, wsh_cmp, uv + vec2<f32>(t, t), lp.z));
+}
+
+fn wsh_pcf1(lp: vec3<f32>) -> f32 {
+    let uv = vec2<f32>(lp.x * 0.5 + 0.5, 0.5 - lp.y * 0.5);
+    let t = 0.75 * wsh.misc.x;
+    return 0.25 * (textureSampleCompareLevel(wsh_map1, wsh_cmp, uv + vec2<f32>(-t, -t), lp.z)
+        + textureSampleCompareLevel(wsh_map1, wsh_cmp, uv + vec2<f32>(t, -t), lp.z)
+        + textureSampleCompareLevel(wsh_map1, wsh_cmp, uv + vec2<f32>(-t, t), lp.z)
+        + textureSampleCompareLevel(wsh_map1, wsh_cmp, uv + vec2<f32>(t, t), lp.z));
+}
+
+// How much of the sun's direct light reaches world point `p` with normal `n`: 1 lit (or off), down to 1 - strength.
+// The near cascade hands over to the far one over its outer edge; the last one fades out over its own.
+fn world_lit(p: vec3<f32>, n: vec3<f32>) -> f32 {
+    if (wsh.info.x <= 0.0) {
+        return 1.0;
+    }
+    let l0 = wsh.vp0 * vec4<f32>(p + n * wsh.info.z, 1.0);
+    let m0 = max(abs(l0.x), abs(l0.y));
+    var s = 1.0;
+    var fade = 1.0;
+    if (wsh.info.y < 1.5) {
+        if (m0 >= 1.0 || l0.z <= 0.0 || l0.z >= 1.0) {
+            return 1.0;
+        }
+        s = wsh_pcf0(l0.xyz);
+        fade = 1.0 - smoothstep(0.8, 0.98, m0);
+    } else {
+        let l1 = wsh.vp1 * vec4<f32>(p + n * wsh.info.w, 1.0);
+        let m1 = max(abs(l1.x), abs(l1.y));
+        let far = select(1.0, wsh_pcf1(l1.xyz), m1 < 1.0 && l1.z > 0.0 && l1.z < 1.0);
+        let k = smoothstep(0.85, 0.98, m0);
+        var near = far;
+        if (k < 1.0 && l0.z > 0.0 && l0.z < 1.0) {
+            near = wsh_pcf0(l0.xyz);
+        }
+        s = mix(near, far, k);
+        fade = 1.0 - smoothstep(0.8, 0.98, m1);
+    }
+    return 1.0 - wsh.info.x * (1.0 - s) * fade;
+}
+
 fn part_k(time: vec4<f32>, now: f32) -> f32 {
     return select(clamp((now - time.x) / time.y, 0.0, 1.0), 1.0, time.y <= 0.0);
 }
@@ -259,6 +325,11 @@ fn bump_points(lights: vec4<u32>, v: vec3<f32>, n: vec3<f32>, inv: mat3x3<f32>, 
 
 @vertex
 fn vs_main(v: VertexIn) -> VertexOut {
+    return scenery(v);
+}
+
+// The scenery's vertex (vs_main), shared with the world shadows' depth pass (vs_world_sun).
+fn scenery(v: VertexIn) -> VertexOut {
     var model = mat4x4<f32>(v.m0, v.m1, v.m2, v.m3);
     let part = u32(v.band.z);
     if (part != 0u) {
@@ -564,6 +635,25 @@ fn fs_sun_feet(i: SunOut) -> @location(0) vec4<f32> {
     return vec4<f32>(i.feet, 0.0, 0.0, 1.0);
 }
 
+// World sun shadows (render/worldshadow.rs): the scenery's depth through the cascade's matrix at group 3, its LOD
+// band as the scene's (a collapsed instance stays collapsed); cut-outs keep their alpha test.
+@vertex
+fn vs_world_sun(v: VertexIn) -> VertexOut {
+    var out = scenery(v);
+    if (any(out.clip != vec4<f32>(0.0))) {
+        out.clip = sil_vp * vec4<f32>(out.world, 1.0);
+    }
+    return out;
+}
+
+@fragment
+fn fs_world_cut(in: VertexOut) {
+    let a = textureSample(tex, samp, in.uv).a * in.color.a * 2.0;
+    if (a <= 96.0 / 255.0) {
+        discard;
+    }
+}
+
 // TFACTOR 0x80FFFFFF selected for colour and alpha (textures ignored, so cutouts fill solid).
 @fragment
 fn fs_silhouette() -> @location(0) vec4<f32> {
@@ -809,13 +899,30 @@ fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
     // moon as two lights (the zone's, or the area's) and table fog over the view depth.
     var direct = boost(sun_color) * max(dot(n, -sun), 0.0);
     var d = in.range;
+    // World shadows (ours): the zone's light only (an area's own light has no map).
+    let shadowed = slot == 0u && wsh.info.x > 0.0;
     if (u.modes.x < 0.5) {
         var two = u.two;
         if (slot != 0u && areas[slot].sun.w > 0.5) {
             two = areas[slot].two;
         }
-        direct = boost(two[1].rgb) * max(dot(n, -two[0].xyz), 0.0) + boost(two[3].rgb) * max(dot(n, -two[2].xyz), 0.0);
+        var lit_sun = boost(two[1].rgb) * max(dot(n, -two[0].xyz), 0.0);
+        var lit_moon = boost(two[3].rgb) * max(dot(n, -two[2].xyz), 0.0);
+        // The map is cast by one of the two (the zone's light, sun by day, moon by night): only that one's term
+        // is shaded, the one whose direction lies nearer the map's.
+        if (shadowed) {
+            let w = world_lit(in.world, n);
+            let to_map = wsh.misc.yzw;
+            if (dot(normalize(two[0].xyz), to_map) >= dot(normalize(two[2].xyz), to_map)) {
+                lit_sun = lit_sun * w;
+            } else {
+                lit_moon = lit_moon * w;
+            }
+        }
+        direct = lit_sun + lit_moon;
         d = in.depth;
+    } else if (shadowed && any(direct > vec3<f32>(0.0))) {
+        direct = direct * world_lit(in.world, n);
     }
     // Every N.L takes the normal's length (NORMALIZENORMALS off).
     let lit = clamp(in.color.rgb * (ambient_rs(ambient) / 255.0 + in.nscale * (direct + point_lights(in.lights, in.world, n))) + in.point, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -848,8 +955,12 @@ fn fs_bump(in: VertexOut) -> @location(0) vec4<f32> {
         fog_color = a.fog_color.rgb;
         fog = select(a.fog.xy, u.fog.xy, (in.area & 0x8000u) != 0u);
     }
-    let r1 = clamp(dot(t1 * 2.0 - 1.0, in.tsl * 2.0 - 1.0), 0.0, 1.0);
     let n = normalize(in.normal);
+    // World shadows (ours) take the sun's term, as lit_zone's.
+    var r1 = clamp(dot(t1 * 2.0 - 1.0, in.tsl * 2.0 - 1.0), 0.0, 1.0);
+    if (slot == 0u && r1 > 0.0) {
+        r1 = r1 * world_lit(in.world, n);
+    }
     let t2 = clamp(boost(sun_color) * in.color.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     let t3 = clamp((min(boost(ambient), vec3<f32>(1.0)) * 0.5 + point_lights(in.lights, in.world, n)) * in.color.rgb + in.point, vec3<f32>(0.0), vec3<f32>(1.0));
     let rgb = clamp(2.0 * (r1 * t2 + t3) * to_gamma(t0.rgb), vec3<f32>(0.0), vec3<f32>(1.0));
@@ -879,7 +990,11 @@ fn lit_actor(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
         fog = a.fog.xy;
     }
     color = boost(color);
-    let ndl = max(dot(normalize(in.normal), -sun), 0.0);
+    var ndl = max(dot(normalize(in.normal), -sun), 0.0);
+    // World shadows (ours): an actor in the shade of the zone's scenery loses its sun term as the ground does.
+    if (slot == 0u && ndl > 0.0) {
+        ndl = ndl * world_lit(in.world, normalize(in.normal));
+    }
     // D3DRS_AMBIENT (ambient_rs); the target flash mixes those bytes toward 220 and scales the fog colour
     // (FUN_100c94a0).
     let amb = floor(mix(ambient_rs(ambient), vec3<f32>(220.0), in.flash.x)) / 255.0;
