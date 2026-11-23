@@ -30,9 +30,49 @@ pub fn rains(number: u16) -> bool {
 pub const SOAK_SECS: f32 = 30.0;
 pub const DRY_SECS: f32 = 90.0;
 
+/// Seconds for the ripples (drops landing) to fade in or out as rain starts or stops.
+pub const FALL_SECS: f32 = 3.0;
+
 /// The wetness `wet` (0 dry .. 1 soaked) eased `dt` seconds toward `raining`.
 pub fn ease_wet(wet: f32, raining: bool, dt: f32) -> f32 {
     if raining { (wet + dt / SOAK_SECS).min(1.0) } else { (wet - dt / DRY_SECS).max(0.0) }
+}
+
+/// The ground's state, followed every world frame whether the effect is on or not (turning it on just after a shower
+/// shows the ground still wet).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Wetness {
+    /// How wet the ground is, 0 dry .. 1 soaked: darkening, shine and puddles.
+    pub wet: f32,
+    /// How much rain is falling now, 0..1: the ripples. Drops stop landing soon after the rain stops, while the
+    /// ground stays wet.
+    pub fall: f32,
+    /// The ripples' clock (seconds).
+    pub clock: f32,
+    /// The zone it is for.
+    pub zone: Option<u16>,
+}
+
+impl Wetness {
+    /// Soaked in falling rain, the ripples at `clock` (zone-shot's frames).
+    pub fn soaked(clock: f32) -> Self {
+        Self { wet: 1.0, fall: 1.0, clock, zone: None }
+    }
+
+    /// Eased `dt` seconds toward `raining` (the ground dries off slower than it soaks), the ripples' clock run on. In
+    /// a zone other than the last one's, the ground starts as the weather has it: soaked in rain, dry otherwise (the
+    /// rain didn't follow us through the zone line).
+    pub fn step(&mut self, raining: bool, dt: f32, zone: Option<u16>) {
+        if zone != self.zone {
+            let v = if raining { 1.0 } else { 0.0 };
+            (self.zone, self.wet, self.fall) = (zone, v, v);
+        }
+        self.wet = ease_wet(self.wet, raining, dt);
+        let k = dt / FALL_SECS;
+        self.fall = if raining { (self.fall + k).min(1.0) } else { (self.fall - k).max(0.0) };
+        // Wrapped well before f32 loses the ripples' fraction of a second.
+        self.clock = (self.clock + dt) % 4096.0;
+    }
 }
 
 /// (least the wet ground keeps of its colour, puddle cover 0..1, ripple brightness, sheen brightness) for Subtle (1)
@@ -57,8 +97,10 @@ struct U {
     p: vec4<f32>,
     // rgb: the sky's colour (the zone's fog this frame, gamma space); a: the sheen's brightness.
     sky: vec4<f32>,
-    // x: how far the ground is wet; y: how far the ripples go.
+    // x: how far the ground is wet; y: how far the ripples go; z, w: retail's fog start and end (view depth).
     far: vec4<f32>,
+    // xyz: the view's forward axis (unit); w: how much rain is falling now (the ripples).
+    fwd: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var depth: texture_2d<f32>;
@@ -156,7 +198,12 @@ fn ripples(g: vec2<f32>, t: f32) -> f32 {
     let up = smoothstep(0.75, 0.95, -n.y);
     let side = smoothstep(-0.1, 0.3, -n.y);
     if (side <= 0.0) { discard; }
-    let wet = u.p.x * mix(0.5 * side, 1.0, smoothstep(0.2, 0.8, -n.y)) * (1.0 - smoothstep(u.far.x * 0.65, u.far.x, dist));
+    // Retail's fog has already covered what is far (d3d_out_fog, by view depth): the rain's marks fade with what of
+    // the ground still shows, so fully fogged ground stays the fog's colour.
+    let fog_span = max(u.far.w - u.far.z, 1e-3);
+    let shows = clamp((u.far.w - dot(p - u.eye.xyz, u.fwd.xyz)) / fog_span, 0.0, 1.0);
+    if (shows <= 0.0) { discard; }
+    let wet = shows * u.p.x * mix(0.5 * side, 1.0, smoothstep(0.2, 0.8, -n.y)) * (1.0 - smoothstep(u.far.x * 0.65, u.far.x, dist));
     // Puddles in patches a few units across, where the noise is high, on level ground only; their edges soft.
     let g = p.xz;
     let cover = u.p.z;
@@ -169,10 +216,10 @@ fn ripples(g: vec2<f32>, t: f32) -> f32 {
     let level = wet * smoothstep(0.5, 0.9, -n.y);
     var add = u.sky.rgb * u.sky.a * f * (0.35 * level + puddle);
     // The ripples, near the camera only, on wet level ground and brightest in puddles.
-    if (dist < u.far.y) {
+    if (dist < u.far.y && u.fwd.w > 0.0) {
         let near = 1.0 - smoothstep(u.far.y * 0.5, u.far.y, dist);
         let ring = ripples(g, u.eye.w);
-        add += u.sky.rgb * (u.p.w * ring * near * (0.3 * level * up + puddle));
+        add += u.sky.rgb * (u.p.w * u.fwd.w * ring * near * (0.3 * level * up + puddle));
     }
     return vec4<f32>(add, keep);
 }
@@ -187,20 +234,23 @@ pub struct Rain {
     strength: u32,
 }
 
-/// The pass's uniform for `frame` at `strength` with the ground `wet` (0..1) at `clock` seconds, or None when there is
-/// nothing to draw: dry ground, indoors (no sun or moon in the frame) or no zone fog to take the sky's colour from.
-pub fn uniform(frame: &Frame, strength: u32, wet: f32, clock: f32) -> Option<[f32; 32]> {
+/// The pass's uniform for `frame` at `strength` with the ground as `state` has it, or None when there is nothing to
+/// draw: dry ground, indoors (no sun or moon in the frame) or no zone fog to take the sky's colour from.
+pub fn uniform(frame: &Frame, strength: u32, state: &Wetness) -> Option<[f32; 36]> {
+    let Wetness { wet, fall, clock, .. } = *state;
     if wet <= 0.0 || frame.sun.is_none() {
         return None;
     }
     let fog = frame.fog?;
     let [keep, cover, ripple, sheen] = params(strength);
-    let mut u = [0.0f32; 32];
+    let mut u = [0.0f32; 36];
     u[..16].copy_from_slice(&frame.view_proj.inverse().to_cols_array());
     u[16..20].copy_from_slice(&[frame.eye.x, frame.eye.y, frame.eye.z, clock]);
     u[20..24].copy_from_slice(&[wet.min(1.0), keep, cover, ripple]);
     u[24..28].copy_from_slice(&[fog.color[0], fog.color[1], fog.color[2], sheen]);
-    u[28..32].copy_from_slice(&[WET_FAR, RIPPLE_FAR, 0.0, 0.0]);
+    u[28..32].copy_from_slice(&[WET_FAR, RIPPLE_FAR, fog.start, fog.end]);
+    let fwd = (frame.target - frame.eye).try_normalize().unwrap_or(glam::Vec3::Z);
+    u[32..36].copy_from_slice(&[fwd.x, fwd.y, fwd.z, fall]);
     Some(u)
 }
 
@@ -253,7 +303,7 @@ impl Rain {
         };
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wet ground"),
-            size: 32 * 4,
+            size: 36 * 4,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -271,7 +321,6 @@ impl Rain {
     }
 
     /// The wet ground over `scene` by `depth` (the scene's), when the uniform says there is any.
-    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &self,
         gpu: &Gpu,
@@ -279,10 +328,9 @@ impl Rain {
         scene: &wgpu::TextureView,
         depth: &wgpu::TextureView,
         frame: &Frame,
-        wet: f32,
-        clock: f32,
+        state: &Wetness,
     ) {
-        let Some(u) = uniform(frame, self.strength, wet, clock) else { return };
+        let Some(u) = uniform(frame, self.strength, state) else { return };
         super::Put::put(&gpu.queue, &self.uniform, 0, bytemuck::cast_slice(&u));
         let g = self.group.get(depth.clone(), || {
             gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -316,6 +364,18 @@ mod tests {
     }
 
     #[test]
+    fn drops_stop_before_the_ground_dries() {
+        let mut s = Wetness::default();
+        s.step(true, 0.0, Some(100));
+        assert_eq!((s.wet, s.fall), (1.0, 1.0), "a new zone in rain starts soaked");
+        s.step(false, FALL_SECS, Some(100));
+        assert_eq!(s.fall, 0.0);
+        assert!(s.wet > 0.9, "{s:?}");
+        s.step(false, 1.0, Some(101));
+        assert_eq!((s.wet, s.fall), (0.0, 0.0), "a new zone in dry weather starts dry");
+    }
+
+    #[test]
     fn soaks_then_dries_slower() {
         let mut w = 0.0;
         for _ in 0..15 {
@@ -341,23 +401,24 @@ mod tests {
     fn nothing_dry_indoors_or_unlit() {
         let c = cam(Vec3::new(0.0, -2.0, 0.0), Vec3::new(0.0, 0.0, 10.0));
         let f = frame(&c);
-        assert!(uniform(&f, 1, 0.0, 0.0).is_none(), "dry");
-        assert!(uniform(&Frame { sun: None, ..f }, 1, 1.0, 0.0).is_none(), "indoors");
-        assert!(uniform(&Frame { fog: None, ..f }, 1, 1.0, 0.0).is_none(), "no zone lighting");
-        let u = uniform(&f, 2, 1.0, 3.0).unwrap();
-        assert_eq!((u[19], u[20], u[21]), (3.0, 1.0, 0.6));
+        let soaked = Wetness::soaked(3.0);
+        assert!(uniform(&f, 1, &Wetness::default()).is_none(), "dry");
+        assert!(uniform(&Frame { sun: None, ..f }, 1, &soaked).is_none(), "indoors");
+        assert!(uniform(&Frame { fog: None, ..f }, 1, &soaked).is_none(), "no zone lighting");
+        let u = uniform(&f, 2, &soaked).unwrap();
+        assert_eq!((u[19], u[20], u[21], u[30], u[31], u[35]), (3.0, 1.0, 0.6, 20.0, 200.0, 1.0));
     }
 
     /// A grey scene whose depth is a flat floor (y = 0, y down) seen from 2 units above, or a wall straight ahead,
     /// after the pass.
-    fn after(gpu: &Gpu, rain: &Rain, wall: bool, wet: f32) -> Vec<[u8; 4]> {
+    fn after(gpu: &Gpu, rain: &Rain, wall: bool, wet: f32, fog: FogFrame) -> Vec<[u8; 4]> {
         let n = 32u32;
         let c = if wall {
             cam(Vec3::new(0.0, -2.0, 0.0), Vec3::new(0.0, -2.0, 10.0))
         } else {
             cam(Vec3::new(0.0, -2.0, 0.0), Vec3::new(0.0, 0.0, 6.0))
         };
-        let f = frame(&c);
+        let f = Frame { fog: Some(fog), ..frame(&c) };
         let (tex, view) = filled(gpu, [n, n], |_, _| [128, 128, 128, 255]);
         // The depth of each pixel's ray hitting the floor (y = 0) or the wall (z = 8), written as R32Float.
         let vp = c.view_proj(1.0);
@@ -392,7 +453,7 @@ mod tests {
         );
         let depth = dt.create_view(&Default::default());
         let mut enc = gpu.device.create_command_encoder(&Default::default());
-        rain.draw(gpu, &mut enc, &view, &depth, &f, wet, 1.0);
+        rain.draw(gpu, &mut enc, &view, &depth, &f, &Wetness { wet, ..Wetness::soaked(1.0) });
         gpu.queue.submit([enc.finish()]);
         read(gpu, &tex)
     }
@@ -403,7 +464,7 @@ mod tests {
         let mut rain = Rain::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
         rain.set_strength(2);
         let n = 32usize;
-        let floor = after(&gpu, &rain, false, 1.0);
+        let floor = after(&gpu, &rain, false, 1.0, FOG);
         // The bottom row looks down at the floor near the eye: darker than the scene, and the alpha kept.
         let near = floor[(n - 1) * n + n / 2];
         assert!(near[0] < 128 && near[3] == 255, "{near:?}");
@@ -413,10 +474,14 @@ mod tests {
         let mid = floor[(n / 2 + 2) * n + n / 2];
         assert!(mid[0] > near[0], "{mid:?} {near:?}");
         // A wall darkens less than the floor and gets no shine.
-        let wall = after(&gpu, &rain, true, 1.0);
+        let wall = after(&gpu, &rain, true, 1.0, FOG);
         let w = wall[(n / 2) * n + n / 2];
         assert!(w[0] < 128 && w[0] > near[0] && w[3] == 255, "{w:?} {near:?}");
+        // Retail fog that hides all but the nearest ground: what it covers keeps the fog's look.
+        let fogged = after(&gpu, &rain, false, 1.0, FogFrame { color: FOG.color, start: 1.0, end: 2.5 });
+        let far = fogged[(n / 2 + 2) * n + n / 2];
+        assert_eq!(far, [128, 128, 128, 255]);
         // Dry ground: no pass at all.
-        assert!(after(&gpu, &rain, false, 0.0).iter().all(|p| *p == [128, 128, 128, 255]));
+        assert!(after(&gpu, &rain, false, 0.0, FOG).iter().all(|p| *p == [128, 128, 128, 255]));
     }
 }

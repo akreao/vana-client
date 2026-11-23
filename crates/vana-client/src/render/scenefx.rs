@@ -108,16 +108,13 @@ pub struct SceneFx {
     rays: Option<GodRays>,
     dof: Option<Dof>,
     rain: Option<Rain>,
-    /// How wet the ground is (0..1, render/rain.rs ease_wet) and the ripples' clock (seconds).
-    wet: f32,
-    clock: f32,
-    /// The zone the wetness is for.
-    wet_zone: Option<u16>,
+    /// The ground's wetness this frame (render/rain.rs).
+    wetness: super::rain::Wetness,
 }
 
 impl SceneFx {
     pub fn new(format: wgpu::TextureFormat) -> Self {
-        Self { format, bloom: None, fog: None, rays: None, dof: None, rain: None, wet: 0.0, clock: 0.0, wet_zone: None }
+        Self { format, bloom: None, fog: None, rays: None, dof: None, rain: None, wetness: Default::default() }
     }
 
     /// Makes what `want` turns on for a scene of `size` (made on first use or a size change) and lets go of what it
@@ -156,22 +153,9 @@ impl SceneFx {
         }
     }
 
-    /// The ground's wetness eased `dt` seconds toward `raining` (it dries off slower than it soaks), and the ripples'
-    /// clock run on. In a zone other than the last one's, the ground starts as the weather has it: soaked in rain,
-    /// dry otherwise (the rain didn't follow us through the zone line).
-    pub fn step_rain(&mut self, raining: bool, dt: f32, zone: Option<u16>) {
-        if zone != self.wet_zone {
-            self.wet_zone = zone;
-            self.wet = if raining { 1.0 } else { 0.0 };
-        }
-        self.wet = super::rain::ease_wet(self.wet, raining, dt);
-        // Wrapped well before f32 loses the ripples' fraction of a second.
-        self.clock = (self.clock + dt) % 4096.0;
-    }
-
-    /// The ground's wetness and the ripples' clock set outright (zone-shot's soaked frames).
-    pub fn set_rain(&mut self, wet: f32, clock: f32) {
-        (self.wet, self.clock) = (wet, clock);
+    /// The ground's wetness for the frames drawn next.
+    pub fn set_rain(&mut self, wetness: super::rain::Wetness) {
+        self.wetness = wetness;
     }
 
     /// The effects turned on, over `scene` (the plain, not sRGB, view of the scene target, the size `prepare` was
@@ -186,7 +170,7 @@ impl SceneFx {
         frame: &Frame,
     ) {
         if let Some(w) = &self.rain {
-            w.draw(gpu, encoder, scene, depth, frame, self.wet, self.clock);
+            w.draw(gpu, encoder, scene, depth, frame, &self.wetness);
         }
         if let Some(f) = &self.fog {
             f.draw(gpu, encoder, scene, depth, frame);

@@ -8975,6 +8975,8 @@ pub struct App {
     post_fx: Option<crate::render::postfx::PostFx>,
     /// The scene effects turned on (render/scenefx.rs); None while all are off.
     scene_fx: Option<crate::render::scenefx::SceneFx>,
+    /// The ground's wetness in the rain (render/rain.rs), followed whether Wet Ground is on or not.
+    wetness: crate::render::rain::Wetness,
     /// The Lua HUD's portrait targets (client/portrait.rs).
     portraits: portrait::Portraits,
     /// Frames per second, 0 = unlimited (config frame_limit), and the present mode must be picked again.
@@ -9368,6 +9370,7 @@ impl App {
             recorder: None,
             post_fx: None,
             scene_fx: None,
+            wetness: Default::default(),
             portraits: Default::default(),
             frame_limit,
             present_dirty: false,
@@ -19087,6 +19090,7 @@ impl App {
             effects_gpu: &mut self.effects_gpu,
             post_fx: &mut self.post_fx,
             scene_fx: &mut self.scene_fx,
+            wetness: &mut self.wetness,
             audio: &mut self.audio,
             fx_census: &mut self.fx_census,
         };
@@ -19727,6 +19731,7 @@ struct WorldDraw<'a> {
     effects_gpu: &'a mut Option<crate::render::effects::EffectsGpu>,
     post_fx: &'a mut Option<crate::render::postfx::PostFx>,
     scene_fx: &'a mut Option<crate::render::scenefx::SceneFx>,
+    wetness: &'a mut crate::render::rain::Wetness,
     audio: &'a mut Option<crate::audio::Audio>,
     fx_census: &'a mut Option<Instant>,
 }
@@ -21423,12 +21428,14 @@ fn world_overlays(
     let WorldFrame { camera, .. } = wf;
     // The scene effects (ours, render/scenefx.rs) over the finished 3D scene, under the shapes, mods' passes and
     // fades: only those turned on, and nothing made while all are off.
+    // The ground soaks while it rains on us (render/rain.rs) and dries off after; a new zone starts as its weather.
+    // Followed with the effect off too, so turning it on after a shower finds the ground as wet as it is.
+    cx.wetness.step(crate::render::rain::rains(event::weather(w)), wf.dt, w.zone);
     let want = crate::render::scenefx::Want::from_config(cx.cfg);
     if want.any() {
         let fx = cx.scene_fx.get_or_insert_with(|| crate::render::scenefx::SceneFx::new(scene_fmt));
         fx.prepare(&gfx.gpu, want, bg);
-        // The ground soaks while it rains on us (render/rain.rs) and dries off after; a new zone starts as its weather.
-        fx.step_rain(crate::render::rain::rains(event::weather(w)), wf.dt, w.zone);
+        fx.set_rain(*cx.wetness);
         let frame = crate::render::scenefx::Frame::new(camera, fg.aspect, r.lighting.as_ref());
         fx.draw(&gfx.gpu, &mut fg.encoder, &scene_raw, &scene_depth, &frame);
         fg.mark("scene fx");

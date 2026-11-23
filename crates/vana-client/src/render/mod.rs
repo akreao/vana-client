@@ -5466,7 +5466,7 @@ pub fn render_pngs_post(
     if let Some(fx) = scene_fx.as_mut() {
         fx.prepare(&gpu, fx_want, [width, height]);
         // FFXI_WET_GROUND's frames are soaked, the ripples caught at a fixed moment (the same picture each run).
-        fx.set_rain(1.0, 1.3);
+        fx.set_rain(rain::Wetness::soaked(1.3));
     }
     // FFXI_BENCH=N: the first view N more times after a warm-up, its time a frame printed (GPU-bound offscreen).
     if let (Some(n), Some((camera, _, lighting))) =
