@@ -864,7 +864,13 @@ fn lobby_text(lu: &mut GameUi, slots: &[crate::render::screens::TextSlot], help:
     for t in slots {
         match t.what {
             "help line" => lu.text(help, t.x, t.y, t.align, color),
-            w if w.starts_with("ver.") => lu.text(&format!("ver.{version}"), t.x, t.y, t.align, WHITE),
+            w if w.starts_with("ver.") => {
+                lu.text(&format!("ver.{version}"), t.x, t.y, t.align, WHITE);
+                // Ours: NVIDIA's credit where DLSS can run (render/upscale/dlss.rs), the line above.
+                if let Some(c) = crate::render::upscale::dlss::credit() {
+                    lu.text(c, t.x, t.y - 16.0, t.align, WHITE);
+                }
+            }
             _ => {}
         }
     }

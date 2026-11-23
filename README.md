@@ -265,3 +265,7 @@ Bundled third-party files keep their licenses: the Fira Sans, Inter and JetBrain
 Open Font License (the texts are beside them in `crates/vana-client/assets/fonts`), and SMAA's area and search textures in
 `crates/vana-client/src/render/smaa` are under MIT (Jimenez et al., the text is beside them). The game's files are Square Enix's and are not
 covered by this license.
+
+Builds made with the `dlss` cargo feature use NVIDIA DLSS through NVIDIA's NGX SDK (NVIDIA RTX SDKs License); the
+DLSS runtime is downloaded from NVIDIA on first use. NVIDIA, DLSS and RTX are trademarks of NVIDIA Corporation.
+NVIDIA's notices for DLSS and the third-party code in its runtime are in `docs/notices/NVIDIA-DLSS.txt`.

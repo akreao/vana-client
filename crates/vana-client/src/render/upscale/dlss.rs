@@ -34,6 +34,17 @@ pub fn status() -> Result<(), String> {
     STATUS.lock().ok().and_then(|n| n.clone()).unwrap_or_else(|| Err("no device yet".into()))
 }
 
+/// NVIDIA's notices for DLSS and the third-party code in its runtime (docs/notices/NVIDIA-DLSS.txt), written beside
+/// the downloaded runtime.
+#[cfg(feature = "dlss")]
+const NOTICES: &str = include_str!("../../../../../docs/notices/NVIDIA-DLSS.txt");
+
+/// The credit the title screen shows above the version where DLSS can run (a `dlss` build on an NVIDIA RTX GPU), as
+/// the SDK licence asks of applications using DLSS; None elsewhere, so other builds and GPUs keep the retail screen.
+pub fn credit() -> Option<&'static str> {
+    status().is_ok().then_some("Uses NVIDIA DLSS")
+}
+
 /// The DLSS SDK release whose runtime is fetched (the one dlss_wgpu 6.0 and its NGX library are made for).
 #[cfg_attr(not(feature = "dlss"), allow(dead_code))]
 const SDK_TAG: &str = "v310.9.1";
@@ -135,6 +146,8 @@ fn fetch_runtime() -> anyhow::Result<()> {
         anyhow::bail!("{url}: SHA-256 {got}, expected {sha}");
     }
     std::fs::rename(&tmp, dir.join(name))?;
+    #[cfg(feature = "dlss")]
+    std::fs::write(dir.join("NVIDIA-DLSS-NOTICES.txt"), NOTICES)?;
     Ok(())
 }
 

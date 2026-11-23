@@ -62,9 +62,11 @@ FSR 3.1, so the scaling pass grades and encodes it the same way.
   A runtime beside the executable is used too. If NGX refuses the GPU (not an RTX card, an old driver), the DLSS
   choices are withdrawn.
 - **GPUs**: GeForce RTX 20 series and newer (and RTX workstation cards) with a current driver, Windows and Linux.
-- **Shipping a `dlss` build** carries the SDK licence's terms (the NGX library is linked in): the notices of section
-  9.5 of the SDK's `doc/DLSS_Programming_Guide_Release.pdf`, and the use of DLSS credited where the licence's
-  trademark exhibit says (splash screen, about box, credits).
+- **Credit and notices** (the SDK licence's terms for an application using DLSS): where DLSS can run, the title
+  screen shows "Uses NVIDIA DLSS" above the version; the Upscaling help names NVIDIA's trademarks; NVIDIA's notices
+  (the programming guide's sections 9.5 and 9.6, for the third-party code in the runtime) are in
+  `docs/notices/NVIDIA-DLSS.txt`, mentioned in the README, and written beside the downloaded runtime as
+  `NVIDIA-DLSS-NOTICES.txt`. NVIDIA's logos are not used: their use needs NVIDIA's written approval first.
 - `zone-shot` takes `FFXI_FSR3=0..4 FFXI_UPSCALER=4` for a still frame through DLSS at that quality.
 
 ## The engine library (Upscaling: External, Neural Rendering)
