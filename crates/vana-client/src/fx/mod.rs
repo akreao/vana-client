@@ -1009,6 +1009,8 @@ pub struct Effects {
     stepping: Vec<usize>,
     dolls: Vec<tasks::Doll>,
     pending: Vec<tasks::Pending>,
+    /// Furniture actors whose model file is still to come (tasks.rs on_furniture): actor, file.
+    furn_starts: Vec<(u32, u32)>,
     /// FUN_1008c480: the wanted sub-animation while an `init` start (on_init) takes its first step.
     sub_now: Option<(u32, u8)>,
     /// Actor +0xa0: the cast 4cc stored by FUN_10083d60.
@@ -1272,6 +1274,7 @@ impl Effects {
             stepping: Vec::new(),
             dolls: Vec::new(),
             pending: Vec::new(),
+            furn_starts: Vec::new(),
             sub_now: None,
             casting: HashMap::new(),
             sched_cache: HashMap::new(),
@@ -1488,6 +1491,7 @@ impl Effects {
         self.trails_dirty = true;
         self.dolls.clear();
         self.pending.clear();
+        self.furn_starts.clear();
         self.models.clear();
         self.shine.clear();
         self.shine_drives.clear();
@@ -1570,7 +1574,10 @@ impl Effects {
         for node in starts {
             self.start((l, node), Owner::SubArea);
         }
-        // Parsed again at each load, so its self-starting schedulers start again.
+        // Parsed again at each load, so its self-starting schedulers start again. Its environments take the zone's
+        // weather tag at once (FUN_101873a0 -> FUN_101874f0) and would switch their own `weat` folder's schedulers
+        // and generators as the zone's do, but no sub-area file has that folder (census
+        // dat::sched::census::sub_area_weat_census: 0 of 259).
         self.start_auto(l, None);
     }
 
@@ -3319,6 +3326,25 @@ impl Effects {
             }
         }
         scan
+    }
+
+    /// Whether a generator instance belongs to the scene (the zone's, a sub-area's, a weather's or an event's), not
+    /// to an actor's model or footsteps, following element owners up: water reflections (render/reflect.rs) look only
+    /// at these.
+    pub fn zone_owned(&self, inst: usize) -> bool {
+        let mut inst = inst;
+        for _ in 0..8 {
+            let Some(i) = self.insts.get(inst).and_then(|x| x.as_ref()) else { return false };
+            match i.owner {
+                Owner::Actor(_) | Owner::Step(_) => return false,
+                Owner::Element(e) => match self.elems.get(e).and_then(|c| c.as_ref()) {
+                    Some(c) => inst = c.inst,
+                    None => return true,
+                },
+                _ => return true,
+            }
+        }
+        true
     }
 
     /// One line per live element: generator path, what it draws, blend, flags, key, life.
