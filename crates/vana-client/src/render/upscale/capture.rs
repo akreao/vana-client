@@ -27,15 +27,17 @@ impl Request {
     }
 }
 
-/// A folder of its own under `parent`: `name`, else `name`-2, -3.. when a capture in the same second took it.
+/// A folder name of its own under `parent`: `name`, else `name`-2, -3.. when a capture in the same second has it
+/// (on disk, or handed out this run and not written yet). Nothing is made here: the writer makes it with the first
+/// frame, so a capture that never starts (upscaling off, a logout first) leaves no empty folder.
 fn reserve(parent: &std::path::Path, name: &str) -> PathBuf {
-    let _ = std::fs::create_dir_all(parent);
+    static GIVEN: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+    let mut given = GIVEN.lock().unwrap_or_else(|e| e.into_inner());
     for n in 1u32..1000 {
         let dir = if n == 1 { parent.join(name) } else { parent.join(format!("{name}-{n}")) };
-        match std::fs::create_dir(&dir) {
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            // Made, or a failure the writer reports.
-            _ => return dir,
+        if !dir.exists() && !given.contains(&dir) {
+            given.push(dir.clone());
+            return dir;
         }
     }
     parent.join(name)
@@ -182,14 +184,17 @@ pub fn finish(gpu: &Gpu, p: Pending) -> Option<Request> {
 mod tests {
     use super::f16_to_f32;
 
-    /// Two captures in the same second get folders of their own.
+    /// Two captures in the same second get folders of their own, a folder already on disk is skipped, and nothing
+    /// is made before the first frame is written.
     #[test]
     fn same_second_captures_kept_apart() {
         let parent = std::env::temp_dir().join(format!("vana-capture-test-{}", std::process::id()));
         let a = super::reserve(&parent, "100-x");
         let b = super::reserve(&parent, "100-x");
-        assert_eq!(a, parent.join("100-x"));
-        assert_eq!(b, parent.join("100-x-2"));
+        assert_eq!((a.clone(), b), (parent.join("100-x"), parent.join("100-x-2")));
+        assert!(!a.exists());
+        std::fs::create_dir_all(parent.join("100-y")).unwrap();
+        assert_eq!(super::reserve(&parent, "100-y"), parent.join("100-y-2"));
         let _ = std::fs::remove_dir_all(&parent);
     }
 
