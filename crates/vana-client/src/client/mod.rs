@@ -7573,6 +7573,11 @@ type ZoneData = (
     ZoneEffects,
 );
 
+/// A zone's reflecting floors (render/reflect.rs), as the scene carries them.
+fn floor_list(zone: u32) -> Vec<(String, f32)> {
+    crate::render::reflect::floor_textures(zone).iter().map(|(n, w)| (n.to_string(), *w)).collect()
+}
+
 /// Reads and builds a zone (on a loader thread): `bump` config 0017's bump maps, `need_global` DAT 0's effects too.
 fn load_zone_data(
     index: &DatIndex,
@@ -7584,6 +7589,7 @@ fn load_zone_data(
 ) -> Result<ZoneData> {
     let file = index.read(crate::dat::zone::file_id(map_no as u32))?;
     let mut scene = zone::load_scene(keys, &file)?;
+    scene.floors = floor_list(map_no as u32);
     if bump {
         scene.bumps =
             crate::dat::bump::parse(&index.read(crate::dat::bump::file_id(map_no as u32)).unwrap_or_default());
@@ -11837,6 +11843,7 @@ impl App {
                         (|| {
                             let file = index.read(crate::dat::zone::file_id(area as u32))?;
                             let mut scene = zone::load_scene(&keys, &file)?;
+                            scene.floors = floor_list(area as u32);
                             if bump {
                                 scene.bumps = crate::dat::bump::parse(
                                     &index.read(crate::dat::bump::file_id(area as u32)).unwrap_or_default(),
@@ -19028,7 +19035,9 @@ impl App {
             || world_phase
             || lcd
             || self.cfg.antialias != 0
-            || self.cfg.grading != 0;
+            || self.cfg.grading != 0
+            // Reflections read a copy of the scene, which the window's own surface may not allow.
+            || self.cfg.reflections;
         // The upscaler (not retail): the world draws at the render size with a jitter and the upscaler takes it to the
         // window's size (a Background above it would only be upscaled to be shrunk again). The frame's bg is then the
         // render size: the effects and screen passes size themselves by the scene target.
@@ -21005,6 +21014,8 @@ fn shadow_setup(
     r.prepare_sun_shadow(&gfx.gpu, cx.cfg.actor_shadows != 0 && w.game.get(0x3a) != 1, cx.cfg.shadow_map);
     // Ambient occlusion on the scenery (ours, render/ssao.rs), at the scene's size.
     r.prepare_ssao(&gfx.gpu, cx.cfg.ssao, bg);
+    // Water reflections (ours, render/reflect.rs).
+    r.prepare_reflections(&gfx.gpu, cx.cfg.reflections, cx.cfg.reflect_floors);
     // World sun shadows (ours, render/worldshadow.rs).
     r.prepare_world_shadow(&gfx.gpu, cx.cfg.world_shadows);
     // Lamp shadows (ours, render/lampshadow.rs): with Real shadows, the point lights nearest our character
@@ -21240,6 +21251,18 @@ fn draw_scene(
         .filter(|(_, a)| a.gpu.as_ref().is_some_and(|g| g.refract.is_some() && g.alpha >= 1e-4))
         .map(|(&id, _)| id)
         .collect();
+    // Water reflections (ours, render/reflect.rs): after the actors so they show in it, before the effects.
+    r.render_reflections(
+        &gfx.gpu,
+        &mut fg.encoder,
+        &scene_raw,
+        Some(&scene_tex),
+        &scene_depth,
+        camera,
+        aspect,
+        &actors,
+    );
+    fg.mark("reflections");
     r.occl.run(&gfx.gpu, &mut fg.encoder, &scene_depth);
     fg.mark("occlusion");
 }
@@ -21413,11 +21436,14 @@ fn draw_effects(
                 .map(|l| (l.dir, crate::render::boosted(l.diffuse, b), crate::render::boosted(l.ambient, b))),
         );
         eg.set_depth(Some((&scene_depth, camera.proj(aspect))));
+        eg.bump_mode = r.bump_mode;
         perf::timed(|| "effects upload".into(), || eg.update(&gfx.gpu, &mut fg.encoder, &mut w.effects, &f));
         fg.mark("fx update");
         let (fog_color, fog) =
             r.lighting.as_ref().map_or(([0.0; 3], [150.0, 600.0]), |l| (l.fog.to_array(), [l.fog_start, l.fog_end]));
         let keys: Vec<f32> = late.iter().map(|p| p.0).collect();
+        // Water reflections (ours, render/reflect.rs) on the zone's effect water, drawn by the effects draw.
+        eg.water = r.fx_water(&gfx.gpu, eg, &scene_depth);
         late_done = eg.draw_with_breaks(
             &gfx.gpu,
             &mut fg.encoder,
@@ -21431,6 +21457,7 @@ fn draw_effects(
             &keys,
             &mut |enc, i| late_one(&mut *r, enc, &late[i].1),
         );
+        eg.water = None;
         fg.mark("fx draw");
     }
     // Those nearer than every effect (or all of them, with no effects drawn).
