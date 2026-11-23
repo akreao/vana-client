@@ -30,6 +30,51 @@ pub fn neural_status() -> Result<(), String> {
     NEURAL.lock().ok().and_then(|n| n.clone()).unwrap_or_else(|| Err("no device yet".into()))
 }
 
+/// Whether this device runs FSR 3.1 (`supported`) and the external engine's upscaler (that, plus Vulkan and an engine
+/// library with vana_upscale_dispatch); Err says why not. Set when the device is made, so Settings can leave out what
+/// can't run.
+#[derive(Clone)]
+pub struct Availability {
+    pub fsr3: Result<(), String>,
+    pub external: Result<(), String>,
+}
+
+static AVAILABLE: std::sync::Mutex<Option<Availability>> = std::sync::Mutex::new(None);
+
+pub fn set_availability(gpu: &Gpu) {
+    let fsr3 = supported(gpu);
+    let external = fsr3.clone().and_then(|()| {
+        if gpu.adapter.get_info().backend != wgpu::Backend::Vulkan {
+            return Err("the engine needs the Vulkan backend".to_string());
+        }
+        match external::probe()? {
+            (true, _) => Ok(()),
+            _ => Err("the engine has no vana_upscale_dispatch".to_string()),
+        }
+    });
+    if let Err(e) = &fsr3 {
+        log::info!("FSR 3.1 unavailable, FSR 1 instead: {e}");
+    }
+    if let Ok(mut a) = AVAILABLE.lock() {
+        *a = Some(Availability { fsr3, external });
+    }
+}
+
+pub fn availability() -> Availability {
+    AVAILABLE
+        .lock()
+        .ok()
+        .and_then(|a| a.clone())
+        .unwrap_or_else(|| Availability { fsr3: Err("no device yet".into()), external: Err("no device yet".into()) })
+}
+
+/// The texture LOD bias for a render width below the display's, as AMD's guides give it: log2(render / display) - 1
+/// for a temporal upscaler (FSR 3.1, the external engine; they rebuild the detail from the frames before, so the extra
+/// -1), log2(render / display) for FSR 1. Textures then keep about the display size's mip level.
+pub fn lod_bias(render: u32, display: u32, temporal: bool) -> f32 {
+    (render.max(1) as f32 / display.max(1) as f32).log2() - if temporal { 1.0 } else { 0.0 }
+}
+
 /// Output-to-render ratio by quality mode (config `upscale_quality`): Native AA, Quality, Balanced, Performance,
 /// Ultra Performance (FSR 3.1's).
 pub const RATIOS: [f32; 5] = [1.0, 1.5, 1.7, 2.0, 3.0];
@@ -602,6 +647,19 @@ mod tests {
         assert_eq!(halton(3, 2), 0.75);
         assert!((halton(1, 3) - 1.0 / 3.0).abs() < 1e-6);
         assert!((halton(2, 3) - 2.0 / 3.0).abs() < 1e-6);
+    }
+
+    /// AMD's biases: FSR 3.1 -1 at Native AA, about -1.58 at Quality, -2 at Performance, -2.58 at Ultra
+    /// Performance; FSR 1 the same without the -1; none at the display size.
+    #[test]
+    fn texture_lod_bias() {
+        let near = |a: f32, b: f32| (a - b).abs() < 0.01;
+        assert!(near(lod_bias(1920, 1920, true), -1.0));
+        assert!(near(lod_bias(1280, 1920, true), -1.585));
+        assert!(near(lod_bias(960, 1920, true), -2.0));
+        assert!(near(lod_bias(640, 1920, true), -2.585));
+        assert!(near(lod_bias(960, 1920, false), -1.0));
+        assert!(near(lod_bias(1920, 1920, false), 0.0));
     }
 
     #[test]

@@ -18963,7 +18963,7 @@ impl App {
         // shrunk again). The effects and screen passes size themselves by the scene target. FSR 3.1 (upscaler 1) falls
         // back to it on a device that can't run FSR 3.1 (GL / GLES, small limits) or once FSR 3.1 has failed.
         let fsr3_fallback =
-            self.cfg.upscaler == 1 && (!self.upscale_ready(gfx) || self.upscale.as_ref().is_some_and(|u| !u.usable(1)));
+            self.cfg.upscaler == 1 && (!self.upscale_ready() || self.upscale.as_ref().is_some_and(|u| !u.usable(1)));
         let fsr1 = matches!(self.phase, Phase::World(_))
             && !lcd
             && (self.cfg.upscaler == crate::render::fsr1::FSR1 || fsr3_fallback);
@@ -19002,7 +19002,7 @@ impl App {
             && !lcd
             && !fsr1
             && (matches!(self.cfg.upscaler, 1 | 2) || neural)
-            && self.upscale_ready(gfx)
+            && self.upscale_ready()
             && self.upscale.as_ref().is_none_or(|u| u.usable(self.cfg.upscaler));
         if !matches!(self.cfg.upscaler, 1 | 2) && !neural {
             self.upscale = None;
@@ -19020,6 +19020,12 @@ impl App {
             snaps = up.targets.as_ref().map(|t| [t.snap_opaque.clone(), t.snap_blend.clone(), t.snap_pre_fx.clone()]);
             motion = up.motion_target();
         }
+        // The texture LOD bias while an upscaler draws the world below the window's size (zone.wgsl u.modes.z).
+        let lod_bias = if fsr1 || (upscaling && matches!(self.cfg.upscaler, 1 | 2)) {
+            crate::render::upscale::lod_bias(target_size[0], size[0], !fsr1)
+        } else {
+            0.0
+        };
         let bg = target_size;
         let (scene_view, scene_depth, scene_tex) = if scaled {
             self.scene_scale
@@ -19057,6 +19063,7 @@ impl App {
             counts,
             drew_world,
             upscaling,
+            lod_bias,
             jitter,
             snaps,
             frame_camera: None,
@@ -19234,15 +19241,9 @@ impl App {
 
     /// The scene finished: the lobby's fade over it, then the scaling pass into the window (gamma, 3D LCD Mode,
     /// anti-aliasing, grading); the 2D layer's and the scene's levels.
-    /// Whether the device can run the upscaler (checked once; logged when not).
-    fn upscale_ready(&mut self, gfx: &Gfx) -> bool {
-        *self.upscale_supported.get_or_insert_with(|| match crate::render::upscale::supported(&gfx.gpu) {
-            Ok(()) => true,
-            Err(e) => {
-                log::warn!("upscaler unavailable: {e}");
-                false
-            }
-        })
+    /// Whether the device can run the upscaler (render::upscale::availability, logged when the device was made).
+    fn upscale_ready(&mut self) -> bool {
+        *self.upscale_supported.get_or_insert_with(|| crate::render::upscale::availability().fsr3.is_ok())
     }
 
     fn finish_scene(&mut self, gfx: &Gfx, g: &mut FrameGpu, size: [u32; 2]) -> (f32, f32) {
@@ -19703,6 +19704,8 @@ struct FrameGpu {
     /// The upscaler runs this frame: the projection's jitter, the colour snapshots' targets (after the opaque
     /// scenery, after the blended, before the effects) and the camera the world drew with.
     upscaling: bool,
+    /// The texture LOD bias for this frame's render size (0 at the window's size).
+    lod_bias: f32,
     jitter: glam::Vec2,
     snaps: Option<[wgpu::Texture; 3]>,
     frame_camera: Option<crate::render::upscale::FrameCamera>,
@@ -21122,6 +21125,8 @@ fn draw_scene(
     r.bump_mode = cx.cfg.tool("0017") != 0 && w.zone != Some(182);
     // Light Shading (ours): Smooth lights the scenery's lamps per pixel, Retail per vertex.
     r.smooth_lights = cx.cfg.smooth_lights;
+    // Below the window's size (an upscaler, ours): textures sampled with a negative LOD bias.
+    r.lod_bias = fg.lod_bias;
     // Windowed (0034 != 0, no gamma ramp): lights boosted by the channels' ramps (render::light_boost),
     // gamma base 0028 + 1 + Gameplay R / G / B / 100 (FUN_101aa650).
     r.light_boost = if cx.cfg.window_mode() != 0 {

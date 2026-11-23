@@ -321,7 +321,7 @@ impl Gpu {
             );
         }
         let max_texture_2d = device.limits().max_texture_dimension_2d;
-        Ok(Self {
+        let gpu = Self {
             instance,
             adapter,
             device,
@@ -330,7 +330,9 @@ impl Gpu {
             uploads: Default::default(),
             pipes,
             max_texture_2d,
-        })
+        };
+        upscale::set_availability(&gpu);
+        Ok(gpu)
     }
 
     /// Makes the shared pipelines on a worker thread, so no frame compiles them later.
@@ -422,7 +424,8 @@ pub struct Uniforms {
     voyage: [[f32; 4]; 4],
     /// Config 0017 off (FUN_10181b50): the sun and the moon as two lights, (direction, colour) each.
     two: [[f32; 4]; 4],
-    /// x: 1 with bump mapping on (one eased light, vertex fog), 0 off (two lights, table fog).
+    /// x: 1 with bump mapping on (one eased light, vertex fog), 0 off (two lights, table fog); y: Light Shading
+    /// Smooth; z: the texture LOD bias (an upscaler's, ours).
     modes: [f32; 4],
     /// Windowed mode's light boost (light_boost): rgb factors, w = 1 on.
     boost: [f32; 4],
@@ -613,6 +616,9 @@ pub struct ZoneRenderer {
     /// Settings' Light Shading (ours): false Retail (the scenery's point lights per vertex, hard cut at the range),
     /// true Smooth (per pixel, soft edge; not retail).
     pub smooth_lights: bool,
+    /// The texture LOD bias (zone.wgsl `u.modes.z`): negative while the world draws below the window's size for an
+    /// upscaler (ours), 0 otherwise.
+    pub lod_bias: f32,
     /// Windowed mode's light boost (light_boost; zero = off).
     pub light_boost: [f32; 4],
     /// The zone's scenery culled on the GPU (render/cull.rs) when the device draws indirectly, and its passes.
@@ -2879,6 +2885,7 @@ impl ZoneRenderer {
             bump_groups,
             bump_mode: true,
             smooth_lights: false,
+            lod_bias: 0.0,
             light_boost: [0.0; 4],
             scenery_bump: p.scenery_bump,
             scenery: p.scenery,
@@ -4280,7 +4287,7 @@ impl ZoneRenderer {
             area_info: [0.0; 4],
             voyage: self.voyage.to_cols_array_2d(),
             two: [[0.0; 4]; 4],
-            modes: [self.bump_mode as u32 as f32, self.smooth_lights as u32 as f32, 0.0, 0.0],
+            modes: [self.bump_mode as u32 as f32, self.smooth_lights as u32 as f32, self.lod_bias, 0.0],
             boost: self.light_boost,
         };
         let mut clear = self.fog_color;
@@ -5410,18 +5417,37 @@ pub fn render_pngs_post(
     let env_q = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u32>().ok()).filter(|q| (1..=4).contains(q));
     let up = env_q("FFXI_FSR1").map(|q| (q, true)).or_else(|| env_q("FFXI_CATROM").map(|q| (q, false)));
     let sharp = std::env::var("FFXI_FSR1_SHARP").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(50);
-    let mut scale = up.map(|_| scale::SceneScale::new(&gpu, format));
-    let (rw, rh) = up.map_or((width, height), |(q, _)| {
-        let r = fsr1::render_size([width, height], q);
-        (r[0], r[1])
-    });
+    // FFXI_FSR3=0..4 (ours): FSR 3.1 at that quality (0 Native AA), FFXI_FSR3_FRAMES (default 32) jittered frames
+    // of the still camera accumulated, the last one written; sharpness FFXI_FSR1_SHARP.
+    let fsr3_q = std::env::var("FFXI_FSR3").ok().and_then(|v| v.parse::<u32>().ok()).filter(|q| *q <= 4);
+    let fsr3_frames = std::env::var("FFXI_FSR3_FRAMES").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(32).max(1);
+    let mut fsr3 = fsr3_q.map(|_| upscale::Upscale::new(&gpu));
+    let mut scale = (up.is_some() || fsr3.is_some()).then(|| scale::SceneScale::new(&gpu, format));
+    let (rw, rh) = match (up, fsr3_q) {
+        (_, Some(q)) => {
+            let r = upscale::render_size([width, height], q);
+            (r[0], r[1])
+        }
+        (Some((q, _)), None) => {
+            let r = fsr1::render_size([width, height], q);
+            (r[0], r[1])
+        }
+        (None, None) => (width, height),
+    };
+    // The texture LOD bias the client gives the upscalers (FFXI_LODBIAS=0: none, to compare).
+    if std::env::var("FFXI_LODBIAS").as_deref() != Ok("0") && (up.is_some_and(|u| u.1) || fsr3.is_some()) {
+        renderer.lod_bias = upscale::lod_bias(rw, width, fsr3.is_some());
+    }
     let (view, depth, scene_target) = match scale.as_mut() {
         Some(s) => s.target(&gpu, [rw, rh]),
         None => (out_view.clone(), depth_view(&gpu.device, width, height), target.clone()),
     };
-    let mut scale_up = |encoder: &mut wgpu::CommandEncoder| {
-        if let (Some(s), Some((_, fsr))) = (scale.as_mut(), up) {
-            s.blit(&gpu, encoder, &out_view, [width, height], [1.0; 3], None, false, 0, fsr.then_some(sharp), None);
+    // The scene's own view, for FSR 3.1.
+    let raw = scale.as_ref().and_then(|s| s.raw_view()).unwrap_or_else(|| view.clone());
+    let mut scale_up = |encoder: &mut wgpu::CommandEncoder, upscaled: Option<(&wgpu::TextureView, [u32; 2])>| {
+        if let Some(s) = scale.as_mut() {
+            let fsr1 = up.and_then(|(_, fsr)| fsr.then_some(sharp));
+            s.blit(&gpu, encoder, &out_view, [width, height], [1.0; 3], None, false, 0, fsr1, upscaled);
         }
     };
     let out_size = [width, height];
@@ -5464,7 +5490,7 @@ pub fn render_pngs_post(
                     let frame = scenefx::Frame::new(camera, width as f32 / height as f32, lighting.as_ref());
                     fx.draw(&gpu, &mut encoder, &view, &depth, &frame);
                 }
-                scale_up(&mut encoder);
+                scale_up(&mut encoder, None);
                 if let Some(q) = q {
                     encoder.write_timestamp(q, f * 2 + 1);
                 }
@@ -5523,6 +5549,36 @@ pub fn render_pngs_post(
             mapped_at_creation: false,
         });
         renderer.update_leak(&gpu, camera, width as f32 / height as f32);
+        let aspect = width as f32 / height as f32;
+        // FSR 3.1: the frames before the written one, each jittered, accumulated into the upscaler's history.
+        let mut jittered = **camera;
+        if let (Some(f), Some(q)) = (fsr3.as_mut(), fsr3_q) {
+            for k in 0..fsr3_frames {
+                let mut encoder = gpu.device.create_command_encoder(&Default::default());
+                let (_, jitter) = f.begin(&gpu, out_size, q, format, true);
+                jittered.jitter = jitter;
+                renderer.snaps = f.targets.as_ref().map(|t| {
+                    (scene_target.clone(), [t.snap_opaque.clone(), t.snap_blend.clone(), t.snap_pre_fx.clone()])
+                });
+                renderer.motion_target = f.motion_target().map(|mut m| {
+                    m.vp = jittered.steady().view_proj(aspect);
+                    m.prev_vp = m.vp;
+                    m
+                });
+                if k + 1 == fsr3_frames {
+                    break;
+                }
+                renderer.render(&gpu, &mut encoder, &view, &depth, &jittered, aspect, &actor_refs);
+                if let Some((scene, s)) = &renderer.snaps {
+                    upscale::snap(&mut encoder, scene, &s[2]);
+                }
+                f.frame_camera = Some(upscale::FrameCamera { camera: jittered, aspect });
+                f.run(&gpu, &mut encoder, &raw, &depth, 1, sharp, 0, false);
+                gpu.queue.submit([encoder.finish()]);
+                f.after_submit(&gpu);
+            }
+        }
+        let camera = &&jittered;
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         renderer.render(&gpu, &mut encoder, &view, &depth, camera, width as f32 / height as f32, &actor_refs);
         renderer.render_refraction(
@@ -5541,8 +5597,15 @@ pub fn render_pngs_post(
             let frame = scenefx::Frame::new(camera, width as f32 / height as f32, lighting.as_ref());
             fx.draw(&gpu, &mut encoder, &view, &depth, &frame);
         }
-        scale_up(&mut encoder);
-        let (width, height) = up.map_or((width, height), |_| (out_size[0], out_size[1]));
+        let out = fsr3.as_mut().and_then(|f| {
+            if let Some((scene, s)) = &renderer.snaps {
+                upscale::snap(&mut encoder, scene, &s[2]);
+            }
+            f.frame_camera = Some(upscale::FrameCamera { camera: **camera, aspect });
+            f.run(&gpu, &mut encoder, &raw, &depth, 1, sharp, 0, false)
+        });
+        scale_up(&mut encoder, out.as_ref().map(|(v, sz)| (v, *sz)));
+        let (width, height) = if up.is_some() || fsr3.is_some() { (out_size[0], out_size[1]) } else { (width, height) };
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &target,

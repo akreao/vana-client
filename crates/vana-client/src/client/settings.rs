@@ -252,9 +252,23 @@ impl From<&SRow> for Row {
             label: r.label.into(),
             help: r.help.into(),
             val: r.val,
-            choices: r.choices.iter().map(|c| (c.0, c.1.to_string())).collect(),
+            choices: r.choices.iter().filter(|c| offered(r.val, c.0)).map(|c| (c.0, c.1.to_string())).collect(),
             when: r.when,
         }
+    }
+}
+
+/// Whether a row's choice is offered on this device: Upscaling leaves out FSR 3.1 (1..5) and External (6) where they
+/// can't run (GL / GLES, small limits, no engine), so FSR 1 is what such a device gets.
+fn offered(v: Val, x: u32) -> bool {
+    !matches!(v, Val::Upscaler) || offered_on(&crate::render::upscale::availability(), x)
+}
+
+fn offered_on(can: &crate::render::upscale::Availability, upscaling: u32) -> bool {
+    match upscaling {
+        1..=5 => can.fsr3.is_ok(),
+        6 => can.external.is_ok(),
+        _ => true,
     }
 }
 
@@ -1050,12 +1064,18 @@ impl SettingsUi {
             Val::Aniso => self.s.anisotropy as u32,
             Val::Antialias => self.s.antialias,
             Val::Grading => self.s.grading,
-            Val::Upscaler => match self.s.upscaler {
-                0 => 0,
-                1 => 1 + self.s.upscale_quality.min(4),
-                crate::render::fsr1::FSR1 => 6 + self.s.upscale_quality.clamp(1, 4),
-                _ => 6,
-            },
+            // As the frame draws it: FSR 3.1 where it can't run is FSR 1 (client frame_targets), External where it
+            // can't run is Off.
+            Val::Upscaler => {
+                let can = crate::render::upscale::availability();
+                match self.s.upscaler {
+                    0 => 0,
+                    1 if can.fsr3.is_ok() => 1 + self.s.upscale_quality.min(4),
+                    1 | crate::render::fsr1::FSR1 => 6 + self.s.upscale_quality.clamp(1, 4),
+                    _ if can.external.is_ok() => 6,
+                    _ => 0,
+                }
+            }
             Val::UpscaleSharpness => self.s.upscale_sharpness,
             Val::Neural => (self.s.neural && crate::render::upscale::neural_status().is_ok()) as u32,
             Val::DrawDistance => self.s.draw_distance,
@@ -1651,6 +1671,10 @@ impl SettingsUi {
         let warn = if self.warns(r) { format!("{WARNING} ") } else { String::new() };
         let why = match (r.val, crate::render::upscale::neural_status()) {
             (Val::Neural, Err(e)) => format!(" Unavailable here: {e}."),
+            (Val::Upscaler, _) => match crate::render::upscale::availability().fsr3 {
+                Err(e) => format!(" FSR 3.1 can't run here ({e}), so FSR 1 is offered."),
+                Ok(()) => String::new(),
+            },
             _ => String::new(),
         };
         format!("{warn}{}{when}{why}", r.help)
@@ -2362,6 +2386,18 @@ pub(super) fn marker(gu: &mut GameUi, x: f32, y: f32, w: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Upscaling offers FSR 3.1 and External only where they run; FSR 1 and Off always.
+    #[test]
+    fn upscaling_choices_by_device() {
+        use crate::render::upscale::Availability;
+        let shown = |can: Availability| (0..=10).filter(|&x| offered_on(&can, x)).collect::<Vec<u32>>();
+        let no = || Err("no".to_string());
+        assert_eq!(shown(Availability { fsr3: Ok(()), external: Ok(()) }), (0..=10).collect::<Vec<u32>>());
+        assert_eq!(shown(Availability { fsr3: Ok(()), external: no() }), [0, 1, 2, 3, 4, 5, 7, 8, 9, 10]);
+        // GL / GLES: FSR 1 alone.
+        assert_eq!(shown(Availability { fsr3: no(), external: no() }), [0, 7, 8, 9, 10]);
+    }
 
     /// A page's frame holds 7 rows; at the title the Client page leaves out UI Setup and nothing else.
     #[test]

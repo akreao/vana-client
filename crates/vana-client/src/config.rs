@@ -230,7 +230,9 @@ pub struct Config {
     /// FSR's RCAS sharpening, 0 (off) .. 100.
     pub upscale_sharpness: u32,
     /// The upscaler's input shown in place of the scene: 0 none, 1 motion vectors, 2 depth, 3 reactive mask,
-    /// 4 transparency and composition mask.
+    /// 4 transparency and composition mask. Set by `/updebug` for this run only: never saved, so a debug view can't
+    /// come back at the next launch with no setting to turn it off.
+    #[serde(skip)]
     pub upscale_debug: u32,
     /// Neural rendering by the engine library (vana_nr_dispatch) on the render-size colour before the upscale, with
     /// any Upscaling, Off included. Not a retail option.
@@ -1130,6 +1132,15 @@ mod tests {
         c.remember_login();
         let out = written(&c);
         assert!(kept(&serde_json::from_str(text).unwrap(), &out), "{out}");
+    }
+
+    /// `/updebug`'s view is for this run only: never written, and a saved one (from an older build) is not read.
+    #[test]
+    fn upscale_debug_not_saved() {
+        let c = Config { upscale_debug: 3, ..Config::default() };
+        assert!(written(&c).get("upscale_debug").is_none());
+        let c: Config = serde_json::from_str(r#"{"upscale_debug": 2}"#).unwrap();
+        assert_eq!(c.upscale_debug, 0);
     }
 
     /// The real config (when there is one) loses nothing through a load and a save (read only).
