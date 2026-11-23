@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Publishes a GitHub release vVERSION of akreao/vana-client (updater.rs RELEASE_REPO) with the assets release/build-linux.sh made and those
-# release/fetch-ci-builds.sh downloaded (Windows always; Linux aarch64 and macOS when present), each with its .sig. VERSION must be the
+# release/fetch-ci-builds.sh downloaded (Windows always; Linux aarch64 and macOS when present) and the neural rendering engine
+# release/build-engine.sh made, each with its .sig. VERSION must be the
 # crate's version (crates/vana-client/Cargo.toml), newer than the last release: clients offer the update when the tag
 # is newer and its signature checks against release/signing-key.pub, built in.
 # The private key: VANA_SIGNING_KEY, or ~/.config/vana-client-release/signing-key.pem (Ed25519; never in the repo).
+# Neural Rendering downloads the engine from this release (client/neural.rs), so it must be there: run
+# release/build-engine.sh first, or set VANA_NO_ENGINE=1 to publish without it (the setting then says the release has
+# no engine).
 #   release/publish.sh 0.1.1 [notes file]
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -14,6 +18,16 @@ assets=(target/assets/vana-client-linux-x86_64 target/assets/vana-client-windows
 for a in target/assets/vana-client-linux-aarch64 target/assets/vana-client-macos-aarch64 target/assets/vana-client-macos-x86_64; do
     if [ -f "$a" ]; then assets+=("$a"); else echo "note: no $a (release/fetch-ci-builds.sh); left out" >&2; fi
 done
+# The neural rendering engine, downloaded by the client when Neural Rendering is turned on.
+engine=target/assets/vana-client-nr-engine-linux-x86_64.so
+if [ -f "$engine" ]; then
+    assets+=("$engine")
+elif [ -n "${VANA_NO_ENGINE:-}" ]; then
+    echo "note: no $engine; left out (VANA_NO_ENGINE): Neural Rendering will say this release has no engine" >&2
+else
+    echo "missing $engine: run release/build-engine.sh (or set VANA_NO_ENGINE=1 to publish without it)" >&2
+    exit 1
+fi
 key="${VANA_SIGNING_KEY:-$HOME/.config/vana-client-release/signing-key.pem}"
 [ -f "$key" ] || { echo "no signing key at $key" >&2; exit 1; }
 pub=$(tr -d '[:space:]' < release/signing-key.pub)
@@ -22,9 +36,9 @@ pub=$(tr -d '[:space:]' < release/signing-key.pub)
 sigs=()
 for a in "${assets[@]}"; do
     [ -f "$a" ] || { echo "missing $a (run release/build-linux.sh and release/fetch-ci-builds.sh)" >&2; exit 1; }
-    # A binary built without this key could never update itself to the next release.
-    grep -a -q "$pub" "$a" || { echo "$a was not built with release/signing-key.pub" >&2; exit 1; }
-    # Its updater's user agent: an asset left from another version is never signed as this one.
+    # A binary built without this key could never update itself to the next release (the engine has no updater).
+    [ "$a" = "$engine" ] || grep -a -q "$pub" "$a" || { echo "$a was not built with release/signing-key.pub" >&2; exit 1; }
+    # Its updater's user agent, the engine's vana_nr_version: an asset left from another version is never signed as this one.
     grep -a -q "vana-client/$version" "$a" || { echo "$a is not version $version" >&2; exit 1; }
     # What the client checks (updater::signed_text): the tag, the asset's name, its SHA-256.
     text="$a.text"

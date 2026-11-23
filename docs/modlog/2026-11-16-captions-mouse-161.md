@@ -3,7 +3,7 @@
 <!-- dll-build: 30261102_0 -->
 
 Modlog-gaps item 161 ("Menu captions take the mouse cursor", found by item 139; also FUN_10191710 on the comment
-editor's drawn lines). The item's claim is wrong, and so is the linkshell caption click item 139 built on it.
+editor's drawn lines). The item's claim is wrong.
 Addresses are 30261102_0. Decompiled with Ghidra; the hit test, the window open, the frame part and FUN_10191710's
 language gate checked in Rizin.
 
@@ -53,9 +53,10 @@ Ours:
   mouse of winhits.rs (65 call sites) uses the same boxes and skips the same caption (`winhits::parts`), whatever range
   of children the window asks for: linklist's member windows asked for 1..=4, which took link7 / link8's caption at
   its place (0, 0) and sent the sack / pearl change from it (link9 / link10's too).
-- The linkshell submenus' caption no longer takes the cursor and `select` has no case for it; the editor's opener is
-  removed (mode 3's store and close stay as the window class has them). The linkshell, party, search, status,
-  quest, mission and mission menu pointers use `GameUi::hit`.
+- The linkshell pointer took only children with a cursor link up (link 0xff passed over) at their place without the
+  header offset; it, and the party, search, status, quest and mission pointers, use `GameUi::hit` now. `select` has
+  no case for the submenus' caption, and nothing opens the editor's mode 3 (its store and close stay as the window
+  class has them).
 - chatctrl: child 8 takes the cursor, Enter there is the next tell name, and the arrows leave the cursor on it (its
   links are 0xff).
 - mcrselec: the page arrows 21 / 22 take the cursor like mcres20's; Enter there turns the page (message 5's cases

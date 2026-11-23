@@ -73,12 +73,14 @@ impl Icon {
     }
 }
 
-/// A list row: its cells (one without columns), an icon before them, a colour.
+/// A list row: its cells (one without columns), an icon before them, a colour, and colours for single cells.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Row {
     pub cells: Vec<String>,
     pub icon: Option<Icon>,
     pub colour: Option<[u8; 4]>,
+    /// A cell's own colour, by its column (over `colour`).
+    pub cell_colours: Vec<Option<[u8; 4]>>,
     /// The help shown while the cursor or the pointer is on the row (a spell's description).
     pub tip: String,
 }
@@ -496,6 +498,15 @@ pub struct Window {
     /// The edge an edge window stands on, as last told to the mod: "top", "bottom", "left", "right" or "free".
     pub dock: Option<&'static str>,
     pub panel: Option<String>,
+    /// The classic page's width its lists need, measured as it is drawn.
+    pub fit_w: std::cell::Cell<f32>,
+    /// What each part last scrolled into view (`moved`): the cursor's element, a list's row, an open dropdown's. Shared
+    /// with the window's clones, which the modern UI draws.
+    follows: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, usize>>>,
+    /// A popup's opener: the window of its mod that had the focus, given it back when the popup closes.
+    pub back: Option<String>,
+    /// The classic UI's open dropdown: its first row shown.
+    drop_top: std::cell::Cell<usize>,
 }
 
 /// What happened in a window, for the mod's handler.
@@ -635,8 +646,14 @@ impl Event {
     }
 }
 
+/// The most rows an open dropdown shows on the classic page; more scroll with its highlight.
+const DROP_ROWS: usize = 12;
 /// The classic page's width when none is given (the Config pages').
 pub const CLASSIC_W: f32 = 366.0;
+/// The widest a classic page grows to fit its lists.
+const CLASSIC_FIT_MAX: f32 = 760.0;
+/// A classic cell's room beside its text: text_fit cuts 16 px before its end, and 4 more stay clear.
+const CLASSIC_PAD: f32 = 22.0;
 const PITCH: f32 = 34.0;
 const LINE: f32 = 18.0;
 const TOP: f32 = 34.0;
@@ -661,6 +678,66 @@ pub fn columns(cols: &[Col], w: f32) -> Vec<(f32, f32, bool)> {
             out
         })
         .collect()
+}
+
+/// A list's columns widened so every cell fits, and the width its rows need. `measure`: a text's width; `icon`: the
+/// room an icon takes in the first column; `pad`: the room each cell keeps beside its text. A list with no columns
+/// holds free text (chat lines, URLs): it keeps the mod's width and needs none.
+pub fn fit_columns(cols: &[Col], rows: &[Row], icon: f32, pad: f32, measure: impl Fn(&str) -> f32) -> (Vec<Col>, f32) {
+    let ic = |r: &Row| if r.icon.is_some() { icon } else { 0.0 };
+    if cols.is_empty() {
+        return (Vec::new(), 0.0);
+    }
+    let mut out = cols.to_vec();
+    let (mut fixed, mut share, mut shares) = (0.0, 0.0f32, 0.0);
+    for (c, col) in out.iter_mut().enumerate() {
+        let widest = rows
+            .iter()
+            .filter_map(|r| r.cells.get(c).map(|t| measure(t) + pad + if c == 0 { ic(r) } else { 0.0 }))
+            .fold(measure(&col.title) + pad, f32::max);
+        if col.width > 0.0 {
+            col.width = col.width.max(widest);
+            fixed += col.width;
+        } else {
+            // The shared columns split what is left evenly: each needs the room of the widest.
+            share = share.max(widest);
+            shares += 1.0;
+        }
+    }
+    (out, fixed + share * shares)
+}
+
+/// `fit` (fit_columns' widening of `cols`) kept inside `w` beside the shared columns' 24 px floor: the widened columns
+/// give back their extra in proportion, then, if the mod's widths are still too wide, every fixed column shrinks alike.
+pub fn fit_within(cols: &[Col], fit: &[Col], w: f32) -> Vec<Col> {
+    let fixed = |cs: &[Col]| cs.iter().map(|c| c.width.max(0.0)).sum::<f32>();
+    let room = (w - 24.0 * fit.iter().filter(|c| c.width <= 0.0).count() as f32).max(0.0);
+    let mut out = fit.to_vec();
+    let over = fixed(&out) - room;
+    if over <= 0.0 {
+        return out;
+    }
+    let extra: f32 = fit.iter().zip(cols).map(|(f, c)| (f.width - c.width).max(0.0)).sum();
+    if extra > 0.0 {
+        let back = (over / extra).min(1.0);
+        for (f, c) in out.iter_mut().zip(cols) {
+            f.width -= (f.width - c.width).max(0.0) * back;
+        }
+    }
+    let total = fixed(&out);
+    if total > room {
+        for c in out.iter_mut().filter(|c| c.width > 0.0) {
+            // Never 0: a width of 0 is a shared column.
+            c.width = (c.width * room / total).max(1.0);
+        }
+    }
+    out
+}
+
+/// A classic list's columns fitted to its cells and kept inside its text width `lw`.
+fn classic_columns(gu: &GameUi, cols: &[Col], rows: &[Row], lw: f32) -> Vec<Col> {
+    let (fit, _) = fit_columns(cols, rows, 18.0, CLASSIC_PAD, |t| gu.text_width(t));
+    fit_within(cols, &fit, lw)
 }
 
 pub fn has_header(cols: &[Col]) -> bool {
@@ -757,6 +834,23 @@ impl Window {
             dock: None,
             hovered: None,
             panel: None,
+            fit_w: std::cell::Cell::new(0.0),
+            follows: Default::default(),
+            back: None,
+            drop_top: std::cell::Cell::new(0),
+        }
+    }
+
+    /// Whether `key`'s place moved to `at` since it was last asked (first asked: yes): a part scrolls into view only
+    /// then, so the wheel can move away from a cursor that stays put.
+    pub fn moved(&self, key: &str, at: Option<usize>) -> bool {
+        let mut f = self.follows.borrow_mut();
+        match at {
+            Some(at) => f.insert(key.to_string(), at) != Some(at),
+            None => {
+                f.remove(key);
+                false
+            }
         }
     }
 
@@ -1429,6 +1523,22 @@ impl Window {
         (vec![Event::Drag { id, phase, x, y, dx: x - lx, dy: y - ly, screen: None, over: None }], Vec::new())
     }
 
+    /// The classic page's width its lists need to show every cell whole (at most CLASSIC_FIT_MAX).
+    fn classic_fit(&self, gu: &GameUi) -> f32 {
+        let need = self
+            .elems
+            .iter()
+            .map(|e| match e {
+                Elem::List { rows, columns, height, .. } => {
+                    let (_, need) = fit_columns(columns, rows, 18.0, CLASSIC_PAD, |t| gu.text_width(t));
+                    need + 64.0 + if rows.len() > *height { 12.0 } else { 0.0 }
+                }
+                _ => 0.0,
+            })
+            .fold(0.0, f32::max);
+        need.min(CLASSIC_FIT_MAX).ceil()
+    }
+
     /// The classic list's text width and its columns.
     fn classic_list_w(&self, rows: usize, height: usize) -> f32 {
         let (w, _) = self.classic_size();
@@ -1442,11 +1552,9 @@ impl Window {
         let hidden = self.hidden();
         // An open dropdown's rows (parts 1..) lie over what is under them: they come first.
         let mut out = Vec::new();
-        if let Some((i, b)) = self.drop_box(x, y)
-            && let Some(Elem::Choice { items, .. }) = self.elems.get(i)
-        {
-            for k in 0..items.len() {
-                out.push((i, 1 + k, [b[0], b[1] + LINE * k as f32, b[2], LINE]));
+        if let Some((i, b)) = self.drop_box(x, y) {
+            for k in self.drop_rows() {
+                out.push((i, 1 + k, [b[0], b[1] + LINE * (k - self.drop_top.get()) as f32, b[2], LINE]));
             }
         }
         let mut ey = y + TOP;
@@ -1467,8 +1575,9 @@ impl Window {
                 Elem::List { rows, columns, top, height, .. } => {
                     let mut ry = ey;
                     if has_header(columns) {
+                        let lw = self.classic_list_w(rows.len(), *height);
                         for (c, (cx, cw, _)) in
-                            self::columns(columns, self.classic_list_w(rows.len(), *height)).into_iter().enumerate()
+                            self::columns(&classic_columns(gu, columns, rows, lw), lw).into_iter().enumerate()
                         {
                             out.push((i, 1000 + c, [x + 32.0 + cx, ey, cw, LINE]));
                         }
@@ -1676,6 +1785,7 @@ impl Window {
 
     pub fn classic_size(&self) -> (f32, f32) {
         let w = if self.width > 0.0 { self.width } else { CLASSIC_W };
+        let w = w.max(self.fit_w.get());
         (w, TOP + (0..self.elems.len()).map(|i| self.elem_h(i)).sum::<f32>() + 12.0)
     }
 
@@ -1686,7 +1796,46 @@ impl Window {
         let Some(Elem::Choice { items, .. }) = self.elems.get(i) else { return None };
         let (w, _) = self.classic_size();
         let ey = y + TOP + (0..i).map(|j| self.elem_h(j)).sum::<f32>();
-        Some((i, [x + 32.0, ey + 30.0, w - 64.0, LINE * items.len() as f32]))
+        Some((i, [x + 32.0, ey + 30.0, w - 64.0, LINE * items.len().min(DROP_ROWS) as f32]))
+    }
+
+    /// Whether `p` is on the open dropdown's list of the classic page at (x, y).
+    pub fn over_drop(&self, x: f32, y: f32, p: (f32, f32)) -> bool {
+        self.drop_box(x, y).is_some_and(|(_, b)| p.0 >= b[0] && p.1 >= b[1] && p.0 < b[0] + b[2] && p.1 < b[1] + b[3])
+    }
+
+    /// The wheel over the open dropdown's list on the classic page at (x, y): its rows scroll `notches` (up positive),
+    /// the highlight kept among them. True when it took the wheel.
+    pub fn drop_wheel(&mut self, x: f32, y: f32, p: (f32, f32), notches: i32) -> bool {
+        if notches == 0 || !self.over_drop(x, y, p) {
+            return false;
+        }
+        let n = match self.drop_open().and_then(|i| self.elems.get(i)) {
+            Some(Elem::Choice { items, .. }) => items.len(),
+            _ => return false,
+        };
+        let shown = self.drop_rows().len();
+        let top = (self.drop_top.get() as i64 - notches as i64).clamp(0, (n - shown) as i64) as usize;
+        self.drop_top.set(top);
+        self.drop_at = self.drop_at.clamp(top, top + shown - 1);
+        true
+    }
+
+    /// The open dropdown's items in view (at most DROP_ROWS), moved to keep its highlight among them.
+    fn drop_rows(&self) -> std::ops::Range<usize> {
+        let n = match self.drop_open().and_then(|i| self.elems.get(i)) {
+            Some(Elem::Choice { items, .. }) => items.len(),
+            _ => return 0..0,
+        };
+        let shown = n.min(DROP_ROWS);
+        let mut top = self.drop_top.get().min(n - shown);
+        if self.drop_at < top {
+            top = self.drop_at;
+        } else if self.drop_at >= top + shown {
+            top = self.drop_at + 1 - shown;
+        }
+        self.drop_top.set(top);
+        top..top + shown
     }
 
     /// What the classic page covers: its size, taller while an open dropdown's list hangs below it.
@@ -1697,6 +1846,7 @@ impl Window {
 
     /// The classic page at (x, y): the Config pages' frame, bullets, buttons, sliders and the hand.
     pub fn draw_classic(&self, gu: &mut GameUi, world: Option<&super::World>, x: f32, y: f32) -> [f32; 4] {
+        self.fit_w.set(self.classic_fit(gu));
         let (w, h) = self.classic_size();
         if self.framed {
             gu.frame(x, y, w, h);
@@ -1767,6 +1917,8 @@ impl Window {
                 }
                 Elem::List { rows, columns, at, top, height, .. } => {
                     let lw = self.classic_list_w(rows.len(), *height);
+                    let fit = classic_columns(gu, columns, rows, lw);
+                    let columns = &fit;
                     let cols = self::columns(columns, lw);
                     let mut ry0 = ey;
                     if has_header(columns) {
@@ -1795,6 +1947,7 @@ impl Window {
                             for (c, &(cx, cw, right)) in cols.iter().enumerate() {
                                 let Some(cell) = row.cells.get(c) else { continue };
                                 let (cx, cw) = if c == 0 { (cx + ix, cw - ix) } else { (cx, cw) };
+                                let ink = row.cell_colours.get(c).copied().flatten().map_or(ink, tint);
                                 if right {
                                     let tx = (x + 32.0 + cx + cw - gu.text_width(cell) - 4.0).max(x + 32.0 + cx);
                                     gu.text_fit(cell, tx, ry, x + 32.0 + cx + cw - tx + 16.0, ink);
@@ -1971,12 +2124,13 @@ impl Window {
         if let Some((i, b)) = self.drop_box(x, y)
             && let Some(Elem::Choice { items, .. }) = self.elems.get(i)
         {
-            for (k, item) in items.iter().enumerate() {
-                let r = [b[0], b[1] + LINE * k as f32, b[2], LINE];
-                let shown = super::super::fit_tail(gu, item, r[2] - 10.0);
+            let top = self.drop_rows().start;
+            for k in self.drop_rows() {
+                let r = [b[0], b[1] + LINE * (k - top) as f32, b[2], LINE];
+                let shown = super::super::fit_tail(gu, &items[k], r[2] - 10.0);
                 gu.combo_row(r, &shown, k == self.drop_at);
             }
-            hand = Some((b[0], b[1] + LINE * self.drop_at as f32));
+            hand = Some((b[0], b[1] + LINE * (self.drop_at - top) as f32));
         }
         if let Some((hx, hy)) = hand {
             gu.cursor(hx, hy);
@@ -2221,6 +2375,59 @@ mod tests {
         w.click_button(0, 0);
         w.drop_close(0);
         assert_eq!(w.drop_open(), None);
+    }
+
+    /// A long dropdown shows DROP_ROWS rows on the classic page, scrolled to keep its highlight in view.
+    #[test]
+    fn long_dropdown_scrolls() {
+        let mut w = Window::new("w");
+        let items: Vec<String> = (0..40).map(|k| format!("Set {k}")).collect();
+        w.elems = vec![Elem::Choice { id: "t".into(), label: "Set".into(), items, at: 30, drop: true }];
+        (w.open, w.focus) = (true, true);
+        w.settle();
+        assert_eq!(w.drop_rows(), 0..0, "closed");
+        w.key(K::Enter);
+        assert_eq!(w.drop_rows(), 19..31);
+        assert_eq!(w.drop_box(0.0, 0.0).unwrap().1[3], LINE * DROP_ROWS as f32);
+        for _ in 0..25 {
+            w.key(K::ArrowUp);
+        }
+        assert_eq!((w.drop_at, w.drop_rows()), (5, 5..17));
+        w.key(K::ArrowDown);
+        assert_eq!(w.drop_rows(), 5..17, "a move inside the view keeps it");
+    }
+
+    /// The wheel over a long dropdown's open list scrolls it, the highlight kept in view; elsewhere it does nothing.
+    #[test]
+    fn long_dropdown_wheel() {
+        let mut w = Window::new("w");
+        let items: Vec<String> = (0..40).map(|k| format!("Set {k}")).collect();
+        w.elems = vec![Elem::Choice { id: "t".into(), label: "Set".into(), items, at: 0, drop: true }];
+        (w.open, w.focus) = (true, true);
+        w.settle();
+        w.key(K::Enter);
+        assert_eq!(w.drop_rows(), 0..12);
+        let b = w.drop_box(0.0, 0.0).unwrap().1;
+        let on = (b[0] + 4.0, b[1] + 4.0);
+        assert!(!w.drop_wheel(0.0, 0.0, (b[0] - 10.0, b[1]), -3), "off the list");
+        assert!(w.drop_wheel(0.0, 0.0, on, -3));
+        assert_eq!((w.drop_rows(), w.drop_at), (3..15, 3));
+        assert!(w.drop_wheel(0.0, 0.0, on, -100));
+        assert_eq!((w.drop_rows(), w.drop_at), (28..40, 28), "stops at the end");
+        assert!(w.drop_wheel(0.0, 0.0, on, 5));
+        assert_eq!((w.drop_rows(), w.drop_at), (23..35, 28), "a highlight still in view stays");
+    }
+
+    /// `moved`: yes the first time and on a change, no while the place stays (in the clones the modern UI draws too);
+    /// forgotten when told none.
+    #[test]
+    fn follows_only_moves() {
+        let w = Window::new("w");
+        assert!(w.clone().moved("row", Some(0)));
+        assert!(!w.clone().moved("row", Some(0)));
+        assert!(w.moved("row", Some(3)));
+        assert!(!w.moved("row", None));
+        assert!(w.moved("row", Some(3)));
     }
 
     fn key_ev(k: K) -> egui::Event {
@@ -2525,5 +2732,41 @@ mod tests {
         ];
         w.set_elems(other, vec![Meta::default(); 3]);
         assert_eq!(w.elems[w.at].id(), Some("save"));
+    }
+
+    /// A list's cells never clip: a fixed column too narrow for its cells widens, and the shared one needs its widest
+    /// cell (with the icon) in each share.
+    #[test]
+    fn list_columns_fit_their_cells() {
+        let col = |w: f32| Col { title: String::new(), width: w, right: true };
+        let cols = [Col { title: String::new(), width: 0.0, right: false }, col(46.0), col(20.0)];
+        let row = |a: &str, b: &str, icon: bool| Row {
+            cells: vec![a.into(), b.into(), "10".into()],
+            icon: icon.then_some(Icon::Spell(1)),
+            ..Default::default()
+        };
+        let rows = [row("Thundaga III", "", true), row("Thunder", "1:05:00", false)];
+        let measure = |t: &str| 10.0 * t.chars().count() as f32;
+        let (fit, need) = fit_columns(&cols, &rows, 24.0, 8.0, measure);
+        assert_eq!(fit[1].width, 78.0, "7 chars + pad over 46");
+        assert_eq!(fit[2].width, 28.0, "2 chars + pad over 20");
+        assert_eq!(need, 24.0 + 120.0 + 8.0 + 78.0 + 28.0);
+        // Free text (no columns) keeps the mod's width.
+        assert_eq!(fit_columns(&[], &rows, 24.0, 8.0, measure).1, 0.0);
+    }
+
+    /// Widened columns stay inside the list: the widening gives way first, then the mod's widths shrink alike.
+    #[test]
+    fn widened_columns_stay_inside_the_list() {
+        let col = |w: f32| Col { title: String::new(), width: w, right: true };
+        let cols = [col(0.0), col(100.0), col(50.0)];
+        let fit = [col(0.0), col(160.0), col(70.0)];
+        let w = |cs: &[Col]| cs.iter().map(|c| c.width).collect::<Vec<_>>();
+        // Room for all of it: as fitted.
+        assert_eq!(w(&fit_within(&cols, &fit, 300.0)), [0.0, 160.0, 70.0]);
+        // 200 left beside the share's 24: 30 of the 80 widened back, in proportion (60 : 20).
+        assert_eq!(w(&fit_within(&cols, &fit, 224.0)), [0.0, 137.5, 62.5]);
+        // Less than the mod's 150: the widening goes, then both shrink alike.
+        assert_eq!(w(&fit_within(&cols, &fit, 99.0)), [0.0, 50.0, 25.0]);
     }
 }

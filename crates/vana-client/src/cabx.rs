@@ -129,9 +129,27 @@ impl<R: Read> Read for FolderStream<'_, R> {
 /// Extracts every file `dest_for` maps to a path, reporting uncompressed bytes as they are written.
 pub fn extract_all<R: Read + Seek>(
     reader: R,
+    dest_for: impl FnMut(&str) -> Option<PathBuf>,
+    on_bytes: impl FnMut(u64),
+) -> Result<Vec<Extracted>> {
+    extract_all_with(reader, dest_for, || Ok(()), on_bytes)
+}
+
+/// `extract_all`, with `before_write` called once before the first file is written or copied (an error stops there,
+/// nothing written).
+pub fn extract_all_with<R: Read + Seek>(
+    reader: R,
     mut dest_for: impl FnMut(&str) -> Option<PathBuf>,
+    mut before_write: impl FnMut() -> Result<()>,
     mut on_bytes: impl FnMut(u64),
 ) -> Result<Vec<Extracted>> {
+    let mut first = true;
+    let mut writing = move || -> Result<()> {
+        if std::mem::take(&mut first) {
+            before_write()?;
+        }
+        Ok(())
+    };
     let mut r = BufReader::with_capacity(1 << 20, reader);
     let mut hdr = [0u8; 36];
     r.read_exact(&mut hdr)?;
@@ -205,6 +223,7 @@ pub fn extract_all<R: Read + Seek>(
                 };
                 let (Some(path), Some((src, md5))) = (dest, source.clone()) else { continue };
                 if path != src {
+                    writing()?;
                     if let Some(parent) = path.parent() {
                         fs::create_dir_all(parent)?;
                     }
@@ -224,6 +243,7 @@ pub fn extract_all<R: Read + Seek>(
                 stored.insert(key, None);
                 continue;
             };
+            writing()?;
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -311,6 +331,36 @@ mod tests {
         let bad = cabinet(b"abcdwxyz", &[("one", 0, 4), ("odd", 2, 4), ("three", 4, 4)]);
         assert!(extract(&bad, &dir, &["one"]).is_err());
         assert!(extract(&bad, &dir, &[]).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// `before_write` runs once, before the first file is written; never when nothing is written (nothing wanted, or
+    /// the cabinet fails first); its error stops the extraction with nothing written.
+    #[test]
+    fn before_write_once() {
+        let dir = std::env::temp_dir().join(format!("vana-cabx-bw-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let cab = cabinet(b"abcdwxyz", &[("one", 0, 4), ("two", 0, 4), ("three", 4, 4)]);
+        let run = |cab: &[u8], wanted: &[&str], fail: bool| {
+            let mut calls = 0;
+            let r = extract_all_with(
+                io::Cursor::new(cab),
+                |name| wanted.contains(&name).then(|| dir.join(name)),
+                || {
+                    calls += 1;
+                    if fail { bail!("no") } else { Ok(()) }
+                },
+                |_| {},
+            );
+            (r.is_ok(), calls)
+        };
+        assert_eq!(run(&cab, &["one", "two", "three"], false), (true, 1));
+        assert_eq!(run(&cab, &[], false), (true, 0));
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(run(&cab, &["three"], true), (false, 1));
+        assert!(!dir.join("three").exists());
+        let bad = cabinet(b"abcdwxyz", &[("one", 0, 4), ("odd", 2, 4), ("three", 4, 4)]);
+        assert_eq!(run(&bad, &["odd"], false), (false, 0));
         let _ = fs::remove_dir_all(&dir);
     }
 }

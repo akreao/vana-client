@@ -35,8 +35,15 @@
   StringFromGUID2 (FUN_0040e1e0); the game reads it with CLSIDFromString (FUN_10019060) when the pad is on.
 - Ours: client/gamepad_dinput.rs, and gamepad.rs's Windows path (gilrs is not started once DirectInput is up); the
   Controller window lists DirectInput's controllers and saves config gamepad_padguid, and padmode000's [5] / [2] / [3]
-  as gamepad_xinput / gamepad_sliders / gamepad_hat. Not retail: SetupAPI's instance IDs for WMI's DeviceIDs (the
+  as gamepad_xinput / gamepad_sliders / gamepad_hat, each only when it is changed. Use XInput turned off waits for the
+  next start, as +0xc9a stays set once the DLL loaded (the window says so). Not retail: SetupAPI's instance IDs for WMI's DeviceIDs (the
   same present devices); the IDirectInput8W interface; xinput1_3 (then 1_4 / 9_1_0) for xinputdll.dll; XInput slot
-  0 when nothing is picked; no buffered GetDeviceData (a press and release inside one frame is lost); the round dead
+  0 when nothing is picked (an empty slot read once a second); no buffered GetDeviceData (a press and release inside one frame is lost); the round dead
   zone; a background option change also picks again; Linux and macOS list gilrs's pads and keep gilrs's UUID in
   padguid.
+- Review round (2026-11-22): with nothing saved, a controller read through DirectInput plays FFXiPadConfig's Pattern A
+  (menu 0x410, record 0x6ef598 that FUN_0040dfc0 applies: "console-type gamepads with 2 directional control devices
+  and 16 buttons"), not the XInput layout, whose axis codes are XInput's. The tool's records are 34 dwords: padsin000
+  is dwords 0..26 and 29..33, dword 27's bytes the force feedback / hat / sliders / background options, dword 28's
+  byte XInput. Not retail: the game has no default per device. The rescan every 0x5b frames enumerates on a thread
+  of its own (its own IDirectInput8) and the setup runs on the frame only when it found a controller the pick takes.

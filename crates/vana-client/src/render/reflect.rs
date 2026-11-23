@@ -699,6 +699,7 @@ mod tests {
         let mut r = Reflections::new(&gpu, format, std::sync::Arc::new(WaterSurface::build(&c)), Default::default());
         let n = 32u32;
         let cam = crate::render::Camera {
+            jitter: glam::Vec2::ZERO,
             eye: Vec3::new(0.0, -3.0, -20.0),
             target: Vec3::new(0.0, 0.0, 0.0),
             up: Vec3::NEG_Y,
@@ -792,6 +793,7 @@ mod tests {
         let format = wgpu::TextureFormat::Rgba8Unorm;
         let n = 32u32;
         let cam = crate::render::Camera {
+            jitter: glam::Vec2::ZERO,
             eye: Vec3::new(0.0, -1.6, -6.0),
             target: Vec3::new(0.0, -1.0, 0.0),
             up: Vec3::NEG_Y,
@@ -905,6 +907,7 @@ mod tests {
         let format = wgpu::TextureFormat::Rgba8Unorm;
         let n = 32u32;
         let cam = crate::render::Camera {
+            jitter: glam::Vec2::ZERO,
             eye: Vec3::new(0.0, -1.6, -6.0),
             target: Vec3::new(0.0, -1.0, 0.0),
             up: Vec3::NEG_Y,

@@ -1,6 +1,6 @@
 //! The client language, one per process as retail's: DAT_10457bd8 +8 (0 ja, 1 en, 2 de, 3 fr). PlayOnline hands it
 //! to the game in its start-up block (FUN_100157d0 gives the host &DAT_10457b58; FUN_100157e0 copies the block's +0x28,
-//! DAT_10457b80, to +8). Ours takes it from config.json's `language` (Config::load sets it).
+//! DAT_10457b80, to +8). Ours takes it from config.json's `language`, set once as the game data loads (App).
 
 use super::items::Lang;
 use std::sync::atomic::{AtomicU8, Ordering};

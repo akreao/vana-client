@@ -174,9 +174,10 @@ pub fn install(opts: &Options, progress: Arc<Progress>) -> Result<()> {
         targets.insert(file.key.clone(), (path, file.size));
     }
     let total: u64 = targets.values().map(|(_, size)| size).sum();
-    // The files below go back to the installer's versions: the applied manifest no longer describes them, so the
-    // next update reads every file (also after a run that stops part way).
-    crate::patch::forget_applied(&install_root)?;
+    // The files below go back to the installer's versions: before the first is written the applied version is dropped
+    // (crate::patch::forget_applied), since it no longer describes the folder, so the next update reads every file. An
+    // install that fails before writing any (a bad cabinet) leaves the folder's version as it was.
+    let forgot: std::sync::OnceLock<std::result::Result<(), String>> = std::sync::OnceLock::new();
     progress.begin(format!("Installing {} files", targets.len()), total);
 
     let cab_dir = root.join("FINAL_FANTASY_XI");
@@ -186,11 +187,20 @@ pub fn install(opts: &Options, progress: Arc<Progress>) -> Result<()> {
             .iter()
             .map(|media| {
                 let (targets, progress, cab) = (&targets, &progress, cab_dir.join(&media.cabinet));
+                let (forgot, install_root) = (&forgot, &install_root);
                 s.spawn(move || {
                     let file = std::fs::File::open(&cab).with_context(|| format!("opening {}", cab.display()))?;
-                    cabx::extract_all(
+                    cabx::extract_all_with(
                         file,
                         |name| targets.get(name).map(|(p, _)| p.clone()),
+                        || {
+                            forgot
+                                .get_or_init(|| {
+                                    crate::patch::forget_applied(install_root).map_err(|e| format!("{e:#}"))
+                                })
+                                .clone()
+                                .map_err(|e| anyhow!("dropping the applied version: {e}"))
+                        },
                         |n| {
                             progress.done.fetch_add(n, Ordering::Relaxed);
                         },
@@ -202,6 +212,9 @@ pub fn install(opts: &Options, progress: Arc<Progress>) -> Result<()> {
         handles.into_iter().map(|h| h.join().unwrap_or_else(|_| Err(anyhow!("extract thread panicked")))).collect()
     });
 
+    if let Some(Err(e)) = forgot.get() {
+        bail!("dropping the applied version: {e}");
+    }
     let mut extracted = 0usize;
     let mut bad = Vec::new();
     for batch in results {

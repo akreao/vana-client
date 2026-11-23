@@ -56,4 +56,4 @@ Traced, not built (new queue row):
   still not traced: FUN_100a57f0 itself moves an undriven ship nowhere.
 
 Tests: `drive::tests::end_sets_no_position`, `jeuno_leaving_drive_end`, `sequence_dies_two_frames_after_its_end`;
-`zone_ini_sky` now sees the `@ini` task ended, not gone. Not checked live.
+`skill_files_dropped_at_main_end` now sees the skill file go two frames later (frames 72 and 101). Not checked live.

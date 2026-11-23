@@ -13,6 +13,13 @@ local BAG_LABEL = { [1] = "Mog Safe", [2] = "Storage", [4] = "Mog Locker", [5] =
   [7] = "Mog Case", [9] = "Mog Safe 2" }
 -- Score bands against the reference.
 local GOOD, FAIR, LOW = { 240, 170, 60, 255 }, { 230, 220, 110, 255 }, { 120, 170, 230, 255 }
+-- A slot's match with its best in slot: green whole, yellow most, orange part, red little.
+local function match_colour(share)
+  if share >= 0.95 then return { 120, 220, 120, 255 } end
+  if share >= 0.7 then return { 230, 220, 110, 255 } end
+  if share >= 0.4 then return { 240, 160, 80, 255 } end
+  return { 235, 100, 90, 255 }
+end
 
 local view = { set = 1, slot = nil }
 
@@ -75,7 +82,7 @@ local function slot_rows(name, def, r)
   for slot = 0, 15 do
     local o = r and r.slots[slot]
     local h = hand[pick.SLOT_NAMES[slot]]
-    local wearing, share, ref, worth = "-", "", "", ""
+    local wearing, share, ref, worth, tone = "-", "", "", "", nil
     if h then
       wearing = h.name .. " *" .. (held(h.name) and "" or " (not held)")
     elseif o and o.pick then
@@ -84,13 +91,20 @@ local function slot_rows(name, def, r)
       wearing = "(kept)"
     end
     if o then
-      if o.share and o.pick and not h then share = ("%d%%"):format(math.floor(o.share * 100 + 0.5)) end
+      if o.share and o.pick and not h then
+        share, tone = ("%d%%"):format(math.floor(o.share * 100 + 0.5)), match_colour(o.share)
+      end
       if o.ref then ref = item_name(o.ref.id) end
-      if o.worth then worth = item_name(o.worth.id) .. " (" .. ((pick.item(o.worth.id) or {}).level or "?") .. ")" end
+      if o.worth and o.worth_bag then
+        worth = item_name(o.worth.id) .. " (in " .. (BAG_LABEL[o.worth_bag] or "storage") .. ")"
+      elseif o.worth then
+        worth = item_name(o.worth.id) .. " (" .. ((pick.item(o.worth.id) or {}).level or "?") .. ")"
+      end
     end
     local icon_id = (o and o.pick and o.pick.id)
+    -- The Match cell's colour (`colours`; a client without them shows the text alone).
     rows[#rows + 1] = { SLOT_LABEL[slot], wearing, share, ref, worth,
-      icon = icon_id and { kind = "item", id = icon_id } or nil }
+      icon = icon_id and { kind = "item", id = icon_id } or nil, colours = tone and { [3] = tone } or nil }
   end
   return rows
 end
@@ -135,7 +149,12 @@ local function detail(name, def, r)
   local parts = { SLOT_LABEL[view.slot] .. ":" }
   if o.pick then parts[#parts + 1] = item_name(o.pick.id) .. " " .. summary(o.pick.s, def) end
   if o.ref then parts[#parts + 1] = "| best in slot " .. item_name(o.ref.id) .. " " .. summary(o.ref.s, def) end
-  if o.worth then parts[#parts + 1] = "| worth getting " .. item_name(o.worth.id) .. " " .. summary(o.worth.s, def) end
+  if o.worth and o.worth_bag then
+    parts[#parts + 1] = "| in your " .. (BAG_LABEL[o.worth_bag] or "storage") .. " (move it to a wardrobe to wear it): "
+      .. item_name(o.worth.id) .. " " .. summary(o.worth.s, def)
+  elseif o.worth then
+    parts[#parts + 1] = "| worth getting " .. item_name(o.worth.id) .. " " .. summary(o.worth.s, def)
+  end
   return table.concat(parts, " ")
 end
 

@@ -1503,6 +1503,7 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
             save(vm, Some(w));
         }
     }
+    host.return_focus();
     // A window opened this phase takes the focus from every other (not from an open modal one, unless modal itself).
     let wanted: Option<(usize, String)> =
         host.vms.iter().enumerate().find_map(|(k, v)| v.st.borrow_mut().focus_request.take().map(|id| (k, id)));
@@ -2839,6 +2840,54 @@ mod tests {
         assert!(!input::hud_press(&mut host, Left));
     }
 
+    /// A menu opened from a window gives that window the focus back when it closes (picked or Escaped), so Escape
+    /// closes the window next; a list row's `colours` colour single cells by column.
+    #[test]
+    fn menu_gives_the_focus_back() {
+        let mut host = Host::default();
+        let vm = Vm::new(
+            manifest::Manifest { id: "t".into(), ..Default::default() },
+            PathBuf::from("."),
+            vm::Source::Dir(PathBuf::from(".")),
+        )
+        .unwrap();
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        vm.lua
+            .load(
+                r#"
+                ui.window("w", {title = "W", elements = {{type = "list", id = "l",
+                  rows = {{"a", "100%", colours = {[2] = {120, 220, 120}}}, "b"}}}})
+                ui.open("w")
+            "#,
+            )
+            .exec()
+            .unwrap();
+        host.vms.push(vm);
+        let win = |host: &Host, id: &str| {
+            let st = host.vms[0].st.borrow();
+            st.windows.iter().find(|w| w.id == id).map(|w| (w.open, w.focus))
+        };
+        let Some(window::Elem::List { rows, .. }) = host.vms[0].st.borrow().windows[0].elems.first().cloned() else {
+            panic!("no list")
+        };
+        assert_eq!(rows[0].cell_colours, vec![None, Some([120, 220, 120, 255])]);
+        assert!(rows[1].cell_colours.is_empty());
+        host.vms[0].st.borrow_mut().windows[0].focus = true;
+        host.vms[0].lua.load(r#"ui.menu({"x", "y"}, function() end)"#).exec().unwrap();
+        for w in host.vms[0].st.borrow_mut().windows.iter_mut() {
+            w.focus = w.id == "__menu";
+        }
+        // Escape closes the menu: the window has the keys again.
+        let st = host.vms[0].st.clone();
+        st.borrow_mut().windows.iter_mut().find(|w| w.id == "__menu").unwrap().key(egui::Key::Escape);
+        host.return_focus();
+        assert_eq!((win(&host, "w"), win(&host, "__menu")), (Some((true, true)), Some((false, false))));
+        // Once only: a later frame with the window unfocused leaves it so.
+        host.vms[0].st.borrow_mut().windows[0].focus = false;
+        host.return_focus();
+        assert_eq!(win(&host, "w"), Some((true, false)));
+    }
+
     /// A HUD element dragged and let go over one of its mod's canvases (as the modern UI last drew it): the canvas's
     /// window gets a drop at the point in the canvas, in its points; none once the window is closed.
     #[test]
@@ -4106,6 +4155,23 @@ impl Host {
         self.vms.iter().map(|v| v.manifest.id.clone()).collect()
     }
 
+    /// A popup that closed gives the focus back to the window of its mod it was opened from, while that is still open
+    /// and nothing else took the focus (a pick in a slot's menu leaves the window it came from on the keys).
+    fn return_focus(&mut self) {
+        let focused = self.vms.iter().any(|v| v.st.borrow().windows.iter().any(|w| w.focus && w.open));
+        for vm in &self.vms {
+            let mut st = vm.st.borrow_mut();
+            let backs: Vec<String> =
+                st.windows.iter_mut().filter(|w| !w.open && w.back.is_some()).filter_map(|w| w.back.take()).collect();
+            if focused {
+                continue;
+            }
+            if let Some(win) = backs.iter().find_map(|b| st.windows.iter().position(|w| w.id == *b && w.open)) {
+                st.windows[win].focus = true;
+            }
+        }
+    }
+
     /// The open modal window (vm, id), the last opened when there are several.
     pub(super) fn modal(&self) -> Option<(usize, String)> {
         // The index is the mod's place in `vms` (a parked stand-in's states are in the same order).
@@ -4509,6 +4575,24 @@ fn classic_places(w: &World) -> Vec<(usize, String, f32, f32)> {
     }
     out.extend(modal);
     out
+}
+
+/// The wheel on the classic mod windows: an open dropdown's list under the pointer scrolls `notches` (up positive);
+/// with 0, only whether one is there. True when one is.
+pub(super) fn wheel_classic(w: &World, p: (f32, f32), notches: i32) -> bool {
+    let mut places = classic_places(w);
+    if let Some((k, mid)) = w.lua.modal() {
+        places.retain(|(v, id, _, _)| *v == k && *id == mid);
+    }
+    for (v, id, x, y) in places.into_iter().rev() {
+        let mut st = w.lua.vms[v].st.borrow_mut();
+        let Some(win) = st.windows.iter_mut().find(|x| x.id == id) else { continue };
+        if win.over_drop(x, y, p) {
+            win.drop_wheel(x, y, p, notches);
+            return true;
+        }
+    }
+    false
 }
 
 /// The pointer on the classic mod windows (the topmost under it); whether it is over a control.

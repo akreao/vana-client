@@ -10,8 +10,10 @@ So retail logs "Max HP attribute increased to 2." Our battle expander skipped th
 " attribute increased to 2."
 
 **Ours.** `battle::Ctx::texts` carries the point names (`event::point_texts`, the tables dialogue lines already use)
-and `7f b0` / `b1` / `b7` read them as `dialog::expand` does. The s2c 0x029 / 0x02D, 0x053, 0x009, treasure and
-delivery box lines pass them.
+and `7f b0` / `b1` / `b7` read them as `dialog::expand` does; `7f b5` reads the Monstrosity names the same way.
+Every battle line in the client, and the mods' battle message expand, takes its context from `combat::ctx`, which
+fills the name tables and our name. World keeps one copy of the tables while the game data stays the same, so each
+point, Monstrosity or grammar table is read from disk once.
 
 **Modern Status page.** Row 13's English help since build 30261102 (menu message file 55651) is "View Faith Points
 and change Celestite for each alter ego type.", keeping the Japanese name; every other English line says alter ego
