@@ -19013,8 +19013,9 @@ impl App {
             && (crate::render::upscale::temporal(self.cfg.upscaler) || neural)
             && self.upscale_ready()
             && self.upscale.as_ref().is_none_or(|u| u.usable(self.cfg.upscaler))
-            // DLSS once NGX refused the GPU (dlss::status): the world draws at full size again.
-            && (self.cfg.upscaler != crate::render::upscale::dlss::DLSS || crate::render::upscale::dlss::status().is_ok());
+            // DLSS once NGX refused the GPU, or this window size and quality (dlss::usable): the world draws at full size.
+            && (self.cfg.upscaler != crate::render::upscale::dlss::DLSS
+                || crate::render::upscale::dlss::usable(size, self.cfg.upscale_quality));
         if !crate::render::upscale::temporal(self.cfg.upscaler) && !neural {
             self.upscale = None;
         }

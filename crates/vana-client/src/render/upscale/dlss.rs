@@ -39,6 +39,22 @@ pub fn status() -> Result<(), String> {
 #[cfg(feature = "dlss")]
 const NOTICES: &str = include_str!("../../../../../docs/notices/NVIDIA-DLSS.txt");
 
+/// An output size and quality mode NGX's render range left out (dispatch): DLSS is not used for that pair.
+static REJECTED: std::sync::Mutex<Option<([u32; 2], usize)>> = std::sync::Mutex::new(None);
+
+#[cfg_attr(not(feature = "dlss"), allow(dead_code))]
+fn reject(output: [u32; 2], mode: usize) {
+    if let Ok(mut r) = REJECTED.lock() {
+        *r = Some((output, mode));
+    }
+}
+
+/// Whether the frame upscales with DLSS at window size `output` and `upscale_quality` `quality`: NGX runs here, and
+/// that pair was not left out of its render range.
+pub fn usable(output: [u32; 2], quality: u32) -> bool {
+    status().is_ok() && REJECTED.lock().map_or(true, |r| *r != Some((output, quality.min(4) as usize)))
+}
+
 /// The credit the title screen shows above the version where DLSS can run (a `dlss` build on an NVIDIA RTX GPU), as
 /// the SDK licence asks of applications using DLSS; None elsewhere, so other builds and GPUs keep the retail screen.
 pub fn credit() -> Option<&'static str> {
@@ -145,9 +161,10 @@ fn fetch_runtime() -> anyhow::Result<()> {
         let _ = std::fs::remove_file(&tmp);
         anyhow::bail!("{url}: SHA-256 {got}, expected {sha}");
     }
-    std::fs::rename(&tmp, dir.join(name))?;
+    // The notices first: the runtime counts as installed once it is in place, and comes with them.
     #[cfg(feature = "dlss")]
     std::fs::write(dir.join("NVIDIA-DLSS-NOTICES.txt"), NOTICES)?;
+    std::fs::rename(&tmp, dir.join(name))?;
     Ok(())
 }
 
@@ -335,10 +352,10 @@ mod imp {
                 let range = sr.render_resolution_range();
                 let (lo, hi) = (*range.start(), *range.end());
                 if (0..2).any(|i| inp.render[i] < lo[i] || inp.render[i] > hi[i]) {
-                    // Outside what NGX takes for this mode: DLSS is withdrawn and the world draws at full size.
-                    let e = format!("render size {:?} outside DLSS's {lo:?}..={hi:?}", inp.render);
-                    log::warn!("DLSS: {e}");
-                    set_status(Err(e));
+                    // Outside what NGX takes for this mode at this output size: the world draws at full size until
+                    // either changes (`usable`); the other sizes and modes stay offered.
+                    log::warn!("DLSS: render size {:?} outside NGX's {lo:?}..={hi:?}", inp.render);
+                    super::reject(inp.output, mode);
                     return None;
                 }
                 log::info!(
@@ -424,5 +441,19 @@ mod tests {
                 assert_eq!(super::mode_of(super::super::render_size(out, q), out), q as usize, "{out:?} quality {q}");
             }
         }
+    }
+
+    /// A size NGX's range left out stops DLSS for that window size and mode only: another size, or the same size in
+    /// another mode, is still used, and going back to a good size works again.
+    #[test]
+    fn range_rejection_is_per_size_and_mode() {
+        super::set_status(Ok(()));
+        let ok = |o, q| !cfg!(feature = "dlss") || super::usable(o, q);
+        super::reject([640, 360], 4);
+        assert!(!super::usable([640, 360], 4));
+        assert!(ok([640, 360], 1));
+        assert!(ok([1600, 900], 4));
+        super::reject([700, 400], 4);
+        assert!(ok([640, 360], 4));
     }
 }
