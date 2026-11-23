@@ -63,6 +63,20 @@ fn grade(c: vec3<f32>) -> vec3<f32> {
     g = g + vec3<f32>(u.grade.z, 0.0, -u.grade.z) * min(l * 4.0, 1.0);
     return clamp(g, vec3<f32>(0.0), vec3<f32>(1.0));
 }
+// fsr.y: an sRGB surface. The scene's view decodes what it reads and the surface encodes what is written, so the
+// grading and the gamma (made for gamma-space values) work on re-encoded values and the result is decoded last; the
+// picture then matches a plain surface's.
+fn srgb_encode(c: vec3<f32>) -> vec3<f32> {
+    let x = max(c, vec3<f32>(0.0));
+    return select(1.055 * pow(x, vec3<f32>(1.0 / 2.4)) - 0.055, x * 12.92, x <= vec3<f32>(0.0031308));
+}
+fn srgb_decode(c: vec3<f32>) -> vec3<f32> {
+    return select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
+}
+fn finish(c: vec3<f32>) -> vec4<f32> {
+    let o = pow(clamp(grade(c), vec3<f32>(0.0), vec3<f32>(1.0)), 1.0 / u.gamma.rgb);
+    return vec4<f32>(select(o, srgb_decode(o), u.fsr.y > 0.5), 1.0);
+}
 // Gamma: c^(1 / g) per channel (FUN_10016400's ramp exponent).
 // 3D LCD Mode (lcd.x = 1, config 0030): the scene was drawn 0.6 % wider (lcd.z = its extra share, 0.006); eye 0
 // (projection shifted -0.006 in NDC x) squeezed into the left half, eye 1 (+0.006) into the right, bilinear
@@ -78,8 +92,8 @@ fn grade(c: vec3<f32>) -> vec3<f32> {
         let left = i.uv.x < 0.5;
         let x = select(i.uv.x - 0.5, i.uv.x, left) * 2.0;
         let ux = select(x, x + u.lcd.z, left) / (1.0 + u.lcd.z);
-        let e = grade(tap(vec2<f32>(ux, i.uv.y)));
-        return vec4<f32>(pow(clamp(e, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0 / u.gamma.rgb), 1.0);
+        let e = tap(vec2<f32>(ux, i.uv.y));
+        return finish(select(e, srgb_encode(e), u.fsr.y > 0.5));
     }
     var c: vec3<f32>;
     if (u.src.x > u.dst.x || u.src.y > u.dst.y) {
@@ -90,13 +104,10 @@ fn grade(c: vec3<f32>) -> vec3<f32> {
     // lcd.w: the source is the upscaler's linear output (render/upscale), filtered linear and encoded here.
     if (u.lcd.w > 0.5) {
         c = pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2));
-        // fsr.y: an sRGB surface encodes what is written; the scene's path hands it decoded values, so decode to match.
-        if (u.fsr.y > 0.5) {
-            c = select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
-        }
+    } else if (u.fsr.y > 0.5) {
+        c = srgb_encode(c);
     }
-    c = grade(c);
-    return vec4<f32>(pow(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0 / u.gamma.rgb), 1.0);
+    return finish(c);
 }
 // FSR 1's second half: `tex` is EASU's output at the window's size, sharpened by RCAS (u.fsr.x, 0 = off), then the
 // grading and gamma as above.
@@ -106,12 +117,8 @@ fn grade(c: vec3<f32>) -> vec3<f32> {
     if (u.fsr.x > 0.0) {
         c = rcas(p, u.fsr.x);
     }
-    // fsr.y: an sRGB surface, where the other path's values are linear (the scene's view decodes): decode to match.
-    if (u.fsr.y > 0.5) {
-        c = select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
-    }
-    c = grade(c);
-    return vec4<f32>(pow(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0 / u.gamma.rgb), 1.0);
+    // EASU's output is gamma space on either surface (it encodes as it loads on an sRGB one).
+    return finish(c);
 }
 "#;
 
@@ -537,7 +544,7 @@ mod tests {
                 })
             })
             .collect();
-        let run = |format: wgpu::TextureFormat| {
+        let run = |format: wgpu::TextureFormat, fsr1: Option<u32>, grading: u32, dst: [u32; 2]| {
             let mut s = SceneScale::new(&gpu, format);
             s.target(&gpu, src);
             let tex = &s.target.as_ref().unwrap().tex;
@@ -563,26 +570,20 @@ mod tests {
                 view_formats: &[],
             });
             let mut enc = gpu.device.create_command_encoder(&Default::default());
-            s.blit(
-                &gpu,
-                &mut enc,
-                &out.create_view(&Default::default()),
-                dst,
-                [1.0; 3],
-                None,
-                false,
-                0,
-                Some(75),
-                None,
-            );
+            let dst_view = out.create_view(&Default::default());
+            s.blit(&gpu, &mut enc, &dst_view, dst, [1.1, 1.0, 0.9], None, false, grading, fsr1, None);
             gpu.queue.submit([enc.finish()]);
             read(&gpu, &out, dst[0], dst[1])
         };
-        let plain = run(wgpu::TextureFormat::Rgba8Unorm);
-        let srgb = run(wgpu::TextureFormat::Rgba8UnormSrgb);
-        let worst = plain.iter().zip(&srgb).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
-        // 8-bit sRGB round trips in the darks cost up to 3; filtering decoded values instead differs by over 30.
-        assert!(worst <= 3, "sRGB differs from plain by up to {worst}");
+        // FSR 1 with grading and a gamma; the plain pass at the scene's size too (scaled, it filters decoded values
+        // on an sRGB surface, as it always has).
+        for (fsr1, grading, dst) in [(Some(75), 0, dst), (Some(75), 1, dst), (None, 4, src)] {
+            let plain = run(wgpu::TextureFormat::Rgba8Unorm, fsr1, grading, dst);
+            let srgb = run(wgpu::TextureFormat::Rgba8UnormSrgb, fsr1, grading, dst);
+            let worst = plain.iter().zip(&srgb).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
+            // 8-bit sRGB round trips in the darks cost up to 3; filtering decoded values instead differs by over 30.
+            assert!(worst <= 3, "{fsr1:?} grading {grading}: sRGB differs from plain by up to {worst}");
+        }
     }
 
     /// The temporal upscaler's linear output comes out as the same bytes on an sRGB surface as on a plain one (not
@@ -614,7 +615,7 @@ mod tests {
             wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
         );
         let view = up.create_view(&Default::default());
-        let run = |format: wgpu::TextureFormat| {
+        let run = |format: wgpu::TextureFormat, grading: u32, gamma: [f32; 3]| {
             let mut s = SceneScale::new(&gpu, format);
             s.target(&gpu, size);
             let out = gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -629,15 +630,21 @@ mod tests {
             });
             let mut enc = gpu.device.create_command_encoder(&Default::default());
             let dst = out.create_view(&Default::default());
-            s.blit(&gpu, &mut enc, &dst, size, [1.0; 3], None, false, 0, None, Some((&view, size)));
+            s.blit(&gpu, &mut enc, &dst, size, gamma, None, false, grading, None, Some((&view, size)));
             gpu.queue.submit([enc.finish()]);
             read(&gpu, &out, size[0], size[1])
         };
-        let (plain, srgb) = (run(wgpu::TextureFormat::Rgba8Unorm), run(wgpu::TextureFormat::Rgba8UnormSrgb));
-        // pow(x, 1 / 2.2) as bytes: 65, 124, 202.
-        assert!((plain[0] as i32 - 65).abs() <= 1 && (plain[2] as i32 - 202).abs() <= 1, "{:?}", &plain[..4]);
-        let worst = plain.iter().zip(&srgb).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
-        assert!(worst <= 1, "sRGB differs from plain by up to {worst}");
+        // Grading and gamma (made for gamma-space values) too.
+        for (grading, gamma) in [(0, [1.0; 3]), (1, [1.0; 3]), (4, [1.25, 1.0, 0.85])] {
+            let plain = run(wgpu::TextureFormat::Rgba8Unorm, grading, gamma);
+            let srgb = run(wgpu::TextureFormat::Rgba8UnormSrgb, grading, gamma);
+            if grading == 0 {
+                // pow(x, 1 / 2.2) as bytes: 65, 124, 202.
+                assert!((plain[0] as i32 - 65).abs() <= 1 && (plain[2] as i32 - 202).abs() <= 1, "{:?}", &plain[..4]);
+            }
+            let worst = plain.iter().zip(&srgb).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
+            assert!(worst <= 1, "grading {grading}: sRGB differs from plain by up to {worst}");
+        }
     }
 
     fn half_bits(v: f32) -> u16 {
