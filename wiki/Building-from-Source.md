@@ -54,7 +54,8 @@ CI ([ci.yml](https://github.com/akreao/vana-client/blob/master/.github/workflows
 
 Published releases are built with:
 
-- `release/build-linux.sh`: inside the Steam Runtime 3 "sniper" SDK container, so one binary runs on every current distro
-- `release/build-windows.sh`: a MinGW cross build from Linux
+- `release/build-linux.sh`: Linux x86_64, inside the Steam Runtime 3 "sniper" SDK container, so one binary runs on every current distro
+- `release/fetch-ci-builds.sh`: runs the Release builds workflow on GitHub (Linux on ARM, macOS Apple Silicon and Intel, Windows with MSVC) and downloads those builds
+- `release/build-engine.sh`: the Neural Rendering engine (Linux x86_64, in the same SDK container); the client downloads it from the release when Neural Rendering is turned on
 
-`release/publish.sh VERSION` then signs both with the Ed25519 release key (`VANA_SIGNING_KEY`, kept by the publisher; its public half is `release/signing-key.pub`, built into the client), tags them and creates the GitHub release the in-app Update offers.
+`release/publish.sh VERSION` then signs them all with the Ed25519 release key (`VANA_SIGNING_KEY`, kept by the publisher; its public half is `release/signing-key.pub`, built into the client), tags them and creates the GitHub release the in-app Update offers. It stops when the engine is missing; `VANA_NO_ENGINE=1` publishes without it.

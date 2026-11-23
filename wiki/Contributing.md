@@ -33,7 +33,7 @@ On master, `python3 docs/fold.py` appends every fragment to MODLOG.md and docs/m
 
 ## Releases
 
-- `release/publish.sh VERSION` signs the Linux and Windows builds with the release key and creates the GitHub release the in-app Update offers. See [[Building from Source#release-builds]].
+- `release/publish.sh VERSION` signs the Linux, macOS and Windows builds and the Neural Rendering engine (`release/build-engine.sh`) with the release key and creates the GitHub release the in-app Update offers. See [[Building from Source#release-builds]].
 
 ## This wiki
 

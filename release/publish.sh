@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Publishes a GitHub release vVERSION of akreao/vana-client (updater.rs RELEASE_REPO) with the assets release/build-linux.sh made and those
 # release/fetch-ci-builds.sh downloaded (Windows always; Linux aarch64 and macOS when present) and the neural rendering engine
-# release/build-engine.sh made (when present), each with its .sig. VERSION must be the
+# release/build-engine.sh made, each with its .sig. VERSION must be the
 # crate's version (crates/vana-client/Cargo.toml), newer than the last release: clients offer the update when the tag
 # is newer and its signature checks against release/signing-key.pub, built in.
 # The private key: VANA_SIGNING_KEY, or ~/.config/vana-client-release/signing-key.pem (Ed25519; never in the repo).
+# Neural Rendering downloads the engine from this release (client/neural.rs), so it must be there: run
+# release/build-engine.sh first, or set VANA_NO_ENGINE=1 to publish without it (the setting then says the release has
+# no engine).
 #   release/publish.sh 0.1.1 [notes file]
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -17,7 +20,14 @@ for a in target/assets/vana-client-linux-aarch64 target/assets/vana-client-macos
 done
 # The neural rendering engine, downloaded by the client when Neural Rendering is turned on.
 engine=target/assets/vana-client-nr-engine-linux-x86_64.so
-if [ -f "$engine" ]; then assets+=("$engine"); else echo "note: no $engine (release/build-engine.sh); left out" >&2; fi
+if [ -f "$engine" ]; then
+    assets+=("$engine")
+elif [ -n "${VANA_NO_ENGINE:-}" ]; then
+    echo "note: no $engine; left out (VANA_NO_ENGINE): Neural Rendering will say this release has no engine" >&2
+else
+    echo "missing $engine: run release/build-engine.sh (or set VANA_NO_ENGINE=1 to publish without it)" >&2
+    exit 1
+fi
 key="${VANA_SIGNING_KEY:-$HOME/.config/vana-client-release/signing-key.pem}"
 [ -f "$key" ] || { echo "no signing key at $key" >&2; exit 1; }
 pub=$(tr -d '[:space:]' < release/signing-key.pub)
