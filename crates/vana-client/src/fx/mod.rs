@@ -485,6 +485,24 @@ fn run_key(born: u32, mode: u8, started: u32, serial: u32) -> RunKey {
     (born, if matches!(mode, 0 | 0xe | 0xf | 0x14) { (0, started) } else { (1, !started) }, serial)
 }
 
+/// Element update ops 0x33 / 0x46 (0x1004b604): a linked clone's matrix. Euler(element rotation), then for 0x33 the
+/// element frame's rotation (none when it has no frame matrix), for 0x46 the inverse view rotation (DAT_104568fc +
+/// 0x294, the rigid inverse of the view FUN_10015120 stores; translation dropped) so the clone faces the camera; the
+/// translation is the element's world position (FUN_10044c40).
+pub fn clone_follow(face_camera: bool, rot: Vec3, world: Vec3, frame: Option<Mat4>, view: Mat4) -> Mat4 {
+    let mut m = math::euler(rot);
+    if face_camera {
+        let mut r = view;
+        r.w_axis = glam::Vec4::W;
+        m = math::then(m, r.transpose());
+    } else if let Some(mut fm) = frame {
+        fm.w_axis = glam::Vec4::W;
+        m = math::then(m, fm);
+    }
+    m.w_axis = world.extend(1.0);
+    m
+}
+
 /// A word range of an element for the GPU this frame.
 pub enum Write {
     Full(u32, Box<Elem>),
@@ -2151,7 +2169,7 @@ impl Effects {
                 self.spin(i, op, f, actors);
             }
             self.ground_frame(i, actors);
-            let driven = self.drive(i, f);
+            let runs = self.drive(i, f);
             let Some(inst) = self.insts[i].as_ref() else { continue };
             // An element's clone runs inside that element's update (ops 0x25 / 0x33 / 0x46: FUN_1004a980 0x1004b5d0,
             // 0x1004b604 -> FUN_100496f0); a generator's own task runs before the elements (buckets 8 / 9).
@@ -2159,10 +2177,20 @@ impl Effects {
             let (m, a, b, wgt, ss, ms) =
                 (inst.matrix, inst.scale_a, inst.scale_b, inst.weather, inst.size_scaled, inst.mslot);
             self.put_slot(ms, m, a, b, wgt, ss);
-            if driven {
-                self.in_elem = in_elem;
-                self.update_instance(i, f, actors);
-                self.in_elem = false;
+            for (place, run) in runs {
+                if let Some((m, a)) = place
+                    && let Some(x) = self.insts[i].as_mut()
+                {
+                    x.matrix = Some(m);
+                    x.scale_a = a;
+                    let (b, wgt, ss, ms) = (x.scale_b, x.weather, x.size_scaled, x.mslot);
+                    self.put_slot(ms, Some(m), a, b, wgt, ss);
+                }
+                if run {
+                    self.in_elem = in_elem;
+                    self.update_instance(i, f, actors);
+                    self.in_elem = false;
+                }
             }
         }
         // The walk reaches bucket 0xb after the generators' tasks: what they made this frame runs its first update
@@ -2190,51 +2218,45 @@ impl Effects {
         }
     }
 
-    /// Whether instance `i` runs this frame: its task always; an element's clone while the element lives and its
-    /// update stream has op 0x25 (emit every frame, life != 0), or 0x33 / 0x46 (the clone follows the element:
-    /// its rotation, scale and world position, 0x46 also turned to the camera; it runs while either life is not 0).
+    /// How instance `i` runs this frame (FUN_1004a980, the element update stream): its own task once; an element's
+    /// clone (+0x164) once per op 0x25 / 0x33 / 0x46 in the element's update stream, in stream order. Each entry is
+    /// the placement to apply first (ops 0x33 / 0x46) and whether the clone then runs (FUN_100496f0):
+    /// - 0x25 (0x1004b5d0): runs while the element's life (+0x110) is not 0; no placement.
+    /// - 0x33 / 0x46 (0x1004b604): matrix = Euler(element rotation +0xe0), for 0x33 through the element's frame
+    ///   rotation (FUN_100473f0: its borrowed frame, else its generator's attach matrix; skipped when it has none),
+    ///   for 0x46 through the inverse view rotation (FUN_10015240, DAT_104568fc + 0x294) instead; translation the
+    ///   element's world position (FUN_10044c40); clone +0x78 = the element generator's +0x78 x the element's scale
+    ///   (+0xec; +0x84 untouched). Runs while the element's or the clone's own life (+0xd0) is not 0.
+    ///
     /// The clone of a dead element stops.
-    fn drive(&mut self, i: usize, f: &Frame) -> bool {
-        let Some(e) = self.insts[i].as_ref().and_then(|x| x.driven) else { return true };
+    fn drive(&mut self, i: usize, f: &Frame) -> Vec<(Option<(Mat4, Vec3)>, bool)> {
+        let Some(e) = self.insts[i].as_ref().and_then(|x| x.driven) else { return vec![(None, true)] };
         let elem = self.elems.get(e as usize).and_then(|c| c.as_ref()).filter(|c| c.child == Some(i));
         let Some(c) = elem else {
             if let Some(x) = self.insts[i].as_mut() {
                 x.stopping = true;
             }
-            return false;
+            return Vec::new();
         };
-        let (life, back, owner) = (c.life, c.back, self.insts.get(c.inst).and_then(|x| x.as_ref()).map(|x| x.src));
-        let pf = self.parent_frame(c);
-        let Some(owner) = owner else { return false };
-        let has = |reg: &Registry, code: u8| reg.update_op_slot(owner, code).is_some();
-        let follow = if has(&self.reg, 0x46) {
-            Some(true)
-        } else if has(&self.reg, 0x33) {
-            Some(false)
-        } else {
-            None
-        };
-        if let (Some(cam), Some(b)) = (follow, back)
-            && let Some(x) = self.insts[i].as_mut()
-        {
-            // 0x1004b604 (0x33): euler(rot) x the element's parent frame rotation (FUN_100473f0: its snapshot or the
-            // generator's matrix, translation cleared), then the world position; scale A = the owner's x the element's.
-            let mut m = math::euler(b.rot);
-            if cam {
-                // 0x1004b6e8 (0x46): the camera object's +0x294 (FUN_10015240), the inverse of its LookAt view
-                // (FUN_10015120 -> FUN_100283c0), translation cleared: the view rotation's inverse.
-                m = math::then(m, f.view_rot.transpose());
-            } else if let Some(mut p) = pf.as_ref().and_then(|p| p.matrix) {
-                p.w_axis = glam::Vec4::W;
-                m = math::then(m, p);
+        let (life, back) = (c.life, c.back);
+        let Some(owner) = self.insts.get(c.inst).and_then(|x| x.as_ref()) else { return Vec::new() };
+        let (src, owner_scale) = (owner.src, owner.scale_a);
+        let frame = self.parent_frame(c).and_then(|p| p.matrix);
+        let Some(g) = self.reg.libs[src.0].generator(src.1) else { return Vec::new() };
+        let ops: Vec<u8> = g.streams[2].iter().map(|o| o.code).filter(|c| matches!(c, 0x25 | 0x33 | 0x46)).collect();
+        let clone_life = self.insts[i].as_ref().map_or(0.0, |x| x.life);
+        let mut runs = Vec::with_capacity(ops.len());
+        for code in ops {
+            if code == 0x25 {
+                runs.push((None, life != 0.0));
+                continue;
             }
-            m.w_axis = b.world.extend(1.0);
-            x.matrix = Some(m);
-            x.scale_a = pf.as_ref().map_or(Vec3::ONE, |p| p.scale_a) * b.scale;
-            // Run only while the element's life or the clone's (+0xd0) is not 0: a held element stops it.
-            return life != 0.0 || x.life != 0.0;
+            // Placement needs the element's read-back position, rotation and scale.
+            let Some(b) = back else { continue };
+            let m = clone_follow(code == 0x46, b.rot, b.world, frame, f.view_rot);
+            runs.push((Some((m, owner_scale * b.scale)), life != 0.0 || clone_life != 0.0));
         }
-        has(&self.reg, 0x25) && life != 0.0
+        runs
     }
 
     /// FUN_10048740 for one instance.
@@ -2621,12 +2643,14 @@ impl Effects {
         for ch in s.children {
             match ch {
                 emit::Child::Clone { src, op } => {
-                    // Ops 0x53 / 0x6a: the clone's matrix is the element's rotation (through the emitter's
-                    // rotation, and the camera's for 0x6a) at the element's world position, its scales the
-                    // element's; 0x44 leaves the clone's placement.
-                    let (emitter, size, actors) = self.insts[inst]
-                        .as_ref()
-                        .map_or((None, Vec3::ONE, [sched::Who::None; 2]), |x| (x.matrix, x.scale_b, x.actors));
+                    // Ops 0x53 / 0x6a (FUN_1004e8d0 0x1004eef5): the clone's matrix is the element's rotation
+                    // through its frame's rotation (FUN_100473f0: the borrowed frame, else the emitter's attach
+                    // matrix) and the camera's c10 for 0x6a, at the element's world position; +0x78 the element's
+                    // scale, +0x84 its frame's scale B (FUN_10047490). 0x44 leaves the clone's own placement.
+                    let pf = self.elems[e as usize].as_ref().and_then(|c| self.parent_frame(c));
+                    let actors = self.insts[inst].as_ref().map_or([sched::Who::None; 2], |x| x.actors);
+                    let emitter = pf.as_ref().and_then(|p| p.matrix);
+                    let size = pf.as_ref().map_or(Vec3::ONE, |p| p.scale_b);
                     // 0x1004ee4a: +0x64 (the damage number) only from a parent that is a clone itself.
                     let dam = self.insts[inst].as_ref().filter(|x| x.clone).and_then(|x| x.dam.clone());
                     if let Some(ci) = self.start(src, Owner::Element(e as usize)) {
@@ -2659,6 +2683,13 @@ impl Effects {
                         }
                         if let Some(c) = self.elems[e as usize].as_mut() {
                             c.child = Some(ci);
+                        }
+                        // Its slot now, before it runs: a clone it emits at once reads this frame through it
+                        // (FUN_100473f0 reads the generator's +0xa4 directly in retail).
+                        if let Some(x) = self.insts[ci].as_ref() {
+                            let (m, a, b, wgt, ss, ms) =
+                                (x.matrix, x.scale_a, x.scale_b, x.weather, x.size_scaled, x.mslot);
+                            self.put_slot(ms, m, a, b, wgt, ss);
                         }
                         self.update_instance(ci, f, acts);
                     }
@@ -3587,5 +3618,34 @@ mod tests {
         let c = fx.elems.iter().flatten().find(|c| c.quake.is_some()).expect("vib1's element");
         assert!(c.max_life > f.dt + 1.0 && c.life == c.max_life - f.dt, "{} of {}", c.life, c.max_life);
         assert!(!fx.quakes.is_empty() && fx.rumble > 0, "no kick in the frame it was made");
+    }
+
+    /// Op 0x46: the clone's axes come out as the view's (it faces the camera), at the element's world position.
+    #[test]
+    fn clone_follow_faces_camera() {
+        let view = Mat4::from_rotation_x(0.4)
+            * Mat4::from_rotation_y(-1.1)
+            * Mat4::from_translation(Vec3::new(4.0, -3.0, 9.0));
+        let world = Vec3::new(1.0, 2.0, 3.0);
+        let m = clone_follow(true, Vec3::ZERO, world, Some(Mat4::from_rotation_y(1.0)), view);
+        for v in [Vec3::X, Vec3::Y, Vec3::Z] {
+            assert!(view.transform_vector3(m.transform_vector3(v)).abs_diff_eq(v, 1e-5));
+        }
+        assert_eq!(m.w_axis.truncate(), world);
+    }
+
+    /// Op 0x33: Euler(rotation) then the frame's rotation; the frame's translation is dropped.
+    #[test]
+    fn clone_follow_frame_rotation() {
+        let frame =
+            Mat4::from_translation(Vec3::new(50.0, 0.0, 0.0)) * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let rot = Vec3::new(0.0, 0.0, 0.3);
+        let m = clone_follow(false, rot, Vec3::ONE, Some(frame), Mat4::IDENTITY);
+        let want = Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2) * math::euler(rot);
+        assert!(m.transform_vector3(Vec3::X).abs_diff_eq(want.transform_vector3(Vec3::X), 1e-5));
+        assert_eq!(m.w_axis.truncate(), Vec3::ONE);
+        // No frame matrix: the element's rotation alone.
+        let m = clone_follow(false, rot, Vec3::ONE, None, Mat4::IDENTITY);
+        assert!(m.transform_vector3(Vec3::X).abs_diff_eq(math::euler(rot).transform_vector3(Vec3::X), 1e-5));
     }
 }
