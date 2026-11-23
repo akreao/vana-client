@@ -582,7 +582,7 @@ fn fs_motion(i: MotionOut) -> @location(0) vec4<f32> {
 // threshold), so what shows through a cut-out keeps the camera's motion.
 @fragment
 fn fs_actor_motion(i: MotionOut) -> @location(0) vec4<f32> {
-    if (textureSampleBias(tex, samp, i.uv, u.modes.z).a < 0.3) {
+    if (textureSampleBias(tex, samp, i.uv, u.lod.x).a < 0.3) {
         discard;
     }
     return motion_px(i);
