@@ -23,8 +23,9 @@ const MIN_ELEVATION: f32 = 25.0;
 const RECENTRE: f32 = 0.25;
 /// ... or the sun has turned more than this (radians; 0.2 degrees, about 2 s of game time at noon).
 const TURN: f32 = 0.2 * std::f32::consts::PI / 180.0;
-/// How far the camera's eye may move from where the maps were drawn before they are drawn again (an orbit about the
-/// target: the LOD bands and the camera list's reach go by the eye).
+/// The least the camera's eye may move from where a cascade was drawn before it is drawn again (an orbit about the
+/// target: the LOD bands and the camera list's reach go by the eye); a cascade allows its recentring step if larger,
+/// so following the player in a straight line redraws the far map no more often than its recentring does.
 const EYE_STEP: f32 = 4.0;
 /// The most a shadow takes off the sun's direct term (a little of it is kept: the sky's light, which the game's
 /// ambient term does not carry).
@@ -90,12 +91,14 @@ pub struct Drawn {
     pub dir: Vec3,
     pub centre: Vec2,
     pub vp: Mat4,
+    /// The camera's eye it was drawn from.
+    pub eye: Vec3,
 }
 
 /// Which cascades to draw again this frame (their indices) for light direction `d` (direction()'s) and the camera's
-/// `target`, given what each was drawn for; `all` (a voyage, a change in what is shown) draws every one. Each one
-/// drawn takes its new state.
-pub fn plan(drawn: &mut [Option<Drawn>], halves: &[f32], d: Vec3, target: Vec3, all: bool) -> Vec<usize> {
+/// `target` and `eye`, given what each was drawn for; `all` (a voyage, a change in what is shown) draws every one. Each
+/// one drawn takes its new state.
+pub fn plan(drawn: &mut [Option<Drawn>], halves: &[f32], d: Vec3, target: Vec3, eye: Vec3, all: bool) -> Vec<usize> {
     let turned = drawn.iter().flatten().any(|c| c.dir.angle_between(d) > TURN);
     let mut out = Vec::new();
     for (k, (slot, &half)) in drawn.iter_mut().zip(halves).enumerate() {
@@ -103,12 +106,15 @@ pub fn plan(drawn: &mut [Option<Drawn>], halves: &[f32], d: Vec3, target: Vec3, 
             None => true,
             Some(c) => {
                 let t = light_view(c.dir).transform_point3(target);
-                all || turned || (Vec2::new(t.x, t.y) - c.centre).abs().max_element() > RECENTRE * half
+                let step = RECENTRE * half;
+                all || turned
+                    || (Vec2::new(t.x, t.y) - c.centre).abs().max_element() > step
+                    || c.eye.distance(eye) > step.max(EYE_STEP)
             }
         };
         if stale {
             let (vp, centre) = matrix(d, target, half);
-            *slot = Some(Drawn { dir: d, centre, vp });
+            *slot = Some(Drawn { dir: d, centre, vp, eye });
             out.push(k);
         }
     }
@@ -252,9 +258,6 @@ struct State {
     shown: u64,
     /// Whether door parts were moving at the last frame: their final pose is drawn once more after they stop.
     moving: bool,
-    /// The camera's eye when the maps were drawn: the casters' LOD bands and the camera list's reach are measured
-    /// from it, so an orbit far enough draws them again.
-    eye: Vec3,
     /// The last frame's strength and how many cascades it drew (the diagnostics and the benchmark).
     strength: f32,
     redrawn: usize,
@@ -305,8 +308,8 @@ impl WorldShadow {
     }
 
     /// The cascades to draw this frame (index, matrix) for light direction `d` around `target`: plan()'s, all of
-    /// them when `all`, what is shown (`shown`) changed, door parts are `moving` or just stopped, or the `eye` has
-    /// moved EYE_STEP. Their matrices are written for the depth pass.
+    /// them when `all`, what is shown (`shown`) changed, door parts are `moving` or just stopped; each one
+    /// also when the `eye` has moved its step from where it was drawn (plan). Their matrices are written for the depth pass.
     #[allow(clippy::too_many_arguments)]
     pub fn stale(
         &self,
@@ -319,18 +322,15 @@ impl WorldShadow {
         moving: bool,
     ) -> Vec<(usize, Mat4)> {
         let mut s = self.state();
-        let all = all || s.shown != shown || moving || s.moving || s.eye.distance(eye) > EYE_STEP;
+        let all = all || s.shown != shown || moving || s.moving;
         s.shown = shown;
         s.moving = moving;
-        let out: Vec<(usize, Mat4)> = plan(&mut s.drawn, halves(self.level), d, target, all)
+        let out: Vec<(usize, Mat4)> = plan(&mut s.drawn, halves(self.level), d, target, eye, all)
             .into_iter()
             .filter_map(|k| Some((k, s.drawn[k]?.vp)))
             .collect();
         for (k, vp) in &out {
             super::Put::put(&gpu.queue, &self.matrix, 256 * *k as u64, bytemuck::cast_slice(&vp.to_cols_array()));
-        }
-        if !out.is_empty() {
-            s.eye = eye;
         }
         s.redrawn = out.len();
         out
@@ -397,22 +397,35 @@ mod tests {
         let mut drawn = vec![None; h.len()];
         let d = direction(Vec3::new(0.3, 1.0, 0.2)).unwrap();
         let t = Vec3::new(10.0, 0.0, 10.0);
-        assert_eq!(plan(&mut drawn, h, d, t, false), vec![0, 1]);
-        assert!(plan(&mut drawn, h, d, t, false).is_empty());
+        assert_eq!(plan(&mut drawn, h, d, t, t, false), vec![0, 1]);
+        assert!(plan(&mut drawn, h, d, t, t, false).is_empty());
         // A small step: nothing; past a quarter of the near half side (5 units), the near one only.
-        assert!(plan(&mut drawn, h, d, t + Vec3::new(2.0, 0.0, 0.0), false).is_empty());
-        assert_eq!(plan(&mut drawn, h, d, t + Vec3::new(9.0, 0.0, 9.0), false), vec![0]);
+        assert!(plan(&mut drawn, h, d, t + Vec3::new(2.0, 0.0, 0.0), t + Vec3::new(2.0, 0.0, 0.0), false).is_empty());
+        assert_eq!(plan(&mut drawn, h, d, t + Vec3::new(9.0, 0.0, 9.0), t + Vec3::new(9.0, 0.0, 9.0), false), vec![0]);
         // Past the far one's quarter (20 units) both.
-        assert_eq!(plan(&mut drawn, h, d, t + Vec3::new(40.0, 0.0, 40.0), false), vec![0, 1]);
+        assert_eq!(
+            plan(&mut drawn, h, d, t + Vec3::new(40.0, 0.0, 40.0), t + Vec3::new(40.0, 0.0, 40.0), false),
+            vec![0, 1]
+        );
         let t = t + Vec3::new(40.0, 0.0, 40.0);
         // The sun turning a little (0.1 degree): kept; past 0.2 degrees: both.
         let turn = |deg: f32| Mat4::from_rotation_z(deg.to_radians()).transform_vector3(d);
-        assert!(plan(&mut drawn, h, turn(0.1), t, false).is_empty());
-        assert_eq!(plan(&mut drawn, h, turn(0.5), t, false), vec![0, 1]);
-        assert_eq!(plan(&mut drawn, h, turn(0.5), t, true), vec![0, 1]);
+        assert!(plan(&mut drawn, h, turn(0.1), t, t, false).is_empty());
+        assert_eq!(plan(&mut drawn, h, turn(0.5), t, t, false), vec![0, 1]);
+        assert_eq!(plan(&mut drawn, h, turn(0.5), t, t, true), vec![0, 1]);
+        // Each cascade keeps the eye it was drawn from: a near-only redraw doesn't move the far one's, so an orbit
+        // that takes the eye past the far map's step (20) from where it was drawn redraws it.
+        let eye0 = drawn[1].unwrap().eye;
+        assert_eq!(plan(&mut drawn, h, turn(0.5), t + Vec3::X * 8.0, eye0 + Vec3::X * 3.0, false), vec![0]);
+        assert_eq!(drawn[1].unwrap().eye, eye0);
+        assert!(plan(&mut drawn, h, turn(0.5), t + Vec3::X * 8.0, eye0 + Vec3::X * 7.0, false).is_empty());
+        assert_eq!(
+            plan(&mut drawn, h, turn(0.5), t + Vec3::X * 8.0, eye0 + Vec3::new(7.0, 0.0, 21.0), false),
+            vec![0, 1]
+        );
     }
 
-    /// The cache: drawn once, kept while nothing changes, all drawn again when the eye orbits past EYE_STEP, parts
+    /// The cache: drawn once, kept while nothing changes, the near one drawn again when the eye orbits past its step, all when parts
     /// move (and once more as they stop) or what is shown changes.
     #[test]
     fn stale_redraws_on_orbit_parts_and_shown() {
@@ -440,7 +453,8 @@ mod tests {
         assert!(ws.drawn());
         assert_eq!(n(eye, 0, false), 0);
         assert_eq!(n(eye + Vec3::X * 2.0, 0, false), 0);
-        assert_eq!(n(Vec3::new(6.0, -3.0, 0.0), 0, false), 2);
+        // An orbit of 8.5 units: past the near map's step (5), not the far one's (20).
+        assert_eq!(n(Vec3::new(6.0, -3.0, 0.0), 0, false), 1);
         let eye = Vec3::new(6.0, -3.0, 0.0);
         assert_eq!((n(eye, 0, true), n(eye, 0, true), n(eye, 0, false), n(eye, 0, false)), (2, 2, 2, 0));
         assert_eq!((n(eye, 7, false), n(eye, 7, false)), (2, 0));
