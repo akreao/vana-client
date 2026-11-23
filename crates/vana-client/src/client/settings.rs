@@ -18,6 +18,9 @@ pub struct Settings {
     pub anisotropy: u16,
     pub antialias: u32,
     pub grading: u32,
+    pub upscaler: u32,
+    pub upscale_quality: u32,
+    pub upscale_sharpness: u32,
     pub draw_distance: u32,
     pub send_interval: u32,
     pub move_rate: u32,
@@ -66,6 +69,9 @@ impl Settings {
             anisotropy: c.anisotropy,
             antialias: c.antialias,
             grading: c.grading,
+            upscaler: c.upscaler,
+            upscale_quality: c.upscale_quality,
+            upscale_sharpness: c.upscale_sharpness,
             draw_distance: c.draw_distance,
             send_interval: c.send_interval,
             move_rate: c.move_rate,
@@ -110,6 +116,9 @@ impl Settings {
         c.anisotropy = self.anisotropy;
         c.antialias = self.antialias;
         c.grading = self.grading;
+        c.upscaler = self.upscaler;
+        c.upscale_quality = self.upscale_quality;
+        c.upscale_sharpness = self.upscale_sharpness;
         c.draw_distance = self.draw_distance;
         c.send_interval = self.send_interval;
         c.move_rate = self.move_rate;
@@ -164,6 +173,10 @@ enum Val {
     Aniso,
     Antialias,
     Grading,
+    /// The upscaler and its quality in one: 0 off, 7..10 FSR 1 at quality 1..4 (1..6 are left for the temporal
+    /// upscaler's choices).
+    Upscaler,
+    UpscaleSharpness,
     DrawDistance,
     SendRate,
     MoveRate,
@@ -314,7 +327,7 @@ const fn row(
     SRow { label, help, val, choices, when }
 }
 
-const TABS: [&str; 12] = [
+const TABS: [&str; 13] = [
     "General",
     "Screen",
     "Textures",
@@ -325,12 +338,13 @@ const TABS: [&str; 12] = [
     "Controls",
     "Graphics",
     "Scene",
+    "Upscaling",
     "DAT Packs",
     "Mods",
 ];
 /// The DAT Packs and Mods pages (client/modsui.rs): their rows come from the mods folder, not a table.
-const PACKS: usize = 10;
-const MODS: usize = 11;
+const PACKS: usize = 11;
+const MODS: usize = 12;
 const EXTRA_TABS: [&str; 4] = ["Maps", "Timers", "Battle", "Misc."];
 
 /// `in_game`: the volumes are the Gameplay page's there, so the Sound page leaves them out. `modern`: the minimap's and
@@ -663,6 +677,29 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
             Now,
         ),
     ];
+    // Ours: drawing the world smaller and upscaling it to the window (render/fsr1.rs).
+    const UPSCALING: &[SRow] = &[
+        row(
+            "Upscaling",
+            "Draws the 3D world at a lower resolution and sharpens it back up to the window's size (AMD FidelityFX Super Resolution 1), for a faster frame on a slower graphics card. Quality draws at 67% of the window size, Balanced 59%, Performance 50%, Ultra Performance 33%. Menus and text stay sharp, and Background is not used while it is on (not retail).",
+            Upscaler,
+            &[
+                (0, "Off"),
+                (7, "FSR 1 Quality"),
+                (8, "FSR 1 Balanced"),
+                (9, "FSR 1 Performance"),
+                (10, "FSR 1 Ultra Perf."),
+            ],
+            Now,
+        ),
+        row(
+            "Upscaling Sharpness",
+            "How much the upscaled picture is sharpened (AMD FidelityFX RCAS). Off leaves it soft (not retail).",
+            UpscaleSharpness,
+            &[(0, "Off"), (25, "25%"), (50, "50%"), (75, "75%"), (100, "100%")],
+            Now,
+        ),
+    ];
     // A page holds 7 rows; the controls' (the gamepad, mouse look) have theirs.
     const GAMEPAD: &[SRow] = &[
         row(
@@ -727,7 +764,7 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
         // UI Setup (the last Linux row) is a character's: in game only.
         Kind::Settings if !in_game && tab == 6 => &CLIENT[..CLIENT.len() - 1],
         Kind::Settings => {
-            [GENERAL, SCREEN, TEXTURES, EFFECTS, SOUND, MISC, CLIENT, GAMEPAD, GRAPHICS, SCENE][tab.min(9)]
+            [GENERAL, SCREEN, TEXTURES, EFFECTS, SOUND, MISC, CLIENT, GAMEPAD, GRAPHICS, SCENE, UPSCALING][tab.min(10)]
         }
     }
 }
@@ -995,6 +1032,9 @@ impl SettingsUi {
             Val::Aniso => self.s.anisotropy as u32,
             Val::Antialias => self.s.antialias,
             Val::Grading => self.s.grading,
+            Val::Upscaler if self.s.upscaler == crate::render::fsr1::FSR1 => 6 + self.s.upscale_quality.clamp(1, 4),
+            Val::Upscaler => 0,
+            Val::UpscaleSharpness => self.s.upscale_sharpness,
             Val::DrawDistance => self.s.draw_distance,
             Val::SendRate => self.s.send_interval,
             Val::MoveRate => self.s.move_rate,
@@ -1034,6 +1074,11 @@ impl SettingsUi {
             Val::Aniso => self.s.anisotropy = x as u16,
             Val::Antialias => self.s.antialias = x,
             Val::Grading => self.s.grading = x,
+            Val::Upscaler => match x {
+                7..=10 => (self.s.upscaler, self.s.upscale_quality) = (crate::render::fsr1::FSR1, x - 6),
+                _ => self.s.upscaler = 0,
+            },
+            Val::UpscaleSharpness => self.s.upscale_sharpness = x,
             Val::DrawDistance => self.s.draw_distance = x,
             Val::SendRate => self.s.send_interval = x,
             Val::MoveRate => self.s.move_rate = x,
