@@ -21428,6 +21428,7 @@ fn draw_effects(
                 .map(|l| (l.dir, crate::render::boosted(l.diffuse, b), crate::render::boosted(l.ambient, b))),
         );
         eg.set_depth(Some((&scene_depth, camera.proj(aspect))));
+        eg.bump_mode = r.bump_mode;
         perf::timed(|| "effects upload".into(), || eg.update(&gfx.gpu, &mut fg.encoder, &mut w.effects, &f));
         fg.mark("fx update");
         let (fog_color, fog) =
