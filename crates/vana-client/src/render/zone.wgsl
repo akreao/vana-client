@@ -441,6 +441,8 @@ struct MotionOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) cur: vec4<f32>,
     @location(1) prev: vec4<f32>,
+    // The actors' texture coordinates, for fs_actor_motion's alpha test.
+    @location(2) uv: vec2<f32>,
 };
 
 @vertex
@@ -450,6 +452,7 @@ fn vs_skinned_motion(v: SkinIn) -> MotionOut {
     out.clip = s.clip;
     out.cur = motion_u.vp * vec4<f32>(s.world, 1.0);
     out.prev = motion_u.prev_vp * vec4<f32>(skin_prev(v), 1.0);
+    out.uv = s.uv;
     return out;
 }
 
@@ -482,10 +485,24 @@ fn vs_scenery_motion(v: VertexIn) -> MotionOut {
 }
 
 // Previous minus current position in render pixels (y down); alpha 1 marks the pixel as the actor's.
-@fragment
-fn fs_motion(i: MotionOut) -> @location(0) vec4<f32> {
+fn motion_px(i: MotionOut) -> vec4<f32> {
     let d = i.prev.xy / i.prev.w - i.cur.xy / i.cur.w;
     return vec4<f32>(d.x * 0.5 * motion_u.size.x, -d.y * 0.5 * motion_u.size.y, 0.0, 1.0);
+}
+
+@fragment
+fn fs_motion(i: MotionOut) -> @location(0) vec4<f32> {
+    return motion_px(i);
+}
+
+// An actor's motion where its colour pass kept the pixel: actor_colour's alpha test (same texture, bias and
+// threshold), so what shows through a cut-out keeps the camera's motion.
+@fragment
+fn fs_actor_motion(i: MotionOut) -> @location(0) vec4<f32> {
+    if (textureSampleBias(tex, samp, i.uv, u.modes.z).a < 0.3) {
+        discard;
+    }
+    return motion_px(i);
 }
 
 // The shadow silhouette (render/shadow.rs, FUN_100329e0): the actor drawn flat white from its light, through the

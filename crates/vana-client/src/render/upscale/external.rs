@@ -234,6 +234,13 @@ impl Engine {
             })
         };
         gpu.queue.submit([raw.finish()]);
+        // wgpu tracks the views and textures only through the settle submission, not the engine's raw one: they are
+        // held until all work submitted so far (the engine's buffer included) is done.
+        let keep = (
+            [color, motion, reactive, composition, output, depth],
+            [inp.color, inp.motion, inp.reactive, inp.composition, inp.depth, out].map(|t| t.clone()),
+        );
+        gpu.queue.on_submitted_work_done(move || drop(keep));
         if status != Some(0) {
             log::debug!("engine returned {status:?}");
         }

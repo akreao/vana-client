@@ -19,8 +19,26 @@ impl Request {
         let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
         let label: String = label.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
         let name = if label.is_empty() { t.to_string() } else { format!("{t}-{label}") };
-        Request { dir: crate::config::data_dir().join("captures").join(name), frames: frames.clamp(1, 240), index: 0 }
+        Request {
+            dir: reserve(&crate::config::data_dir().join("captures"), &name),
+            frames: frames.clamp(1, 240),
+            index: 0,
+        }
     }
+}
+
+/// A folder of its own under `parent`: `name`, else `name`-2, -3.. when a capture in the same second took it.
+fn reserve(parent: &std::path::Path, name: &str) -> PathBuf {
+    let _ = std::fs::create_dir_all(parent);
+    for n in 1u32..1000 {
+        let dir = if n == 1 { parent.join(name) } else { parent.join(format!("{name}-{n}")) };
+        match std::fs::create_dir(&dir) {
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            // Made, or a failure the writer reports.
+            _ => return dir,
+        }
+    }
+    parent.join(name)
 }
 
 struct Image {
@@ -163,6 +181,17 @@ pub fn finish(gpu: &Gpu, p: Pending) -> Option<Request> {
 #[cfg(test)]
 mod tests {
     use super::f16_to_f32;
+
+    /// Two captures in the same second get folders of their own.
+    #[test]
+    fn same_second_captures_kept_apart() {
+        let parent = std::env::temp_dir().join(format!("vana-capture-test-{}", std::process::id()));
+        let a = super::reserve(&parent, "100-x");
+        let b = super::reserve(&parent, "100-x");
+        assert_eq!(a, parent.join("100-x"));
+        assert_eq!(b, parent.join("100-x-2"));
+        let _ = std::fs::remove_dir_all(&parent);
+    }
 
     #[test]
     fn halves() {

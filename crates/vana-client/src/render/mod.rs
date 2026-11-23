@@ -1548,7 +1548,12 @@ impl ZonePipes {
             label: Some("actor motion"),
             layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("actor motion"),
-                bind_group_layouts: &[Some(&globals_layout), None, Some(&pose_layout), Some(&motion_layout)],
+                bind_group_layouts: &[
+                    Some(&globals_layout),
+                    Some(&texture_layout),
+                    Some(&pose_layout),
+                    Some(&motion_layout),
+                ],
                 immediate_size: 0,
             })),
             vertex: wgpu::VertexState {
@@ -1569,7 +1574,7 @@ impl ZonePipes {
             multisample: Default::default(),
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: Some("fs_motion"),
+                entry_point: Some("fs_actor_motion"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: upscale::OBJECT_MOTION_FORMAT,
@@ -4148,10 +4153,11 @@ impl ZoneRenderer {
             pass.set_bind_group(2, group, &[skin.offset]);
             pass.set_bind_group(3, g3, &[off]);
             pass.set_vertex_buffer(0, skin.vertices.slice(..));
-            for (_, range, wep) in &a.draws {
+            for (tex, range, wep) in &a.draws {
                 if *wep != NO_WEP && a.hidden_weps & (1 << wep) != 0 {
                     continue;
                 }
+                pass.set_bind_group(1, &a.textures[*tex], &[]);
                 pass.draw(range.clone(), 0..1);
             }
         }
@@ -5485,12 +5491,33 @@ pub fn render_pngs_post(
                 if let Some(q) = q {
                     encoder.write_timestamp(q, f * 2);
                 }
-                renderer.render(&gpu, &mut encoder, &view, &depth, camera, width as f32 / height as f32, &actor_refs);
+                let aspect = width as f32 / height as f32;
+                // FSR 3.1 (FFXI_FSR3): the jittered frame, its snapshots and the upscaler, as the shot does.
+                let mut cam = **camera;
+                if let (Some(f), Some(q)) = (fsr3.as_mut(), fsr3_q) {
+                    cam.jitter = f.begin(&gpu, out_size, q, format, true).1;
+                    renderer.snaps = f.targets.as_ref().map(|t| {
+                        (scene_target.clone(), [t.snap_opaque.clone(), t.snap_blend.clone(), t.snap_pre_fx.clone()])
+                    });
+                    renderer.motion_target = f.motion_target().map(|mut m| {
+                        m.vp = cam.steady().view_proj(aspect);
+                        m.prev_vp = m.vp;
+                        m
+                    });
+                }
+                renderer.render(&gpu, &mut encoder, &view, &depth, &cam, aspect, &actor_refs);
+                if let Some((scene, s)) = renderer.snaps.as_ref().filter(|_| fsr3.is_some()) {
+                    upscale::snap(&mut encoder, scene, &s[2]);
+                }
                 if let Some(fx) = &scene_fx {
-                    let frame = scenefx::Frame::new(camera, width as f32 / height as f32, lighting.as_ref());
+                    let frame = scenefx::Frame::new(&cam, aspect, lighting.as_ref());
                     fx.draw(&gpu, &mut encoder, &view, &depth, &frame);
                 }
-                scale_up(&mut encoder, None);
+                let out = fsr3.as_mut().and_then(|f| {
+                    f.frame_camera = Some(upscale::FrameCamera { camera: cam, aspect });
+                    f.run(&gpu, &mut encoder, &raw, &depth, 1, sharp, 0, false)
+                });
+                scale_up(&mut encoder, out.as_ref().map(|(v, sz)| (v, *sz)));
                 if let Some(q) = q {
                     encoder.write_timestamp(q, f * 2 + 1);
                 }
@@ -5593,14 +5620,15 @@ pub fn render_pngs_post(
         );
         // An error (a GPU short of what the pass needs) stops before the frame is written over an older one.
         post(&gpu, &mut encoder, (&view, &scene_target), &depth, camera, lighting.as_ref(), &mut renderer)?;
+        // FSR 3.1: the snapshot before the effects, as the client takes it.
+        if let Some((scene, s)) = renderer.snaps.as_ref().filter(|_| fsr3.is_some()) {
+            upscale::snap(&mut encoder, scene, &s[2]);
+        }
         if let Some(fx) = &scene_fx {
             let frame = scenefx::Frame::new(camera, width as f32 / height as f32, lighting.as_ref());
             fx.draw(&gpu, &mut encoder, &view, &depth, &frame);
         }
         let out = fsr3.as_mut().and_then(|f| {
-            if let Some((scene, s)) = &renderer.snaps {
-                upscale::snap(&mut encoder, scene, &s[2]);
-            }
             f.frame_camera = Some(upscale::FrameCamera { camera: **camera, aspect });
             f.run(&gpu, &mut encoder, &raw, &depth, 1, sharp, 0, false)
         });
