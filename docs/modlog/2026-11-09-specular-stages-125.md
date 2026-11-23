@@ -32,7 +32,8 @@ L11734). Addresses are Steven's FFXiMain.dll.
   (TSS 0x103528f0: rgb + a0 x texel) and the lens flare (FUN_1003ebf0 under FUN_100548d0, TSS 0x103520a8: rgb + a x
   texel). A cube left there adds black.
 - The lens flare's own stages (TSS 0x103520a8): alpha MODULATE2X(diffuse, texture), then MODULATE2X(current,
-  TFACTOR). Ours lacked the first doubling.
+  TFACTOR). The image's alpha is already doubled at upload (uncompressed / DXT3, 0x80 = 1.0), so the first
+  doubling is the texture alpha as stored; ours keeps the one MODULATE2X with TFACTOR.
 - Camera +0xd4 vs +0xb90: FUN_10015510 sets VIEW from the camera (0x10015569), stores it (FUN_10015120: +0x54, +0x94,
   +0xd4 with the translation zeroed, +0x294 the inverse) and calls FUN_1006b270, which reads the device VIEW back into
   +0xb50 and +0xb90 (translation zeroed). The same rotation in the effects pass. Closed.
