@@ -3979,6 +3979,8 @@ fn fx_shot(
         }
         let Some(eg) = eg.as_mut() else { unreachable!() };
         eg.set_lights(&zr.lights);
+        // Lit elements (op-1 flag 16), as the client sets them with no gamma boost.
+        eg.set_light(l.map(|l| (l.dir, l.diffuse, l.ambient)));
         fx.reg.light_keys = zr.light_keys.clone();
         let view = cam.view();
         let mut view_rot = view;
