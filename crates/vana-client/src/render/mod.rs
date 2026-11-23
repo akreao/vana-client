@@ -1096,6 +1096,7 @@ fn material_bind_group(
             wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
             wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(normal) },
             wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(rm) },
+            wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(view) },
         ],
     })
 }
@@ -1587,6 +1588,9 @@ impl ZonePipes {
                 // Material maps (material.rs): the normal map and roughness / metal.
                 material_entry(2),
                 material_entry(3),
+                // Binding 0's view again, for '#' placements' CLAMP sample (zone.wgsl tex0): GLSL ties a texture to
+                // one sampler, so the second sampler needs its own binding.
+                material_entry(4),
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
