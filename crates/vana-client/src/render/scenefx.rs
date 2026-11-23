@@ -11,17 +11,19 @@ use super::bloom::Bloom;
 use super::dof::Dof;
 use super::fog::Fog;
 use super::godrays::GodRays;
+use super::rain::Rain;
 use glam::{Mat4, Vec3};
 
 /// What the settings turn on, each 0 = off (retail). `bloom`: config `bloom`, 1 Subtle, 2 Strong. `fog`: config
 /// `height_fog`, 1 Height, 2 Dense. `rays`: config `god_rays`, 1 Subtle, 2 Strong. `dof`: config `dof`, 1 Subtle, 2
-/// Strong.
+/// Strong. `wet`: config `wet_ground`, 1 Subtle, 2 Strong.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Want {
     pub bloom: u32,
     pub fog: u32,
     pub rays: u32,
     pub dof: u32,
+    pub wet: u32,
 }
 
 /// The frame the effects are drawn for.
@@ -76,18 +78,25 @@ impl Frame {
 
 impl Want {
     pub fn from_config(c: &crate::config::Config) -> Self {
-        Self { bloom: c.bloom, fog: c.height_fog, rays: c.god_rays, dof: c.dof }
+        Self { bloom: c.bloom, fog: c.height_fog, rays: c.god_rays, dof: c.dof, wet: c.wet_ground }
     }
 
-    /// zone-shot's switches: FFXI_BLOOM=1|2, FFXI_HEIGHT_FOG=1|2, FFXI_GOD_RAYS=1|2, FFXI_DOF=1|2.
+    /// zone-shot's switches: FFXI_BLOOM=1|2, FFXI_HEIGHT_FOG=1|2, FFXI_GOD_RAYS=1|2, FFXI_DOF=1|2, FFXI_WET_GROUND=1|2
+    /// (drawn soaked, whatever the weather).
     pub fn from_env() -> Self {
         let n = |k: &str| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(0);
-        Self { bloom: n("FFXI_BLOOM"), fog: n("FFXI_HEIGHT_FOG"), rays: n("FFXI_GOD_RAYS"), dof: n("FFXI_DOF") }
+        Self {
+            bloom: n("FFXI_BLOOM"),
+            fog: n("FFXI_HEIGHT_FOG"),
+            rays: n("FFXI_GOD_RAYS"),
+            dof: n("FFXI_DOF"),
+            wet: n("FFXI_WET_GROUND"),
+        }
     }
 
     /// Whether any effect is on (the stage is made only then).
     pub fn any(&self) -> bool {
-        self.bloom != 0 || self.fog != 0 || self.rays != 0 || self.dof != 0
+        self.bloom != 0 || self.fog != 0 || self.rays != 0 || self.dof != 0 || self.wet != 0
     }
 }
 
@@ -98,11 +107,14 @@ pub struct SceneFx {
     fog: Option<Fog>,
     rays: Option<GodRays>,
     dof: Option<Dof>,
+    rain: Option<Rain>,
+    /// The ground's wetness this frame (render/rain.rs).
+    wetness: super::rain::Wetness,
 }
 
 impl SceneFx {
     pub fn new(format: wgpu::TextureFormat) -> Self {
-        Self { format, bloom: None, fog: None, rays: None, dof: None }
+        Self { format, bloom: None, fog: None, rays: None, dof: None, rain: None, wetness: Default::default() }
     }
 
     /// Makes what `want` turns on for a scene of `size` (made on first use or a size change) and lets go of what it
@@ -134,11 +146,21 @@ impl SceneFx {
             d.resize(gpu, size);
             d.set_strength(want.dof);
         }
+        if want.wet == 0 {
+            self.rain = None;
+        } else {
+            self.rain.get_or_insert_with(|| Rain::new(gpu, self.format)).set_strength(want.wet);
+        }
+    }
+
+    /// The ground's wetness for the frames drawn next.
+    pub fn set_rain(&mut self, wetness: super::rain::Wetness) {
+        self.wetness = wetness;
     }
 
     /// The effects turned on, over `scene` (the plain, not sRGB, view of the scene target, the size `prepare` was
-    /// given) with its `depth`, in the order light travels: the fog in the air, the shafts through it, the glow of what
-    /// is bright, then the lens's focus over all of it.
+    /// given) with its `depth`, in the order light travels: the wet ground's surface, the fog in the air, the shafts
+    /// through it, the glow of what is bright, then the lens's focus over all of it.
     pub fn draw(
         &self,
         gpu: &Gpu,
@@ -147,6 +169,9 @@ impl SceneFx {
         depth: &wgpu::TextureView,
         frame: &Frame,
     ) {
+        if let Some(w) = &self.rain {
+            w.draw(gpu, encoder, scene, depth, frame, &self.wetness);
+        }
         if let Some(f) = &self.fog {
             f.draw(gpu, encoder, scene, depth, frame);
         }

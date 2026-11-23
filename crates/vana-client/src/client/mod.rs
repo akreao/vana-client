@@ -8180,6 +8180,9 @@ struct World {
     /// The weather objects, oldest first (FUN_1018a7a0 links the previous newest as the child): weather, when it came
     /// and its blend time (0x057 @0x0a Vana minutes x 2.4 s; 0 for the base).
     weather_chain: Vec<(u16, Instant, f32)>,
+    /// The ground's wetness in the rain (render/rain.rs), followed whether Wet Ground is on or not; a new login starts
+    /// it afresh.
+    wetness: crate::render::rain::Wetness,
     /// Scheduler op 0x7e's env (fx::EnvOp::Static), used where the zone has no env for the weather; a 0x7c or a
     /// zone change drops it.
     static_env: Option<crate::dat::weather::Env>,
@@ -10823,6 +10826,7 @@ impl App {
                             client_version: self.cfg.client_version.clone(),
                             weather: 1,
                             weather_chain: Vec::new(),
+                            wetness: Default::default(),
                             static_env: None,
                             zone_weather: None,
                             light_ease: Default::default(),
@@ -20984,6 +20988,8 @@ fn shadow_setup(
     r.prepare_sun_shadow(&gfx.gpu, cx.cfg.actor_shadows != 0 && w.game.get(0x3a) != 1, cx.cfg.shadow_map);
     // Ambient occlusion on the scenery (ours, render/ssao.rs), at the scene's size.
     r.prepare_ssao(&gfx.gpu, cx.cfg.ssao, bg);
+    // World sun shadows (ours, render/worldshadow.rs).
+    r.prepare_world_shadow(&gfx.gpu, cx.cfg.world_shadows);
     // Lamp shadows (ours, render/lampshadow.rs): with Real shadows, the point lights nearest our character
     // (the zone's data lights, and with Real lamp lights the lamps) are cut behind it, one shadow each.
     // Only ours casts them (with our mount while riding); others keep their sun or retail shadow. The lights
@@ -21438,10 +21444,14 @@ fn world_overlays(
     let WorldFrame { camera, .. } = wf;
     // The scene effects (ours, render/scenefx.rs) over the finished 3D scene, under the shapes, mods' passes and
     // fades: only those turned on, and nothing made while all are off.
+    // The ground soaks while it rains on us (render/rain.rs) and dries off after; a new zone starts as its weather.
+    // Followed with the effect off too, so turning it on after a shower finds the ground as wet as it is.
+    w.wetness.step(crate::render::rain::rains(event::weather(w)), wf.dt, w.zone);
     let want = crate::render::scenefx::Want::from_config(cx.cfg);
     if want.any() {
         let fx = cx.scene_fx.get_or_insert_with(|| crate::render::scenefx::SceneFx::new(scene_fmt));
         fx.prepare(&gfx.gpu, want, bg);
+        fx.set_rain(w.wetness);
         let frame = crate::render::scenefx::Frame::new(camera, fg.aspect, r.lighting.as_ref());
         fx.draw(&gfx.gpu, &mut fg.encoder, &scene_raw, &scene_depth, &frame);
         fg.mark("scene fx");
