@@ -179,8 +179,10 @@ pub fn frame(gu: &mut GameUi, w: &mut World, input: &UiInput) -> Option<UiInput>
     // during a drag).
     let grabbed =
         on.is_some() || gu.bar_hold.is_some() || (input.released && sites.iter().any(|s| Some(s.owner) == held));
+    // A right click over a bar no button holds still reaches the window under it (a frame's right-click cancel).
+    let cancel = input.right_clicked && !input.down && gu.bar_hold.is_none();
     grabbed.then(|| UiInput {
-        pointer: None,
+        pointer: input.pointer.filter(|_| cancel),
         moved: false,
         pressed: false,
         clicked: false,
