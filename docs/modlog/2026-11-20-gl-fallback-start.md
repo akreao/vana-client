@@ -17,11 +17,14 @@ seen on Mesa llvmpipe (GL 4.6) and zink.
   shadows are depth only and still draw).
 - The device asked for WebGPU's default limits, which GLES parts don't all meet (a Raspberry Pi's V3D has 15
   inter-stage variables against 16; it failed on its Vulkan driver too). The defaults are now lowered to the
-  adapter's own where it has less (`wanted_limits`); a desktop GPU asks for exactly what it did before. Start-up logs
-  the limits and the game stops, naming the GPU and what it lacks (headless tools log it), when one is below the client's needs (9 storage buffers in
-  one stage for the effects update, 13 inter-stage variables in zone.wgsl, 256 compute invocations for the mip
-  generator), instead of a pipeline panic later. `FFXI_LOW_LIMITS` (tests) caps the limits at a GLES 3.1 Mali / V3D
-  class device's and goes on past that check.
+  adapter's own where it has less (`wanted_limits`); a desktop GPU asks for exactly what it did before. Every limit
+  is then checked against what the client needs (`NEEDED`: wgpu's downlevel defaults with 4096 textures, 9 storage
+  buffers in one stage for the effects update and 13 inter-stage variables for zone.wgsl). Start-up logs the limits;
+  when the chosen adapter is short and another one for the window has enough (another backend of the card, a second
+  GPU), that one runs; when none has, the game stops, naming the GPU and what it lacks, instead of a pipeline panic
+  later. Headless tools log it, and `EffectsGpu::new` gives an error (no effects) on a GPU short of storage buffers.
+  `FFXI_LOW_LIMITS` (tests) caps the limits at a GLES 3.1 Mali / V3D class device's (`LOW_LIMITS`) and goes on past
+  that check.
 - The offscreen scene is scaled down (aspect kept) to the device's texture size (4096 on some GLES parts).
 - Not fixed here: NVIDIA's own GL gets a 3.3 context from wgpu-hal (no compute). Vertex-stage storage buffers on
   GLES drivers that offer few were not checked on a device.

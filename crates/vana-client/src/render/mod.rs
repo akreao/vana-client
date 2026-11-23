@@ -1,11 +1,16 @@
 //! wgpu renderer for zone scenery.
 
 pub mod anim;
+pub mod bloom;
 pub mod character;
 pub mod cloth;
 pub mod cull;
 pub mod dancer;
+pub mod dof;
 pub mod effects;
+pub mod fog;
+pub mod fsr1;
+pub mod godrays;
 pub mod gputime;
 pub mod invwin;
 pub mod lampshadow;
@@ -19,6 +24,7 @@ pub mod portrait;
 pub mod postfx;
 pub mod reflect;
 pub mod scale;
+pub mod scenefx;
 pub mod screenfx;
 pub mod screens;
 pub mod shadow;
@@ -28,6 +34,7 @@ pub mod sunshadow;
 pub mod sway;
 pub mod ui;
 pub mod upload;
+pub mod upscale;
 
 use crate::dat::zone::ZoneScene;
 use anyhow::{Context, Result};
@@ -49,6 +56,8 @@ pub struct Gpu {
     pub mips: std::sync::Mutex<mipgen::MipGen>,
     pub uploads: std::sync::Mutex<upload::Budget>,
     pub pipes: std::sync::Arc<PipeCache>,
+    /// The device's `max_texture_dimension_2d` (fixed when it is made; Device::limits copies every limit).
+    pub max_texture_2d: u32,
 }
 
 /// Pipelines made once per device, by any thread (Gpu::warm makes them at start-up).
@@ -60,6 +69,8 @@ pub struct PipeCache {
     zone: std::sync::Mutex<HashMap<wgpu::TextureFormat, ZonePipes>>,
     /// The sun shadow's feet target format here (sunshadow::feet_format; None: no character shadows).
     feet: Option<wgpu::TextureFormat>,
+    /// The material maps of a texture without any: a flat normal, roughness 1, metal 0.
+    flat_material: std::sync::OnceLock<(wgpu::TextureView, wgpu::TextureView)>,
 }
 
 impl PipeCache {
@@ -105,7 +116,9 @@ impl GpuClass {
     }
 }
 
-/// FFXI_LOW_LIMITS's limits: a GLES 3.1 Mali / V3D class device.
+/// FFXI_LOW_LIMITS's limits: a GLES 3.1 Mali / V3D class device. wgpu's downlevel defaults (16 KiB uniform buffers,
+/// 15 inter-stage variables, 4 colour attachments, 256 3D textures, 16352 bytes of workgroup storage, the rest
+/// WebGPU's defaults) with 8 storage buffers per stage and 4096 textures.
 const LOW_LIMITS: wgpu::Limits = wgpu::Limits {
     max_storage_buffers_per_shader_stage: 8,
     max_texture_dimension_1d: 4096,
@@ -113,42 +126,45 @@ const LOW_LIMITS: wgpu::Limits = wgpu::Limits {
     ..wgpu::Limits::downlevel_defaults()
 };
 
+/// What the client needs of a device, every limit: LOW_LIMITS, where the whole test suite runs on GLES 3.1, with the
+/// effects update's 8 storage buffers in one stage (render/effects.rs). zone.wgsl's widest vertex output takes 13
+/// inter-stage variables and the mip generator's solve pass 256 invocations in x (render/mipgen.rs), both within it.
+const NEEDED: wgpu::Limits = wgpu::Limits {
+    max_storage_buffers_per_shader_stage: effects::STORAGE_NEEDED,
+    max_texture_dimension_1d: 2048,
+    max_inter_stage_shader_variables: 13,
+    ..LOW_LIMITS
+};
+
 /// The device limits to ask for: WebGPU's defaults with up to 16 storage buffers per stage (the GPU culling binds 8 in
-/// compute, the effects update 8; desktop GPUs allow far more), lowered to whatever the adapter can't meet. A GLES device (a Raspberry Pi's V3D has 15
-/// inter-stage variables, the default is 16) then still opens, and each pipeline is checked against what it really has.
+/// compute, the effects update 8; desktop GPUs allow far more), lowered to whatever the adapter can't meet. A GLES
+/// device (a Raspberry Pi's V3D has 15 inter-stage variables, the default is 16) then still opens; short_limits says
+/// whether that is enough.
 fn wanted_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
     wgpu::Limits {
         max_storage_buffers_per_shader_stage: adapter.max_storage_buffers_per_shader_stage.min(16),
+        // FSR's shading change pyramid binds 6 storage textures (default 4).
+        max_storage_textures_per_shader_stage: adapter.max_storage_textures_per_shader_stage.min(16),
         ..Default::default()
     }
     .or_worse_values_from(adapter)
 }
 
-/// What the client's pipelines need of `limits` and it lacks, one line each: the effects update binds 8 storage
-/// buffers in one stage (render/effects.rs), zone.wgsl's widest vertex output has 13 locations and the mip
-/// generator's solve pass runs 256 invocations in x (render/mipgen.rs).
+/// Every limit of `limits` below what the client needs (NEEDED), one line each.
 fn short_limits(limits: &wgpu::Limits) -> Vec<String> {
     let mut out = Vec::new();
-    if limits.max_storage_buffers_per_shader_stage < effects::STORAGE_NEEDED {
-        out.push(format!(
-            "{} storage buffers per shader stage, the effects need {}",
-            limits.max_storage_buffers_per_shader_stage,
-            effects::STORAGE_NEEDED
-        ));
-    }
-    if limits.max_inter_stage_shader_variables < 13 {
-        out.push(format!(
-            "{} inter-stage shader variables, the scenery needs 13",
-            limits.max_inter_stage_shader_variables
-        ));
-    }
-    if limits.max_compute_invocations_per_workgroup < 256 || limits.max_compute_workgroup_size_x < 256 {
-        out.push(format!(
-            "{} compute invocations per workgroup ({} in x), the mip generator needs 256",
-            limits.max_compute_invocations_per_workgroup, limits.max_compute_workgroup_size_x
-        ));
-    }
+    NEEDED.check_limits_with_fail_fn(limits, false, |name, needed, has| {
+        out.push(format!("{name} is {has}, the client needs {needed}"));
+    });
     out
+}
+
+/// The limits the client sees of `adapter`: its own, or under FFXI_LOW_LIMITS (tests) no more than LOW_LIMITS.
+fn adapter_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
+    match std::env::var_os("FFXI_LOW_LIMITS") {
+        Some(_) => adapter.limits().or_worse_values_from(&LOW_LIMITS),
+        None => adapter.limits(),
+    }
 }
 
 /// The GPUs that can draw to `surface` (or any, headless), by name.
@@ -165,16 +181,20 @@ pub fn adapter_names(instance: &wgpu::Instance, surface: Option<&wgpu::Surface>)
     names
 }
 
-/// With WGPU_BACKEND set, the best adapter (discrete first, software last) of its backends.
-fn preferred_backend(instance: &wgpu::Instance, surface: Option<&wgpu::Surface>) -> Option<wgpu::Adapter> {
-    let backends = wgpu::Backends::from_env()?;
-    let rank = |t: wgpu::DeviceType| match t {
+/// Adapters by kind, best first: discrete, integrated, virtual, other, software.
+fn rank(t: wgpu::DeviceType) -> u8 {
+    match t {
         wgpu::DeviceType::DiscreteGpu => 0,
         wgpu::DeviceType::IntegratedGpu => 1,
         wgpu::DeviceType::VirtualGpu => 2,
         wgpu::DeviceType::Other => 3,
         wgpu::DeviceType::Cpu => 4,
-    };
+    }
+}
+
+/// With WGPU_BACKEND set, the best adapter (discrete first, software last) of its backends.
+fn preferred_backend(instance: &wgpu::Instance, surface: Option<&wgpu::Surface>) -> Option<wgpu::Adapter> {
+    let backends = wgpu::Backends::from_env()?;
     pollster::block_on(instance.enumerate_adapters(backends))
         .into_iter()
         .filter(|a| surface.is_none_or(|s| a.is_surface_supported(s)))
@@ -201,7 +221,7 @@ impl Gpu {
         if !preferred.is_empty() && named.is_none() {
             log::warn!("GPU {preferred:?} not found or can't drive the window; using the default");
         }
-        let adapter = match named.or_else(|| preferred_backend(&instance, surface)) {
+        let first_pick = match named.or_else(|| preferred_backend(&instance, surface)) {
             Some(a) => a,
             None => pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -210,6 +230,32 @@ impl Gpu {
                 apply_limit_buckets: false,
             }))
             .context("no suitable GPU adapter")?,
+        };
+        // The game (a surface) needs every limit (short_limits): when the first pick is short and another adapter for
+        // the window has enough (another backend of the card, a second GPU), that one runs. FFXI_LOW_LIMITS and
+        // headless tools keep the first pick.
+        let enough = |a: &wgpu::Adapter| short_limits(&wanted_limits(&adapter_limits(a))).is_empty();
+        let adapter = if surface.is_some() && std::env::var_os("FFXI_LOW_LIMITS").is_none() && !enough(&first_pick) {
+            let other = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
+                .into_iter()
+                .filter(|a| surface.is_none_or(|s| a.is_surface_supported(s)) && enough(a))
+                .min_by_key(|a| rank(a.get_info().device_type));
+            match other {
+                Some(a) => {
+                    let (was, now) = (first_pick.get_info(), a.get_info());
+                    log::warn!(
+                        "{} ({:?}) is short of what the client needs; using {} ({:?})",
+                        was.name,
+                        was.backend,
+                        now.name,
+                        now.backend
+                    );
+                    a
+                }
+                None => first_pick,
+            }
+        } else {
+            first_pick
         };
         let info = adapter.get_info();
         log::info!("GPU: {} ({:?}, {:?})", info.name, info.backend, info.device_type);
@@ -220,7 +266,13 @@ impl Gpu {
             | wgpu::Features::TIMESTAMP_QUERY
             | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS
             | wgpu::Features::INDIRECT_FIRST_INSTANCE
-            | wgpu::Features::POLYGON_MODE_LINE;
+            | wgpu::Features::POLYGON_MODE_LINE
+            // The upscaler's inputs and FSR's passes: read-write storage in R8 / R16F / RG16F and others, R32F filtered,
+            // coherent storage buffers (SPD's cross-workgroup reads; render/upscale).
+            | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+            | wgpu::Features::FLOAT32_FILTERABLE
+            | wgpu::Features::MEMORY_DECORATION_COHERENT
+            | wgpu::Features::CLEAR_TEXTURE;
         // FFXI_NO_GPU_TIME / FFXI_NO_CULL: without the timestamps or the culling's indirect draws (driver checks).
         if std::env::var_os("FFXI_NO_GPU_TIME").is_some() {
             wanted.remove(wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS);
@@ -240,14 +292,9 @@ impl Gpu {
             required_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
             std::sync::atomic::Ordering::Relaxed,
         );
+        crate::material::set_gpu_support(required_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC));
         set_uncompressed(uncompressed());
-        // FFXI_LOW_LIMITS (tests): the limits of a GLES 3.1 Mali-class part (8 storage buffers per stage, 15
-        // inter-stage variables, 4096 textures, 16 KiB uniform buffers) wherever the adapter has more.
-        let adapter_limits = match std::env::var_os("FFXI_LOW_LIMITS") {
-            Some(_) => adapter.limits().or_worse_values_from(&LOW_LIMITS),
-            None => adapter.limits(),
-        };
-        let required_limits = wanted_limits(&adapter_limits);
+        let required_limits = wanted_limits(&adapter_limits(&adapter));
         log::info!("device limits {required_limits:?}");
         // Below what the world's pipelines need, the game's device would open and the first such pipeline panic: the
         // game (a surface) stops here and says why. Headless tools (UI shots and the like) and FFXI_LOW_LIMITS, which
@@ -259,11 +306,11 @@ impl Gpu {
         if !short.is_empty() && surface.is_some() && std::env::var_os("FFXI_LOW_LIMITS").is_none() {
             anyhow::bail!("{} ({:?}) can't run the client: {}", info.name, info.backend, short.join("; "));
         }
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_features,
-            required_limits,
-            ..Default::default()
-        }))?;
+        let desc = wgpu::DeviceDescriptor { required_features, required_limits, ..Default::default() };
+        let (device, queue) = match neural_device(&adapter, &desc) {
+            Some(made) => made,
+            None => pollster::block_on(adapter.request_device(&desc))?,
+        };
         let pipes = std::sync::Arc::new(PipeCache {
             device: device.clone(),
             mips: Default::default(),
@@ -271,13 +318,26 @@ impl Gpu {
             cloth: Default::default(),
             zone: Default::default(),
             feet: sunshadow::feet_format(&adapter),
+            flat_material: Default::default(),
         });
         if pipes.feet.is_none() {
             log::warn!(
                 "no renderable float format for the sun shadow map: no sun or moon shadows on this GPU (lamp shadows, depth only, still draw)"
             );
         }
-        Ok(Self { instance, adapter, device, queue, mips: Default::default(), uploads: Default::default(), pipes })
+        let max_texture_2d = device.limits().max_texture_dimension_2d;
+        let gpu = Self {
+            instance,
+            adapter,
+            device,
+            queue,
+            mips: Default::default(),
+            uploads: Default::default(),
+            pipes,
+            max_texture_2d,
+        };
+        upscale::set_status(upscale::supported(&gpu));
+        Ok(gpu)
     }
 
     /// Makes the shared pipelines on a worker thread, so no frame compiles them later.
@@ -369,11 +429,13 @@ pub struct Uniforms {
     voyage: [[f32; 4]; 4],
     /// Config 0017 off (FUN_10181b50): the sun and the moon as two lights, (direction, colour) each.
     two: [[f32; 4]; 4],
-    /// x: 1 with bump mapping on (one eased light, vertex fog), 0 off (two lights, table fog); y: smooth point lights;
-    /// z: Surface Detail's strength (0 off).
+    /// x: 1 with bump mapping on (one eased light, vertex fog), 0 off (two lights, table fog); y: Light Shading
+    /// Smooth; z: 1 with Material Maps, w their strength.
     modes: [f32; 4],
     /// Windowed mode's light boost (light_boost): rgb factors, w = 1 on.
     boost: [f32; 4],
+    /// x: the textures' LOD bias (lod_bias).
+    lod: [f32; 4],
 }
 
 /// Windowed mode's light boost (FUN_1000be50, the SetLight wrapper FUN_1000bf30's helper; only while config 0034 !=
@@ -462,8 +524,6 @@ struct Draw {
     args: [u32; 2],
     /// A bump-mapped model's normal map (ZoneGeometry::bumps index; config 0017).
     bump: Option<usize>,
-    /// Its texture's Surface Detail pack slopes (ZoneGeometry::surface index; surface.rs).
-    surface: Option<usize>,
 }
 
 impl Draw {
@@ -490,9 +550,9 @@ enum Culled<'a> {
 pub const NEAR: f32 = 0.1;
 /// A sub-area draw's texture from this up is the zone's slot (texture - ZONE_TEXTURE).
 const ZONE_TEXTURE: usize = 1 << 20;
-/// Ours: past every Draw Distance, Unlimited included (a voyage's coasts lie thousands away). Depth precision hangs on
-/// NEAR, not on this.
-pub const FAR: f32 = 20000.0;
+/// Far is retail's 65535 (camera +0x2e0, FUN_10015490). The draw distance is a cull, not this plane, and a ship has no
+/// distance test at all (its +0x8c stays 1.0): Selbina's ferry sails 1,975 units out from its berth.
+pub const FAR: f32 = 65535.0;
 
 #[derive(Clone, Copy, Default)]
 pub struct Camera {
@@ -500,6 +560,8 @@ pub struct Camera {
     pub target: Vec3,
     pub up: Vec3,
     pub fov_y: f32,
+    /// Ours: the upscaler's sub-pixel jitter, as an NDC offset (zero when it is off).
+    pub jitter: glam::Vec2,
 }
 
 impl Camera {
@@ -512,7 +574,16 @@ impl Camera {
     }
 
     pub fn proj(&self, aspect: f32) -> Mat4 {
-        glam::camera::rh::proj::directx::perspective(self.fov_y, aspect, NEAR, FAR)
+        let mut m = glam::camera::rh::proj::directx::perspective(self.fov_y, aspect, NEAR, FAR);
+        // clip.w = -z view, so the NDC offset goes into the z column negated.
+        m.z_axis.x -= self.jitter.x;
+        m.z_axis.y -= self.jitter.y;
+        m
+    }
+
+    /// The camera without the upscaler's jitter (motion vectors and the UI's projections).
+    pub fn steady(&self) -> Camera {
+        Camera { jitter: glam::Vec2::ZERO, ..*self }
     }
 }
 
@@ -524,12 +595,6 @@ pub struct ZoneRenderer {
     /// Modes 2 / 3 (the blended classes) for furniture: depth writes on, no bias (batch 7 item 23).
     scenery_furn: [[wgpu::RenderPipeline; 3]; 2],
     scenery_bump: [wgpu::RenderPipeline; 3],
-    /// Surface Detail's pack pipelines (`scenery`, `scenery_furn` reading the slopes at group 2) and the slopes.
-    scenery_surface: [[wgpu::RenderPipeline; 3]; 4],
-    scenery_surface_furn: [[wgpu::RenderPipeline; 3]; 2],
-    surface_groups: Vec<wgpu::BindGroup>,
-    /// The texture names to look the pack up for, until asked (ZoneGeometry::surface_names).
-    surface_names: Option<Vec<String>>,
     /// The scenery as lines by cull, where the device draws lines (a mod's wireframe switch).
     scenery_wire: Option<[wgpu::RenderPipeline; 3]>,
     pub wireframe: bool,
@@ -558,8 +623,11 @@ pub struct ZoneRenderer {
     /// Settings' Light Shading (ours): false Retail (the scenery's point lights per vertex, hard cut at the range),
     /// true Smooth (per pixel, soft edge; not retail).
     pub smooth_lights: bool,
-    /// Surface Detail (ours, zone.wgsl `detail_normal`): 0 off, 1 subtle, 2 strong.
-    pub surface_detail: u32,
+    /// Settings' Material Maps (ours, material.rs): textures' normal / roughness / metal maps light the scenery and
+    /// actors.
+    pub material_maps: bool,
+    /// Their strength: the normal maps' tilt and the relief they put on the baked light (1 = as generated).
+    pub material_strength: f32,
     /// Windowed mode's light boost (light_boost; zero = off).
     pub light_boost: [f32; 4],
     /// The zone's scenery culled on the GPU (render/cull.rs) when the device draws indirectly, and its passes.
@@ -603,7 +671,7 @@ pub struct ZoneRenderer {
     shadows: Option<shadow::Shadows>,
     /// Real character shadows (render/sunshadow.rs; prepare_sun_shadow), and whether render drew them this frame
     /// (the client then leaves retail's out). Their depth pipelines: ZonePipes::sun_depth.
-    sun_depth: Option<(wgpu::TextureFormat, [wgpu::RenderPipeline; 2])>,
+    sun_depth: Option<[wgpu::RenderPipeline; 2]>,
     lamp_depth_pipeline: wgpu::RenderPipeline,
     sun_shadow: Option<sunshadow::SunShadow>,
     /// Ambient occlusion on the scenery (render/ssao.rs; prepare_ssao).
@@ -658,6 +726,21 @@ pub struct ZoneRenderer {
     /// Faded actors are composited later, by render_faded_after (the world: after the effects, as retail's sorted
     /// transparent list puts them over what is behind them); others draw them at the end of render.
     pub defer_faded: bool,
+    /// The upscaler's actor motion (render/upscale): this frame's target and matrices, last frame's poses (with
+    /// the groups over them and over this frame's), and the pose frame they were copied in.
+    pub motion_target: Option<upscale::MotionTarget>,
+    motion_layout: wgpu::BindGroupLayout,
+    motion_pipeline: wgpu::RenderPipeline,
+    motion_scenery_pipeline: wgpu::RenderPipeline,
+    motion_prev: Option<MotionPrev>,
+    motion_copied: std::cell::Cell<u64>,
+    /// The part clock until which a door or lift part moves, and last frame's clock and voyage matrix (the moving
+    /// scenery's motion).
+    parts_busy: f32,
+    motion_last: std::cell::Cell<(f32, Mat4)>,
+    /// The upscaler's colour snapshots (render/upscale): the scene texture, then the copies taken after the opaque
+    /// scenery and after the blended scenery (and, by the world, before the effects).
+    pub snaps: Option<(wgpu::Texture, [wgpu::Texture; 3])>,
     /// The shine slots render used, for render_faded_after's.
     faded_slot: std::cell::Cell<u64>,
     pending: std::collections::VecDeque<(usize, crate::dat::zone::Texture, Option<upload::TexUp>)>,
@@ -798,6 +881,18 @@ static UNCOMPRESSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBo
 /// Whether the device samples BC textures.
 static BC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// The textures' LOD bias while the world draws below the window's size for an upscaler (AMD's FSR 3.1 notes:
+/// log2(render / display) - 1), else 0; set each frame, read by the scenery, actor and effect shaders.
+static LOD_BIAS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn set_lod_bias(b: f32) {
+    LOD_BIAS.store(b.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn lod_bias() -> f32 {
+    f32::from_bits(LOD_BIAS.load(std::sync::atomic::Ordering::Relaxed))
+}
+
 /// Config-tool 0018 = 2; with the device's BC support, whether loaders decode DXT to RGBA up front.
 pub fn set_uncompressed(on: bool) {
     use std::sync::atomic::Ordering::Relaxed;
@@ -922,55 +1017,6 @@ pub fn upload_texture_seq(gpu: &Gpu, t: &crate::dat::zone::Texture, srgb: bool) 
     (up.texture.create_view(&Default::default()), seq)
 }
 
-/// Surface Detail's slopes (surface.rs, RG8) as a texture with its mips made here (each level the mean of the
-/// texels above it): the shader reads the slope averaged over a pixel's footprint.
-fn upload_slopes(gpu: &Gpu, w: u32, h: u32, rg: &[u8]) -> wgpu::TextureView {
-    let mut data = rg.to_vec();
-    let (mut lw, mut lh, mut level) = (w as usize, h as usize, rg.to_vec());
-    let mut levels = 1;
-    while lw > 1 || lh > 1 {
-        let (nw, nh) = ((lw / 2).max(1), (lh / 2).max(1));
-        let mut next = Vec::with_capacity(nw * nh * 2);
-        // Each texel over its 2 x 2 block; on an odd side the last one takes the leftover row or column too.
-        let span = |i: usize, n: usize, l: usize| 2 * i..if i + 1 == n { l } else { (2 * i + 2).min(l) };
-        for y in 0..nh {
-            for x in 0..nw {
-                for c in 0..2 {
-                    let (mut sum, mut k) = (0u32, 0u32);
-                    for yy in span(y, nh, lh) {
-                        for xx in span(x, nw, lw) {
-                            sum += level[(yy * lw + xx) * 2 + c] as u32;
-                            k += 1;
-                        }
-                    }
-                    next.push(((sum + k / 2) / k.max(1)) as u8);
-                }
-            }
-        }
-        data.extend_from_slice(&next);
-        (lw, lh, level) = (nw, nh, next);
-        levels += 1;
-    }
-    TEXTURE_BYTES.fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
-    gpu.device
-        .create_texture_with_data(
-            &gpu.queue,
-            &wgpu::TextureDescriptor {
-                label: Some("surface detail"),
-                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-                mip_level_count: levels,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rg8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            },
-            wgpu::util::TextureDataOrder::MipMajor,
-            &data,
-        )
-        .create_view(&Default::default())
-}
-
 fn texture_bind_group(
     gpu: &Gpu,
     layout: &wgpu::BindGroupLayout,
@@ -989,14 +1035,99 @@ fn view_bind_group(
     sampler: &wgpu::Sampler,
     view: &wgpu::TextureView,
 ) -> wgpu::BindGroup {
+    material_bind_group(gpu, layout, sampler, view, None)
+}
+
+fn material_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+/// A texture's group with its material maps (material.rs; uploaded once per map, by its TexUp when streamed), or the
+/// flat ones (no maps, or a GPU without BC).
+fn material_bind_group(
+    gpu: &Gpu,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    view: &wgpu::TextureView,
+    material: Option<&crate::material::Material>,
+) -> wgpu::BindGroup {
+    let own = material
+        .filter(|_| crate::material::gpu_supported())
+        .map(|m| m.gpu.get_or_init(|| upload_material(gpu, m)).clone());
+    let (normal, rm) = match &own {
+        Some((n, r)) => (n, r),
+        None => {
+            let f = flat_material(gpu);
+            (&f.0, &f.1)
+        }
+    };
     gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout,
         entries: &[
             wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
             wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
+            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(normal) },
+            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(rm) },
         ],
     })
+}
+
+fn flat_material(gpu: &Gpu) -> &(wgpu::TextureView, wgpu::TextureView) {
+    gpu.pipes.flat_material.get_or_init(|| {
+        let one = |rg: [u8; 2]| {
+            let t = gpu.device.create_texture_with_data(
+                &gpu.queue,
+                &wgpu::TextureDescriptor {
+                    label: Some("flat material"),
+                    size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rg8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                },
+                wgpu::util::TextureDataOrder::LayerMajor,
+                &rg,
+            );
+            t.create_view(&Default::default())
+        };
+        (one([128, 128]), one([255, 0]))
+    })
+}
+
+/// The two BC5 chains as they are stored.
+fn upload_material(gpu: &Gpu, m: &crate::material::Material) -> (wgpu::TextureView, wgpu::TextureView) {
+    let one = |data: &[u8]| {
+        let t = gpu.device.create_texture_with_data(
+            &gpu.queue,
+            &wgpu::TextureDescriptor {
+                label: Some("material"),
+                size: wgpu::Extent3d { width: m.width, height: m.height, depth_or_array_layers: 1 },
+                mip_level_count: m.levels,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Bc5RgUnorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            data,
+        );
+        TEXTURE_BYTES.fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        t.create_view(&Default::default())
+    };
+    (one(&m.normal), one(&m.rough_metal))
 }
 
 /// Which shadow depth pass draw_actor_depth draws.
@@ -1251,6 +1382,18 @@ struct Skinned {
     /// Dynamic offset of this frame's pose region, and the pose frame it was written in.
     offset: u32,
     frame: u64,
+    /// The region's offset in the frame before, when the actor was posed then (the upscaler's motion vectors).
+    prev_offset: Option<u32>,
+}
+
+/// The upscaler's copy of last frame's poses, the motion groups over it and over this frame's buffer, and the
+/// uniform with the matrices.
+struct MotionPrev {
+    cap: u64,
+    buffer: wgpu::Buffer,
+    prev_group: wgpu::BindGroup,
+    cur_group: wgpu::BindGroup,
+    uniform: wgpu::Buffer,
 }
 
 /// Bones a pose region holds; influences on later bones read the identity slot after them.
@@ -1284,13 +1427,14 @@ pub struct ZonePipes {
     scenery: [[wgpu::RenderPipeline; 3]; 4],
     scenery_furn: [[wgpu::RenderPipeline; 3]; 2],
     scenery_bump: [wgpu::RenderPipeline; 3],
-    /// Surface Detail's pack pipelines, as `scenery` and `scenery_furn`.
-    scenery_surface: [[wgpu::RenderPipeline; 3]; 4],
-    scenery_surface_furn: [[wgpu::RenderPipeline; 3]; 2],
     scenery_wire: Option<[wgpu::RenderPipeline; 3]>,
     actor_pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
     skin_pipeline: wgpu::RenderPipeline,
+    /// The upscaler's actor motion pass: its group 3 (last frame's poses, the matrices) and pipeline.
+    motion_layout: wgpu::BindGroupLayout,
+    motion_pipeline: wgpu::RenderPipeline,
+    motion_scenery_pipeline: wgpu::RenderPipeline,
     shine_layout: wgpu::BindGroupLayout,
     shine_wrap_layout: wgpu::BindGroupLayout,
     shine_pipeline: wgpu::RenderPipeline,
@@ -1308,8 +1452,8 @@ pub struct ZonePipes {
     sil_layout: wgpu::BindGroupLayout,
     sil_pipeline: wgpu::RenderPipeline,
     /// Real character shadows (render/sunshadow.rs, render/lampshadow.rs): the actors' depth from the sun (with
-    /// their feet heights, in the format given; plain and lamp lit; None where no feet format renders) and from a lamp.
-    sun_depth: Option<(wgpu::TextureFormat, [wgpu::RenderPipeline; 2])>,
+    /// their feet heights, in PipeCache::feet; plain and lamp lit; None where no feet format renders) and from a lamp.
+    sun_depth: Option<[wgpu::RenderPipeline; 2]>,
     lamp_depth_pipeline: wgpu::RenderPipeline,
     /// The scenery's frustum culling (render/cull.rs): its group 3 layout, the visibility and compaction passes; None
     /// where it can't run (cull::on_gpu: GLES, or too few storage buffers), which culls on the CPU instead.
@@ -1414,6 +1558,9 @@ impl ZonePipes {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // Material maps (material.rs): the normal map and roughness / metal.
+                material_entry(2),
+                material_entry(3),
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1520,13 +1667,113 @@ impl ZonePipes {
             multiview_mask: None,
             cache: None,
         });
+        let motion_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("actor motion"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 20,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(POSE_BINDING),
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 21,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let motion_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("actor motion"),
+            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("actor motion"),
+                bind_group_layouts: &[
+                    Some(&globals_layout),
+                    Some(&texture_layout),
+                    Some(&pose_layout),
+                    Some(&motion_layout),
+                ],
+                immediate_size: 0,
+            })),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_skinned_motion"),
+                compilation_options: Default::default(),
+                buffers: &skin_buffers,
+            },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            // The scene's depth from the actor pass: its own surface passes, nearer scenery hides it.
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: Default::default(),
+                bias: wgpu::DepthBiasState { constant: -16, slope_scale: -0.5, clamp: 0.0 },
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_actor_motion"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: upscale::OBJECT_MOTION_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        let motion_scenery_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("scenery motion"),
+            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("scenery motion"),
+                bind_group_layouts: &[Some(&globals_layout), None, None, Some(&motion_layout)],
+                immediate_size: 0,
+            })),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_scenery_motion"),
+                compilation_options: Default::default(),
+                buffers: &vertex_layouts,
+            },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: Default::default(),
+                bias: wgpu::DepthBiasState { constant: -16, slope_scale: -0.5, clamp: 0.0 },
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_motion"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: upscale::OBJECT_MOTION_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
         // Scenery: front faces clockwise as D3D's; normal placements cull CCW (back), mirrored ones CW (front).
         // Bit-31 models: SRCALPHA / INVSRCALPHA, depth tested (LESSEQUAL) but not written, ZBIAS 8 *(inf: as a constant
         // depth bias of -8)*.
         // `furn`: furniture's pass (FUN_101844c0) sets neither ZWRITEENABLE nor ZBIAS, so its blended meshes keep
         // the actor pass's depth writes and bias 0 (batch 7 item 23).
-        // Config 0017's type-3 meshes and Surface Detail's pack (FUN_10175ac0 case 3 / ours): the colour texture,
-        // then the normal map or the pack's slopes at group 2.
+        // Config 0017's type-3 meshes (FUN_10175ac0 case 3): the colour texture, then the normal map at group 2.
         let bump_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("zone bumped"),
             bind_group_layouts: &[Some(&globals_layout), Some(&texture_layout), Some(&texture_layout)],
@@ -1586,16 +1833,6 @@ impl ZonePipes {
         let make_scenery_z =
             |f: &str, b: bool, c: Option<wgpu::Face>, w: bool, furn: bool| make_scenery_l(f, b, c, w, furn, &layout);
         let culls = [None, Some(wgpu::Face::Back), Some(wgpu::Face::Front)];
-        // Surface Detail's pack: the same classes reading the slopes at group 2.
-        let scenery_surface = [
-            ("fs_opaque_pack", false),
-            ("fs_alpha_test_pack", false),
-            ("fs_blend_pack", true),
-            ("fs_blend_test_pack", true),
-        ]
-        .map(|(f, b)| culls.map(|c| make_scenery_l(f, b, c, false, false, &bump_layout)));
-        let scenery_surface_furn = [("fs_blend_pack", true), ("fs_blend_test_pack", true)]
-            .map(|(f, b)| culls.map(|c| make_scenery_l(f, b, c, false, true, &bump_layout)));
         let make_scenery = |f: &str, b: bool, c: Option<wgpu::Face>, w: bool| make_scenery_z(f, b, c, w, false);
         let scenery = [("fs_opaque", false), ("fs_alpha_test", false), ("fs_blend", true), ("fs_blend_test", true)]
             .map(|(f, b)| culls.map(|c| make_scenery(f, b, c, false)));
@@ -1764,13 +2001,10 @@ impl ZonePipes {
             })
         };
         let sun_depth = feet.map(|f| {
-            (
-                f,
-                [
-                    shadow_depth("sun shadow depth", Some(f), "vs_skinned_sun"),
-                    shadow_depth("sun shadow depth (lamp lit)", Some(f), "vs_skinned_sun_lamped"),
-                ],
-            )
+            [
+                shadow_depth("sun shadow depth", Some(f), "vs_skinned_sun"),
+                shadow_depth("sun shadow depth (lamp lit)", Some(f), "vs_skinned_sun_lamped"),
+            ]
         });
         let lamp_depth_pipeline = shadow_depth("lamp shadow depth", None, "vs_skinned_silhouette");
         // The shine overlay (FUN_10024e10's second pass): additive (SRCALPHA / ONE), z tested (as drawn) but not written.
@@ -2132,12 +2366,13 @@ impl ZonePipes {
             scenery,
             scenery_furn,
             scenery_bump,
-            scenery_surface,
-            scenery_surface_furn,
             scenery_wire,
             actor_pipeline,
             sky_pipeline,
             skin_pipeline,
+            motion_layout,
+            motion_pipeline,
+            motion_scenery_pipeline,
             shine_layout,
             shine_wrap_layout,
             shine_pipeline,
@@ -2251,11 +2486,6 @@ pub struct ZoneGeometry {
     sway_curves: crate::dat::zone::SwayCurves,
     /// Config 0017: the normal maps the bumped draws use.
     bumps: Vec<(u32, u32, Vec<u8>)>,
-    /// Surface Detail's pack slopes the draws use (surface.rs), one per texture.
-    surface: Vec<crate::surface::Slopes>,
-    /// The scene's texture names (a draw's texture slot - 1), when the pack wasn't looked for at load: Surface Detail
-    /// switched on later asks for it then (ZoneRenderer::surface_request).
-    surface_names: Option<Vec<String>>,
     /// The water faces reflections draw on (render/reflect.rs); empty for a sub-area.
     water: std::sync::Arc<reflect::WaterSurface>,
     /// The polished floors' upward faces in world space (the scene's `floors`).
@@ -2403,15 +2633,6 @@ impl ZoneGeometry {
         };
         let mut floor_faces: Vec<([Vec3; 3], f32)> = Vec::new();
         let mut bump_used: HashMap<usize, usize> = HashMap::new();
-        let mut surface: Vec<crate::surface::Slopes> = Vec::new();
-        let mut surface_used: HashMap<&str, usize> = HashMap::new();
-        let mut surface_of = |texture: &str| -> Option<usize> {
-            let (key, s) = scene.surface.get_key_value(texture)?;
-            Some(*surface_used.entry(key.as_str()).or_insert_with(|| {
-                surface.push(s.clone());
-                surface.len() - 1
-            }))
-        };
         for mesh in &scene.meshes {
             let Some(mut mats) = by_mesh.remove(mesh.name.as_str()) else { continue };
             // Normal placements first, then the mirrored ones (culled the other way).
@@ -2534,7 +2755,6 @@ impl ZoneGeometry {
                         mode: mesh.name.starts_with('_') as u8 | ((model.blending & 0x8000 != 0) as u8) << 1,
                         args: [u32::MAX; 2],
                         bump: Some(bi),
-                        surface: None,
                     });
                     continue;
                 }
@@ -2567,7 +2787,6 @@ impl ZoneGeometry {
                     mode: mesh.name.starts_with('_') as u8 | ((model.blending & 0x8000 != 0) as u8) << 1,
                     args: [u32::MAX; 2],
                     bump: None,
-                    surface: surface_of(&model.texture),
                 });
             }
         }
@@ -2621,8 +2840,6 @@ impl ZoneGeometry {
             sway_insts,
             sway_curves,
             bumps,
-            surface,
-            surface_names: (!scene.surface_tried).then(|| scene.textures.iter().map(|t| t.name.clone()).collect()),
             water: std::sync::Arc::new(match (&scene.collision, animate) {
                 (Some(c), true) => reflect::WaterSurface::build(c),
                 _ => Default::default(),
@@ -2864,19 +3081,6 @@ impl ZoneRenderer {
                 view_bind_group(gpu, &p.texture_layout, &sampler, &view)
             })
             .collect();
-        // Surface Detail's pack (surface.rs), loaded only with the setting on: one small RG8 texture per texture.
-        if !geo.surface.is_empty() {
-            log::info!(
-                "surface detail: {} pack textures on {} draws",
-                geo.surface.len(),
-                geo.draws.iter().filter(|d| d.surface.is_some()).count()
-            );
-        }
-        let surface_groups: Vec<wgpu::BindGroup> = geo
-            .surface
-            .iter()
-            .map(|(w, h, rg)| view_bind_group(gpu, &p.texture_layout, &sampler, &upload_slopes(gpu, *w, *h, rg)))
-            .collect();
         if sway.is_some() {
             log::info!(
                 "environment animation: {} instances, {} vertex deltas, curves per tag {:?}",
@@ -2888,13 +3092,10 @@ impl ZoneRenderer {
         Self {
             sway,
             bump_groups,
-            surface_groups,
-            surface_names: geo.surface_names.clone(),
-            scenery_surface: p.scenery_surface,
-            scenery_surface_furn: p.scenery_surface_furn,
             bump_mode: true,
             smooth_lights: false,
-            surface_detail: 0,
+            material_maps: false,
+            material_strength: 1.0,
             light_boost: [0.0; 4],
             scenery_bump: p.scenery_bump,
             scenery: p.scenery,
@@ -2936,6 +3137,14 @@ impl ZoneRenderer {
             indices: buffer("scenery indices", i, wgpu::BufferUsages::INDEX),
             draws: geo.draws.clone(),
             skin_pipeline: p.skin_pipeline,
+            motion_target: None,
+            motion_layout: p.motion_layout.clone(),
+            motion_pipeline: p.motion_pipeline.clone(),
+            motion_scenery_pipeline: p.motion_scenery_pipeline.clone(),
+            motion_prev: None,
+            parts_busy: f32::MIN,
+            motion_last: std::cell::Cell::new((0.0, Mat4::IDENTITY)),
+            motion_copied: std::cell::Cell::new(u64::MAX),
             shine_pipeline: p.shine_pipeline,
             shine_buf,
             shine_wrap_layout: p.shine_wrap_layout.clone(),
@@ -2977,6 +3186,7 @@ impl ZoneRenderer {
             builds: Vec::new(),
             budgeted,
             defer_faded: false,
+            snaps: None,
             faded_slot: Default::default(),
             pending: std::collections::VecDeque::new(),
             geo_pending: None,
@@ -3034,6 +3244,7 @@ impl ZoneRenderer {
         *from = [cur[0], cur[1], cur[2], 0.0];
         *dst = [to[0], to[1], to[2], 0.0];
         *time = [now, ticks.max(0.0), 0.0, 0.0];
+        self.parts_busy = self.parts_busy.max(now + ticks.max(0.0));
         let at = slot as u64 * std::mem::size_of::<PartGpu>() as u64;
         gpu.queue.put(&self.parts_gpu, at, bytemuck::bytes_of(&*p));
     }
@@ -3280,7 +3491,6 @@ impl ZoneRenderer {
                 texture: texture(d.texture),
                 instances: d.instances.clone(),
                 mirrored: d.mirrored.clone(),
-                surface: None,
                 ..*d
             })
             .collect();
@@ -3366,7 +3576,6 @@ impl ZoneRenderer {
                     texture: texture(d.texture),
                     instances: d.instances.clone(),
                     mirrored: d.mirrored.clone(),
-                    surface: None,
                     ..*d
                 })
                 .collect();
@@ -3662,7 +3871,8 @@ impl ZoneRenderer {
         view: &wgpu::TextureView,
         seq: u64,
     ) {
-        self.textures[slot] = view_bind_group(gpu, &self.texture_layout, &self.sampler, view);
+        self.textures[slot] =
+            material_bind_group(gpu, &self.texture_layout, &self.sampler, view, t.material.as_deref());
         self.mips_seq = self.mips_seq.max(seq);
         self.tex_bytes.1 += (t.width * t.height * 4) as u64;
         self.tex_bytes.2 += 1;
@@ -3743,8 +3953,9 @@ impl ZoneRenderer {
                 let up = up.get_or_insert_with(|| upload::TexUp::new(gpu, t, true));
                 let Some(seq) = up.step(gpu, t, false) else { break };
                 let view = up.texture.create_view(&Default::default());
-                let (slot, _, _) = m.pending.pop_front().unwrap();
-                m.textures[slot] = view_bind_group(gpu, &self.texture_layout, &self.sampler, &view);
+                let (slot, t, _) = m.pending.pop_front().unwrap();
+                m.textures[slot] =
+                    material_bind_group(gpu, &self.texture_layout, &self.sampler, &view, t.material.as_deref());
                 m.mips = m.mips.max(seq);
             }
             m.up = m.pending.is_empty() && gpu.mips_done() >= m.mips;
@@ -3792,7 +4003,8 @@ impl ZoneRenderer {
             let up = b.cur.get_or_insert_with(|| upload::TexUp::new(gpu, t, true));
             let Some(seq) = up.step(gpu, t, false) else { return false };
             let view = up.texture.create_view(&Default::default());
-            b.actor.textures[b.tex + 1] = view_bind_group(gpu, &self.texture_layout, &self.sampler, &view);
+            b.actor.textures[b.tex + 1] =
+                material_bind_group(gpu, &self.texture_layout, &self.sampler, &view, t.material.as_deref());
             b.actor.mips = b.actor.mips.max(seq);
             b.cur = None;
             b.tex += 1;
@@ -3822,6 +4034,7 @@ impl ZoneRenderer {
             sim: mesh.sim.clone(),
             offset: 0,
             frame: u64::MAX,
+            prev_offset: None,
         });
         a
     }
@@ -3879,6 +4092,7 @@ impl ZoneRenderer {
                     sim: mesh.sim.clone(),
                     offset: 0,
                     frame: u64::MAX,
+                    prev_offset: None,
                 }),
                 alpha: 1.0,
                 shadow_off: false,
@@ -3944,6 +4158,7 @@ impl ZoneRenderer {
         while !self.poses.len().is_multiple_of(16) {
             self.poses.push([0.0; 4]);
         }
+        skin.prev_offset = (skin.frame.wrapping_add(1) == self.pose_frame).then_some(skin.offset);
         skin.offset = (self.poses.len() * 16) as u32;
         skin.frame = self.pose_frame;
         self.poses.extend(model.to_cols_array_2d());
@@ -3993,7 +4208,8 @@ impl ZoneRenderer {
             let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("poses"),
                 size: cap,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                // COPY_SRC: the upscaler's motion pass keeps a copy as the next frame's previous poses.
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             });
             let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -4010,12 +4226,157 @@ impl ZoneRenderer {
             });
             self.pose_gpu = Some((buf, group, cap));
         }
+        self.motion_buffers(gpu);
         if let Some((buf, _, _)) = &self.pose_gpu {
             gpu.queue.put(buf, 0, bytemuck::cast_slice(&self.poses));
             self.anim.dispatch(gpu, encoder, buf, !self.budgeted);
             self.cloth.dispatch(gpu, encoder, buf, !self.budgeted);
             self.points.run(gpu, encoder, buf);
         }
+    }
+
+    /// The motion pass's buffers while the upscaler wants it, sized as the pose buffer (a new one holds no
+    /// previous frame yet).
+    fn motion_buffers(&mut self, gpu: &Gpu) {
+        let (Some(_), Some((pose, _, cap))) = (&self.motion_target, &self.pose_gpu) else {
+            if self.motion_target.is_none() {
+                self.motion_prev = None;
+            }
+            return;
+        };
+        if self.motion_prev.as_ref().is_some_and(|m| m.cap == *cap) {
+            return;
+        }
+        let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("previous poses"),
+            size: *cap,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let uniform = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("actor motion"),
+            size: 208,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let group = |b: &wgpu::Buffer| {
+            gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("actor motion"),
+                layout: &self.motion_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 20,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: b,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(POSE_BINDING),
+                        }),
+                    },
+                    wgpu::BindGroupEntry { binding: 21, resource: uniform.as_entire_binding() },
+                ],
+            })
+        };
+        let (prev_group, cur_group) = (group(&buffer), group(pose));
+        self.motion_prev = Some(MotionPrev { cap: *cap, buffer, prev_group, cur_group, uniform });
+        self.motion_copied.set(u64::MAX);
+    }
+
+    /// The upscaler's actor motion: each solid skinned actor drawn over the scene depth into the object motion
+    /// target, then this frame's poses copied for the next frame's.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_motion(
+        &self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        depth: &wgpu::TextureView,
+        actors: &[&ActorGpu],
+        done: u64,
+        zone: (&wgpu::Buffer, Option<Culled>),
+    ) {
+        let Some(t) = &self.motion_target else { return };
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("actor motion"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &t.view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth,
+                depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        let (Some((pose, group, _)), Some(m)) = (&self.pose_gpu, &self.motion_prev) else { return };
+        let prev_ok = self.motion_copied.get().wrapping_add(1) == self.pose_frame;
+        let (last_now, last_voyage) = if prev_ok { self.motion_last.get() } else { (self.now, self.voyage) };
+        self.motion_last.set((self.now, self.voyage));
+        let mut u = Vec::with_capacity(52);
+        u.extend_from_slice(&t.vp.to_cols_array());
+        u.extend_from_slice(&t.prev_vp.to_cols_array());
+        u.extend_from_slice(&[t.size[0] as f32, t.size[1] as f32, last_now, 0.0]);
+        u.extend_from_slice(&last_voyage.to_cols_array());
+        gpu.queue.put(&m.uniform, 0, bytemuck::cast_slice(&u));
+        // Moving scenery, only while a part moves (or moved last frame) or the voyage matrix changes.
+        if last_now <= self.parts_busy || last_voyage != self.voyage {
+            let (inst, culled) = zone;
+            pass.set_pipeline(&self.motion_scenery_pipeline);
+            pass.set_bind_group(0, &self.globals, &[]);
+            pass.set_bind_group(3, &m.cur_group, &[0]);
+            pass.set_vertex_buffer(1, inst.slice(..));
+            pass.set_vertex_buffer(0, self.vertices.slice(..));
+            pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint16);
+            for d in self.draws.iter().filter(|d| d.mode <= 1) {
+                let runs = d.runs();
+                for (k, (_, range)) in runs.into_iter().enumerate() {
+                    if range.is_empty() {
+                        continue;
+                    }
+                    match culled {
+                        Some(Culled::Gpu(c, a, shown)) if shown[c.run_of(d.args[k])] => {
+                            pass.draw_indexed_indirect(a, d.args[k] as u64 * 20)
+                        }
+                        Some(Culled::Cpu(c, placed)) => {
+                            let run = placed[c.run_of(d.args[k])].clone();
+                            if !run.is_empty() {
+                                pass.draw_indexed(d.first_index..d.first_index + d.index_count, d.base_vertex, run);
+                            }
+                        }
+                        Some(_) => {}
+                        None => pass.draw_indexed(d.first_index..d.first_index + d.index_count, d.base_vertex, range),
+                    }
+                }
+            }
+        }
+        pass.set_pipeline(&self.motion_pipeline);
+        pass.set_bind_group(0, &self.globals, &[]);
+        for a in actors.iter().filter(|a| a.mips <= done && a.refract.is_none() && a.alpha >= 1.0) {
+            let Some(skin) = a.skin.as_ref().filter(|s| s.frame == self.pose_frame) else { continue };
+            let (g3, off) = match skin.prev_offset {
+                Some(o) if prev_ok => (&m.prev_group, o),
+                _ => (&m.cur_group, skin.offset),
+            };
+            pass.set_bind_group(2, group, &[skin.offset]);
+            pass.set_bind_group(3, g3, &[off]);
+            pass.set_vertex_buffer(0, skin.vertices.slice(..));
+            for (tex, range, wep) in &a.draws {
+                if *wep != NO_WEP && a.hidden_weps & (1 << wep) != 0 {
+                    continue;
+                }
+                pass.set_bind_group(1, &a.textures[*tex], &[]);
+                pass.draw(range.clone(), 0..1);
+            }
+        }
+        drop(pass);
+        encoder.copy_buffer_to_buffer(pose, 0, &m.buffer, 0, m.cap);
+        self.motion_copied.set(self.pose_frame);
     }
 
     pub fn new_actor(&self, gpu: &Gpu, ch: &crate::dat::character::Character) -> ActorGpu {
@@ -4028,7 +4389,7 @@ impl ZoneRenderer {
             slot.entry(t.name.clone()).or_insert(textures.len());
             let (view, seq) = upload_texture_seq(gpu, t, true);
             mips = mips.max(seq);
-            textures.push(view_bind_group(gpu, &self.texture_layout, &self.sampler, &view));
+            textures.push(material_bind_group(gpu, &self.texture_layout, &self.sampler, &view, t.material.as_deref()));
         }
         let instance = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("actor instance"),
@@ -4148,10 +4509,11 @@ impl ZoneRenderer {
             modes: [
                 self.bump_mode as u32 as f32,
                 self.smooth_lights as u32 as f32,
-                [0.0, 1.0, 2.5][self.surface_detail.min(2) as usize],
-                0.0,
+                self.material_maps as u32 as f32,
+                self.material_strength,
             ],
             boost: self.light_boost,
+            lod: [lod_bias(), 0.0, 0.0, 0.0],
         };
         let mut clear = self.fog_color;
         if let Some(l) = &self.lighting {
@@ -4267,11 +4629,14 @@ impl ZoneRenderer {
         };
         // Real character shadows (render/sunshadow.rs): the actors' depth from the zone's sun, laid on the scenery
         // below after all the scenery (the blended too) and before the actors.
-        let sun = match (&self.sun_shadow, self.sun_shadow_light(camera.target), &self.pose_gpu, &self.sun_depth) {
-            (Some(s), Some((m, d, st)), Some((_, group, _)), Some(_)) => Some((s, m, d, st, group)),
+        let sun = match (&self.sun_shadow, self.sun_shadow_light(camera.target), &self.pose_gpu) {
+            (Some(s), Some((m, d, st)), Some((_, group, _))) => Some((s, m, d, st, group)),
             _ => None,
         };
-        if let (Some((s, m, _, _, group)), Some((_, [sun_pipe, lamped_pipe]))) = (&sun, &self.sun_depth) {
+        // sun_shadow is only made with the depth pipelines (prepare_sun_shadow).
+        if let Some((s, m, _, _, group)) = &sun
+            && let Some([sun_pipe, lamped_pipe]) = &self.sun_depth
+        {
             s.set_light(gpu, *m);
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("sun shadow depth"),
@@ -4382,10 +4747,15 @@ impl ZoneRenderer {
             // reads the ground under them. Then the pass resumes.
             let ssao_now = mode == 2 && self.ssao.is_some();
             let sun_now = mode == 4 && (sun.is_some() || !lamps.is_empty());
-            if ssao_now || sun_now {
+            // The upscaler's snapshots: after the opaque scenery (and its occlusion), and after the blended.
+            let snap_now = (mode == 2 || mode == 4) && self.snaps.is_some();
+            if ssao_now || sun_now || snap_now {
                 drop(pass);
                 if let Some(a) = self.ssao.as_ref().filter(|_| ssao_now) {
                     a.draw(gpu, encoder, color, depth, vp, camera.eye);
+                }
+                if let Some((scene, s)) = self.snaps.as_ref().filter(|_| snap_now) {
+                    upscale::snap(encoder, scene, &s[if mode == 2 { 0 } else { 1 }]);
                 }
                 if let Some((s, m, d, st, _)) = sun.as_ref().filter(|_| sun_now) {
                     s.receive(gpu, encoder, color, depth, vp, *m, *d, *st, camera.eye, self.shadow_soft);
@@ -4563,6 +4933,7 @@ impl ZoneRenderer {
             }
         }
         drop(pass);
+        self.draw_motion(gpu, encoder, depth, actors, done, (zone_inst, zone_args));
         if self.defer_faded {
             self.faded_slot.set(slot);
             return;
@@ -5045,40 +5416,13 @@ impl ZoneRenderer {
     /// them only with a lit sun or moon.
     pub fn prepare_sun_shadow(&mut self, gpu: &Gpu, on: bool, size: u32) {
         let size = if sunshadow::MAP_SIZES.contains(&size) { size } else { sunshadow::MAP_SIZE };
-        let Some((feet, _)) = self.sun_depth.as_ref().filter(|_| on) else {
+        let Some(feet) = gpu.pipes.feet.filter(|_| on && self.sun_depth.is_some()) else {
             self.sun_shadow = None;
             return;
         };
         if self.sun_shadow.as_ref().is_none_or(|s| s.size != size) {
-            self.sun_shadow = Some(sunshadow::SunShadow::new(gpu, &self.sil_layout, self.color_format, *feet, size));
+            self.sun_shadow = Some(sunshadow::SunShadow::new(gpu, &self.sil_layout, self.color_format, feet, size));
         }
-    }
-
-    /// With Surface Detail on and the pack not looked for when the zone loaded, the scene's texture names to look it
-    /// up for (once; the caller loads it off the frame and hands it to `attach_surface`).
-    pub fn surface_request(&mut self) -> Option<Vec<String>> {
-        if self.surface_detail == 0 {
-            return None;
-        }
-        self.surface_names.take()
-    }
-
-    /// Surface Detail's pack for this zone, loaded after it went up (`surface_request`; `names` the texture names it
-    /// gave): the pack's slopes on the draws whose texture has one and no retail bump map.
-    pub fn attach_surface(&mut self, gpu: &Gpu, pack: &HashMap<String, crate::surface::Slopes>, names: &[String]) {
-        let mut index: HashMap<&str, usize> = HashMap::new();
-        for d in self.draws.iter_mut().filter(|d| d.bump.is_none() && d.surface.is_none()) {
-            let Some(name) = d.texture.checked_sub(1).and_then(|t| names.get(t)) else { continue };
-            let Some(slopes) = pack.get(name) else { continue };
-            let k = *index.entry(name.as_str()).or_insert_with(|| {
-                let (w, h, rg) = slopes;
-                let view = upload_slopes(gpu, *w, *h, rg);
-                self.surface_groups.push(view_bind_group(gpu, &self.texture_layout, &self.sampler, &view));
-                self.surface_groups.len() - 1
-            });
-            d.surface = Some(k);
-        }
-        log::info!("surface detail: {} pack textures attached", index.len());
     }
 
     /// The faded actors' offscreen target at the scene target's size (`scene`: the texture render draws into), in the
@@ -5299,34 +5643,24 @@ impl ZoneRenderer {
             *bound = d.texture;
         }
         let bump = d.bump.filter(|_| mode == 0).and_then(|b| self.bump_groups.get(b));
-        // Surface Detail's pack: only while the setting is on (the slopes are loaded only then, but it can be
-        // switched off mid-zone).
-        let surface =
-            d.surface.filter(|_| bump.is_none() && self.surface_detail > 0).and_then(|s| self.surface_groups.get(s));
-        if let Some(g) = bump.or(surface) {
+        if let Some(g) = bump {
             pass.set_bind_group(2, g, &[]);
         }
         for (k, (c, range)) in runs.clone().into_iter().enumerate() {
             if !live(k) {
                 continue;
             }
-            let want = match (bump.is_some(), surface.is_some(), furn) {
-                (true, _, _) => 8 + c,
-                (_, true, true) => 32 + c,
-                (_, true, false) => 24 + c,
-                (_, false, true) => 16 + c,
-                _ => c,
+            let want = if bump.is_some() {
+                8 + c
+            } else if furn {
+                16 + c
+            } else {
+                c
             };
             if *pipe != want {
-                let m = mode as usize;
-                let chosen = match (bump.is_some(), surface.is_some(), furn) {
-                    (true, _, _) => &self.scenery_bump[c],
-                    (_, true, true) => &self.scenery_surface_furn[m - 2][c],
-                    (_, true, false) => &self.scenery_surface[m][c],
-                    (_, false, true) => &self.scenery_furn[m - 2][c],
-                    _ => &self.scenery[m][c],
-                };
-                pass.set_pipeline(self.wire(c).unwrap_or(chosen));
+                let normal =
+                    if furn { &self.scenery_furn[mode as usize - 2][c] } else { &self.scenery[mode as usize][c] };
+                pass.set_pipeline(self.wire(c).unwrap_or(if bump.is_some() { &self.scenery_bump[c] } else { normal }));
                 *pipe = want;
             }
             match culled {
@@ -5338,6 +5672,36 @@ impl ZoneRenderer {
                 ),
                 None => pass.draw_indexed(d.first_index..d.first_index + d.index_count, d.base_vertex, range),
             }
+        }
+    }
+}
+
+/// The device with the neural rendering engine's Vulkan features, when an engine with vana_nr_dispatch is installed
+/// and the device has them (render/upscale/vkdevice.rs); None for the usual device. Sets upscale::neural_status.
+fn neural_device(adapter: &wgpu::Adapter, desc: &wgpu::DeviceDescriptor) -> Option<(wgpu::Device, wgpu::Queue)> {
+    upscale::set_vulkan(adapter.get_info().backend == wgpu::Backend::Vulkan);
+    let status = match upscale::external::probe() {
+        _ if upscale::engine_outdated() => Err("the engine is from another release".to_string()),
+        Ok((_, true)) if adapter.get_info().backend == wgpu::Backend::Vulkan => Ok(()),
+        Ok((_, true)) => Err("neural rendering needs the Vulkan backend".to_string()),
+        Ok(_) => Err("the engine has no vana_nr_dispatch".to_string()),
+        Err(e) => Err(e),
+    };
+    #[cfg(any(target_os = "linux", windows))]
+    let made = status.and_then(|()| upscale::vkdevice::open(adapter, desc));
+    #[cfg(not(any(target_os = "linux", windows)))]
+    let made: Result<(wgpu::Device, wgpu::Queue), String> = status.and(Err("Vulkan only".to_string()));
+    match made {
+        Ok(d) => {
+            upscale::set_neural_status(Ok(()));
+            Some(d)
+        }
+        Err(e) => {
+            if upscale::external::library_path().exists() {
+                log::warn!("neural rendering unavailable: {e}");
+            }
+            upscale::set_neural_status(Err(e));
+            None
         }
     }
 }
@@ -5433,9 +5797,56 @@ pub fn render_pngs_post(
             | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
-    let view = target.create_view(&Default::default());
-    let depth = depth_view(&gpu.device, width, height);
+    let out_view = target.create_view(&Default::default());
     let row = (width * 4).div_ceil(256) * 256;
+    // FFXI_FSR1=1..4 / FFXI_CATROM=1..4 (ours): the scene drawn at that quality's render size (render/fsr1.rs) and
+    // scaled to the frame by FSR 1 (RCAS at FFXI_FSR1_SHARP percent, default 50) or by the plain Catmull-Rom
+    // scaling pass, as the client does; the frames compare the two with a native one.
+    let env_q = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u32>().ok()).filter(|q| (1..=4).contains(q));
+    let up = env_q("FFXI_FSR1").map(|q| (q, true)).or_else(|| env_q("FFXI_CATROM").map(|q| (q, false)));
+    let sharp = std::env::var("FFXI_FSR1_SHARP").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(50);
+    // FFXI_FSR3=0..4 (ours): FSR 3.1 at that quality (0 Native AA), FFXI_FSR3_FRAMES (default 32) jittered frames
+    // of the still camera accumulated, the last one written; sharpness FFXI_FSR1_SHARP.
+    let fsr3_q = std::env::var("FFXI_FSR3").ok().and_then(|v| v.parse::<u32>().ok()).filter(|q| *q <= 4);
+    let fsr3_frames = std::env::var("FFXI_FSR3_FRAMES").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(32).max(1);
+    let mut fsr3 = fsr3_q.map(|_| upscale::Upscale::new(&gpu));
+    let mut scale = (up.is_some() || fsr3.is_some()).then(|| scale::SceneScale::new(&gpu, format));
+    let (rw, rh) = match (up, fsr3_q) {
+        (_, Some(q)) => {
+            let r = upscale::render_size([width, height], q);
+            (r[0], r[1])
+        }
+        (Some((q, _)), None) => {
+            let r = fsr1::render_size([width, height], q);
+            (r[0], r[1])
+        }
+        (None, None) => (width, height),
+    };
+    // The texture LOD bias the client gives the upscalers (FFXI_LODBIAS=0: none, to compare).
+    if std::env::var("FFXI_LODBIAS").as_deref() != Ok("0") && (up.is_some_and(|u| u.1) || fsr3.is_some()) {
+        set_lod_bias(upscale::lod_bias(rw, width, fsr3.is_some()));
+    }
+    let (view, depth, scene_target) = match scale.as_mut() {
+        Some(s) => s.target(&gpu, [rw, rh]),
+        None => (out_view.clone(), depth_view(&gpu.device, width, height), target.clone()),
+    };
+    // The scene's own view, for FSR 3.1.
+    let raw = scale.as_ref().and_then(|s| s.raw_view()).unwrap_or_else(|| view.clone());
+    let mut scale_up = |encoder: &mut wgpu::CommandEncoder, upscaled: Option<(&wgpu::TextureView, [u32; 2])>| {
+        if let Some(s) = scale.as_mut() {
+            let fsr1 = up.and_then(|(_, fsr)| fsr.then_some(sharp));
+            s.blit(&gpu, encoder, &out_view, [width, height], [1.0; 3], None, false, 0, fsr1, upscaled);
+        }
+    };
+    let out_size = [width, height];
+    let (width, height) = (rw, rh);
+    // The scene effects their FFXI_ switches turn on (render/scenefx.rs), over the frame after the post step (and in
+    // FFXI_BENCH's frames, so their cost is in its times).
+    let fx_want = scenefx::Want::from_env();
+    let mut scene_fx = fx_want.any().then(|| scenefx::SceneFx::new(format));
+    if let Some(fx) = scene_fx.as_mut() {
+        fx.prepare(&gpu, fx_want, [width, height]);
+    }
     // FFXI_BENCH=N: the first view N more times after a warm-up, its time a frame printed (GPU-bound offscreen).
     if let (Some(n), Some((camera, _, lighting))) =
         (std::env::var("FFXI_BENCH").ok().and_then(|v| v.parse::<u32>().ok()), frames.first())
@@ -5454,7 +5865,7 @@ pub fn render_pngs_post(
                 count: n * 2,
             })
         });
-        let run = |k: u32, timed: bool| -> Result<(f32, Option<f32>)> {
+        let mut run = |k: u32, timed: bool| -> Result<(f32, Option<f32>)> {
             let t = std::time::Instant::now();
             for f in 0..k {
                 let mut encoder = gpu.device.create_command_encoder(&Default::default());
@@ -5462,7 +5873,33 @@ pub fn render_pngs_post(
                 if let Some(q) = q {
                     encoder.write_timestamp(q, f * 2);
                 }
-                renderer.render(&gpu, &mut encoder, &view, &depth, camera, width as f32 / height as f32, &actor_refs);
+                let aspect = width as f32 / height as f32;
+                // FSR 3.1 (FFXI_FSR3): the jittered frame, its snapshots and the upscaler, as the shot does.
+                let mut cam = **camera;
+                if let (Some(f), Some(q)) = (fsr3.as_mut(), fsr3_q) {
+                    cam.jitter = f.begin(&gpu, out_size, q, format, true).1;
+                    renderer.snaps = f.targets.as_ref().map(|t| {
+                        (scene_target.clone(), [t.snap_opaque.clone(), t.snap_blend.clone(), t.snap_pre_fx.clone()])
+                    });
+                    renderer.motion_target = f.motion_target().map(|mut m| {
+                        m.vp = cam.steady().view_proj(aspect);
+                        m.prev_vp = m.vp;
+                        m
+                    });
+                }
+                renderer.render(&gpu, &mut encoder, &view, &depth, &cam, aspect, &actor_refs);
+                if let Some((scene, s)) = renderer.snaps.as_ref().filter(|_| fsr3.is_some()) {
+                    upscale::snap(&mut encoder, scene, &s[2]);
+                }
+                if let Some(fx) = &scene_fx {
+                    let frame = scenefx::Frame::new(&cam, aspect, lighting.as_ref());
+                    fx.draw(&gpu, &mut encoder, &view, &depth, &frame);
+                }
+                let out = fsr3.as_mut().and_then(|f| {
+                    f.frame_camera = Some(upscale::FrameCamera { camera: cam, aspect });
+                    f.run(&gpu, &mut encoder, &raw, &depth, 1, sharp, 0, false)
+                });
+                scale_up(&mut encoder, out.as_ref().map(|(v, sz)| (v, *sz)));
                 if let Some(q) = q {
                     encoder.write_timestamp(q, f * 2 + 1);
                 }
@@ -5516,25 +5953,69 @@ pub fn render_pngs_post(
         renderer.lighting = *lighting;
         let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("readback"),
-            size: (row * height) as u64,
+            size: (row * out_size[1]) as u64,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
         renderer.update_leak(&gpu, camera, width as f32 / height as f32);
+        let aspect = width as f32 / height as f32;
+        // FSR 3.1: the frames before the written one, each jittered, accumulated into the upscaler's history.
+        let mut jittered = **camera;
+        if let (Some(f), Some(q)) = (fsr3.as_mut(), fsr3_q) {
+            for k in 0..fsr3_frames {
+                let mut encoder = gpu.device.create_command_encoder(&Default::default());
+                let (_, jitter) = f.begin(&gpu, out_size, q, format, true);
+                jittered.jitter = jitter;
+                renderer.snaps = f.targets.as_ref().map(|t| {
+                    (scene_target.clone(), [t.snap_opaque.clone(), t.snap_blend.clone(), t.snap_pre_fx.clone()])
+                });
+                renderer.motion_target = f.motion_target().map(|mut m| {
+                    m.vp = jittered.steady().view_proj(aspect);
+                    m.prev_vp = m.vp;
+                    m
+                });
+                if k + 1 == fsr3_frames {
+                    break;
+                }
+                renderer.render(&gpu, &mut encoder, &view, &depth, &jittered, aspect, &actor_refs);
+                if let Some((scene, s)) = &renderer.snaps {
+                    upscale::snap(&mut encoder, scene, &s[2]);
+                }
+                f.frame_camera = Some(upscale::FrameCamera { camera: jittered, aspect });
+                f.run(&gpu, &mut encoder, &raw, &depth, 1, sharp, 0, false);
+                gpu.queue.submit([encoder.finish()]);
+                f.after_submit(&gpu);
+            }
+        }
+        let camera = &&jittered;
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         renderer.render(&gpu, &mut encoder, &view, &depth, camera, width as f32 / height as f32, &actor_refs);
         renderer.render_refraction(
             &gpu,
             &mut encoder,
             &view,
-            Some(&target),
+            Some(&scene_target),
             &depth,
             camera,
             width as f32 / height as f32,
             &actor_refs,
         );
         // An error (a GPU short of what the pass needs) stops before the frame is written over an older one.
-        post(&gpu, &mut encoder, (&view, &target), &depth, camera, lighting.as_ref(), &mut renderer)?;
+        post(&gpu, &mut encoder, (&view, &scene_target), &depth, camera, lighting.as_ref(), &mut renderer)?;
+        // FSR 3.1: the snapshot before the effects, as the client takes it.
+        if let Some((scene, s)) = renderer.snaps.as_ref().filter(|_| fsr3.is_some()) {
+            upscale::snap(&mut encoder, scene, &s[2]);
+        }
+        if let Some(fx) = &scene_fx {
+            let frame = scenefx::Frame::new(camera, width as f32 / height as f32, lighting.as_ref());
+            fx.draw(&gpu, &mut encoder, &view, &depth, &frame);
+        }
+        let out = fsr3.as_mut().and_then(|f| {
+            f.frame_camera = Some(upscale::FrameCamera { camera: **camera, aspect });
+            f.run(&gpu, &mut encoder, &raw, &depth, 1, sharp, 0, false)
+        });
+        scale_up(&mut encoder, out.as_ref().map(|(v, sz)| (v, *sz)));
+        let (width, height) = if up.is_some() || fsr3.is_some() { (out_size[0], out_size[1]) } else { (width, height) };
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &target,
@@ -5649,8 +6130,6 @@ mod faded_tests {
             list_base: 0,
             sway: Default::default(),
             bumps: vec![],
-            surface: Default::default(),
-            surface_tried: false,
             floors: vec![],
         };
         let format = wgpu::TextureFormat::Rgba8Unorm;
@@ -5668,6 +6147,7 @@ mod faded_tests {
         });
         let depth = super::depth_view(&gpu.device, 8, 8);
         let camera = super::Camera {
+            jitter: glam::Vec2::ZERO,
             eye: glam::Vec3::new(0.0, -2.0, 5.0),
             target: glam::Vec3::ZERO,
             up: glam::Vec3::NEG_Y,
@@ -5718,7 +6198,11 @@ mod limits_tests {
         let desktop = wgpu::Limits { max_storage_buffers_per_shader_stage: 1_000_000, ..wgpu::Limits::unlimited() };
         assert_eq!(
             super::wanted_limits(&desktop),
-            wgpu::Limits { max_storage_buffers_per_shader_stage: 16, ..Default::default() }
+            wgpu::Limits {
+                max_storage_buffers_per_shader_stage: 16,
+                max_storage_textures_per_shader_stage: 16,
+                ..Default::default()
+            }
         );
         let pi = wgpu::Limits {
             max_inter_stage_shader_variables: 15,
@@ -5737,22 +6221,30 @@ mod limits_tests {
     #[test]
     fn short_limits_name_what_is_missing() {
         // Mali's 8 storage buffers are enough; GLES 3.1's guaranteed 4 are not.
-        let mali = wgpu::Limits { max_storage_buffers_per_shader_stage: 8, ..wgpu::Limits::downlevel_defaults() };
+        let mali = wgpu::Limits { max_storage_buffers_per_shader_stage: 8, ..super::LOW_LIMITS };
         assert!(super::short_limits(&mali).is_empty());
-        let four = wgpu::Limits { max_storage_buffers_per_shader_stage: 4, ..wgpu::Limits::downlevel_defaults() };
+        let four = wgpu::Limits { max_storage_buffers_per_shader_stage: 4, ..super::LOW_LIMITS };
         let short = super::short_limits(&four);
-        assert_eq!(short.len(), 1, "{short:?}");
-        assert!(short[0].starts_with("4 storage buffers"));
+        assert_eq!(short, ["max_storage_buffers_per_shader_stage is 4, the client needs 8"]);
         // Panfrost on Midgard: 128 invocations.
         let midgard = wgpu::Limits {
             max_storage_buffers_per_shader_stage: 16,
             max_compute_invocations_per_workgroup: 128,
             max_compute_workgroup_size_x: 128,
-            ..wgpu::Limits::downlevel_defaults()
+            ..super::LOW_LIMITS
         };
         let short = super::short_limits(&midgard);
-        assert_eq!(short.len(), 1, "{short:?}");
-        assert!(short[0].starts_with("128 compute invocations"));
+        assert_eq!(
+            short,
+            [
+                "max_compute_invocations_per_workgroup is 128, the client needs 256",
+                "max_compute_workgroup_size_x is 128, the client needs 256"
+            ]
+        );
+        // Any limit counts, not only the three the effects, scenery and mip generator name: 2 colour attachments.
+        let two = wgpu::Limits { max_color_attachments: 2, ..super::NEEDED };
+        assert_eq!(super::short_limits(&two), ["max_color_attachments is 2, the client needs 4"]);
+        assert!(super::short_limits(&super::NEEDED).is_empty());
         let desktop = wgpu::Limits { max_storage_buffers_per_shader_stage: 16, ..Default::default() };
         assert!(super::short_limits(&super::wanted_limits(&desktop)).is_empty());
     }

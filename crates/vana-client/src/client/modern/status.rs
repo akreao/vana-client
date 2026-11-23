@@ -45,9 +45,9 @@ fn shown(w: &World) -> bool {
 /// The English help of statcom2 row 13 since build 30261102 (menu message file 55651: "View Faith Points and change
 /// Celestite for each alter ego type.") keeps "Faith Points", the Japanese name; every other English line calls them
 /// alter ego points (its neighbours: "Consumes alter ego points to increase this attribute."). The modern page says
-/// alter ego points; the classic window shows retail's text unchanged.
-fn alter_ego_wording(help: String) -> String {
-    help.replace("Faith Points", "alter ego points")
+/// alter ego points; the classic window shows retail's text unchanged. Only that row's help is changed.
+fn alter_ego_wording(sel: u16, help: String) -> String {
+    if sel == 13 { help.replace("Faith Points", "alter ego points") } else { help }
 }
 
 fn cursor_row(sel: u16) -> usize {
@@ -262,7 +262,7 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     let race = status::RACES.get(w.my_race as usize).copied().unwrap_or("");
     let mon = w.monstrosity.filter(|x| x.0 & 0x18 == 0x18);
     let (mentor, mastery) = w.job_info.map_or((0, 0), |j| (j.mentor, j.mastery));
-    let help = alter_ego_wording(gu.focus_text(STATCOM, sel)[0].clone().unwrap_or_default());
+    let help = alter_ego_wording(sel, gu.focus_text(STATCOM, sel)[0].clone().unwrap_or_default());
     let mut held_only = m.held_only.get();
     let played = super::super::textcmd::played(w);
     let played_line = super::super::textcmd::playtime_text(w);
@@ -615,9 +615,11 @@ mod tests {
     #[test]
     fn alter_ego_help() {
         assert_eq!(
-            alter_ego_wording("View Faith Points and change Celestite for each alter ego type.".into()),
+            alter_ego_wording(13, "View Faith Points and change Celestite for each alter ego type.".into()),
             "View alter ego points and change Celestite for each alter ego type."
         );
-        assert_eq!(alter_ego_wording("View your merit points.".into()), "View your merit points.");
+        assert_eq!(alter_ego_wording(7, "View your merit points.".into()), "View your merit points.");
+        // Another row's text is never rewritten.
+        assert_eq!(alter_ego_wording(1, "Faith Points".into()), "Faith Points");
     }
 }

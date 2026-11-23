@@ -44,17 +44,28 @@ pub struct Dictionary {
     lang_byte: u8,
 }
 
-/// A group built at run time: its header kind (7 items, 0x13 key items), title, completion key and words (block id,
-/// text; a word's key is its text).
+/// A group built at run time: its header kind (7 items, 0x13 key items), title, completion key and words (`list`: the
+/// title's words first, `titles` of them; a word's key is its text).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Built {
     pub kind: u8,
     pub title: String,
     pub key: String,
-    pub words: Vec<([u8; 4], String)>,
     list: Vec<Word>,
     titles: usize,
     sorted: Vec<usize>,
+}
+
+impl Built {
+    /// Its entries in build order: (block id, text).
+    pub fn words(&self) -> impl Iterator<Item = ([u8; 4], String)> + '_ {
+        self.list[self.titles..].iter().map(|w| (w.id, w.text.clone()))
+    }
+
+    /// How many entries it has.
+    pub fn len(&self) -> usize {
+        self.list.len() - self.titles
+    }
 }
 
 /// A word (FUN_101bdd10, 0x18 bytes): its text, the key completion compares, the four id bytes. `raw` / `key` hold the
@@ -380,8 +391,11 @@ fn entry_words(body: &[u8], p: usize, lang: u8, at: &dyn Fn(&[u8]) -> Option<Vec
         None => (raw.to_vec(), len.saturating_sub(1)),
     };
     let mut words = Vec::new();
-    if matches!(lang, 1 | 4) {
-        let l2 = *body.get(next)? as usize;
+    // A group whose last entry ends at its end has no second string there: the entry keeps its text as its key.
+    if matches!(lang, 1 | 4)
+        && let Some(&l2) = body.get(next)
+    {
+        let l2 = l2 as usize;
         let key = body.get(next + 1..next + 1 + l2)?;
         next += 1 + l2;
         if l2 >= 2 {
@@ -498,7 +512,7 @@ impl Dictionary {
                 list.push(Word::plain(&raw, l, *b));
             }
             let sorted = (titles..list.len()).collect();
-            built.push(Built { kind: KIND_KEY_ITEMS, title, key, words: keys, list, titles, sorted });
+            built.push(Built { kind: KIND_KEY_ITEMS, title, key, list, titles, sorted });
         }
         let items: Vec<_> = recent
             .iter()
@@ -517,7 +531,13 @@ impl Dictionary {
             }
             let mut sorted: Vec<usize> = (titles..list.len()).collect();
             select_sort(&mut sorted, |&a, &b| before(self.lang, &list[a], &list[b]));
-            built.push(Built { kind: KIND_ITEMS, title, key, words: items, list, titles, sorted });
+            built.push(Built { kind: KIND_ITEMS, title, key, list, titles, sorted });
+        }
+        // The same groups as last time (the list opened again): the merged words stand. FUN_101bdaf0's selection sort
+        // is kept as it is (its compare reads over the second key's length, so no other sort orders the same), and it
+        // costs 20..40 ms, so it runs only when the groups changed.
+        if *self.built() == built && !self.merged.read().unwrap_or_else(|e| e.into_inner()).is_empty() {
+            return;
         }
         let merged = self.merge(&built);
         if let Ok(mut b) = self.built.write() {
@@ -582,6 +602,12 @@ impl Dictionary {
     /// FUN_101ac990 without braces (a text command's argument, the line being typed): blocks as their plain text.
     pub fn expand_plain(&self, s: &str, names: Option<&dyn NameSource>) -> String {
         self.expand(s, names).chars().filter(|&c| c != '\u{E008}' && c != '\u{E009}').collect()
+    }
+
+    /// Whether `filter` names a category FUN_101bc640 finds: a file group by its group byte, or a built group by its
+    /// kind byte while it is there.
+    pub fn has_category(&self, filter: [u8; 4]) -> bool {
+        self.by_id.contains_key(&filter[2]) || self.built().iter().any(|b| b.kind == filter[0])
     }
 
     /// Groups (0x4c-byte header: kind, language, group id, 0, title[32], completion[32], u32 count, u32 bytes) then
@@ -929,7 +955,10 @@ mod tests {
         d.rebuild(&names.items.recent(), &[]);
         let b = d.built().clone();
         assert_eq!(b.len(), 1);
-        assert_eq!((b[0].kind, b[0].words.as_slice()), (7, &[([7, 2, 0x40, 0x97], "Bronze Sword".to_string())][..]));
+        assert_eq!(
+            (b[0].kind, b[0].words().collect::<Vec<_>>()),
+            (7, vec![([7, 2, 0x40, 0x97], "Bronze Sword".to_string())])
+        );
         assert_eq!(d.query("", None).0.len(), 43);
         assert_eq!(d.resolve([8, 2, 0xff, 0xff], n).as_deref(), Some(b[0].title.as_str()));
         assert!(d.query("bronze s", None).0.iter().any(|c| c.1 == [7, 2, 0x40, 0x97]));
@@ -989,9 +1018,12 @@ mod tests {
         d.rebuild(&recent, &keys);
         let b = d.built().clone();
         assert_eq!(b.iter().map(|g| g.kind).collect::<Vec<_>>(), vec![0x13, 7]);
-        assert_eq!(b[0].words, vec![([0x15, 2, 0xff, 0x45], s("Airship pass")), ([0x16, 2, 2, 0xff], s("Map"))]);
         assert_eq!(
-            b[1].words,
+            b[0].words().collect::<Vec<_>>(),
+            vec![([0x15, 2, 0xff, 0x45], s("Airship pass")), ([0x16, 2, 2, 0xff], s("Map"))]
+        );
+        assert_eq!(
+            b[1].words().collect::<Vec<_>>(),
             vec![
                 ([7, 2, 0x10, 0x10], s("Potion")),
                 ([9, 2, 0xff, 0x50], s("Chair")),
@@ -1018,13 +1050,10 @@ mod tests {
         assert_eq!((block_id(0xd, 0xff, 0x50), block_id(0x12, 0x10, 0xff), block_id(0xf, 1, 2)), (0x50, 0x1000, 0x102));
         // What a block names: every built word gives its id back; a category block is id 0; a phrase is none.
         assert_eq!(
-            b[1].words.iter().map(|w| block_item(w.0)).collect::<Vec<_>>(),
+            b[1].words().map(|w| block_item(w.0)).collect::<Vec<_>>(),
             [0x1010, 0x50, 0x1000, 0xffff].map(|i| Some((false, i)))
         );
-        assert_eq!(
-            b[0].words.iter().map(|w| block_item(w.0)).collect::<Vec<_>>(),
-            [0x45, 0x200].map(|i| Some((true, i)))
-        );
+        assert_eq!(b[0].words().map(|w| block_item(w.0)).collect::<Vec<_>>(), [0x45, 0x200].map(|i| Some((true, i))));
         assert_eq!(
             (block_item(cats[2].1), block_item(cats[1].1), block_item(cats[0].1)),
             (Some((false, 0)), Some((true, 0)), None)

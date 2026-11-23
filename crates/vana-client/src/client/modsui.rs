@@ -64,10 +64,9 @@ const ALL: usize = usize::MAX;
 
 /// The catalogue's entries, each with what it is here: to install, to update or installed.
 fn statuses(list: Vec<Entry>) -> Vec<(Entry, Option<bool>)> {
-    let root = crate::config::mods_dir();
     list.into_iter()
         .map(|e| {
-            let have = catalogue::installed(&root, &e.id);
+            let have = catalogue::installed(&catalogue::root_of(&e), &e.id);
             let st = catalogue::offer(&e, have.as_deref());
             (e, st)
         })
@@ -319,7 +318,7 @@ impl Mods {
         let pr = progress.clone();
         let id = e.id.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(catalogue::install(&e, &crate::config::mods_dir(), &pr));
+            let _ = tx.send(catalogue::install(&e, &catalogue::root_of(&e), &pr));
         });
         self.installing = Some((id, progress, rx));
         true
@@ -361,7 +360,10 @@ impl Mods {
                     }
                     e.1 = None;
                 }
-                if !mods.iter().any(|m| m.name == slug) {
+                // The material pack is not a DAT pack: Settings' Material Maps uses it, opened anew.
+                if self.entries.iter().any(|e| e.0.id == slug && e.0.kind == "materials") {
+                    crate::material::reopen();
+                } else if !mods.iter().any(|m| m.name == slug) {
                     mods.insert(0, ModRef::new(slug, true));
                 }
                 self.error = None;
@@ -466,11 +468,13 @@ pub fn remove_folder(name: &str) -> bool {
 }
 
 /// A file picker for an archive or a Lua mod's folder: a folder's sub-folders and archives (zip, 7z, rar), ".." first.
+/// For Neural Rendering's DLL (`dll`): .dll and .zip files.
 pub struct Browse {
     pub dir: PathBuf,
     pub entries: Vec<(String, Pick)>,
     pub cursor: usize,
     mods: bool,
+    dll: bool,
 }
 
 /// What a picker entry is.
@@ -486,7 +490,15 @@ impl Browse {
     /// At the Downloads folder (else home); `mods`: a Lua mod's folder is a pick too.
     pub fn open(mods: bool) -> Self {
         let dir = dirs::download_dir().or_else(dirs::home_dir).unwrap_or_else(|| PathBuf::from("/"));
-        let mut b = Self { dir, entries: Vec::new(), cursor: 0, mods };
+        let mut b = Self { dir, entries: Vec::new(), cursor: 0, mods, dll: false };
+        b.read();
+        b
+    }
+
+    /// For NVIDIA's nvngx_dlssnr.dll or a zip holding it (Neural Rendering), at the Downloads folder.
+    pub fn open_dll() -> Self {
+        let dir = dirs::download_dir().or_else(dirs::home_dir).unwrap_or_else(|| PathBuf::from("/"));
+        let mut b = Self { dir, entries: Vec::new(), cursor: 0, mods: false, dll: true };
         b.read();
         b
     }
@@ -503,6 +515,11 @@ impl Browse {
                 let p = e.path();
                 if p.is_dir() {
                     dirs.push((name, if self.mods && p.join("mod.toml").is_file() { Pick::Mod } else { Pick::Folder }));
+                } else if self.dll {
+                    let ext = p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase());
+                    if matches!(ext.as_deref(), Some("dll" | "zip")) {
+                        files.push((name, Pick::Archive));
+                    }
                 } else if modpack::is_archive(&p) {
                     files.push((name, Pick::Archive));
                 }

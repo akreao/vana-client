@@ -97,9 +97,10 @@ enum Click {
     Clear,
     Options(bool, bool, u32),
     Rumble(bool),
-    /// padguid000, then padmode000's XInput, sliders and hat options.
-    Device(String, bool, bool, bool),
-    MoveRate(u32),
+    /// padguid000.
+    Device(String),
+    /// One of padmode000's XInput, sliders and hat options (0..3), on or off.
+    Flag(usize, bool),
     Defaults,
     Copy,
     Retail,
@@ -225,7 +226,7 @@ fn side(ui: &mut Ui, m: &super::Modern, p: &PadCfg, click: &mut Option<Click>) {
         egui::ComboBox::from_id_salt("controller device").selected_text(shown).width(SIDE_W - 20.0).show_ui(ui, |ui| {
             for (guid, name) in &p.devices {
                 if ui.selectable_label(guid.eq_ignore_ascii_case(&set.padguid), name).clicked() {
-                    *click = Some(Click::Device(guid.clone(), set.xinput, set.sliders, set.hat));
+                    *click = Some(Click::Device(guid.clone()));
                 }
             }
         });
@@ -237,9 +238,11 @@ fn side(ui: &mut Ui, m: &super::Modern, p: &PadCfg, click: &mut Option<Click>) {
             ui.label(egui::RichText::new(label).size(m.theme.small).color(m.theme.color("text")));
             let at = [set.xinput, set.sliders, set.hat][k];
             if let Some(v) = kit::choice(ui, m, &onoff, at as usize, 0) {
-                let mut f = [set.xinput, set.sliders, set.hat];
-                f[k] = v == 1;
-                *click = Some(Click::Device(set.padguid.clone(), f[0], f[1], f[2]));
+                *click = Some(Click::Flag(k, v == 1));
+            }
+            // Retail keeps the XInput DLL's pad (+0xc9a) once it loaded, until the game starts again.
+            if k == 0 && !set.xinput {
+                note(ui, m, "Turning XInput off takes effect at the next start.", "muted");
             }
         }
         heading(ui, m, "Gamepad Options", false);
@@ -265,16 +268,6 @@ fn side(ui: &mut Ui, m: &super::Modern, p: &PadCfg, click: &mut Option<Click>) {
         {
             *click = Some(Click::Options(set.on, set.background, k as u32 * 5));
         }
-        heading(ui, m, "Movement", false);
-        ui.label(
-            egui::RichText::new("Movement Rate: how many times a second your character moves and turns, with a stick or the keyboard. 30 as the game runs, or 60 as it does with a frame rate add-on (not retail).")
-                .size(m.theme.small)
-                .color(m.theme.color("text")),
-        );
-        let rates = ["30".to_string(), "60".to_string()];
-        if let Some(k) = kit::choice(ui, m, &rates, (p.move_rate == 60) as usize, 0) {
-            *click = Some(Click::MoveRate(if k == 1 { 60 } else { 30 }));
-        }
         heading(ui, m, "Settings in Use", false);
         let (from, colour) = match set.source {
             Source::Config => ("Saved by Vana Client in config.json.".to_string(), "text"),
@@ -285,6 +278,9 @@ fn side(ui: &mut Ui, m: &super::Modern, p: &PadCfg, click: &mut Option<Click>) {
                 ),
                 "gold",
             ),
+            Source::Default if set.padsin == super::super::gamepad::DINPUT_PADSIN => {
+                ("The tool's Pattern A, for a DirectInput controller (no saved settings).".to_string(), "muted")
+            }
             Source::Default => ("The XInput setup (no saved settings).".to_string(), "muted"),
         };
         note(ui, m, &from, colour);
@@ -343,16 +339,16 @@ fn apply(w: &mut World, c: Click) {
             p.set_options(on, bg, dead);
             Se::Cursor
         }
-        Click::MoveRate(rate) => {
-            p.set_move_rate(rate);
-            Se::Cursor
-        }
         Click::Rumble(on) => {
             p.set_rumble(on);
             Se::Cursor
         }
-        Click::Device(guid, xinput, sliders, hat) => {
-            p.set_device(guid, xinput, sliders, hat);
+        Click::Device(guid) => {
+            p.set_device(guid);
+            Se::Cursor
+        }
+        Click::Flag(k, on) => {
+            p.set_flag(k, on);
             Se::Cursor
         }
         Click::Defaults => {

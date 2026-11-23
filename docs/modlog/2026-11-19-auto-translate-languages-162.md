@@ -12,8 +12,8 @@ The client language:
   FUN_100157e0 copies the block's +0x28 (DAT_10457b80) to +8, and the block's +0x4c bit 0 (DAT_10457ba4) to +0x18
   bit 7, the flag that makes German and French read the English files and compare as English (FUN_1025cb90,
   FUN_101b67e0, FUN_101bde00). A debug switch (FUN_101d3fe0, flag 4) can name it ("japanese" .. "french") or step it.
-- Ours: config.json `language` ("ja" / "en" / "de" / "fr", default "en"), set process-wide at Config::load
-  (dat::lang). The flag stays clear (ours has no install without the European files). No Settings row.
+- Ours: config.json `language` ("ja" / "en" / "de" / "fr", default "en"), set process-wide once, as the game data
+  loads and before the dictionary does (dat::lang; App), so the dictionary, its blocks and the quotes agree. The flag stays clear (ours has no install without the European files). No Settings row.
 - The language tables: FUN_1025cb20 picks DAT_1038bbd0 (ja), DAT_1038b610 (en), DAT_1038b450 (de), DAT_1038b7d0 (fr);
   slot 0x18 of each is 55545 / 55665 / 55785 / 56205. tables.rs had the German and French tables' names swapped (the
   index was right); fixed.
@@ -63,9 +63,16 @@ Ours now:
 - dat::lang (client / files), Config.language.
 - autotrans: Word (text, key, lengths, id), title_words / entry_words, the compares (strncmp / strnicmp / fold_cmp with
   FOLD_ORDER / FOLD_ACCENTS), select_sort, search, listed, kana; Dictionary::load_lang; the built groups and the merged
-  array made again together; blocks with the dictionary's language byte (id_block, phrase_block, the Lua blocks).
-- font::german_quotes (char_len = FUN_10191050): chat lines, the chat line being typed, the comment window (its lines
-  and live box), the macro editor (lines, live title and line).
+  array made again together, and only when the built groups changed (the selection sort takes 20..40 ms; its compare
+  reads over the second key's length, so no other sort orders the same); blocks with the dictionary's language byte
+  (id_block, phrase_block, the Lua blocks). A Japanese or French group whose last entry ends at the group's end has no
+  second string: the entry keeps its text as its key.
+- `res.autotranslate` with a group lists all its entries (the word is not used) and an unknown group gives none; the
+  game's own list keeps retail's "エラー" row.
+- font::german_quotes_str (char_len = FUN_10191050): only the quotes change, no Shift-JIS round trip. Chat lines take
+  them as the classic log draws them (retail keeps them in the log; ours keeps the quotes as typed for the mods,
+  copying and search), the chat line being typed (in place, nothing done outside German), the comment window (its
+  lines and live box), the macro editor (lines, live title and line).
 - Tests: `dat::autotrans::tests::{fold_tables, compares, search_finds_the_run, french_words, japanese_words,
   german_places}`, `dat::font::tests::german_quote_marks`.
 

@@ -73,6 +73,8 @@ pub struct ModMgr {
     /// The last Run: (mod, the print number then, the line).
     ran: Option<(String, u64, String)>,
     get_row: usize,
+    /// Get mods' details pages asked for by keys, for the next draw (Page Down +1).
+    get_pages: std::cell::Cell<i32>,
     pickers: gm::Pickers,
     lists_at: Option<std::time::Instant>,
 }
@@ -102,6 +104,7 @@ impl ModMgr {
             owners: HashMap::new(),
             ran: None,
             get_row: 0,
+            get_pages: std::cell::Cell::new(0),
             pickers: gm::Pickers::default(),
             lists_at: None,
         };
@@ -468,7 +471,13 @@ pub fn events(w: &mut World, events: &[egui::Event]) -> bool {
                 if *key == egui::Key::Enter && *repeat {
                     continue;
                 }
-                self::key(w, *key, modifiers.shift);
+                // The pad's page modifier (Ctrl on the arrows) pages Get mods' details, as Page Up / Down do.
+                let key = match key {
+                    egui::Key::ArrowUp if modifiers.ctrl && on_get_mods(w) => egui::Key::PageUp,
+                    egui::Key::ArrowDown if modifiers.ctrl && on_get_mods(w) => egui::Key::PageDown,
+                    k => *k,
+                };
+                self::key(w, key, modifiers.shift);
             }
             _ => {}
         }
@@ -477,6 +486,10 @@ pub fn events(w: &mut World, events: &[egui::Event]) -> bool {
         }
     }
     true
+}
+
+fn on_get_mods(w: &World) -> bool {
+    w.modmgr.as_ref().is_some_and(|m| m.tab == 1)
 }
 
 fn text(w: &mut World, t: &str) {
@@ -919,6 +932,11 @@ fn get_stops(s: &SettingsUi) -> Vec<Stop> {
 
 fn get_key(w: &mut World, key: egui::Key, shift: bool) {
     let Some(mm) = w.modmgr.as_mut() else { return };
+    // The rows are buttons, so the page keys are free: they page the details.
+    if matches!(key, egui::Key::PageUp | egui::Key::PageDown) {
+        mm.get_pages.set(mm.get_pages.get() + if key == egui::Key::PageDown { 1 } else { -1 });
+        return;
+    }
     let st = get_stops(&mm.s);
     let mut at = At::new(mm.get_row.min(st.len() - 1), 0);
     let act = kit::key(&st, &mut at, key, shift);
@@ -1460,14 +1478,24 @@ fn form(
     }
 }
 
-/// Get mods: Install from File, the standard mods, the archives found; the details of the row under the cursor.
-fn get_mods(ui: &mut Ui, m: &super::Modern, s: &SettingsUi, row: usize, follow: bool, click: &mut Vec<Click>) {
+/// Get mods: Install from File, the standard mods, the archives found; the details of the row under the cursor
+/// (`pages`: their pages asked for by keys).
+fn get_mods(
+    ui: &mut Ui,
+    m: &super::Modern,
+    s: &SettingsUi,
+    row: usize,
+    follow: bool,
+    pages: &mut i32,
+    click: &mut Vec<Click>,
+) {
     let Some(state) = s.mods_state() else { return };
     let busy = state.installing();
     let standard = state.standard();
     // The archives found (Update All is the Installed tab's).
     let offers: Vec<_> = s.mods_rows().1.into_iter().filter(|o| !o.all).collect();
     let mut hover = None;
+    let tall = ui.ctx().content_rect().height() * 0.45;
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(LIST_W + 16.0 + FORMS_W + 60.0);
@@ -1482,7 +1510,6 @@ fn get_mods(ui: &mut Ui, m: &super::Modern, s: &SettingsUi, row: usize, follow: 
                 note(ui, m, &format!("The last install failed: {e}"), "hp");
             }
             ui.add_space(6.0);
-            let tall = ui.ctx().content_rect().height() * 0.45;
             kit::scroll(ui, "get mods", tall, |ui| {
                 ui.add_space(4.0);
                 heading(ui, m, "Standard mods");
@@ -1562,7 +1589,7 @@ fn get_mods(ui: &mut Ui, m: &super::Modern, s: &SettingsUi, row: usize, follow: 
                 facts: Vec::new(),
             }),
         };
-        config::details(ui, m, &d);
+        config::details_scrolled(ui, m, &d, tall, pages);
     });
 }
 
@@ -1786,9 +1813,12 @@ fn window(p: &mut Panels, mm: &ModMgr, sel: Option<&Sel>, replies: &[&str]) -> V
                         help = installed_help(mm, sel, &ks);
                     }
                     1 => {
-                        get_mods(ui, m, &mm.s, mm.get_row, follow, &mut click);
-                        help = "Up / Down: a mod. Enter: install it (or update it). Tab: the next tab. Escape: close."
-                            .into();
+                        let mut pages = mm.get_pages.take();
+                        get_mods(ui, m, &mm.s, mm.get_row, follow, &mut pages, &mut click);
+                        help =
+                            "Up / Down: a mod. Page Up / Down: scroll its details. Enter: install it (or update it). \
+                                Tab: the next tab. Escape: close."
+                                .into();
                     }
                     _ => {
                         ui.horizontal_top(|ui| {

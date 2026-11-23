@@ -128,7 +128,14 @@ pub fn start(root: PathBuf, playonline: bool) -> Shared {
                 g.lock().unwrap().game = Game::Behind(server.version.clone());
                 match crate::patch::plan_against(&root, server) {
                     Ok(plan) if !plan.todo.is_empty() => Game::Available(Box::new(plan)),
-                    Ok(_) => Game::Current,
+                    // Every file is current (a reinstall the Viewer then patched): the version is recorded, so the
+                    // next start does not read every file again.
+                    Ok(plan) => {
+                        if let Err(e) = crate::patch::record_current(&root, &plan) {
+                            log::warn!("update check: recording {}: {e:#}", plan.server.version);
+                        }
+                        Game::Current
+                    }
                     Err(e) => Game::Failed(format!("{e:#}")),
                 }
             }
@@ -214,6 +221,35 @@ pub fn signed_text(tag: &str, asset: &str, file: &[u8]) -> String {
 fn signed_by(key: &str, text: &str, sig: &[u8]) -> bool {
     let Some(key) = hex::decode(key.trim()).ok().filter(|k| k.len() == 32) else { return false };
     ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key).verify(text.as_bytes(), sig).is_ok()
+}
+
+/// The release tagged `tag`: its asset `name` and that asset's signature, as (url, size, sig url); None when there is
+/// no such release or asset (an older release without it).
+pub(super) fn tagged_asset(tag: &str, name: &str) -> Result<Option<(String, u64, Option<String>)>> {
+    let url = format!("https://api.github.com/repos/{RELEASE_REPO}/releases/tags/{tag}");
+    let mut resp = match agent().get(&url).header("Accept", "application/vnd.github+json").call() {
+        Ok(r) => r,
+        Err(ureq::Error::StatusCode(404)) => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let v: serde_json::Value = serde_json::from_str(&resp.body_mut().read_to_string()?)?;
+    let find = |n: &str| v["assets"].as_array().and_then(|a| a.iter().find(|x| x["name"].as_str() == Some(n)));
+    let url = |a: &serde_json::Value| a["browser_download_url"].as_str().unwrap_or_default().to_string();
+    let sig = find(&format!("{name}.sig")).map(url);
+    Ok(find(name).map(|a| (url(a), a["size"].as_u64().unwrap_or(0), sig)))
+}
+
+/// `file` (asset `name` of release `tag`) is signed by the release key: the signature at `sig_url` checked.
+pub(super) fn signed_asset(tag: &str, name: &str, file: &[u8], sig_url: &str) -> Result<bool> {
+    let sig = agent()
+        .get(sig_url)
+        .call()
+        .with_context(|| sig_url.to_string())?
+        .body_mut()
+        .with_config()
+        .limit(1024)
+        .read_to_vec()?;
+    Ok(signed_by(SIGNING_KEY, &signed_text(tag, name, file), &sig))
 }
 
 /// A downloaded binary checked against its release's signature before it is installed; one that fails is removed.

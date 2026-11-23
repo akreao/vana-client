@@ -10,7 +10,10 @@ chat = { add = function() end }
 local on_window = ui.on
 ui.on = function(id, f) if id == "manager" then H = f end; on_window(id, f) end
 local data = require("src.data")
-data.init({ read = function() return nil end, write = function() end, decode = json.decode, encode = json.encode })
+-- Files kept in memory: a sticky change reads sticky.json afresh, so a dropped write would lose the entry.
+local files = {}
+data.init({ read = function(f) return files[f] end, write = function(f, t) files[f] = t end, decode = json.decode,
+  encode = json.encode })
 local manager = require("src.manager")
 manager.hooks = { changed = function() end, rebind = function() end }
 manager.open()

@@ -22736,8 +22736,8 @@ From FFXiMain.dll (Steven's unpacked copy, full_text.asm / all_decomp.c).
 - Not retail. The modern interface's Config window (client/modern/config.rs) becomes "Settings": retail's Config list
   (Gameplay, Chat Filters, Font Colors, Misc. 1..4, Effects, Mouse/Cam., Global) and our Settings / Extras entries are
   replaced by fourteen topic pages in five groups (Game: Gameplay, Interface, Chat & Log, Maps & Timers; Graphics:
-  Display, Image Quality, Lighting & Shadows, Characters & World, Effects & Colour; Sound; Input: Mouse, Camera & Keys,
-  Controller; System: Startup & Account, Mods).
+  Display, Image Quality, Lighting & Shadows, Characters & World, Effects & Colour; Sound; Input: Mouse & Cursor,
+  Camera & Keys, Controller; System: Startup & Account, Mods).
 - `PAGES` lists each page's lines: a heading, retail's setting by its Config page and first control (its captions,
   options and help still read from the page's layout), ours by its row's label (`SettingsUi::item` / `item_set` find a
   row of Settings or Extras whatever page that state is on), or a button opening Chat Filters, Effects, Font Colors,
@@ -24869,6 +24869,43 @@ Addresses are 30261006_0's.
 - Seen live (Lnxcsfix, Mithra DRK 75, Mythril Scythe, a Snipper in Valkurm Dunes): the sphere goes at +5.4 s, when
   "skill files dropped" is logged; before, it sat by the corpse until the despawn about 15 s later.
 
+## Records of Eminence: the search, and the modern Journal follows the log (2026-11-19)
+
+Ours (not retail): client/roe.rs (follow_tree, search_all / search_rows / search_pick), modern/journal.rs (roe_search_open),
+modern/search.rs (the "roe" list).
+
+- LSB sends the whole log (s2c 0x112, Offset 0..3) on every completion (roeutils::SetEminenceRecordCompletion), and a
+  record flagged `retro` in roe_records.lua completes as it is taken when its condition already holds (the Windurst
+  mission chain 1355.. does, with its item reward). The four parts land in one frame, so FUN_10231080's wait (flags
+  0x110, 0x111 and the whole 0x112, rows built again from row 0 when one goes) never sees the log go, and an open
+  category keeps hiding the follow-up a completion opens until it is left and entered again. Retail servers do the
+  same: in retail captures (Memoria, 2026-11-17, 9 sessions) 80 of 89 0x112 bursts carry parts 0..3 at one timestamp,
+  including both bursts with no 0x110 / 0x111 beside them (7 split by 1-2 ms, 2 at zone-in by 342 / 375 ms). Part 0
+  clears the log bit and part 3 sets it (quests.rs), so the stale list is retail's too and the classic window keeps it.
+- The modern Journal (ours) follows the log: once built, mode 3's rows are worked out again each frame from the
+  current category (FUN_10231000 over its 28 children at most) and replace the rows when they differ, the cursor kept
+  on its row (follow_tree, only with the modern UI on; test roe::tests::refollow_keeps_the_cursor_row). This covers
+  every condition input (the log, job levels, zones, skills, Unity, the 0x110 bytes). Seen live: Lnxcsfix in Tutorial
+  with 937 (Alter Ego: Joachim) not done, completed by a server timer (setEminenceCompleted), and Intermediate came
+  into the open list under Basics with the cursor left on Basics.
+- The modern Journal's Records of Eminence tab (its entries or any of its lists) is one of the search lists: typing
+  searches every objective of the tree, once each. A shown one has its categories as the note ("Tutorial › Basics"); a
+  hidden one (a condition failing on its way: the walk tests each condition alone) is greyed with the objective that
+  opens it ("after An Eminent Scholar 3", condition type 1) or "hidden"; a set record outside the tree "current".
+  A set record the tree hides (a condition that stopped passing after it was set: the rotation, type 6, or the Unity
+  leader, type 7, which reads 0 until the recasts come after login) is "current" too and opens Current
+  (set_in_current, test roe::tests::set_objective_hidden_in_the_tree_is_current).
+  Shown hits rank before hidden ones among equal scores.
+- A pick: a set objective opens Current, any other the Objective List with the stack built down its categories (each
+  parent left on the row that leads there, for Escape), the cursor on it and its description and prompt as Enter
+  (Set objective? on Yes). The open sends c2s 0x117 and clears the 0x110 flag (FUN_100871a0), so the rows come a frame
+  or more later: List.want holds the pick until they are built. A hidden one opens the deepest category the list
+  reaches on its way, the cursor on row 0. Seen live (Lnxcsfix): "always" found Always Stand on 117 greyed, after An
+  Eminent Scholar 3, and Enter opened Tutorial > Intermediate; "first step" found First Step Forward (Tutorial ›
+  Basics) and Enter put the cursor on it with Set objective? up.
+- LSB refuses a record its Lua lacks: "The record #N is not implemented at this time." (RoE System, NS say); the
+  user's log showed 1064 taken three times for that reason.
+
 ## Auto-sort: the list order kept through a zone change (2026-11-19)
 
 - Ours: the zone-in reset of the inventory (LSB re-sends every container after c2s 0x00C) emptied the list order too,
@@ -24890,3 +24927,146 @@ Addresses are 30261006_0's.
 - Tests: items::order_tests::kept_order_survives_a_resend, changed_item_goes_last, view_change_sorts.
 - Seen live (Lnxcsfix, slots pearlsack / wind crystal / cotton cloth / cipher), before the 0x52 reset: sorted at
   login, still sorted after zoning to Northern San d'Oria and back.
+
+## An attack that ends a ride: the motions read the held status (2026-11-19)
+
+- LSB takes an attack (c2s 0x01A category 2) while mounted: DelStatusEffectSilent(Mounted), then Engage, so our status
+  goes 5 -> 1 in one update with no 0 between.
+- The ride machine (FUN_1008b460) holds the applied status +0x170 at the riding one through the stand (state 0xf) and
+  `coff` (0x10), and the status motion picker FUN_100c8bb0 reads its status through FUN_10084390, which returns that
+  +0x170. Ours read the raw status in actmotion (status_motion_posed and status()): with the walk held for the stand
+  (ride::dismounting), an engaged rider picked battle motions and loaded the battle files, so the riding stand `?hi`
+  could be late or never come. The user's run (a gear-swapping DRK holding forward) swapped riding and battle files
+  back and forth for the whole fight: the chocobo stayed and the walk stayed held.
+- Now both take ride::applied: the riding stand plays the frame the input stops, `coff` runs, and the engage (battle
+  files, the draw "in N") starts once the ride has ended *(inferred: retail's engage states of the same machine wait
+  the same way)*. Seen live (Lnxcsfix on a chocobo in West Ronfaure, numpad 8 held, Ctrl+A on a Forest Hare): `chi`
+  and `coff` in the same frame, battle files 3.1 s later when `coff` ended, walking and hitting the hare after the
+  draw.
+
+## Material Maps: normal, roughness and metal maps for the textures (ours, not retail; 2026-11-20)
+
+User request: generate normal, roughness and metal maps for our HD pack and use them. Retail has no such maps; its
+only per-pixel relief is config 0017's Bp height maps on some zones' walls ("Config tool 0017").
+- Maps: PBRify Remix (Kim2091, CC0 models trained on CC0 ambientCG / Poly Haven materials; SPAN, 1x) makes the
+  normal map (DirectX: green along +v, checked against its height model's gradients) and the roughness. Run on our
+  pack's images (Upscayl Standard 4x) at half their size (2x stock): at the full 4x the models see only soft
+  gradients and the normals come out nearly flat, at stock size they are strongest but coarse. No CC0 model makes
+  metal maps (Ubisoft's CHORD does, research-only licence), so metal is a guess for equipment textures (name `tim`)
+  only: grey or gold, bright, and smooth by the roughness map; scenery keeps metal 0 (lava and sand read as gold).
+  Only the world's and characters' images (names `model`, `ship`, `ship_f`, `tim`, `timws`: 17,060 of the 33,363) get
+  maps; effect sprites never go through these shaders.
+- `mat-pack --manifest DIR --maps DIR [--hd MODDIR] --out DIR` (texpack.rs): each image's maps once as
+  `maps/<2 hex>/<key>.vmat` (BC5 normal x / y renormalised per mip, BC5 roughness / metal, mips down to 4 texels), and
+  `index.bin` from Texture::content_key (FNV-1a over the size and the stored DXT blocks, else RGBA, by 64-bit words,
+  splitmix finish) of the stock image and of the tex-pack copy to the map key. So the maps follow the stock textures
+  and ours; another HD pack's images are not indexed.
+- Client (material.rs): config `material_maps`, Settings > Textures > Material Maps (both UIs): Off (default) / Low /
+  Medium / High, strength 1 / 2 / 3 (Uniforms modes.w; FFXI_MATERIAL_STRENGTH for the tools). Turning it on takes
+  effect at the next zone (the maps are attached as zone and character files load: dat::zone::load_scene,
+  dat::character::load_file). The pack is `<data>/materials` (VANA_MATERIALS elsewhere; FFXI_MATERIAL_MAPS=1 for the
+  offscreen tools). It follows the setting at the top of every frame (App::frame_updates), before loader tasks start:
+  opened first in draw_scene, it came after the login zone's load, so that zone kept no maps at any strength (the
+  user's log: zone 243's textures on the GPU at 04:45:37.879, the pack at .881).
+- Render: the texture group (group 1) gains bindings 2 / 3 (the two maps; a flat 1 x 1 pair for textures without),
+  so every pipeline keeps its layout. zone.wgsl surface(): the normal map in a frame from the screen derivatives of
+  the world position and uv (no vertex tangents), taken before any branch on varyings. lit_zone / lit_actor use it
+  for the sun / moon (and in two-light mode both) N.L and the point lights, add GGX specular from the roughness (F0
+  0.04, the colour for metal; faded out toward roughness 1, the flat default) under the baked vertex light (scenery)
+  or the model tint (actors), take half the diffuse for metal (no reflections), and scale the ambient by
+  1 + 0.4 (n.y - n'.y) (Y down): FFXI's ambient has no direction, so without it bumps would show only where the sun
+  falls. The strength scales the maps' tilt and that ambient term, and shades the baked vertex light (most of the
+  scenery's light) by 1 + 0.5 k (n'.L - n.L) against the key light (the sun, or the first of the two), clamped
+  0.3..2 (ours: retail's 0017 bump scales only the directional diffuse; FFXI's light is mostly baked, so the maps
+  would hardly show). A flat map changes nothing. Type-3 (Bp) meshes take our maps where their texture has them, and keep
+  retail's bump (fs_bump) where it has none (0017 on).
+- The maps need BC5 (TEXTURE_COMPRESSION_BC): without it (GL / GLES, most mobile Vulkan) the pack stays closed and
+  Settings shows Material Maps as Unavailable. Each map goes up once (Material::gpu, shared by every texture and
+  actor that uses it), streamed after its image under the upload budget (upload::TexUp / MatUp).
+- Generation: 17,060 images (1.9 Gpx at half size) in 12 min on the 7900 XTX (ROCm PyTorch, fp16, 1024 tiles);
+  the pack is 17,079 maps, 34,179 indexed textures, 4.8 GB.
+- Seen: zone-shot 230 at 15:00 at strengths 1..4: at 1 hardly a change (the ambient carries most of the light),
+  2 the walls' stone blocks and mortar lines and the floor's wear stand out, 4 the floor turns to noise.
+  flash-shot (zone 101, the Hume in body 8): the wall and the beam carved, the leather and boots a little raised
+  and glossy. Not seen live yet.
+- Fixes after the user's runs (2026-11-22):
+  - Roughness: PBRify rates every image 0.3..0.6 (median 0.42; its glossiest are the dark, flat ones such as `black`),
+    so grass and dark ground glinted under the moon like wet stone. Non-metal surfaces now stretch it to 0.6..1, and
+    the Fresnel term rises toward max(1 - roughness, F0), not 1, so rough surfaces lose the grazing sheen.
+  - Checkerboard on the ground (snow, grass, sand): the maps keep a small average tilt (median 0.03), and ground
+    tiles are one model placed at different turns (Beaucedine Glacier [S]'s 40 x 40 `ga_clro_co1_m` at 90 / 270
+    degrees), so the tilt pointed each tile a different way in the world and a low sun lit them apart. surface()
+    subtracts the map's last mip (4 x 4) before using it. Diffuse terms also use the normal with its lost component
+    along the geometric normal put back, so a bumpier map is not darker on average.
+  - Metal on actors reflects the zone's sky dome (the room's ambient without one), blurred by roughness, and takes a
+    quarter of the diffuse. Few equipment texels are tagged metal (a plate body 16 shows only specks), so armour
+    changes little until the metal maps improve.
+
+## Upscaling: FSR 3.1 and the inputs for a temporal upscaler (ours, not retail)
+
+Settings > Graphics > Upscaling (config `upscaler` 0 off / 1 FSR / 2 external, `upscale_quality`,
+`upscale_sharpness`, `upscale_debug`), in both UIs; off by default. Code `render/upscale/`, docs/upscaler-engine.md.
+
+- The frame: frame_targets makes the scene target at the render size (FFX's ratios 1.0 / 1.5 / 1.7 / 2.0 / 3.0 of the
+  window size, truncated; not of the Background size: a Background above the window would be upscaled only to be
+  shrunk again, at FSR's cost per output pixel) in the world only, not in 3D LCD Mode. The frame's bg is the render
+  size, as the effects and screen passes take it for the scene target's. `Camera::jitter` adds the Halton(2, 3) offset
+  (render pixels, sequence 8 x ratio² as FFX's) to the projection's z column (NDC x += 2 jx / w, y -= 2 jy / h; minus
+  in the matrix as clip w = -z). Everything drawn into the scene through `camera.proj` (scenery, actors, effects,
+  SSAO, shadows' receive passes) takes it; `Camera::steady` drops it.
+- finish_scene, before the scaling pass: the inputs pass (prep.wgsl) makes linear colour (scene^2.2, Rgba16Float),
+  camera motion (depth through the jittered inverse, then last and this frame's steady view-projection: previous minus
+  current, render pixels, y down), the reactive mask (largest channel change between the snapshot before the effects
+  and the end) and the composition mask (the change between the snapshots after modes 0..1 and after mode 3).
+  The snapshots are texture copies at the zone pass's existing breaks (mode 2, mode 4) and at draw_effects' start.
+- Moving things draw their own motion into an Rgba16Float target over the scene depth (LessEqual, bias -16, no
+  writes), taken where alpha is 1:
+  - skinned actors (vs_skinned_motion): this frame's pose region against last frame's, from a copy of the pose
+    buffer made after the pass (`Skinned::prev_offset`; an actor not posed last frame moves with the camera only);
+  - door and lift parts at this and last frame's part clock, a voyage's world through this and last frame's voyage
+    matrix (vs_scenery_motion, the zone's modes 0..1 with the cull's draws; every other instance is pushed past the
+    far plane). Only while a part moves (`parts_busy`, set by move_part) or the voyage matrix changes.
+  - The scenery pass ran clean with the gate forced open; a moving door, lift or voyage not seen live yet.
+  - Not covered: ship model actors (move_model_actor), furniture, effects and faded / refracting actors (those have
+    the reactive mask instead).
+- Reset: a zone change, a render size change, the first frame, a camera move over 8 units or a turn over 30° in a
+  frame.
+- FSR 3.1 (render/upscale/fsr.rs): AMD's GLSL passes (FidelityFX SDK 1.1.4, vendor/fidelityfx) through glslc,
+  spirv-opt and naga into WGSL (vendor/fidelityfx/gen.py), so they run on every wgpu backend. Changes for naga /
+  wgpu: image atomics as storage buffer atomics (the reconstructed depth, SPD's counter), SPD's coherent mip 5 mirrored
+  in a coherent buffer, SPD without subgroup operations, the samplers' bindings 1000 / 1001 moved to 98 / 99, the
+  output image given a format. The host side follows ffx_fsr3upscaler.cpp: the ping-pong halves by frame parity,
+  the first-frame and reset clears, the reconstructed depth filled with 1.0 each frame (a compute fill: wgpu clears
+  only to zero), the constants (deviceToViewDepth for standard finite depth, the jitter phase count ramp,
+  motionVectorScale 1 / render size for pixel vectors). Needs TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES (read-write
+  R8 / R16F / RG16F / RGBA8 / RGBA32F storage), FLOAT32_FILTERABLE, MEMORY_DECORATION_COHERENT, CLEAR_TEXTURE and 6
+  storage textures per stage; without them the scene draws at full size.
+- The external engine (render/upscale/external.rs): a library's `vana_upscale_dispatch` gets the inputs as Vulkan
+  handles (wgpu-hal) and a raw command buffer. wgpu 30 panics when raw (`as_hal_mut`) and wgpu recording mix in one
+  encoder, so the frame is submitted up to there and the engine's buffer goes in a submit of its own; a settle
+  dispatch first leaves the inputs in SHADER_READ_ONLY_OPTIMAL (depth DEPTH_STENCIL_READ_ONLY_OPTIMAL) and the output
+  in GENERAL (wgpu-hal's layouts by last use). Seen working with a test engine that blits colour to the output.
+- Neural rendering (config `neural`, Settings' Upscaling page, both UIs): the engine library's vana_nr_dispatch runs
+  on the render-size colour after the inputs pass and before the upscaler, writing a render-size Rgba16Float image
+  the upscaler (or with Upscaling off the scaling pass, render size = output size, no jitter) reads instead; a
+  frame it declines keeps the colour. When the library has that export, render/upscale/vkdevice.rs makes the device
+  through wgpu-hal's open_with_callback: SHADER_F16, SHADER_I16 and EXPERIMENTAL_COOPERATIVE_MATRIX for what
+  wgpu-hal enables itself (shaderFloat16 / shaderInt8 / shaderInt16, 16-bit storage, cooperativeMatrix, the memory
+  model with device scope), and on the pNext chain the struct types wgpu-hal never chains (8-bit storage,
+  synchronization2, the optional workgroup explicit layout, pipeline robustness, pipeline binaries with
+  maintenance5; the binaries' struct by hand, newer than the ash in the tree); then create_device_from_hal. A
+  missing required feature keeps the usual device and the row shows Unavailable with the reason. Seen live with the
+  DLSSNR-RDNA3 engine on the 7900 XTX: 14.5 ms of GPU a frame at 1920 x 1080.
+- /updebug [0..4] (motion, depth, reactive, composition in place of the scene) and /upcapture [frames] [label] (raw
+  f32 files and inputs.json under the data folder's captures/).
+- Checked: GPU tests (all passes build; a flat frame stays flat through three dispatches; camera vectors against the
+  pinhole shift). Live: a captured /wave emote, warping by the vectors leaves a third of the error of no warp, and the
+  reversed sign is worse.
+
+## Surface Detail removed for Material Maps (ours, fork only; 2026-11-23)
+
+Steven's call: upstream's Material Maps (#337, per-texture normal / roughness / metal maps from the material pack)
+replaces our Surface Detail. Gone: the `surface_detail` setting and its rows (classic GRAPHICS, modern Lighting &
+Shadows), `tex-heights` and surface.rs (the height pack), the `scenery_surface` pipelines and zone.wgsl's
+`detail_normal` / `fs_*_pack`, and the zone-shot env FFXI_SURFACE_DETAIL / FFXI_SURFACE_PACK. A saved
+`surface_detail` key is ignored. Reflections (water, floors, mirrored actors) stay.

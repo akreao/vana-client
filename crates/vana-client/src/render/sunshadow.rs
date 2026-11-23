@@ -41,10 +41,14 @@ const FEET_FORMATS: [wgpu::TextureFormat; 2] = [wgpu::TextureFormat::R32Float, w
 
 /// The feet target's format on this adapter, or None when it can render to none of them (no character shadows).
 pub fn feet_format(adapter: &wgpu::Adapter) -> Option<wgpu::TextureFormat> {
-    FEET_FORMATS.into_iter().find(|&f| {
-        let u = adapter.get_texture_format_features(f).allowed_usages;
-        u.contains(wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING)
-    })
+    feet_format_of(|f| adapter.get_texture_format_features(f).allowed_usages)
+}
+
+/// The first of FEET_FORMATS whose usages (`usages`) take both drawing into it and sampling it.
+fn feet_format_of(usages: impl Fn(wgpu::TextureFormat) -> wgpu::TextureUsages) -> Option<wgpu::TextureFormat> {
+    FEET_FORMATS
+        .into_iter()
+        .find(|&f| usages(f).contains(wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING))
 }
 
 const WGSL: &str = r#"
@@ -485,20 +489,38 @@ mod tests {
         (0..h).flat_map(|y| d[(y * row) as usize..(y * row + w * 4) as usize].to_vec()).collect()
     }
 
+    /// R32Float where it can be drawn into and sampled, else R16Float, else none (no character shadows).
+    #[test]
+    fn feet_format_order() {
+        use wgpu::TextureFormat::{R16Float, R32Float};
+        use wgpu::TextureUsages as U;
+        let both = U::RENDER_ATTACHMENT | U::TEXTURE_BINDING;
+        assert_eq!(feet_format_of(|_| both), Some(R32Float));
+        // Mesa's GL core profiles: R32Float samples but isn't renderable.
+        assert_eq!(feet_format_of(|f| if f == R32Float { U::TEXTURE_BINDING } else { both }), Some(R16Float));
+        assert_eq!(feet_format_of(|f| if f == R16Float { both } else { U::empty() }), Some(R16Float));
+        assert_eq!(feet_format_of(|_| U::TEXTURE_BINDING | U::COPY_SRC), None);
+    }
+
     /// The receive pass over a floor seen from above, lit from above: an empty map leaves it as it was, a map that
     /// shadows everything just above it darkens it by the strength, a caster standing on a ledge far above leaves it
     /// lit, and one standing a small step above stays dark however far along the light its body is (a terrain seam).
     #[test]
     fn receive_darkens_shadowed_floor() {
         let Ok(gpu) = Gpu::headless() else { return };
-        // Every feet format this adapter renders (R16Float, the GL fallback, as well as R32Float); with none,
-        // feet_format says so and the sun shadows stay off (ZonePipes::sun_depth None).
+        // Both feet formats (R16Float is the GL fallback); one the adapter can't render is skipped, loudly.
         let renders = |f: wgpu::TextureFormat| {
             let u = gpu.adapter.get_texture_format_features(f).allowed_usages;
             u.contains(wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING)
         };
-        assert_eq!(feet_format(&gpu.adapter), FEET_FORMATS.into_iter().find(|&f| renders(f)));
-        for feet in FEET_FORMATS.into_iter().filter(|&f| renders(f)) {
+        for feet in [wgpu::TextureFormat::R32Float, wgpu::TextureFormat::R16Float] {
+            if !renders(feet) {
+                eprintln!(
+                    "receive_darkens_shadowed_floor: {:?} can't render {feet:?}; skipped",
+                    gpu.adapter.get_info().name
+                );
+                continue;
+            }
             let format = wgpu::TextureFormat::Rgba8Unorm;
             let silly = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: None,
@@ -516,8 +538,13 @@ mod tests {
             let sh = SunShadow::new(&gpu, &silly, format, feet, 1024);
             let n = 16u32;
             // y is down: the eye 10 above the floor at y = 0, looking down.
-            let cam =
-                crate::render::Camera { eye: Vec3::new(0.0, -10.0, 0.0), target: Vec3::ZERO, up: Vec3::Z, fov_y: 0.8 };
+            let cam = crate::render::Camera {
+                jitter: glam::Vec2::ZERO,
+                eye: Vec3::new(0.0, -10.0, 0.0),
+                target: Vec3::ZERO,
+                up: Vec3::Z,
+                fov_y: 0.8,
+            };
             let vp = cam.view_proj(1.0);
             let floor_z = vp.project_point3(Vec3::ZERO).z;
             let sun = Vec3::Y;
