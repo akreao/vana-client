@@ -506,6 +506,16 @@ impl Modern {
             FontId::proportional(size),
             self.theme.color("text"),
         );
+        // NVIDIA's credit where DLSS can run (render/upscale/dlss.rs), the line above, as the classic lobby has it.
+        if let Some(credit) = crate::render::upscale::dlss::credit() {
+            p.text(
+                pos2(ver.0 / (k * ui_k.0), r.min.y - 3.0 - size * 1.3),
+                Align2::LEFT_BOTTOM,
+                credit,
+                FontId::proportional(size),
+                self.theme.color("text"),
+            );
+        }
     }
 
     /// A lobby popup on retail's rect (UI pixels): the pack's frame, the text in Fira Sans above the form's size, centred

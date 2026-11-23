@@ -308,9 +308,17 @@ impl Gpu {
             anyhow::bail!("{} ({:?}) can't run the client: {}", info.name, info.backend, short.join("; "));
         }
         let desc = wgpu::DeviceDescriptor { required_features, required_limits, ..Default::default() };
+        // The neural engine's device, else DLSS's (NGX's extensions, an NVIDIA GPU on Vulkan with the runtime only),
+        // else the usual one.
         let (device, queue) = match neural_device(&adapter, &desc) {
-            Some(made) => made,
-            None => pollster::block_on(adapter.request_device(&desc))?,
+            Some(made) => {
+                upscale::dlss::set_status(Err("the neural rendering engine's device is in use".into()));
+                made
+            }
+            None => match upscale::dlss::device(&adapter, &desc) {
+                Some(made) => made,
+                None => pollster::block_on(adapter.request_device(&desc))?,
+            },
         };
         let pipes = std::sync::Arc::new(PipeCache {
             device: device.clone(),
@@ -5801,9 +5809,25 @@ pub fn render_pngs_post(
     let up = env_q("FFXI_FSR1").map(|q| (q, true)).or_else(|| env_q("FFXI_CATROM").map(|q| (q, false)));
     let sharp = std::env::var("FFXI_FSR1_SHARP").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(50);
     // FFXI_FSR3=0..4 (ours): FSR 3.1 at that quality (0 Native AA), FFXI_FSR3_FRAMES (default 32) jittered frames
-    // of the still camera accumulated, the last one written; sharpness FFXI_FSR1_SHARP.
+    // of the still camera accumulated, the last one written; sharpness FFXI_FSR1_SHARP. FFXI_UPSCALER: another temporal
+    // upscaler in its place at that quality (config `upscaler`: 2 the external engine, 4 DLSS).
     let fsr3_q = std::env::var("FFXI_FSR3").ok().and_then(|v| v.parse::<u32>().ok()).filter(|q| *q <= 4);
     let fsr3_frames = std::env::var("FFXI_FSR3_FRAMES").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(32).max(1);
+    let up_kind = std::env::var("FFXI_UPSCALER")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|k| upscale::temporal(*k))
+        .unwrap_or(1);
+    // DLSS for a shot needs NGX running now: no plainly scaled frame passed off as DLSS.
+    if fsr3_q.is_some() && up_kind == upscale::dlss::DLSS {
+        upscale::dlss::status().map_err(|e| anyhow::anyhow!("DLSS: {e}"))?;
+        if !upscale::dlss::runtime_present() {
+            anyhow::bail!(
+                "DLSS: no runtime in {} (choose DLSS in the client once to download it)",
+                upscale::dlss::runtime_dir().display()
+            );
+        }
+    }
     let mut fsr3 = fsr3_q.map(|_| upscale::Upscale::new(&gpu));
     let mut scale = (up.is_some() || fsr3.is_some()).then(|| scale::SceneScale::new(&gpu, format));
     let (rw, rh) = match (up, fsr3_q) {
@@ -5894,7 +5918,7 @@ pub fn render_pngs_post(
                 }
                 let out = fsr3.as_mut().and_then(|f| {
                     f.frame_camera = Some(upscale::FrameCamera { camera: cam, aspect });
-                    f.run(&gpu, &mut encoder, &raw, &depth, 1, sharp, 0, false)
+                    f.run(&gpu, &mut encoder, &raw, &depth, up_kind, sharp, 0, false)
                 });
                 scale_up(&mut encoder, out.as_ref().map(|(v, sz)| (v, *sz)));
                 if let Some(q) = q {
@@ -5982,7 +6006,7 @@ pub fn render_pngs_post(
                     upscale::snap(&mut encoder, scene, &s[2]);
                 }
                 f.frame_camera = Some(upscale::FrameCamera { camera: jittered, aspect });
-                f.run(&gpu, &mut encoder, &raw, &depth, 1, sharp, 0, false);
+                f.run(&gpu, &mut encoder, &raw, &depth, up_kind, sharp, 0, false);
                 gpu.queue.submit([encoder.finish()]);
                 f.after_submit(&gpu);
             }
@@ -6012,8 +6036,11 @@ pub fn render_pngs_post(
         }
         let out = fsr3.as_mut().and_then(|f| {
             f.frame_camera = Some(upscale::FrameCamera { camera: **camera, aspect });
-            f.run(&gpu, &mut encoder, &raw, &depth, 1, sharp, 0, false)
+            f.run(&gpu, &mut encoder, &raw, &depth, up_kind, sharp, 0, false)
         });
+        if fsr3_q.is_some() && up_kind == upscale::dlss::DLSS && out.is_none() {
+            anyhow::bail!("DLSS gave no frame (see the log)");
+        }
         scale_up(&mut encoder, out.as_ref().map(|(v, sz)| (v, *sz)));
         let (width, height) = if up.is_some() || fsr3.is_some() { (out_size[0], out_size[1]) } else { (width, height) };
         encoder.copy_texture_to_buffer(

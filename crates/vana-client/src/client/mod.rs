@@ -93,7 +93,7 @@ mod subarea;
 mod suggest;
 mod swkbd;
 mod target;
-mod updater;
+pub(crate) mod updater;
 mod widescan;
 pub use lamps::Lamps;
 mod aepoints;
@@ -865,7 +865,13 @@ fn lobby_text(lu: &mut GameUi, slots: &[crate::render::screens::TextSlot], help:
     for t in slots {
         match t.what {
             "help line" => lu.text(help, t.x, t.y, t.align, color),
-            w if w.starts_with("ver.") => lu.text(&format!("ver.{version}"), t.x, t.y, t.align, WHITE),
+            w if w.starts_with("ver.") => {
+                lu.text(&format!("ver.{version}"), t.x, t.y, t.align, WHITE);
+                // Ours: NVIDIA's credit where DLSS can run (render/upscale/dlss.rs), the line above.
+                if let Some(c) = crate::render::upscale::dlss::credit() {
+                    lu.text(c, t.x, t.y - 16.0, t.align, WHITE);
+                }
+            }
             _ => {}
         }
     }
@@ -19025,10 +19031,13 @@ impl App {
         let upscaling = world_phase
             && !lcd
             && !fsr1
-            && (matches!(self.cfg.upscaler, 1 | 2) || neural)
+            && (crate::render::upscale::temporal(self.cfg.upscaler) || neural)
             && self.upscale_ready()
-            && self.upscale.as_ref().is_none_or(|u| u.usable(self.cfg.upscaler));
-        if !matches!(self.cfg.upscaler, 1 | 2) && !neural {
+            && self.upscale.as_ref().is_none_or(|u| u.usable(self.cfg.upscaler))
+            // DLSS once NGX refused the GPU, or this window size and quality (dlss::usable): the world draws at full size.
+            && (self.cfg.upscaler != crate::render::upscale::dlss::DLSS
+                || crate::render::upscale::dlss::usable(size, self.cfg.upscale_quality));
+        if !crate::render::upscale::temporal(self.cfg.upscaler) && !neural {
             self.upscale = None;
         }
         let (mut target_size, mut jitter, mut snaps, mut motion) = (bg, glam::Vec2::ZERO, None, None);
@@ -19039,13 +19048,13 @@ impl App {
                 size,
                 self.cfg.upscale_quality,
                 gfx.config.format,
-                matches!(self.cfg.upscaler, 1 | 2),
+                crate::render::upscale::temporal(self.cfg.upscaler),
             );
             snaps = up.targets.as_ref().map(|t| [t.snap_opaque.clone(), t.snap_blend.clone(), t.snap_pre_fx.clone()]);
             motion = up.motion_target();
         }
         // The texture LOD bias while an upscaler draws the world below the window's size (render::lod_bias).
-        crate::render::set_lod_bias(if fsr1 || (upscaling && matches!(self.cfg.upscaler, 1 | 2)) {
+        crate::render::set_lod_bias(if fsr1 || (upscaling && crate::render::upscale::temporal(self.cfg.upscaler)) {
             crate::render::upscale::lod_bias(target_size[0], size[0], !fsr1)
         } else {
             0.0
