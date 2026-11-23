@@ -18952,6 +18952,9 @@ impl App {
         // shrunk again). The effects and screen passes size themselves by the scene target.
         let fsr1 = matches!(self.phase, Phase::World(_)) && !lcd && self.cfg.upscaler == crate::render::fsr1::FSR1;
         let bg = if fsr1 { crate::render::fsr1::render_size(size, self.cfg.upscale_quality.clamp(1, 4)) } else { bg };
+        if !fsr1 && let Some(s) = self.scene_scale.as_mut() {
+            s.drop_fsr1();
+        }
         // Within the device's texture size (4096 on some GLES parts), the aspect kept.
         let bg = crate::render::scale::fit(bg, gfx.gpu.max_texture_2d);
         if lcd {

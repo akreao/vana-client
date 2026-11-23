@@ -7,7 +7,25 @@
 //! The shaders are a WGSL port of `ffxFsrEasuFloat` and `FsrRcasF` from AMD's ffx_fsr1.h (FidelityFX SDK, MIT
 //! licence, copyright Advanced Micro Devices, Inc.): the 32-bit paths, the gathers written as the twelve loads
 //! they stand for, and the approximate reciprocals as exact ones with the divide-by-zero cases guarded.
-//! The input is the gamma-space scene, which is what FSR 1 expects (perceptual, after tonemapping).
+//! The input is the gamma-space scene, which is what FSR 1 expects (perceptual, after tonemapping). On an sRGB surface
+//! the scene's views decode, so EASU encodes again as it loads and both passes work on gamma-space values.
+//!
+//! AMD's notice for the ported shader code (ffx_fsr1.h):
+//!
+//! Copyright (C) 2024 Advanced Micro Devices, Inc.
+//!
+//! Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+//! documentation files (the "Software"), to deal in the Software without restriction, including without limitation
+//! the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+//! permit persons to whom the Software is furnished to do so, subject to the following conditions:
+//!
+//! The above copyright notice and this permission notice shall be included in all copies or substantial portions of
+//! the Software.
+//!
+//! THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+//! WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS
+//! OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+//! OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 use super::Gpu;
 use super::Put;
@@ -44,7 +62,8 @@ pub fn easu_constants(input: [u32; 2], output: [u32; 2]) -> [f32; 4] {
 }
 
 const EASU: &str = r#"
-struct E { con0: vec4<f32> };
+// flags.x: the source view decodes sRGB (encode it back to gamma space as it loads).
+struct E { con0: vec4<f32>, flags: vec4<f32> };
 @group(0) @binding(0) var<uniform> e: E;
 @group(0) @binding(1) var src: texture_2d<f32>;
 @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -54,7 +73,11 @@ struct E { con0: vec4<f32> };
 // One texel, clamped to the edge (as the gathers' clamp sampler).
 fn ld(p: vec2<i32>) -> vec3<f32> {
     let hi = vec2<i32>(textureDimensions(src)) - 1;
-    return textureLoad(src, clamp(p, vec2<i32>(0), hi), 0).rgb;
+    let c = textureLoad(src, clamp(p, vec2<i32>(0), hi), 0).rgb;
+    if (e.flags.x > 0.5) {
+        return select(1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - 0.055, c * 12.92, c <= vec3<f32>(0.0031308));
+    }
+    return c;
 }
 // Luma times 2.
 fn l2(c: vec3<f32>) -> f32 { return c.b * 0.5 + (c.r * 0.5 + c.g); }
@@ -193,7 +216,7 @@ struct Target {
     view: wgpu::TextureView,
 }
 
-/// The EASU pass and its window-size target.
+/// The EASU pass and its window-size target (always a plain format: gamma-space values, as RCAS reads them).
 pub struct Easu {
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
@@ -257,14 +280,18 @@ impl Easu {
                 module: &shader,
                 entry_point: Some("fs"),
                 compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: format.remove_srgb_suffix(),
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
             }),
             multiview_mask: None,
             cache: None,
         });
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fsr1 easu"),
-            size: 16,
+            size: 32,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -288,13 +315,17 @@ impl Easu {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: self.format,
+                format: self.format.remove_srgb_suffix(),
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
             self.target = Some(Target { size: dst_size, view: tex.create_view(&Default::default()) });
         }
-        gpu.queue.put(&self.uniform, 0, bytemuck::cast_slice(&easu_constants(src_size, dst_size)));
+        let srgb = if self.format.is_srgb() { 1.0 } else { 0.0 };
+        let mut u = [0.0f32; 8];
+        u[..4].copy_from_slice(&easu_constants(src_size, dst_size));
+        u[4] = srgb;
+        gpu.queue.put(&self.uniform, 0, bytemuck::cast_slice(&u));
         let group = self.group.get(src.clone(), || {
             gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("fsr1 easu"),
