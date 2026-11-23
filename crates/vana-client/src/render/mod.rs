@@ -701,6 +701,8 @@ pub struct ZoneRenderer {
     /// Lamp shadows (render/lampshadow.rs): the maps (always made) and this frame's lamps (light slot, matrix,
     /// position; empty = none), which the client sets.
     lamp_shadow: lampshadow::LampShadows,
+    /// '#' placements' sampler (globals binding 10).
+    clamp_sampler: wgpu::Sampler,
     pub lamp_shadows: Vec<(u32, Mat4, Vec3)>,
     /// The real shadows' level from the Vana'diel clock (sunshadow::twilight; 0 at the sun / moon change) and their PCF
     /// spacing (softer by the moon).
@@ -954,6 +956,30 @@ pub fn mip_sampler(device: &wgpu::Device) -> wgpu::Sampler {
     })
 }
 
+/// mip_sampler with ADDRESSU / ADDRESSV CLAMP ('#' placements).
+pub fn clamp_sampler(device: &wgpu::Device) -> wgpu::Sampler {
+    let clamp = wgpu::AddressMode::ClampToEdge;
+    if old_textures() {
+        return device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: clamp,
+            address_mode_v: clamp,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+    }
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        address_mode_u: clamp,
+        address_mode_v: clamp,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        lod_max_clamp: if MIPMAPS.load(std::sync::atomic::Ordering::Relaxed) { 32.0 } else { 0.0 },
+        anisotropy_clamp: ANISOTROPY.load(std::sync::atomic::Ordering::Relaxed).clamp(1, 16),
+        ..Default::default()
+    })
+}
+
 /// Bytes of texture memory uploaded so far (the F12 overlay and zone logs).
 pub static TEXTURE_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -1071,6 +1097,7 @@ fn material_bind_group(
             wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
             wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(normal) },
             wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(rm) },
+            wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(view) },
         ],
     })
 }
@@ -1531,6 +1558,13 @@ impl ZonePipes {
                 ws7,
                 ws8,
                 ws9,
+                // '#' placements' stage 0 (FUN_1017c9c0: ADDRESSU / ADDRESSV CLAMP): the scenery sampler clamped.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 10,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
         let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1555,6 +1589,9 @@ impl ZonePipes {
                 // Material maps (material.rs): the normal map and roughness / metal.
                 material_entry(2),
                 material_entry(3),
+                // Binding 0's view again, for '#' placements' CLAMP sample (zone.wgsl tex0): GLSL ties a texture to
+                // one sampler, so the second sampler needs its own binding.
+                material_entry(4),
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -2691,6 +2728,9 @@ impl ZoneGeometry {
                 let at = m.transform_point3(c);
                 spheres.push([at.x, at.y, at.z, h.length() * k]);
             }
+            // FUN_1017a... placement +0xd6 = 2 for a '#' name: FUN_1017c9c0 draws it with stage 0's ADDRESSU / ADDRESSV
+            // CLAMP and no alpha test (vertex flag bit 2).
+            let clamp_uv = (mesh.name.starts_with('#') as u32) << 2;
             for (mi, model) in mesh.models.iter().enumerate() {
                 let indices = if model.strip { strip_to_list(&model.indices) } else { model.indices.clone() };
                 if indices.is_empty() || model.vertices.is_empty() {
@@ -2716,7 +2756,8 @@ impl ZoneGeometry {
                             let t = corner_tangent(&a, &b, &c);
                             deltas.push([t.x, t.y, t.z, 0.0]);
                             let [bb, g, r, al] = a.color.to_le_bytes();
-                            let flags = (model.blending & 0x1000 != 0) as u32 | 2 | (deltas.len() as u32) << 8;
+                            let flags =
+                                (model.blending & 0x1000 != 0) as u32 | 2 | clamp_uv | (deltas.len() as u32) << 8;
                             all_indices.push((all_verts.len() as i32 - base_vertex) as u16);
                             all_verts.push(GpuVertex {
                                 pos: a.pos,
@@ -2746,7 +2787,7 @@ impl ZoneGeometry {
                     .iter()
                     .map(|v| {
                         let [b, g, r, a] = v.color.to_le_bytes();
-                        let mut flags = (model.blending & 0x1000 != 0) as u32;
+                        let mut flags = (model.blending & 0x1000 != 0) as u32 | clamp_uv;
                         if sways && v.delta != [0.0; 3] && deltas.len() < 0xff_ffff {
                             deltas.push([v.delta[0], v.delta[1], v.delta[2], 0.0]);
                             flags |= (deltas.len() as u32) << 8;
@@ -2962,6 +3003,7 @@ impl ZoneRenderer {
             gpu.queue.put(&deltas, 0, bytemuck::cast_slice(&geo.deltas));
         }
         let lamp_shadow = lampshadow::LampShadows::new(gpu, &p.sil_layout, color_format);
+        let clamp_sampler = clamp_sampler(device);
         let world_off = worldshadow::Off::new(gpu);
         let globals = globals_group(
             device,
@@ -2969,6 +3011,7 @@ impl ZoneRenderer {
             [&uniforms, &lights, &areas, &parts_gpu, &deltas, &lamp_shadow.uniform],
             None,
             &world_off,
+            &clamp_sampler,
         );
         let sampler = mip_sampler(device);
         // Slot 0 is plain white for models whose texture lives elsewhere; the others fill in as they go up.
@@ -3137,6 +3180,7 @@ impl ZoneRenderer {
             sun_shadow: None,
             ssao: None,
             lamp_shadow,
+            clamp_sampler,
             lamp_shadows: Vec::new(),
             shadow_level: 1.0,
             shadow_soft: 1.0,
@@ -4992,6 +5036,7 @@ impl ZoneRenderer {
                 [&buf, &self.lights, &self.areas, &self.parts_gpu, &self.deltas_gpu, &self.lamp_shadow.uniform],
                 None,
                 &self.world_off,
+                &self.clamp_sampler,
             );
             self.portrait_globals.push((buf, group));
         }
@@ -5243,6 +5288,7 @@ impl ZoneRenderer {
             [&self.uniforms, &self.lights, &self.areas, &self.parts_gpu, &self.deltas_gpu, &self.lamp_shadow.uniform],
             self.world_shadow.as_ref(),
             &self.world_off,
+            &self.clamp_sampler,
         );
     }
 
@@ -5685,6 +5731,7 @@ fn globals_group(
     buffers: [&wgpu::Buffer; 6],
     world: Option<&worldshadow::WorldShadow>,
     off: &worldshadow::Off,
+    clamp: &wgpu::Sampler,
 ) -> wgpu::BindGroup {
     let (uniform, near, far) = match world {
         Some(w) => (&w.uniform, &w.maps[0], w.far()),
@@ -5700,6 +5747,8 @@ fn globals_group(
         wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(near) },
         wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::TextureView(far) },
         wgpu::BindGroupEntry { binding: 9, resource: wgpu::BindingResource::Sampler(&off.cmp) },
+        // '#' placements' stage 0: the scenery sampler clamped.
+        wgpu::BindGroupEntry { binding: 10, resource: wgpu::BindingResource::Sampler(clamp) },
     ]);
     device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("globals"), layout, entries: &entries })
 }
