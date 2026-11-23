@@ -126,6 +126,9 @@ fn search_roots() -> Vec<(std::path::PathBuf, bool)> {
     } else {
         roots.extend(home.iter().map(|h| (h.join("Games"), false)));
     }
+    // One walk per real folder (~/.steam/steam is often a link to ~/.local/share/Steam); missing ones dropped.
+    let mut roots: Vec<(PathBuf, bool)> =
+        roots.into_iter().filter_map(|(p, a)| Some((std::fs::canonicalize(p).ok()?, a))).collect();
     roots.sort();
     roots.dedup();
     roots
@@ -243,16 +246,18 @@ fn fetch_runtime() -> anyhow::Result<()> {
     let dir = runtime_dir();
     std::fs::create_dir_all(&dir)?;
     let tmp = dir.join(format!("{name}.download"));
-    match find_copy(&search_roots(), name, runtime_size(), sha, 9) {
-        Some(found) => {
-            log::info!("DLSS: the runtime is already at {}; copying it", found.display());
-            std::fs::copy(&found, &tmp)?;
-        }
-        None => {
-            let url = format!("https://raw.githubusercontent.com/NVIDIA/DLSS/{SDK_TAG}/lib/{plat}/rel/{name}");
-            log::info!("DLSS: downloading the runtime from {url}");
-            crate::client::updater::download(&url, &tmp, &|_, _| {})?;
-        }
+    // A copy that can't be read now, or isn't what it was (a game updated it meanwhile), falls back to the download.
+    let copied = find_copy(&search_roots(), name, runtime_size(), sha, 9).is_some_and(|found| {
+        log::info!("DLSS: the runtime is already at {}; copying it", found.display());
+        std::fs::copy(&found, &tmp).inspect_err(|e| log::info!("DLSS: copying {}: {e}", found.display())).is_ok_and(
+            |_| std::fs::read(&tmp).is_ok_and(|b| hex::encode(ring::digest::digest(&ring::digest::SHA256, &b)) == sha),
+        )
+    });
+    if !copied {
+        let _ = std::fs::remove_file(&tmp);
+        let url = format!("https://raw.githubusercontent.com/NVIDIA/DLSS/{SDK_TAG}/lib/{plat}/rel/{name}");
+        log::info!("DLSS: downloading the runtime from {url}");
+        crate::client::updater::download(&url, &tmp, &|_, _| {})?;
     }
     let got = hex::encode(ring::digest::digest(&ring::digest::SHA256, &std::fs::read(&tmp)?));
     if got != sha {
