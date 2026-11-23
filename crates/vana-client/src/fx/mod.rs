@@ -1436,7 +1436,10 @@ impl Effects {
     }
 
     /// An event area (op 0x34) or the zone again (op 0x35) by its registered library: only the old scene's effects go.
-    pub fn load_area(&mut self, lib: Library) -> usize {
+    pub fn load_area(&mut self, mut lib: Library) -> usize {
+        // Op 0x34 / 0x35 load the scene through the zone loader too: a fresh file's D3m colours are doubled, a file
+        // already registered keeps its own (as in load_zone).
+        lib.mark_zone_load();
         let l = self.reg.lib_of(lib.file_id).unwrap_or_else(|| self.reg.add(lib));
         self.switch_zone(l, true);
         l
