@@ -37,7 +37,9 @@ pub struct Settings {
     pub bloom: u32,
     pub height_fog: u32,
     pub god_rays: u32,
+    pub world_shadows: u32,
     pub dof: u32,
+    pub wet_ground: u32,
     pub timers_dock: u32,
     pub minimap_dock: u32,
     pub minimap_size: u32,
@@ -92,7 +94,9 @@ impl Settings {
             bloom: c.bloom,
             height_fog: c.height_fog,
             god_rays: c.god_rays,
+            world_shadows: c.world_shadows,
             dof: c.dof,
+            wet_ground: c.wet_ground,
             timers_dock: c.timers_dock,
             minimap_dock: c.minimap_dock,
             minimap_size: c.minimap_size,
@@ -143,7 +147,9 @@ impl Settings {
         c.bloom = self.bloom;
         c.height_fog = self.height_fog;
         c.god_rays = self.god_rays;
+        c.world_shadows = self.world_shadows;
         c.dof = self.dof;
+        c.wet_ground = self.wet_ground;
         c.timers_dock = self.timers_dock;
         c.minimap_dock = self.minimap_dock;
         c.minimap_size = self.minimap_size;
@@ -205,7 +211,9 @@ enum Val {
     Bloom,
     HeightFog,
     GodRays,
+    WorldShadows,
     Dof,
+    WetGround,
     TimersDock,
     MinimapDock,
     MinimapSize,
@@ -817,9 +825,23 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
             Now,
         ),
         row(
+            "World Shadows",
+            "Buildings, trees and cliffs cast shadows from the sun onto the ground, the scenery and characters, which only lose the direct sunlight (the game's painted shade is kept). Low covers the area around you; High adds sharper shadows close by and reaches farther. Outdoors only, and faint by moonlight (not retail).",
+            WorldShadows,
+            &[(0, "Off"), (1, "Low"), (2, "High")],
+            Now,
+        ),
+        row(
             "Depth of Field",
             "What the camera looks at, usually your character, stays sharp and the scenery behind it softens with distance, like a camera lens. Strong softens sooner and more (not retail).",
             Dof,
+            &[(0, "Off"), (1, "Subtle"), (2, "Strong")],
+            Now,
+        ),
+        row(
+            "Wet Ground",
+            "While it rains, the ground outdoors darkens and takes a wet shine, with rain ripples and puddles near you. It dries off slowly after the rain stops. Strong is wetter, with more puddles (not retail).",
+            WetGround,
             &[(0, "Off"), (1, "Subtle"), (2, "Strong")],
             Now,
         ),
@@ -1238,7 +1260,9 @@ impl SettingsUi {
             Val::Bloom => self.s.bloom,
             Val::HeightFog => self.s.height_fog,
             Val::GodRays => self.s.god_rays,
+            Val::WorldShadows => self.s.world_shadows,
             Val::Dof => self.s.dof,
+            Val::WetGround => self.s.wet_ground,
             Val::TimersDock => self.s.timers_dock,
             Val::MinimapDock => self.s.minimap_dock,
             Val::MinimapSize => self.s.minimap_size,
@@ -1319,7 +1343,9 @@ impl SettingsUi {
             Val::Bloom => self.s.bloom = x,
             Val::HeightFog => self.s.height_fog = x,
             Val::GodRays => self.s.god_rays = x,
+            Val::WorldShadows => self.s.world_shadows = x,
             Val::Dof => self.s.dof = x,
+            Val::WetGround => self.s.wet_ground = x,
             Val::TimersDock => self.s.timers_dock = x,
             Val::MinimapDock => self.s.minimap_dock = x,
             Val::MinimapSize => self.s.minimap_size = x,

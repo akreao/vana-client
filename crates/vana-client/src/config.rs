@@ -279,9 +279,15 @@ pub struct Config {
     /// Light shafts from the sun through gaps in the scenery (render/godrays.rs): 0 off (retail), 1 Subtle, 2 Strong.
     /// Not a retail option.
     pub god_rays: u32,
+    /// World sun shadows: the scenery's shadows from the zone's sun on the scenery and characters
+    /// (render/worldshadow.rs): 0 off (retail), 1 Low (one map), 2 High (two cascades). Not a retail option.
+    pub world_shadows: u32,
     /// Depth of field: the scenery behind what the camera looks at softened (render/dof.rs): 0 off (retail), 1 Subtle,
     /// 2 Strong. Not a retail option.
     pub dof: u32,
+    /// Wet ground while it rains: the ground outdoors darkens and shines, with rain ripples and puddles
+    /// (render/rain.rs): 0 off (retail), 1 Subtle, 2 Strong. Not a retail option.
+    pub wet_ground: u32,
     /// The Game Master window (ours, client/gm.rs): its request (c2s 0x1F0) goes out at a zone-in only while this is
     /// on and only to a private server. No Settings row: only a server with its GM extension can use it, so it is set
     /// in config.json by hand.
@@ -665,7 +671,9 @@ impl Default for Config {
             bloom: 0,
             height_fog: 0,
             god_rays: 0,
+            world_shadows: 0,
             dof: 0,
+            wet_ground: 0,
             timers_dock: 0,
             timers_out: true,
             timers_folded: 0,

@@ -68,6 +68,68 @@ struct U {
 @group(0) @binding(2) var map: texture_2d<f32>;
 @group(0) @binding(3) var cmp: sampler_comparison;
 @group(0) @binding(4) var feet: texture_2d<f32>;
+// The world shadows' (render/worldshadow.rs, zone.wgsl WorldShadowU): ground already in a building's or a tree's
+// shade has lost the sun a character's shadow would take, so it is not darkened twice.
+struct World {
+    vp0: mat4x4<f32>,
+    vp1: mat4x4<f32>,
+    info: vec4<f32>,
+    misc: vec4<f32>,
+};
+@group(0) @binding(5) var world0: texture_depth_2d;
+@group(0) @binding(6) var world1: texture_depth_2d;
+@group(0) @binding(7) var<uniform> wsu: World;
+
+// How much of the point the world shadows cover (zone.wgsl world_lit's taps, cascade blend and edge fade, without
+// its strength): 0 lit (or the world shadows off), 1 wholly in a building's or tree's shade. A character's shadow
+// there would darken the ground's painted shade, which the world shadows leave alone, so it is scaled by what is
+// left uncovered; at dusk both are equally faint (each takes the twilight level).
+fn world_pcf0(lp: vec3<f32>) -> f32 {
+    let uv = vec2<f32>(lp.x * 0.5 + 0.5, 0.5 - lp.y * 0.5);
+    let t = 0.75 * wsu.misc.x;
+    return 0.25 * (textureSampleCompareLevel(world0, cmp, uv + vec2<f32>(-t, -t), lp.z)
+        + textureSampleCompareLevel(world0, cmp, uv + vec2<f32>(t, -t), lp.z)
+        + textureSampleCompareLevel(world0, cmp, uv + vec2<f32>(-t, t), lp.z)
+        + textureSampleCompareLevel(world0, cmp, uv + vec2<f32>(t, t), lp.z));
+}
+
+fn world_pcf1(lp: vec3<f32>) -> f32 {
+    let uv = vec2<f32>(lp.x * 0.5 + 0.5, 0.5 - lp.y * 0.5);
+    let t = 0.75 * wsu.misc.x;
+    return 0.25 * (textureSampleCompareLevel(world1, cmp, uv + vec2<f32>(-t, -t), lp.z)
+        + textureSampleCompareLevel(world1, cmp, uv + vec2<f32>(t, -t), lp.z)
+        + textureSampleCompareLevel(world1, cmp, uv + vec2<f32>(-t, t), lp.z)
+        + textureSampleCompareLevel(world1, cmp, uv + vec2<f32>(t, t), lp.z));
+}
+
+fn world_shade(p: vec3<f32>, n: vec3<f32>) -> f32 {
+    if (wsu.info.x <= 0.0) {
+        return 0.0;
+    }
+    let l0 = wsu.vp0 * vec4<f32>(p + n * wsu.info.z, 1.0);
+    let m0 = max(abs(l0.x), abs(l0.y));
+    var s = 1.0;
+    var fade = 1.0;
+    if (wsu.info.y < 1.5) {
+        if (m0 >= 1.0 || l0.z <= 0.0 || l0.z >= 1.0) {
+            return 0.0;
+        }
+        s = world_pcf0(l0.xyz);
+        fade = 1.0 - smoothstep(0.8, 0.98, m0);
+    } else {
+        let l1 = wsu.vp1 * vec4<f32>(p + n * wsu.info.w, 1.0);
+        let m1 = max(abs(l1.x), abs(l1.y));
+        let far = select(1.0, world_pcf1(l1.xyz), m1 < 1.0 && l1.z > 0.0 && l1.z < 1.0);
+        let k = smoothstep(0.85, 0.98, m0);
+        var near = far;
+        if (k < 1.0 && l0.z > 0.0 && l0.z < 1.0) {
+            near = world_pcf0(l0.xyz);
+        }
+        s = mix(near, far, k);
+        fade = 1.0 - smoothstep(0.8, 0.98, m1);
+    }
+    return (1.0 - s) * fade;
+}
 
 struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
 @vertex fn vs(@builtin(vertex_index) i: u32) -> VOut {
@@ -118,7 +180,8 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
     let shadow = dark / 9.0;
     // Fades: toward the map's edge, on surfaces turning away from the sun, and off the sky (depth 1).
     let edge = 1.0 - smoothstep(0.8, 1.0, max(abs(lp.x), abs(lp.y)));
-    let k = u.sun.w * shadow * edge * smoothstep(0.0, 0.25, facing) * select(1.0, 0.0, d >= 1.0 || lp.z > 1.0 || lp.z < 0.0);
+    let k = u.sun.w * shadow * edge * smoothstep(0.0, 0.25, facing) * select(1.0, 0.0, d >= 1.0 || lp.z > 1.0 || lp.z < 0.0)
+        * (1.0 - world_shade(world, n));
     return vec4<f32>(vec3<f32>(1.0 - k), 1.0);
 }
 "#;
@@ -202,8 +265,8 @@ struct Params {
 }
 
 pub struct SunShadow {
-    /// The receive pass's group, by the depth, the map and the feet it binds.
-    group: super::BindCache<[wgpu::TextureView; 3]>,
+    /// The receive pass's group, by the depth, the map, the feet and the world shadows' two maps it binds.
+    group: super::BindCache<[wgpu::TextureView; 5]>,
     pub map: wgpu::TextureView,
     /// Beside the map: each texel's caster's feet height (feet_format), written by the same pass.
     pub feet: wgpu::TextureView,
@@ -280,6 +343,16 @@ impl SunShadow {
             },
             count: None,
         };
+        let world_map = |binding: u32| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Depth,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("sun shadow receive"),
             entries: &[
@@ -308,6 +381,18 @@ impl SunShadow {
                         sample_type: wgpu::TextureSampleType::Float { filterable: false },
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
+                    },
+                    count: None,
+                },
+                world_map(5),
+                world_map(6),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
                     count: None,
                 },
@@ -383,7 +468,8 @@ impl SunShadow {
         super::Put::put(&gpu.queue, &self.matrix, 0, bytemuck::cast_slice(&light_vp.to_cols_array()));
     }
 
-    /// Darkens `color` where the map shadows the scenery in `depth` (the scene's). `soft`: the PCF spacing in texels.
+    /// Darkens `color` where the map shadows the scenery in `depth` (the scene's), less where the world shadows
+    /// (`world`: their uniform and two maps, or the off stand-ins) already shade it. `soft`: the PCF spacing in texels.
     pub fn receive(
         &self,
         gpu: &Gpu,
@@ -396,6 +482,7 @@ impl SunShadow {
         strength: f32,
         eye: Vec3,
         soft: f32,
+        world: (&wgpu::Buffer, &wgpu::TextureView, &wgpu::TextureView),
     ) {
         let p = Params {
             inv_view_proj: view_proj.inverse().to_cols_array_2d(),
@@ -405,19 +492,26 @@ impl SunShadow {
             misc: [soft, 0.0, FADE_START, FADE_END],
         };
         super::Put::put(&gpu.queue, &self.uniform, 0, bytemuck::bytes_of(&p));
-        let group = self.group.get([depth.clone(), self.map.clone(), self.feet.clone()], || {
-            gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("sun shadow receive"),
-                layout: &self.layout,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: self.uniform.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(depth) },
-                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&self.map) },
-                    wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.cmp) },
-                    wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&self.feet) },
-                ],
-            })
-        });
+        let (world_u, world0, world1) = world;
+        let group = self.group.get(
+            [depth.clone(), self.map.clone(), self.feet.clone(), world0.clone(), world1.clone()],
+            || {
+                gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("sun shadow receive"),
+                    layout: &self.layout,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: self.uniform.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(depth) },
+                        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&self.map) },
+                        wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.cmp) },
+                        wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&self.feet) },
+                        wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(world0) },
+                        wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(world1) },
+                        wgpu::BindGroupEntry { binding: 7, resource: world_u.as_entire_binding() },
+                    ],
+                })
+            },
+        );
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("sun shadow receive"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -563,7 +657,34 @@ mod tests {
             let cv = color.create_view(&Default::default());
             // The floor's depth in the map: a caster just above it shadows, one far above does not.
             let floor_lz = light.project_point3(Vec3::ZERO).z;
-            let run = |map_depth: f32, feet_y: f32| {
+            // The world shadows off (their stand-ins), and on with a map that shades the whole floor (run_in's
+            // strength: the part of the sun they take off).
+            let off = crate::render::worldshadow::Off::new(&gpu);
+            let ws = crate::render::worldshadow::WorldShadow::new(&gpu, &silly, 1);
+            let wl = crate::render::worldshadow::matrix(sun, Vec3::ZERO, 16.0).0;
+            {
+                let mut enc = gpu.device.create_command_encoder(&Default::default());
+                let _p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: None,
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &ws.maps[0],
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wl.project_point3(Vec3::ZERO).z - 0.01),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                drop(_p);
+                gpu.queue.submit([enc.finish()]);
+            }
+            let run_in = |map_depth: f32, feet_y: f32, shaded: f32| {
+                let params = crate::render::worldshadow::Params::new(&[(wl, 16.0)], shaded, sun);
+                crate::render::Put::put(&gpu.queue, &ws.uniform, 0, bytemuck::bytes_of(&params));
                 let mut enc = gpu.device.create_command_encoder(&Default::default());
                 {
                     let _p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -615,10 +736,16 @@ mod tests {
                         multiview_mask: None,
                     });
                 }
-                sh.receive(&gpu, &mut enc, &cv, &depth, vp, light, sun, STRENGTH, cam.eye, 1.0);
+                let world = if shaded > 0.0 {
+                    (&ws.uniform, &ws.maps[0], ws.far())
+                } else {
+                    (&off.uniform, &off.map, &off.map)
+                };
+                sh.receive(&gpu, &mut enc, &cv, &depth, vp, light, sun, STRENGTH, cam.eye, 1.0, world);
                 gpu.queue.submit([enc.finish()]);
                 read(&gpu, &color, n, n)
             };
+            let run = |map_depth: f32, feet_y: f32| run_in(map_depth, feet_y, 0.0);
             let lit = (0.8f32 * 255.0).round() as i32;
             let dark = (0.8 * (1.0 - STRENGTH) * 255.0).round() as i32;
             for p in run(1.0, 0.0).as_chunks::<4>().0 {
@@ -633,6 +760,13 @@ mod tests {
             }
             for p in run(floor_lz - 20.0 / DEPTH, -1.0).as_chunks::<4>().0 {
                 assert!((p[0] as i32 - dark).abs() <= 3, "caster a step above {p:?} want {dark} ({feet:?})");
+            }
+            // A floor wholly in the world's shadow takes no character shadow on top (its painted shade is kept), at
+            // full strength and at dusk's.
+            for r in [0.85f32, 0.3] {
+                for p in run_in(floor_lz - 1.0 / DEPTH, 0.0, r).as_chunks::<4>().0 {
+                    assert!((p[0] as i32 - lit).abs() <= 2, "in the world's shadow ({r}) {p:?}");
+                }
             }
         }
     }

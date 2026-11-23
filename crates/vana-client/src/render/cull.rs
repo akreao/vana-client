@@ -56,7 +56,7 @@ pub fn reach(own: Option<f32>, door: bool) -> [f32; 2] {
 }
 
 /// What the culling needs of a geometry, built with it (ZoneGeometry::build_keyed).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct CullData {
     /// Per instance: its mesh's box in model space, centre then half extents; the fourth words its reach().
     bounds: Vec<[f32; 8]>,
@@ -705,18 +705,15 @@ mod tests {
         let [lights, areas, parts, deltas] = [(); 4].map(|_| buf(&zeros, wgpu::BufferUsages::STORAGE));
         let lamp = buf(&zeros, wgpu::BufferUsages::UNIFORM);
         let clamp = crate::render::clamp_sampler(device);
-        let mut entries = [&uniforms, &lights, &areas, &parts, &deltas, &lamp]
-            .iter()
-            .enumerate()
-            .map(|(k, b)| wgpu::BindGroupEntry { binding: k as u32, resource: b.as_entire_binding() })
-            .collect::<Vec<_>>();
-        // Binding 6: the '#' placements' clamped sampler (custom).
-        entries.push(wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(&clamp) });
-        let globals = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &p.globals_layout,
-            entries: &entries,
-        });
+        let off = super::super::worldshadow::Off::new(&gpu);
+        let globals = super::super::globals_group(
+            device,
+            &p.globals_layout,
+            [&uniforms, &lights, &areas, &parts, &deltas, &lamp],
+            None,
+            &off,
+            &clamp,
+        );
         let c = Cull::new(&gpu, Some(layout), &data, &instances).expect("a GPU culling");
         let read = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
