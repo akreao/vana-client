@@ -2482,4 +2482,30 @@ mod order_tests {
         assert!(!sorts(40, 40, false));
         assert!(!sorts(40, 41, false));
     }
+
+    /// Zone-in keeps view 3 with the main view: an unchanged slot resent out of order keeps its row, a replaced one
+    /// goes last, and a slot the resend leaves empty goes at the settle.
+    #[test]
+    fn view3_survives_the_zone_resend() {
+        let mut inv = Inventory::default();
+        for (i, id) in [(3u8, 4096u16), (8, 4097), (5, 4098)] {
+            inv.set(2, i, id, 1);
+        }
+        inv.rebuild_view3(2);
+        // Slot 3 replaced: it goes last.
+        inv.set(2, 3, 4099, 1);
+        assert_eq!(inv.view3[&2], [5, 8, 3]);
+        // The zone reset carries the views; the resend comes in slot order, slot 5 left empty.
+        let mut inv = Inventory {
+            order: std::mem::take(&mut inv.order),
+            viewed_ids: std::mem::take(&mut inv.viewed_ids),
+            view3: std::mem::take(&mut inv.view3),
+            ..Default::default()
+        };
+        inv.set(2, 3, 4099, 1);
+        inv.set(2, 8, 4097, 1);
+        assert_eq!(inv.view3[&2], [5, 8, 3]);
+        inv.prune_order(1 << 2);
+        assert_eq!(inv.view3[&2], [8, 3]);
+    }
 }

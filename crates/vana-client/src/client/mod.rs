@@ -12115,6 +12115,7 @@ impl App {
                         sizes2: world.inv.sizes2,
                         order: std::mem::take(&mut world.inv.order),
                         viewed_ids: std::mem::take(&mut world.inv.viewed_ids),
+                        view3: std::mem::take(&mut world.inv.view3),
                         view_changed: world.inv.view_changed,
                         ..Default::default()
                     };
