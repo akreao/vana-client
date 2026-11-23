@@ -269,6 +269,10 @@ pub struct Config {
     pub shadow_map: u32,
     /// Ambient occlusion on the scenery (render/ssao.rs). Not a retail option.
     pub ssao: bool,
+    /// Reflections on water (render/reflect.rs). Not a retail option.
+    pub reflections: bool,
+    /// With `reflections`, polished floors reflect too (render/reflect.rs). Not a retail option.
+    pub reflect_floors: bool,
     /// Bloom over the 3D scene (render/bloom.rs): 0 off (retail), 1 Subtle, 2 Strong. Not a retail option.
     pub bloom: u32,
     /// Height fog over the game's own fog (render/fog.rs): 0 retail's only, 1 Height, 2 Dense. Not a retail option.
@@ -653,6 +657,8 @@ impl Default for Config {
             actor_shadows: 0,
             shadow_map: 2048,
             ssao: false,
+            reflections: false,
+            reflect_floors: false,
             bloom: 0,
             height_fog: 0,
             god_rays: 0,
