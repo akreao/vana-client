@@ -101,26 +101,26 @@ pub(super) fn column(ui: &mut Ui, m: &super::Modern, gu: &GameUi, v: &MenuWin, f
                     };
                     super::rows::face(ui.painter(), m, r, face, Color32::WHITE);
                     let c = if off { m.theme.color("muted") } else { m.theme.color("text") };
-                    let clip = Rect::from_min_max(r.min, pos2(r.max.x - 8.0, r.max.y));
-                    ui.painter().with_clip_rect(clip).text(
-                        pos2(r.min.x + 24.0, r.center().y),
-                        Align2::LEFT_CENTER,
-                        &name,
-                        FontId::proportional(m.theme.small),
-                        c,
-                    );
+                    // The value (a tell target, a linkshell) at the right in at most 55% of the row, the label left
+                    // of it.
+                    let mut end = r.max.x - 8.0;
                     if let Some((_, val)) = v.values.iter().find(|x| x.0 == id) {
                         let vc = if v.marked.contains(&id) { m.theme.color("gold") } else { m.theme.color("text") };
-                        ui.painter().text(
-                            pos2(r.max.x - 12.0, r.center().y),
-                            Align2::RIGHT_CENTER,
-                            val,
-                            FontId::monospace(m.theme.small),
-                            vc,
-                        );
+                        let (val, vf) =
+                            super::kit::fit(ui, val, &FontId::monospace(m.theme.small), r.width() * 0.55, 0.85);
+                        end = ui
+                            .painter()
+                            .text(pos2(r.max.x - 12.0, r.center().y), Align2::RIGHT_CENTER, val, vf, vc)
+                            .min
+                            .x
+                            - 8.0;
                     } else if v.marked.contains(&id) {
                         ui.painter().circle_filled(pos2(r.max.x - 16.0, r.center().y), 4.5, m.theme.color("gold"));
+                        end = r.max.x - 26.0;
                     }
+                    let (shown, font) =
+                        super::kit::fit(ui, &name, &FontId::proportional(m.theme.small), end - r.min.x - 24.0, 0.85);
+                    ui.painter().text(pos2(r.min.x + 24.0, r.center().y), Align2::LEFT_CENTER, shown, font, c);
                     if id == v.sel && follow {
                         ui.scroll_to_rect(r, None);
                     }
@@ -192,24 +192,26 @@ fn area_column(ui: &mut Ui, m: &super::Modern, gu: &GameUi, a: &arealist::AreaLi
                         _ => "controls/list_row_normal",
                     };
                     super::rows::face(ui.painter(), m, rr, face, Color32::WHITE);
-                    ui.painter().text(
-                        pos2(rr.min.x + 24.0, rr.center().y),
-                        Align2::LEFT_CENTER,
-                        &r.name,
-                        FontId::proportional(m.theme.small),
-                        m.theme.color("text"),
-                    );
                     let cell = match &r.cell {
                         arealist::Cell::Paren(s) => format!("({s})"),
                         arealist::Cell::Count(n) => format!("[{n}]"),
                         arealist::Cell::Level(s) => s.clone(),
                     };
-                    ui.painter().text(
+                    let cell_r = ui.painter().text(
                         pos2(rr.max.x - 12.0, rr.center().y),
                         Align2::RIGHT_CENTER,
                         cell,
                         FontId::proportional(m.theme.small),
                         m.theme.color("muted"),
+                    );
+                    let font = FontId::proportional(m.theme.small);
+                    let (shown, font) = super::kit::fit(ui, &r.name, &font, cell_r.min.x - 8.0 - rr.min.x - 24.0, 0.85);
+                    ui.painter().text(
+                        pos2(rr.min.x + 24.0, rr.center().y),
+                        Align2::LEFT_CENTER,
+                        shown,
+                        font,
+                        m.theme.color("text"),
                     );
                     if k == a.cursor && follow {
                         ui.scroll_to_rect(rr, None);

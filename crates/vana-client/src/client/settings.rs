@@ -28,6 +28,7 @@ pub struct Settings {
     pub party_tp: bool,
     pub lamp_lights: bool,
     pub smooth_lights: bool,
+    pub material_maps: u32,
     pub actor_shadows: u32,
     pub shadow_map: u32,
     pub ssao: bool,
@@ -80,6 +81,7 @@ impl Settings {
             party_tp: c.party_tp,
             lamp_lights: c.lamp_lights,
             smooth_lights: c.smooth_lights,
+            material_maps: c.material_maps,
             actor_shadows: c.actor_shadows,
             shadow_map: c.shadow_map,
             ssao: c.ssao,
@@ -128,6 +130,7 @@ impl Settings {
         c.party_tp = self.party_tp;
         c.lamp_lights = self.lamp_lights;
         c.smooth_lights = self.smooth_lights;
+        c.material_maps = self.material_maps;
         c.actor_shadows = self.actor_shadows;
         c.shadow_map = self.shadow_map;
         c.ssao = self.ssao;
@@ -188,6 +191,7 @@ enum Val {
     PartyTp,
     LampLights,
     SmoothLights,
+    MaterialMaps,
     ActorShadows,
     ShadowMap,
     Ssao,
@@ -261,13 +265,15 @@ impl From<&SRow> for Row {
 /// Whether a row's choice is offered on this device: Upscaling leaves out FSR 3.1 (1..5) and External (6) where they
 /// can't run (GL / GLES, small limits, no engine), so FSR 1 is what such a device gets.
 fn offered(v: Val, x: u32) -> bool {
-    !matches!(v, Val::Upscaler) || offered_on(&crate::render::upscale::availability(), x)
+    use crate::render::upscale::status;
+    !matches!(v, Val::Upscaler) || offered_on(status(1).is_ok(), status(2).is_ok(), x)
 }
 
-fn offered_on(can: &crate::render::upscale::Availability, upscaling: u32) -> bool {
+/// `fsr3` / `external`: whether those run here (render::upscale::status).
+fn offered_on(fsr3: bool, external: bool, upscaling: u32) -> bool {
     match upscaling {
-        1..=5 => can.fsr3.is_ok(),
-        6 => can.external.is_ok(),
+        1..=5 => fsr3,
+        6 => external,
         _ => true,
     }
 }
@@ -312,6 +318,107 @@ pub enum Edit {
 }
 
 const OFF_ON: &[(u32, &str)] = &[(1, "ON"), (0, "OFF")];
+
+/// The Neural Rendering row's buttons past On / Off (client/neural.rs): use the DLL a game has, pick a file, open the
+/// drop folder, and a button that only shows what is going on.
+const NR_USE: u32 = 100;
+const NR_PICK: u32 = 101;
+const NR_FOLDER: u32 = 102;
+const NR_BUSY: u32 = 103;
+
+/// Why the model needs a file from the player (keep all three points: what it is, why we can't ship it, where it is).
+const NR_NEEDS: &str = "Neural Rendering runs NVIDIA's DLSS 5 neural rendering network, which vana-client can't distribute: it reads the network's weights from a copy of NVIDIA's nvngx_dlssnr.dll you have (version 310.9.16 or 310.8.0). The DLL is never run. Games with DLSS 5 neural rendering include it.";
+
+/// The Neural Rendering row as its state has it: its buttons and the help after the row's (the engine's sentences
+/// as it wrote them). `modern`: the in-game file picker is offered.
+fn neural_row(r: &mut Row, modern: bool) {
+    use super::neural::State;
+    let (state, found, scanning, restart, last) = super::neural::view();
+    let on_off = || OFF_ON.iter().map(|c| (c.0, c.1.to_string())).collect::<Vec<_>>();
+    let mb = |b: u64| format!("{:.1}", b as f64 / 1_000_000.0);
+    let mut help = String::new();
+    r.choices = match &state {
+        State::Unavailable(e) => {
+            help = format!(" Unavailable here: {}", sentence(e));
+            vec![(NR_BUSY, "Unavailable".into())]
+        }
+        State::Absent => {
+            help = " Turning it on downloads the engine (12 MB) from this release.".into();
+            on_off()
+        }
+        // The classic page's buttons are narrow: short captions, the rest in the help.
+        State::Downloading(done, all) if !modern => {
+            help = format!(" Downloading the engine: {} of {} MB.", mb(*done), mb(*all));
+            vec![(NR_BUSY, format!("{} / {} MB", mb(*done), mb(*all)))]
+        }
+        State::Downloading(done, all) => vec![(NR_BUSY, format!("Downloading {} of {} MB", mb(*done), mb(*all)))],
+        State::NotInRelease => {
+            help = " The engine is not in this release.".into();
+            vec![(NR_BUSY, if modern { "Not in This Release" } else { "Not Here" }.into())]
+        }
+        State::NeedsDll => {
+            // Shown: look again for a DLL dropped in (at most every few seconds).
+            super::neural::scan_soon();
+            help = format!(" {NR_NEEDS}");
+            let mut c = Vec::new();
+            if let Some(f) = found.first() {
+                c.push((NR_USE, if modern { format!("Use the One in {}", f.game) } else { "Use It".into() }));
+                if !modern {
+                    help += &format!(" Use It: the one in {}.", f.game);
+                }
+                help += &format!(" {}", sentence(&f.note));
+                if found.len() > 1 {
+                    let others: Vec<&str> = found[1..].iter().map(|f| f.game.as_str()).collect();
+                    help += &format!(" Also in: {}.", others.join(", "));
+                }
+            } else if scanning {
+                help += " Looking in your Steam games...";
+            }
+            if modern {
+                c.push((NR_PICK, "Choose File...".into()));
+            }
+            c.push((NR_FOLDER, "Open Folder".into()));
+            help += &format!(
+                " Or put the DLL (or a zip holding it) in {}: it is found there.",
+                super::neural::drop_folder().display()
+            );
+            if let Some(why) = &last {
+                help += &format!(" {}", sentence(why));
+            }
+            c
+        }
+        State::Making(f) if !modern => {
+            help = " Making the model from the DLL.".into();
+            vec![(NR_BUSY, format!("Model {:.0}%", f * 100.0))]
+        }
+        State::Making(f) => vec![(NR_BUSY, format!("Making the Model: {:.0}%", f * 100.0))],
+        State::Ready(msg) => {
+            if !msg.trim().is_empty() {
+                help = format!(" {}", sentence(msg));
+            }
+            on_off()
+        }
+        State::Error(msg) => {
+            help = format!(" {}", sentence(msg));
+            vec![(NR_BUSY, "Not Ready".into())]
+        }
+    };
+    if restart && matches!(state, State::Ready(_) | State::NeedsDll) {
+        help += " Downloaded: restart vana-client to turn it on.";
+    }
+    r.help += &help;
+}
+
+/// A row of action buttons (neural_row's setup states), pressed rather than chosen.
+fn actions(r: &Row) -> bool {
+    matches!(r.val, Val::Neural) && r.choices.iter().any(|c| c.0 >= NR_USE)
+}
+
+/// `s` ending in a full stop.
+fn sentence(s: &str) -> String {
+    let s = s.trim();
+    if s.ends_with(['.', '!', '?']) { s.to_string() } else { format!("{s}.") }
+}
 const MODERN_SCALES: &[(u32, &str)] = &[
     (50, "50%"),
     (55, "55%"),
@@ -454,6 +561,13 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
             Tool("0036"),
             &[(0, "Compressed"), (1, "Full"), (2, "High")],
             Restart,
+        ),
+        row(
+            "Material Maps",
+            "Gives textures bumps and shine from a material pack (installed beside the game as materials), lit by the sun, the moon and lamps. Higher makes the bumps deeper. Not retail.",
+            MaterialMaps,
+            &[(0, "Off"), (1, "Low"), (2, "Medium"), (3, "High")],
+            NextZone,
         ),
     ];
     const EFFECTS: &[SRow] = &[
@@ -726,7 +840,7 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
         ),
         row(
             "Neural Rendering",
-            "Runs a neural network over the 3D world each frame (an engine installed beside the game as upscale-engine), before the upscaling. Costs a lot of GPU time. Unavailable without the engine or a GPU with what it needs (not retail).",
+            "Runs a neural network over the 3D world each frame, before the upscaling. Costs a lot of GPU time (not retail).",
             Neural,
             OFF_ON,
             Now,
@@ -759,7 +873,7 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
             "Movement Rate",
             "How many times a second your character moves and turns, with a stick or the keyboard: 30 as the game runs, or 60 as it does with a frame rate add-on (not retail).",
             MoveRate,
-            &[(30, "30"), (60, "60")],
+            &[(super::ground::MOVE_RATE_GAME, "30"), (super::ground::MOVE_RATE_TICK, "60")],
             Now,
         ),
     ];
@@ -875,6 +989,8 @@ pub struct SettingsUi {
     pub hover: bool,
     /// The Mods page's archives and moves, opened the first time the page shows.
     pub mods_ui: Option<super::modsui::Mods>,
+    /// The in-game file picker for Neural Rendering's DLL (modern UI), over the page while open.
+    pub nr_browse: Option<super::modsui::Browse>,
     /// The folders in the mods folder that hold a Lua mod (the Mods page's; the rest are DAT packs).
     pub lua_names: std::collections::HashSet<String>,
     /// The modern DATs page's tab: 0 Installed, 1 Available.
@@ -923,6 +1039,7 @@ impl SettingsUi {
             installed: false,
             hover: false,
             mods_ui: None,
+            nr_browse: None,
             m_mods: (0, 0),
             m_remove: None,
             mod_pages: Vec::new(),
@@ -933,6 +1050,10 @@ impl SettingsUi {
             lua_info: crate::modpack::lua_info(),
         };
         s.col = s.marked_col();
+        // Not in tests: it loads the engine in the data folder.
+        if kind == Kind::Settings && !cfg!(test) {
+            super::neural::refresh(c.neural);
+        }
         s
     }
 
@@ -1019,6 +1140,9 @@ impl SettingsUi {
                 out.insert(place.min(out.len()), r);
             }
         }
+        for r in out.iter_mut().filter(|r| matches!(r.val, Val::Neural)) {
+            neural_row(r, self.s.modern_ui);
+        }
         out
     }
 
@@ -1067,17 +1191,17 @@ impl SettingsUi {
             // As the frame draws it: FSR 3.1 where it can't run is FSR 1 (client frame_targets), External where it
             // can't run is Off.
             Val::Upscaler => {
-                let can = crate::render::upscale::availability();
+                use crate::render::upscale::status;
                 match self.s.upscaler {
                     0 => 0,
-                    1 if can.fsr3.is_ok() => 1 + self.s.upscale_quality.min(4),
+                    1 if status(1).is_ok() => 1 + self.s.upscale_quality.min(4),
                     1 | crate::render::fsr1::FSR1 => 6 + self.s.upscale_quality.clamp(1, 4),
-                    _ if can.external.is_ok() => 6,
+                    _ if status(2).is_ok() => 6,
                     _ => 0,
                 }
             }
             Val::UpscaleSharpness => self.s.upscale_sharpness,
-            Val::Neural => (self.s.neural && crate::render::upscale::neural_status().is_ok()) as u32,
+            Val::Neural => self.s.neural as u32,
             Val::DrawDistance => self.s.draw_distance,
             Val::SendRate => self.s.send_interval,
             Val::MoveRate => self.s.move_rate,
@@ -1091,6 +1215,8 @@ impl SettingsUi {
             Val::MouseCamSpeed => self.s.mouse_camera_speed,
             Val::LampLights => self.s.lamp_lights as u32,
             Val::SmoothLights => self.s.smooth_lights as u32,
+            Val::MaterialMaps if !crate::material::gpu_supported() => 0,
+            Val::MaterialMaps => self.s.material_maps,
             Val::ActorShadows => self.s.actor_shadows,
             Val::ShadowMap => self.s.shadow_map,
             Val::Ssao => self.s.ssao as u32,
@@ -1111,12 +1237,43 @@ impl SettingsUi {
         }
     }
 
+    /// A Neural Rendering button (neural_row): On fetches the engine when it is missing.
+    fn neural_do(&mut self, x: u32) {
+        match x {
+            0 => self.s.neural = false,
+            1 => {
+                if super::neural::turn_on() {
+                    self.s.neural = true;
+                }
+            }
+            NR_USE => {
+                if let Some(f) = super::neural::view().1.first() {
+                    super::neural::make_model(f.path.clone());
+                }
+            }
+            NR_PICK => self.nr_browse = Some(super::modsui::Browse::open_dll()),
+            NR_FOLDER => super::neural::open_drop_folder(),
+            _ => {}
+        }
+    }
+
+    /// The DLL picker's entry `k` taken: a folder opened, or the file the model is made from.
+    pub fn nr_pick(&mut self, k: usize) {
+        let Some(b) = self.nr_browse.as_mut() else { return };
+        b.cursor = k.min(b.entries.len().saturating_sub(1));
+        if let Some(path) = b.enter() {
+            self.nr_browse = None;
+            super::neural::make_model(path);
+        }
+    }
+
     fn set(&mut self, v: Val, x: u32) {
         match v {
             Val::Tool(n) => self.tool_set(n, x),
             Val::Aniso => self.s.anisotropy = x as u16,
             Val::Antialias => self.s.antialias = x,
             Val::Grading => self.s.grading = x,
+            Val::Upscaler if x != 0 && crate::render::upscale::status(if x == 6 { 2 } else { 1 }).is_err() => {}
             Val::Upscaler => match x {
                 0 => self.s.upscaler = 0,
                 1..=5 => (self.s.upscaler, self.s.upscale_quality) = (1, x - 1),
@@ -1124,8 +1281,7 @@ impl SettingsUi {
                 _ => self.s.upscaler = 2,
             },
             Val::UpscaleSharpness => self.s.upscale_sharpness = x,
-            Val::Neural if crate::render::upscale::neural_status().is_ok() => self.s.neural = x != 0,
-            Val::Neural => {}
+            Val::Neural => self.neural_do(x),
             Val::DrawDistance => self.s.draw_distance = x,
             Val::SendRate => self.s.send_interval = x,
             Val::MoveRate => self.s.move_rate = x,
@@ -1139,6 +1295,8 @@ impl SettingsUi {
             Val::MouseCamSpeed => self.s.mouse_camera_speed = x,
             Val::LampLights => self.s.lamp_lights = x != 0,
             Val::SmoothLights => self.s.smooth_lights = x != 0,
+            Val::MaterialMaps if !crate::material::gpu_supported() => {}
+            Val::MaterialMaps => self.s.material_maps = x,
             Val::ActorShadows => self.s.actor_shadows = x,
             Val::ShadowMap => self.s.shadow_map = x,
             Val::Ssao => self.s.ssao = x != 0,
@@ -1279,7 +1437,6 @@ impl SettingsUi {
                 [x, y] => format!("{x}x{y}"),
             },
             Val::Gamma => format!("{:+.1}", f32::from_bits(self.tool_get("0028"))),
-            Val::Neural if crate::render::upscale::neural_status().is_err() => "Unavailable".into(),
             Val::FrameLimit if self.s.frame_limit == 0 => "Unlimited".into(),
             Val::FrameLimit => format!("{}", self.s.frame_limit),
             Val::Music => format!("{}%", self.s.music),
@@ -1669,11 +1826,14 @@ impl SettingsUi {
             When::Restart => " Takes effect on restart.",
         };
         let warn = if self.warns(r) { format!("{WARNING} ") } else { String::new() };
-        let why = match (r.val, crate::render::upscale::neural_status()) {
-            (Val::Neural, Err(e)) => format!(" Unavailable here: {e}."),
-            (Val::Upscaler, _) => match crate::render::upscale::availability().fsr3 {
-                Err(e) => format!(" FSR 3.1 can't run here ({e}), so FSR 1 is offered."),
-                Ok(()) => String::new(),
+        let why = match r.val {
+            Val::MaterialMaps if !crate::material::gpu_supported() => {
+                " Unavailable here: the GPU (or the OpenGL backend) has no BC texture compression.".to_string()
+            }
+            Val::Upscaler => match (crate::render::upscale::status(1), crate::render::upscale::status(2)) {
+                (Err(e), _) => format!(" FSR 3.1 can't run here ({e}), so FSR 1 is offered."),
+                (Ok(()), Err(e)) => format!(" {e}."),
+                _ => String::new(),
             },
             _ => String::new(),
         };
@@ -1693,13 +1853,20 @@ impl SettingsUi {
         let ours = pages
             .flat_map(|(k, t)| rows(k, t, self.in_game, self.s.modern_ui).iter())
             .find(|r| r.label == label)
-            .map(Row::from);
+            .map(Row::from)
+            .map(|mut r| {
+                if matches!(r.val, Val::Neural) {
+                    neural_row(&mut r, self.s.modern_ui);
+                }
+                r
+            });
         // Else a bundled mod's, in its extra's place.
         ours.or_else(|| self.tab_rows.iter().position(|(_, r)| r.label == label).map(|i| self.tab_row(i)))
     }
 
     fn vrow(&self, r: &Row) -> VRow {
         let ctl = match Self::ctl(r) {
+            Ctl::Buttons(_) if actions(r) => VCtl::Actions(r.choices.iter().map(|c| c.1.clone()).collect()),
             Ctl::Buttons(_) => {
                 VCtl::Buttons(r.choices.iter().map(|c| (c.1.to_string(), c.0 == self.get(r.val))).collect())
             }
@@ -1796,7 +1963,14 @@ pub struct VRow {
 /// Buttons (caption, the choice that holds), or a slider (stops, the one it is at, the value shown).
 pub enum VCtl {
     Buttons(Vec<(String, bool)>),
-    Slider { n: usize, at: usize, shown: String },
+    Slider {
+        n: usize,
+        at: usize,
+        shown: String,
+    },
+    /// Buttons that do something when pressed (Neural Rendering's setup), not a choice: the cursor moves along them
+    /// and Enter or a click presses one.
+    Actions(Vec<String>),
 }
 
 /// The page as the modern layer draws it; the cursor's row (0 the page name) and column.
@@ -2390,13 +2564,56 @@ mod tests {
     /// Upscaling offers FSR 3.1 and External only where they run; FSR 1 and Off always.
     #[test]
     fn upscaling_choices_by_device() {
-        use crate::render::upscale::Availability;
-        let shown = |can: Availability| (0..=10).filter(|&x| offered_on(&can, x)).collect::<Vec<u32>>();
-        let no = || Err("no".to_string());
-        assert_eq!(shown(Availability { fsr3: Ok(()), external: Ok(()) }), (0..=10).collect::<Vec<u32>>());
-        assert_eq!(shown(Availability { fsr3: Ok(()), external: no() }), [0, 1, 2, 3, 4, 5, 7, 8, 9, 10]);
+        let shown = |fsr3, external| (0..=10).filter(|&x| offered_on(fsr3, external, x)).collect::<Vec<u32>>();
+        assert_eq!(shown(true, true), (0..=10).collect::<Vec<u32>>());
+        assert_eq!(shown(true, false), [0, 1, 2, 3, 4, 5, 7, 8, 9, 10]);
         // GL / GLES: FSR 1 alone.
-        assert_eq!(shown(Availability { fsr3: no(), external: no() }), [0, 7, 8, 9, 10]);
+        assert_eq!(shown(false, false), [0, 7, 8, 9, 10]);
+    }
+
+    /// Neural Rendering's row by its state: the buttons, and the help (the engine's sentences, the DLL's three points,
+    /// no download link).
+    #[test]
+    fn neural_rows() {
+        use crate::client::neural::{Found, State, set_for_test};
+        let mut ui = SettingsUi::open(&Config::default(), [1280, 800]);
+        ui.s.modern_ui = false;
+        set_for_test(State::Downloading(3_100_000, 12_000_000), vec![]);
+        assert_eq!(ui.find("Neural Rendering").unwrap().choices[0].1, "3.1 / 12.0 MB");
+        ui.s.modern_ui = true;
+        let row = |state: State, found: Vec<Found>| {
+            set_for_test(state, found);
+            ui.find("Neural Rendering").map(|r| (r.choices.iter().map(|c| c.1.clone()).collect::<Vec<_>>(), r.help))
+        };
+        let (c, h) = row(State::Absent, vec![]).unwrap();
+        assert_eq!(c, ["ON", "OFF"]);
+        assert!(h.contains("downloads the engine (12 MB)"), "{h}");
+        let (c, _) = row(State::Downloading(3_100_000, 12_000_000), vec![]).unwrap();
+        assert_eq!(c, ["Downloading 3.1 of 12.0 MB"]);
+        let game =
+            Found { path: "/g/nvngx_dlssnr.dll".into(), game: "Example Game".into(), note: "Usable: 310.9.16".into() };
+        let (c, h) = row(State::NeedsDll, vec![game.clone()]).unwrap();
+        assert_eq!(c[0], "Use the One in Example Game");
+        assert!(c.iter().any(|c| c == "Open Folder"));
+        assert!(h.contains("can't distribute") && h.contains("never run"), "{h}");
+        assert!(h.contains("Usable: 310.9.16."), "{h}");
+        assert!(!h.contains("http") && !h.contains(" own "), "{h}");
+        let (c, _) = row(State::Making(0.4), vec![]).unwrap();
+        assert_eq!(c, ["Making the Model: 40%"]);
+        let (c, h) = row(State::Ready("Ready: the small and original models".into()), vec![]).unwrap();
+        assert_eq!(c, ["ON", "OFF"]);
+        assert!(h.ends_with("Ready: the small and original models."), "{h}");
+        let v = ui.vrow(&ui.find("Neural Rendering").unwrap());
+        assert!(matches!(v.ctl, VCtl::Buttons(_)));
+        set_for_test(State::NeedsDll, vec![]);
+        assert!(matches!(ui.vrow(&ui.find("Neural Rendering").unwrap()).ctl, VCtl::Actions(_)));
+        // The classic page: short captions, the game in the help.
+        ui.s.modern_ui = false;
+        set_for_test(State::NeedsDll, vec![game]);
+        let r = ui.find("Neural Rendering").unwrap();
+        assert_eq!(r.choices.iter().map(|c| c.1.as_str()).collect::<Vec<_>>(), ["Use It", "Open Folder"]);
+        assert!(r.help.contains("the one in Example Game"), "{}", r.help);
+        set_for_test(State::Absent, vec![]);
     }
 
     /// A page's frame holds 7 rows; at the title the Client page leaves out UI Setup and nothing else.

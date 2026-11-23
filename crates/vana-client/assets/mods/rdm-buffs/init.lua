@@ -7,7 +7,7 @@ local COLOUR = { 200, 160, 255 }
 local Status = {
   HASTE = 33, BLAZE_SPIKES = 34, ICE_SPIKES = 35, BLINK = 36, STONESKIN = 37, SHOCK_SPIKES = 38, AQUAVEIL = 39,
   PROTECT = 40, SHELL = 41, REGEN = 42, REFRESH = 43, COPY_IMAGE = 66, STR_BOOST = 80, ENFIRE = 94, RERAISE = 113,
-  PHALANX = 116, SUBLIMATION_ACTIVATED = 187, SUBLIMATION_COMPLETE = 188, ENFIRE_II = 277, COMPOSURE = 419,
+  PHALANX = 116, STR_BOOST_II = 119, SUBLIMATION_ACTIVATED = 187, SUBLIMATION_COMPLETE = 188, ENFIRE_II = 277, COMPOSURE = 419,
   MULTI_STRIKES = 432, COPY_IMAGE_2 = 444, COPY_IMAGE_3 = 445, COPY_IMAGE_4 = 446,
 }
 
@@ -51,7 +51,10 @@ local function wanted(p)
   if on("phalanx") then add("phalanx", "Phalanx", { Status.PHALANX }, { Spell.PHALANX_II, Spell.PHALANX }) end
   if on("temper") then add("temper", "Temper", { Status.MULTI_STRIKES }, { Spell.TEMPER_II, Spell.TEMPER }) end
   local g = index_of(GAINS, on("gain"))
-  if g then add("gain", "Gain-" .. GAINS[g], { Status.STR_BOOST + g - 1 }, { Spell.GAIN_STR + g - 1 }) end
+  -- Retail's Gain spells give STR Boost .. CHR Boost 119..125; LSB's give the Boost spells' 80..86.
+  if g then
+    add("gain", "Gain-" .. GAINS[g], { Status.STR_BOOST_II + g - 1, Status.STR_BOOST + g - 1 }, { Spell.GAIN_STR + g - 1 })
+  end
   local en = index_of(ENSPELLS, on("enspell"))
   if en then
     add("enspell", "Enspell", { Status.ENFIRE_II + en - 1, Status.ENFIRE + en - 1 },

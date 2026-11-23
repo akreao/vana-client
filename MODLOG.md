@@ -22657,8 +22657,8 @@ From FFXiMain.dll (Steven's unpacked copy, full_text.asm / all_decomp.c).
 - Not retail. The modern interface's Config window (client/modern/config.rs) becomes "Settings": retail's Config list
   (Gameplay, Chat Filters, Font Colors, Misc. 1..4, Effects, Mouse/Cam., Global) and our Settings / Extras entries are
   replaced by fourteen topic pages in five groups (Game: Gameplay, Interface, Chat & Log, Maps & Timers; Graphics:
-  Display, Image Quality, Lighting & Shadows, Characters & World, Effects & Colour; Sound; Input: Mouse, Camera & Keys,
-  Controller; System: Startup & Account, Mods).
+  Display, Image Quality, Lighting & Shadows, Characters & World, Effects & Colour; Sound; Input: Mouse & Cursor,
+  Camera & Keys, Controller; System: Startup & Account, Mods).
 - `PAGES` lists each page's lines: a heading, retail's setting by its Config page and first control (its captions,
   options and help still read from the page's layout), ours by its row's label (`SettingsUi::item` / `item_set` find a
   row of Settings or Extras whatever page that state is on), or a button opening Chat Filters, Effects, Font Colors,
@@ -24864,6 +24864,64 @@ modern/search.rs (the "roe" list).
   the same way)*. Seen live (Lnxcsfix on a chocobo in West Ronfaure, numpad 8 held, Ctrl+A on a Forest Hare): `chi`
   and `coff` in the same frame, battle files 3.1 s later when `coff` ended, walking and hitting the hare after the
   draw.
+
+## Material Maps: normal, roughness and metal maps for the textures (ours, not retail; 2026-11-20)
+
+User request: generate normal, roughness and metal maps for our HD pack and use them. Retail has no such maps; its
+only per-pixel relief is config 0017's Bp height maps on some zones' walls ("Config tool 0017").
+- Maps: PBRify Remix (Kim2091, CC0 models trained on CC0 ambientCG / Poly Haven materials; SPAN, 1x) makes the
+  normal map (DirectX: green along +v, checked against its height model's gradients) and the roughness. Run on our
+  pack's images (Upscayl Standard 4x) at half their size (2x stock): at the full 4x the models see only soft
+  gradients and the normals come out nearly flat, at stock size they are strongest but coarse. No CC0 model makes
+  metal maps (Ubisoft's CHORD does, research-only licence), so metal is a guess for equipment textures (name `tim`)
+  only: grey or gold, bright, and smooth by the roughness map; scenery keeps metal 0 (lava and sand read as gold).
+  Only the world's and characters' images (names `model`, `ship`, `ship_f`, `tim`, `timws`: 17,060 of the 33,363) get
+  maps; effect sprites never go through these shaders.
+- `mat-pack --manifest DIR --maps DIR [--hd MODDIR] --out DIR` (texpack.rs): each image's maps once as
+  `maps/<2 hex>/<key>.vmat` (BC5 normal x / y renormalised per mip, BC5 roughness / metal, mips down to 4 texels), and
+  `index.bin` from Texture::content_key (FNV-1a over the size and the stored DXT blocks, else RGBA, by 64-bit words,
+  splitmix finish) of the stock image and of the tex-pack copy to the map key. So the maps follow the stock textures
+  and ours; another HD pack's images are not indexed.
+- Client (material.rs): config `material_maps`, Settings > Textures > Material Maps (both UIs): Off (default) / Low /
+  Medium / High, strength 1 / 2 / 3 (Uniforms modes.w; FFXI_MATERIAL_STRENGTH for the tools). Turning it on takes
+  effect at the next zone (the maps are attached as zone and character files load: dat::zone::load_scene,
+  dat::character::load_file). The pack is `<data>/materials` (VANA_MATERIALS elsewhere; FFXI_MATERIAL_MAPS=1 for the
+  offscreen tools). It follows the setting at the top of every frame (App::frame_updates), before loader tasks start:
+  opened first in draw_scene, it came after the login zone's load, so that zone kept no maps at any strength (the
+  user's log: zone 243's textures on the GPU at 04:45:37.879, the pack at .881).
+- Render: the texture group (group 1) gains bindings 2 / 3 (the two maps; a flat 1 x 1 pair for textures without),
+  so every pipeline keeps its layout. zone.wgsl surface(): the normal map in a frame from the screen derivatives of
+  the world position and uv (no vertex tangents), taken before any branch on varyings. lit_zone / lit_actor use it
+  for the sun / moon (and in two-light mode both) N.L and the point lights, add GGX specular from the roughness (F0
+  0.04, the colour for metal; faded out toward roughness 1, the flat default) under the baked vertex light (scenery)
+  or the model tint (actors), take half the diffuse for metal (no reflections), and scale the ambient by
+  1 + 0.4 (n.y - n'.y) (Y down): FFXI's ambient has no direction, so without it bumps would show only where the sun
+  falls. The strength scales the maps' tilt and that ambient term, and shades the baked vertex light (most of the
+  scenery's light) by 1 + 0.5 k (n'.L - n.L) against the key light (the sun, or the first of the two), clamped
+  0.3..2 (ours: retail's 0017 bump scales only the directional diffuse; FFXI's light is mostly baked, so the maps
+  would hardly show). A flat map changes nothing. Type-3 (Bp) meshes take our maps where their texture has them, and keep
+  retail's bump (fs_bump) where it has none (0017 on).
+- The maps need BC5 (TEXTURE_COMPRESSION_BC): without it (GL / GLES, most mobile Vulkan) the pack stays closed and
+  Settings shows Material Maps as Unavailable. Each map goes up once (Material::gpu, shared by every texture and
+  actor that uses it), streamed after its image under the upload budget (upload::TexUp / MatUp).
+- Generation: 17,060 images (1.9 Gpx at half size) in 12 min on the 7900 XTX (ROCm PyTorch, fp16, 1024 tiles);
+  the pack is 17,079 maps, 34,179 indexed textures, 4.8 GB.
+- Seen: zone-shot 230 at 15:00 at strengths 1..4: at 1 hardly a change (the ambient carries most of the light),
+  2 the walls' stone blocks and mortar lines and the floor's wear stand out, 4 the floor turns to noise.
+  flash-shot (zone 101, the Hume in body 8): the wall and the beam carved, the leather and boots a little raised
+  and glossy. Not seen live yet.
+- Fixes after the user's runs (2026-11-22):
+  - Roughness: PBRify rates every image 0.3..0.6 (median 0.42; its glossiest are the dark, flat ones such as `black`),
+    so grass and dark ground glinted under the moon like wet stone. Non-metal surfaces now stretch it to 0.6..1, and
+    the Fresnel term rises toward max(1 - roughness, F0), not 1, so rough surfaces lose the grazing sheen.
+  - Checkerboard on the ground (snow, grass, sand): the maps keep a small average tilt (median 0.03), and ground
+    tiles are one model placed at different turns (Beaucedine Glacier [S]'s 40 x 40 `ga_clro_co1_m` at 90 / 270
+    degrees), so the tilt pointed each tile a different way in the world and a low sun lit them apart. surface()
+    subtracts the map's last mip (4 x 4) before using it. Diffuse terms also use the normal with its lost component
+    along the geometric normal put back, so a bumpier map is not darker on average.
+  - Metal on actors reflects the zone's sky dome (the room's ambient without one), blurred by roughness, and takes a
+    quarter of the diffuse. Few equipment texels are tagged metal (a plate body 16 shows only specks), so armour
+    changes little until the metal maps improve.
 
 ## Upscaling: FSR 3.1 and the inputs for a temporal upscaler (ours, not retail)
 

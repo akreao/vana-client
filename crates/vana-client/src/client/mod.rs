@@ -78,6 +78,7 @@ mod mapmark;
 mod modsui;
 mod myroom;
 pub mod net;
+pub mod neural;
 mod notes;
 mod padcfg;
 pub(crate) mod perf;
@@ -2561,7 +2562,8 @@ fn anchor_point(world: &World, id: u32, which: usize) -> Option<Vec3> {
     let (pos, status) = if id == world.my_id {
         (drawn_pos(world), world.my_motion.status)
     } else {
-        world.entities.get(&id).map(|e| (e.pos, e.motion.status))?
+        // Actors not ours: the drawn place too (+0x678 follows +0x5fc), not the collision place it trails.
+        world.entities.get(&id).map(|e| (e.drawn.unwrap_or(e.pos), e.motion.status))?
     };
     let pos = event::pose(world, id).map_or(pos, |p| p.pos);
     // The drawn position (+0x678) has the mount offset; `coff` keeps the riding status.
@@ -6651,13 +6653,18 @@ fn drawn_pos(w: &World) -> Vec3 {
     if w.pos == w.step_to { w.draw_pos } else { w.pos }
 }
 
+/// FUN_100c8280's segment: from NOSE_FAR to NOSE_NEAR ahead, NOSE_UP in y (Y down).
+const NOSE_FAR: f32 = 1.1;
+const NOSE_NEAR: f32 = 0.8;
+const NOSE_UP: f32 = -1.0;
+
 /// FUN_100c8280 (own actor, riding, status 5 / 0x55): the segment from 1.1 to 0.8 ahead of the drawn place `d`
 /// (+0x5fc), 1 up (y -1), turned by the drawn rotation `yaw` (+0x620), is tested against the zone (FUN_10182b60); on a
 /// hit the drawn place moves by the hit less the segment's start in x and z.
 fn rider_nose(d: Vec3, yaw: f32, hit: impl Fn(Vec3, Vec3) -> Option<Vec3>) -> Vec3 {
     let f = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
-    let up = Vec3::new(0.0, -1.0, 0.0);
-    let (a, b) = (d + f * 1.1 + up, d + f * 0.8 + up);
+    let up = Vec3::new(0.0, NOSE_UP, 0.0);
+    let (a, b) = (d + f * NOSE_FAR + up, d + f * NOSE_NEAR + up);
     hit(a, b).map_or(d, |h| Vec3::new(d.x + h.x - a.x, d.y, d.z + h.z - a.z))
 }
 
@@ -6876,7 +6883,7 @@ fn slide_frame(
 /// FUN_100c63d0: the drawn rotation eases 0.125 a tick toward the actor's, or op 0x59's percent of 0.00125 during an
 /// event.
 fn turn_rate(a: &Actor, in_event: bool) -> f32 {
-    if in_event && a.turn_pct != 0 { (a.turn_pct as f32 * 0.00125).clamp(0.0, 1.0) } else { 0.125 }
+    if in_event && a.turn_pct != 0 { (a.turn_pct as f32 * 0.00125).clamp(0.0, 1.0) } else { DRAW_EASE }
 }
 
 /// An actor's place; a riding animal stands at its rider's (FUN_100c8ed0), a rider on a mount moves by its offset and
@@ -9219,7 +9226,7 @@ fn strafe_lock_aim(draw_step: Vec3, displaced: Vec3) -> Option<Vec3> {
         Vec3::new(n.x, 0.0, n.z)
     };
     let (d, s) = (flat(displaced), flat(draw_step));
-    if d.dot(s) < 0.0 { Some(d) } else { drawn_aim(draw_step, 0.01) }
+    if d.dot(s) < 0.0 { Some(d) } else { drawn_aim(draw_step, AIM_MIN) }
 }
 
 /// FUN_100c63d0 (0x100c6591) for an actor not ours over `ticks`: the drawn place `drawn` (+0x5fc, None = at `from`,
@@ -9227,7 +9234,7 @@ fn strafe_lock_aim(draw_step: Vec3, displaced: Vec3) -> Option<Vec3> {
 /// eases 0.125 a tick toward the collision place `pos` (+0x5c4), or is set to it (`snap`). Returns the drawn step.
 fn ease_drawn(drawn: &mut Option<Vec3>, from: Vec3, pos: Vec3, ticks: f32, snap: bool) -> Vec3 {
     let was = drawn.unwrap_or(from);
-    let now = if snap { pos } else { was + (pos - was) * (1.0 - 0.875f32.powf(ticks)) };
+    let now = if snap { pos } else { was + (pos - was) * draw_ease(ticks) };
     *drawn = (!snap && now.distance_squared(pos) > 1e-10).then_some(now);
     now - was
 }
@@ -9262,8 +9269,15 @@ fn strafe_lock_turn(
 /// The actor update's 0.125 a tick over one retail frame of `ticks` (its loop runs once per whole tick,
 /// FUN_10014cf0): 1 - 0.875^2 at the game's 30 frames a second.
 fn draw_ease(ticks: f32) -> f32 {
-    1.0 - 0.875f32.powf(ticks)
+    1.0 - (1.0 - DRAW_EASE).powf(ticks)
 }
+
+/// The share of the way the drawn place and rotation ease each tick (_DAT_1032b3bc).
+const DRAW_EASE: f32 = 0.125;
+/// A drawn step under this a retail frame aims nothing (FUN_100c63d0's 0.01 tests).
+const AIM_MIN: f32 = 0.01;
+/// A step under this a tick counts as standing for the walk / run motion (FUN_100c8930).
+const STAND_MAX: f32 = 0.01;
 
 /// A dir angle eased one retail frame of `ticks` toward `to` the short way round (+0x61c's ease, wrapped at +-pi).
 fn ease_yaw(yaw: f32, to: f32, ticks: f32) -> f32 {
@@ -14036,7 +14050,6 @@ impl App {
                 e.floor_noted = far;
             }
             // The actor is drawn at the slide (+0x34 = +4).
-            let step = e.slide - start;
             e.pos = e.slide;
             carry(eid, e);
             // Characters in a lift shaft stand at its height (FUN_100a4ed0 runs for every collision actor).
@@ -14061,18 +14074,24 @@ impl App {
                 || e.door != 0
                 || e.lift.is_some()
                 || matches!(e.sub_kind, 2..=4);
+            // The drawn step (fStack_26c). A jump over 12 and a 0x1c / 0x1f rider have +0x5fc set to the new place
+            // before the actor update (FUN_100929a0 / FUN_10092c20 in FUN_1008cd90), so it is 0 there: no turn
+            // toward the jump or the carrier's move. A lift sets it in the update (+0x5e2): the whole step.
             let dstep = ease_drawn(&mut e.drawn, start, e.pos, ticks, snap);
-            // A step under 0.01 a tick counts as standing (motion).
-            let flat = Vec3::new(step.x, 0.0, step.z);
-            let moved = if flat.length() < 0.01 * ticks { 0.0 } else { flat.length() };
+            let dstep = if snap && !lifted { Vec3::ZERO } else { dstep };
+            // The walk / run motion from the drawn step too (FUN_100c83c0 -> FUN_100c8930 takes its length for an
+            // actor not ours), so an actor gliding to a stop keeps its feet moving; under 0.01 a tick is standing.
+            let flat = Vec3::new(dstep.x, 0.0, dstep.z);
+            let moved = if flat.length() < STAND_MAX * ticks { 0.0 } else { flat.length() };
             // FUN_100c63d0's turn for an actor not ours: toward the drawn step when it reaches 0.01 a retail frame
-            // (flat, or 3D while falling) and moves 0.01 in x or z; else toward the heading (+0x39).
-            let want = drawn_aim(dstep, 0.01 * ticks / ground::frame_ticks())
+            // (flat, or 3D while falling) and moves 0.01 in x or z; else toward the heading (+0x39). The retail
+            // frame is ours (frame_ticks, Movement Rate): retail at 60 runs every actor's update once a tick.
+            let want = drawn_aim(dstep, AIM_MIN * ticks / ground::frame_ticks())
                 .map_or_else(|| event::rad_of(e.dir), |a| (-a.z).atan2(a.x));
             let tau = std::f32::consts::TAU;
             let diff = (want - e.yaw + std::f32::consts::PI).rem_euclid(tau) - std::f32::consts::PI;
             // Scheduler op 0x2f: the drawn facing stays while the effect runs (FUN_100c63d0 skips the ease).
-            let rate = world.actors.get(eid).map_or(0.125, |a| turn_rate(a, in_event));
+            let rate = world.actors.get(eid).map_or(DRAW_EASE, |a| turn_rate(a, in_event));
             // A camera rig (op 0xb9, vt+0x154) skips that block of FUN_100c63d0 too.
             let rig = world.actors.get(eid).is_some_and(|a| a.camera_rig);
             if !rig && world.face_locks.get(eid).is_none_or(|t| Instant::now() >= *t) {
@@ -14748,7 +14767,7 @@ impl App {
                 let ds = drawn - world.draw_from;
                 let kind = match aimed {
                     None => "none",
-                    Some(_) if strafe_lock_aim(ds, next - from) == drawn_aim(ds, 0.01) => "drawn",
+                    Some(_) if strafe_lock_aim(ds, next - from) == drawn_aim(ds, AIM_MIN) => "drawn",
                     Some(_) => "moved",
                 };
                 log::info!(
@@ -14984,7 +15003,7 @@ impl App {
             (Some([a, b]), _) => Some(a + wrap_angle(b - a) * frac),
             (None, Some(cur)) if !in_event && !world.unsettled && pin.is_none() => {
                 let d = (target - cur + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
-                Some(cur + d * (1.0 - 0.875f32.powf(dt * 60.0)))
+                Some(cur + d * draw_ease(dt * 60.0))
             }
             (None, _) => Some(target),
         };
@@ -18140,22 +18159,19 @@ impl App {
             w.sounds.push(crate::audio::Ui::Select as u32);
         }
         let mut save = false;
-        if let Some(rate) = p.save_move_rate.take() {
-            cfg.move_rate = rate;
-            ground::set_move_rate(rate);
-            save = true;
-            if let Some(s) = w.settings.as_mut() {
-                s.s.move_rate = rate;
-            }
-        }
         let p = &mut w.padcfg;
         if let Some(on) = p.save_rumble.take() {
             cfg.gamepad_rumble = on;
         }
-        if let Some((guid, xinput, sliders, hat)) = p.save_device.take() {
-            (cfg.gamepad_padguid, cfg.gamepad_xinput, cfg.gamepad_sliders, cfg.gamepad_hat) =
-                (guid, Some(xinput), Some(sliders), Some(hat));
+        if let Some(guid) = p.save_device.take() {
+            cfg.gamepad_padguid = guid;
             save = true;
+        }
+        for (k, on) in std::mem::take(&mut p.save_flags).into_iter().enumerate() {
+            if let Some(on) = on {
+                *[&mut cfg.gamepad_xinput, &mut cfg.gamepad_sliders, &mut cfg.gamepad_hat][k] = Some(on);
+                save = true;
+            }
         }
         if let Some((padsin, padexsin, on, bg, dead)) = p.save.take() {
             (cfg.gamepad_padsin, cfg.gamepad_padexsin) = (padsin, padexsin);
@@ -18184,9 +18200,8 @@ impl App {
             }
         }
         let p = &mut w.padcfg;
-        p.set = Some(gamepad::settings(cfg, gp.retail()));
+        p.set = Some(gamepad::settings(cfg, gp.retail()).for_dinput(gp.plays_dinput()));
         p.dead = (cfg.gamepad_deadzone * 100.0).round() as u32;
-        p.move_rate = cfg.move_rate;
         p.retail = gp.retail().map(|r| r.source.clone());
         p.pads = gp.pads();
         p.di = gp.plays_dinput();
@@ -18420,6 +18435,8 @@ impl App {
     /// The frame's work before any drawing: finished loader tasks, the network, area switches, then the world's
     /// (or the lobby's) per-frame updates and the mods' frame.
     fn frame_updates(&mut self) {
+        // Material Maps: the pack follows the setting before any load starts, so the first zone's textures get maps.
+        crate::material::set_enabled(self.cfg.material_maps != 0);
         while let Ok(t) = self.tasks.try_recv() {
             let name = t.name();
             perf::timed(|| format!("task {name}"), || self.handle_task(t));
@@ -19023,12 +19040,12 @@ impl App {
             snaps = up.targets.as_ref().map(|t| [t.snap_opaque.clone(), t.snap_blend.clone(), t.snap_pre_fx.clone()]);
             motion = up.motion_target();
         }
-        // The texture LOD bias while an upscaler draws the world below the window's size (zone.wgsl u.modes.z).
-        let lod_bias = if fsr1 || (upscaling && matches!(self.cfg.upscaler, 1 | 2)) {
+        // The texture LOD bias while an upscaler draws the world below the window's size (render::lod_bias).
+        crate::render::set_lod_bias(if fsr1 || (upscaling && matches!(self.cfg.upscaler, 1 | 2)) {
             crate::render::upscale::lod_bias(target_size[0], size[0], !fsr1)
         } else {
             0.0
-        };
+        });
         let bg = target_size;
         let (scene_view, scene_depth, scene_tex) = if scaled {
             self.scene_scale
@@ -19066,7 +19083,6 @@ impl App {
             counts,
             drew_world,
             upscaling,
-            lod_bias,
             jitter,
             snaps,
             frame_camera: None,
@@ -19244,9 +19260,9 @@ impl App {
 
     /// The scene finished: the lobby's fade over it, then the scaling pass into the window (gamma, 3D LCD Mode,
     /// anti-aliasing, grading); the 2D layer's and the scene's levels.
-    /// Whether the device can run the upscaler (render::upscale::availability, logged when the device was made).
+    /// Whether the device can run the upscaler (render::upscale::status, worked out when the device was made).
     fn upscale_ready(&mut self) -> bool {
-        *self.upscale_supported.get_or_insert_with(|| crate::render::upscale::availability().fsr3.is_ok())
+        *self.upscale_supported.get_or_insert_with(|| crate::render::upscale::status(1).is_ok())
     }
 
     fn finish_scene(&mut self, gfx: &Gfx, g: &mut FrameGpu, size: [u32; 2]) -> (f32, f32) {
@@ -19707,8 +19723,6 @@ struct FrameGpu {
     /// The upscaler runs this frame: the projection's jitter, the colour snapshots' targets (after the opaque
     /// scenery, after the blended, before the effects) and the camera the world drew with.
     upscaling: bool,
-    /// The texture LOD bias for this frame's render size (0 at the window's size).
-    lod_bias: f32,
     jitter: glam::Vec2,
     snaps: Option<[wgpu::Texture; 3]>,
     frame_camera: Option<crate::render::upscale::FrameCamera>,
@@ -21128,8 +21142,9 @@ fn draw_scene(
     r.bump_mode = cx.cfg.tool("0017") != 0 && w.zone != Some(182);
     // Light Shading (ours): Smooth lights the scenery's lamps per pixel, Retail per vertex.
     r.smooth_lights = cx.cfg.smooth_lights;
-    // Below the window's size (an upscaler, ours): textures sampled with a negative LOD bias.
-    r.lod_bias = fg.lod_bias;
+    // Material Maps (ours): the pack (App::frame_updates) gives maps to textures loaded while it is open.
+    r.material_maps = cx.cfg.material_maps != 0 && crate::material::available();
+    r.material_strength = cx.cfg.material_maps as f32;
     // Windowed (0034 != 0, no gamma ramp): lights boosted by the channels' ramps (render::light_boost),
     // gamma base 0028 + 1 + Gameplay R / G / B / 100 (FUN_101aa650).
     r.light_boost = if cx.cfg.window_mode() != 0 {
@@ -21546,9 +21561,8 @@ impl ApplicationHandler for App {
         #[cfg(windows)]
         windpi::keep_size(&window);
         // A first start (no config yet): Menu Size and Interface Size from the screen's size (client/screen.rs).
-        if std::mem::take(&mut self.cfg.first_start)
-            && let Some(m) = window.current_monitor().or_else(|| monitor.clone())
-        {
+        let first_start = std::mem::take(&mut self.cfg.first_start);
+        if first_start && let Some(m) = window.current_monitor().or_else(|| monitor.clone()) {
             screen::size_ui(&mut self.cfg, &m);
             if let Err(e) = self.cfg.save() {
                 log::warn!("saving the config: {e:#}");
@@ -21564,27 +21578,19 @@ impl ApplicationHandler for App {
         self.gpus = crate::render::adapter_names(&instance, Some(&surface));
         let gpu = Gpu::with_adapter(instance, Some(&surface), &self.cfg.gpu).expect("opening the GPU");
         let size = window.inner_size();
-        // A low-spec GPU (GL / GLES, no BC textures, a software rasterizer): the first time, the settings still at
-        // their defaults take cheaper values (Config::low_spec_defaults).
+        // A low-spec GPU (GL / GLES, no BC textures, a software rasterizer) on a first start (no config file yet):
+        // cheaper values than the defaults (Config::low_spec_defaults). An existing config is never rewritten, so an
+        // upgrade or one run on another backend (WGPU_BACKEND=gl) leaves the player's settings alone.
         let class = crate::render::GpuClass::of(&gpu.adapter.get_info(), gpu.adapter.features());
-        if class != crate::render::GpuClass::Capable && !self.cfg.low_spec_seen {
-            self.cfg.low_spec_seen = true;
-            // Builds before this halved the background and set anisotropy 1 for a software rasterizer once
-            // (software_gpu_seen): what the player made of those two stays.
-            let legacy = class == crate::render::GpuClass::Software && self.cfg.software_gpu_seen;
-            self.cfg.software_gpu_seen |= class == crate::render::GpuClass::Software;
+        if class != crate::render::GpuClass::Capable && first_start {
             // The game window's size, not the installer's (bootstrap opens a fixed one; the configured window follows
             // when setup is done, window_dirty, in the mode set here). Wayland has no current monitor for a window
             // not yet shown: the one picked for it then.
             let game = if bootstrap { self.cfg.window_size() } else { [size.width, size.height] };
             let screen = window.current_monitor().or_else(|| monitor.clone());
             let was_mode = self.cfg.window_mode();
-            let changes = self.cfg.low_spec_defaults(
-                class,
-                game,
-                screen.as_ref().map(|m| [m.size().width, m.size().height]),
-                legacy,
-            );
+            let changes =
+                self.cfg.low_spec_defaults(class, game, screen.as_ref().map(|m| [m.size().width, m.size().height]));
             log::info!("low-spec GPU ({class:?}), first start: {}", changes.join(", "));
             crate::render::ANISOTROPY.store(self.cfg.anisotropy, std::sync::atomic::Ordering::Relaxed);
             self.frame_limit = self.cfg.frame_limit();

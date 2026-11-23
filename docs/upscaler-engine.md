@@ -36,6 +36,9 @@ The upscaled output is `Rgba16Float`, linear, at the window size.
 
 ## The engine library (Upscaling: External, Neural Rendering)
 
+vana-client's own engine, for Neural Rendering, is in `engine/`: `engine/README.md` covers its build, its install and
+the model it needs.
+
 A native library is given the inputs as Vulkan handles and records its work into a command buffer of its own. It is
 loaded from `VANA_UPSCALE_ENGINE`, else `upscale-engine.so` (Linux) / `upscale-engine.dll` (Windows) in the data
 folder, and needs the Vulkan backend. It exports either or both of:
@@ -49,6 +52,18 @@ int vana_upscale_dispatch(const VanaUpscaleFrame* frame);
    Rgba16Float image; the upscaler (or the scaling pass) reads that instead of `color`. 0 = done; anything else: this
    frame keeps the original colour. `output_size` equals `render_size` in this call. */
 int vana_nr_dispatch(const VanaUpscaleFrame* frame);
+```
+
+A Neural Rendering engine may also export these, which need no device; each writes one plain sentence into `msg`
+for the player:
+
+```c
+const char* vana_nr_version(void);                                  /* the release it came with: "vana-client/0.4.0" */
+int vana_nr_model_status(char* msg, uint32_t size);                 /* 0 ready, 1 no model, 2 its files can't be written */
+int vana_nr_check_dll(const char* path, char* msg, uint32_t size);  /* can this file make the model? 0 yes, 1 no */
+/* Makes the model from the file; blocks (seconds), so off the render thread. progress may be null. 0 done, 1 not. */
+int vana_nr_make_model(const char* path, void (*progress)(float fraction, void* user), void* user,
+                       char* msg, uint32_t size);
 ```
 
 When the library has `vana_nr_dispatch`, the client makes its Vulkan device with the network's features, when the
@@ -89,3 +104,22 @@ typedef struct {
   with a barrier (source: all commands, memory writes), and its last must make the output's writes visible to
   fragment shader reads.
 - The handles belong to the client: do not destroy them or keep them past the call.
+
+## Neural Rendering in Settings (client/neural.rs)
+
+- **The engine:** on Linux x86_64 with the Vulkan backend, turning Neural Rendering on downloads
+  `vana-client-nr-engine-linux-x86_64.so` from the release tagged with this client's version (not the latest), checks
+  its `.sig` against the release key (`signed_text(tag, asset name, bytes)`), and renames it from `upscale-engine.so.part`
+  into place. Never at start-up and never with the update check.
+- **Its release:** an engine whose `vana_nr_version()` is not `vana-client/<this version>` is not used, and is fetched
+  again when Settings opens with Neural Rendering on. One without `vana_nr_version` (a player's build), or one named by
+  `VANA_UPSCALE_ENGINE`, is never replaced.
+- **Mid-session:** the device's features are chosen when it is made (`neural_device`), so an engine fetched during a
+  session asks for a restart.
+- **The model:** while `vana_nr_model_status` says 1, the row asks for NVIDIA's DLL: the Steam libraries
+  (`libraryfolders.vdf` of native, `~/.steam` and Flatpak Steam; each game folder four deep, named by its appmanifest)
+  and the drop folder `<data>/nr/dll/` are searched, each candidate checked with `vana_nr_check_dll` (a file checked
+  before, same size and time, is not checked again). Its buttons: use the one found, Choose File... (the modern UI's
+  in-game picker) and Open Folder. `vana_nr_make_model` runs on a worker thread with its progress on the row; the
+  engine takes the model up by itself. The DLL is never copied or kept.
+- The row shows the engine's sentences as it writes them and never links a download of the DLL.
