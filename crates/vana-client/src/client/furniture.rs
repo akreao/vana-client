@@ -108,10 +108,13 @@ impl State {
     pub fn apply(w: &mut World, l: Loaded) -> Vec<(Arc<ZoneGeometry>, Vec<Texture>)> {
         for (id, _, _) in std::mem::take(&mut w.furniture.pieces) {
             w.effects.stop_actor_scheduler(id, u32::from_le_bytes(*b"init"));
+            w.effects.stop_furniture(id);
         }
         for (k, d) in l.pieces.iter().enumerate() {
             let id = 0x0400_0000 | (0x3ff - k as u32);
             w.furniture.pieces.push((id, d.file_id, d.matrix));
+            // FUN_100c4410 -> FUN_100c46b0: the file's time-window schedulers (op 0xa2) start on the piece.
+            w.effects.on_furniture(id, d.file_id);
             if d.init {
                 w.effects.on_scheduler_quiet(id, u32::from_le_bytes(*b"init"));
             }

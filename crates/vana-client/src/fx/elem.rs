@@ -601,6 +601,21 @@ pub fn update_ref(
                 let k = w::ROT + (code - 0x61) as usize;
                 e.set(k, wrap(e.f(k) + half(kg(e, s)) * dt))
             }
+            // Case 0x1004b249: the turn from the last step S[s+3..] to this one (from the last position S[s..]) times
+            // the factors; then the slot takes this position and step (f32::atan2 answers two zeros as fpatan does).
+            0x64 => {
+                let pos = e.v3(w::POS);
+                let d = pos - e.sv3(s);
+                let a = -e.sf(s + 5).atan2(e.sf(s + 3));
+                let t = (d.x * a.sin() + d.z * a.cos()).atan2(d.x * a.cos() - d.z * a.sin());
+                for k in 0..3 {
+                    if of(1 + k) != 0.0 {
+                        e.set(w::ROT + k, wrap(t * of(1 + k)));
+                    }
+                }
+                e.set_sv3(s, pos);
+                e.set_sv3(s + 3, d);
+            }
             0x66..=0x68 => e.set(w::ROT + (code - 0x66) as usize, half(kg(e, s))),
             0x59 => e.set(w::ROT + 2, (e.f(w::KEY_PREV) * of(1) + of(2)) % OP59_TURN - OP59_HALF),
             0x5a => {
@@ -648,6 +663,22 @@ mod lit_tests {
         assert!(close(lit(Mat3::IDENTITY, Vec3::Y, None).0, 0.07874));
         let (c, l) = lit(Mat3::IDENTITY, Vec3::NEG_Y, Some(Mat4::from_translation(Vec3::new(100.0, 0.0, 0.0))));
         assert!(close(c, 0.08403) && (l - Vec3::new(-0.99995, 0.0099995, 0.0)).length() < 1e-5, "{c} {l}");
+    }
+
+    /// A lit ground projection (gaps item 126), same Cv / ambient / light: the image's mesh under WORLD = S(0.25) L
+    /// has its normal 4 times as long, so the facing side saturates; the decal's faces have no normal and keep
+    /// Cv x Ga, whatever the light.
+    #[test]
+    fn ground_proj_lit() {
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        let quarter = Mat3::from_diagonal(Vec3::splat(0.25));
+        assert!(close(lit(quarter, Vec3::NEG_Y, None).0, 1.0));
+        assert!(close(
+            lit(quarter, Vec3::new(1.0, -0.05, 0.0), None).0,
+            0.07874 + 128.0 / 255.0 * 192.0 / 255.0 * 1.4 * 0.2
+        ));
+        assert!(close(lit(quarter, Vec3::Y, None).0, 0.07874));
+        assert!(close(lit(Mat3::IDENTITY, Vec3::ZERO, None).0, 128.0 / 255.0 * 40.0 / 255.0));
     }
 
     #[test]

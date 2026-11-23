@@ -2039,6 +2039,14 @@ fn main() -> Result<()> {
                                 }
                             }
                         }
+                        // FFXI_REFLECTIONS=1 (water) or 2 (water and floors): water reflections, as the client
+                        // draws them (after the actors, then on the effect water in the effects draw).
+                        let refl = std::env::var("FFXI_REFLECTIONS").ok().and_then(|v| v.parse::<u32>().ok());
+                        if let Some(k) = refl.filter(|k| *k > 0) {
+                            zr.prepare_reflections(gpu, true, k > 1);
+                            zr.render_reflections(gpu, enc, color, Some(color_tex), depth, cam, 1600.0 / 900.0, &[]);
+                            eg.water = zr.fx_water(gpu, eg, depth);
+                        }
                         let (fog_color, fog) =
                             l.map_or(([0.0; 3], [150.0, 600.0]), |l| (l.fog.to_array(), [l.fog_start, l.fog_end]));
                         eg.draw(
@@ -2052,6 +2060,7 @@ fn main() -> Result<()> {
                             fog_color,
                             fog,
                         );
+                        eg.water = None;
                         Ok(())
                     };
                     // Twice: the effects write the point lights the scenery reads on the next frame.
@@ -3973,6 +3982,8 @@ fn fx_shot(
         }
         let Some(eg) = eg.as_mut() else { unreachable!() };
         eg.set_lights(&zr.lights);
+        // Lit elements (op-1 flag 16), as the client sets them with no gamma boost.
+        eg.set_light(l.map(|l| (l.dir, l.diffuse, l.ambient)));
         fx.reg.light_keys = zr.light_keys.clone();
         let view = cam.view();
         let mut view_rot = view;
