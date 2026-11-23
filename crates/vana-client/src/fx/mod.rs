@@ -3393,6 +3393,25 @@ impl Effects {
         scan
     }
 
+    /// Whether a generator instance belongs to the scene (the zone's, a sub-area's, a weather's or an event's), not
+    /// to an actor's model or footsteps, following element owners up: water reflections (render/reflect.rs) look only
+    /// at these.
+    pub fn zone_owned(&self, inst: usize) -> bool {
+        let mut inst = inst;
+        for _ in 0..8 {
+            let Some(i) = self.insts.get(inst).and_then(|x| x.as_ref()) else { return false };
+            match i.owner {
+                Owner::Actor(_) | Owner::Step(_) => return false,
+                Owner::Element(e) => match self.elems.get(e).and_then(|c| c.as_ref()) {
+                    Some(c) => inst = c.inst,
+                    None => return true,
+                },
+                _ => return true,
+            }
+        }
+        true
+    }
+
     /// One line per live element: generator path, what it draws, blend, flags, key, life.
     pub fn describe(&self) -> Vec<String> {
         let mut out = Vec::new();
