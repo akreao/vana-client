@@ -1112,8 +1112,8 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "cd9252a5f4a06eaaeca2b2a733610741264e98f90c6ae680a0e5528346b1bd2e",
-          "size": 2234,
+          "sha256": "f799dad4d13d5eb1b8516252cc0cf89ef60b791a193b8b066b3e4d5a675cc5d6",
+          "size": 2235,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/gearshift/mod.toml"
         },
         {
@@ -1136,14 +1136,14 @@
         },
         {
           "path": "src/build/pick.lua",
-          "sha256": "1842be1601ee6a180b229ecb950b21e2e301e1c819e6088b1f74625b77874495",
-          "size": 13400,
+          "sha256": "ddc2f2f219a4dd9cf0856d12bc798718538c2dd1465e3c865f2a43fda76cd979",
+          "size": 14603,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/gearshift/src/build/pick.lua"
         },
         {
           "path": "src/build/run.lua",
-          "sha256": "b1cf4e0e6b34fb421abd8d820f49d4e669761b9bfa466345d8058f8abbbb657b",
-          "size": 21735,
+          "sha256": "b5832fb44b5bb04e1a21e63294827f2cd21901bd7dffcd89ce90205527dd740a",
+          "size": 22413,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/gearshift/src/build/run.lua"
         },
         {
@@ -1160,8 +1160,8 @@
         },
         {
           "path": "src/build/window.lua",
-          "sha256": "5a1a94e8ab0217afe2c6acdbf6dc66c0ecce5a1d99c4a9f4592324d470da4d80",
-          "size": 10239,
+          "sha256": "3b590b89b274ea49e42053103909f590a0e2dc376e5dba38b871642d517e1331",
+          "size": 11139,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/gearshift/src/build/window.lua"
         },
         {
@@ -1240,7 +1240,7 @@
       "id": "gearshift",
       "kind": "lua",
       "name": "Gearshift",
-      "version": "0.2.7"
+      "version": "0.2.12"
     },
     {
       "authors": [],
@@ -1338,7 +1338,7 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "8d8fe4382905ba479861365b88581e878f2a3ba0188ff1cb4d113bc6bee1a3c6",
+          "sha256": "fd3c495513f36c71698e2db3c14e665593d47cb286af635a543cbdf23c79e43f",
           "size": 4231,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/mod.toml"
         },
@@ -1362,14 +1362,14 @@
         },
         {
           "path": "src/chooser.lua",
-          "sha256": "7814a48cb72f4e9f81cf7489a0228d1863791b13f603e8039cbaecb22aeaf489",
-          "size": 4003,
+          "sha256": "cdf38e7372832d05335bd76fcb2e1deead7cf8bedf5508fa2fdd1a28eb3d4001",
+          "size": 4841,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/chooser.lua"
         },
         {
           "path": "src/data.lua",
-          "sha256": "ffd701fc73c4f040f91c16c222c136115193302b155ffa0c2b1a983a7e07b740",
-          "size": 21591,
+          "sha256": "ef611ef261242a6351b10f09809fede742340e7df10ab84c65f6836f6307ccd6",
+          "size": 22938,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/data.lua"
         },
         {
@@ -1392,8 +1392,8 @@
         },
         {
           "path": "src/manager.lua",
-          "sha256": "ff2f2936ba7ab6e76221923ccf1f926101ac966ea86e5a1cc17642622c7e998f",
-          "size": 33289,
+          "sha256": "97a49c633385bb3f9baa0496b2f70f081cd683a0f26f87bd7c9e949a3616eb2f",
+          "size": 33927,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/hotbar/src/manager.lua"
         },
         {
@@ -1442,7 +1442,7 @@
       "id": "hotbar",
       "kind": "lua",
       "name": "Hotbars",
-      "version": "1.13.3"
+      "version": "1.13.4"
     },
     {
       "authors": [],
@@ -2552,6 +2552,44 @@
     },
     {
       "authors": [],
+      "commands": {
+        "buffs": {
+          "args": "",
+          "forms": [
+            {
+              "args": "list",
+              "help": "Lists the missing buffs in the chat log."
+            },
+            {
+              "args": "cancel",
+              "help": "Stops casting after the spell under way."
+            }
+          ],
+          "help": "Casts every missing buff on yourself, in order."
+        }
+      },
+      "description": "Lists the Red Mage self-buffs that are down or wearing off in an edge window; Cast All (or /buffs) casts them.",
+      "files": [
+        {
+          "path": "init.lua",
+          "sha256": "aac481dc0f7c9df1bd425207d9a5b15a82f66c470f1da9371723c036b4bd7325",
+          "size": 9918,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/rdm-buffs/init.lua"
+        },
+        {
+          "path": "mod.toml",
+          "sha256": "7f6bacede342fdb4054ddb87f11f775e7361cb82825d523499590c9072b82c84",
+          "size": 2235,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/rdm-buffs/mod.toml"
+        }
+      ],
+      "id": "rdm-buffs",
+      "kind": "lua",
+      "name": "RDM Buffs",
+      "version": "1.0.3"
+    },
+    {
+      "authors": [],
       "description": "The Fields or Grounds of Valor regime in force and your kills, in a window beside the timers.",
       "files": [
         {
@@ -3383,25 +3421,25 @@
     },
     {
       "authors": [],
-      "description": "Changes how the world looks: brightness, colour, a cel-shaded look with outlines, or wireframe (the render tweak add-ons). The menus are not changed.",
+      "description": "Changes how the world looks: brightness, colour, a cel-shaded look, a painted look, outlines, or wireframe (the render tweak add-ons). The menus are not changed.",
       "files": [
         {
           "path": "init.lua",
-          "sha256": "fcb9a0d1f9982c0b6db6fb7a18192e7ef32335415fd6e8daa965ce14bca34dd0",
-          "size": 1878,
+          "sha256": "d003bee5f106ef7bf1889390fb723e18e5d3803e4e7bc1688a861954a39f954d",
+          "size": 8304,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/visual-tweaks/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "0a20f2ed4746691ec5c9d34edb8479f0961146753a24b2854d7a1c461a751713",
-          "size": 879,
+          "sha256": "a6c2a22b78e4a17686b9ffdc5f4270a9900ee48f6c0d616c724c756d8cb9ff58",
+          "size": 2064,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/custom/crates/vana-client/assets/mods/visual-tweaks/mod.toml"
         }
       ],
       "id": "visual-tweaks",
       "kind": "lua",
       "name": "Visual Tweaks",
-      "version": "1.0.0"
+      "version": "1.2.2"
     },
     {
       "authors": [],

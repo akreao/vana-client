@@ -41,6 +41,7 @@ mod unrar_isnt {
 mod inventory;
 mod invitems;
 mod invshot;
+mod material;
 mod modpack;
 mod motion;
 mod motionq;
@@ -354,6 +355,20 @@ enum Cmd {
         /// Rewrite PNGs that already exist (hand edits are kept otherwise).
         #[arg(long)]
         redo: bool,
+    },
+    /// The material pack (material.rs) from generated normal / roughness / metal maps for tex-export's images.
+    MatPack {
+        /// The tex-export folder (its manifest.tsv).
+        #[arg(long)]
+        manifest: PathBuf,
+        /// The maps: `<key>.n.png`, `<key>.r.png`, `<key>.m.png`.
+        #[arg(long)]
+        maps: PathBuf,
+        /// A tex-pack folder whose copies are indexed too.
+        #[arg(long)]
+        hd: Option<PathBuf>,
+        #[arg(long)]
+        out: PathBuf,
     },
     /// Install a pack archive into `root` as Settings > Mods does, to check a pack before publishing it.
     ModInstall {
@@ -1252,6 +1267,10 @@ fn main() -> Result<()> {
         }));
     }
     log.init();
+    // FFXI_MATERIAL_MAPS: the offscreen tools load the material pack (material.rs); play follows Settings.
+    if std::env::var_os("FFXI_MATERIAL_MAPS").is_some() {
+        material::set_enabled(true);
+    }
     let Some(cmd) = cli.cmd else {
         return client::run(config::Config::load(), client::Drive::default());
     };
@@ -1333,6 +1352,8 @@ fn main() -> Result<()> {
                     }
                 })?;
                 println!("updated {total} files to {}", plan.server.version);
+            } else if !dry_run {
+                patch::record_current(&root, &plan)?;
             }
             Ok(())
         }
@@ -1458,7 +1479,13 @@ fn main() -> Result<()> {
             let size = (mesh.max - mesh.min).max_element();
             let (s, c) = yaw.to_radians().sin_cos();
             let eye = centre + glam::Vec3::new(s, 0.0, c) * size * 1.6;
-            let camera = render::Camera { eye, target: centre, up: glam::Vec3::NEG_Y, fov_y: 40f32.to_radians() };
+            let camera = render::Camera {
+                jitter: glam::Vec2::ZERO,
+                eye,
+                target: centre,
+                up: glam::Vec3::NEG_Y,
+                fov_y: 40f32.to_radians(),
+            };
             render::character::render_png(&ch, &mesh, &camera, 600, 800, &out)?;
             println!("bounds {} .. {}; wrote {}", mesh.min, mesh.max, out.display());
             Ok(())
@@ -1711,7 +1738,7 @@ fn main() -> Result<()> {
                 (Some(e), Some(t)) => (v3(e), v3(t), Vec3::NEG_Y),
                 _ => (centre + Vec3::new(0.0, -(hi - lo).max_element() * 0.9, 0.01), centre, Vec3::Z),
             };
-            let camera = render::Camera { eye, target, up, fov_y: 60f32.to_radians() };
+            let camera = render::Camera { jitter: glam::Vec2::ZERO, eye, target, up, fov_y: 60f32.to_radians() };
             let sub_file = sub.map(|id| index.read(dat::zone::file_id(id)).map(|f| (id, f))).transpose()?;
             let sub_scene =
                 sub_file.as_ref().map(|(id, f)| dat::zone::load_scene(&keys, f).map(|s| (*id, s))).transpose()?;
@@ -1741,6 +1768,8 @@ fn main() -> Result<()> {
                 // FFXI_SMOOTH_LIGHTS: Settings' Light Shading Smooth (ours) in place of retail's per-vertex lights.
                 r.smooth_lights = std::env::var_os("FFXI_SMOOTH_LIGHTS").is_some();
                 r.surface_detail = detail.min(2);
+                r.material_maps = crate::material::available();
+                r.material_strength = crate::material::env_strength();
                 if let Some(v) = voyage_v {
                     r.voyage = v;
                 }
@@ -1915,10 +1944,10 @@ fn main() -> Result<()> {
                                     l: Option<&dat::weather::Lighting>,
                                     zr: &mut render::ZoneRenderer|
                      -> anyhow::Result<()> {
-                        render::effects::fits(gpu)?;
-                        let eg = eg_keep.get_or_insert_with(|| {
-                            render::effects::EffectsGpu::new(gpu, wgpu::TextureFormat::Rgba8Unorm)
-                        });
+                        if eg_keep.is_none() {
+                            eg_keep = Some(render::effects::EffectsGpu::new(gpu, wgpu::TextureFormat::Rgba8Unorm)?);
+                        }
+                        let Some(eg) = eg_keep.as_mut() else { unreachable!() };
                         eg.set_lights(&zr.lights);
                         eg.set_light(l.map(|l| (l.dir, l.diffuse, l.ambient)));
                         fx.reg.light_keys = zr.light_keys.clone();
@@ -2385,6 +2414,7 @@ fn main() -> Result<()> {
         Cmd::TexPack { manifest, upscaled, out, redo } => texpack::pack(&manifest, &upscaled, &out, redo.as_deref()),
         Cmd::TexHeights { out, zones, redo } => surface::pack(&out, zones.as_deref(), redo),
         Cmd::TexSlim { pack, out } => texpack::slim(&pack, &out),
+        Cmd::MatPack { manifest, maps, hd, out } => texpack::mat_pack(&manifest, &maps, hd.as_deref(), &out),
         Cmd::ModInstall { archive, root } => {
             let pack = modpack::pack_of(&archive)?;
             let n = modpack::install(&pack, &root, &std::sync::atomic::AtomicU32::new(0))?;
@@ -2698,7 +2728,13 @@ fn npc_shot(
     let size = (mesh.max - mesh.min).max_element();
     let (s, c) = yaw.to_radians().sin_cos();
     let eye = centre + glam::Vec3::new(s, 0.0, c) * size * 1.6;
-    let camera = render::Camera { eye, target: centre, up: glam::Vec3::NEG_Y, fov_y: 40f32.to_radians() };
+    let camera = render::Camera {
+        jitter: glam::Vec2::ZERO,
+        eye,
+        target: centre,
+        up: glam::Vec3::NEG_Y,
+        fov_y: 40f32.to_radians(),
+    };
     render::character::render_png(&ch, &mesh, &camera, 600, 800, out)?;
     println!("bounds {} .. {}; wrote {}", mesh.min, mesh.max, out.display());
     Ok(())
@@ -2953,8 +2989,13 @@ fn flyover_shot(
                 for i in 0..if p.keys.is_empty() { 0 } else { steps.max(1) } {
                     let t = if steps <= 1 { 0.0 } else { i as f32 / (steps - 1) as f32 };
                     let k = sample(p, t);
-                    let cam =
-                        render::Camera { eye: k.eye, target: k.target, up: glam::Vec3::NEG_Y, fov_y: fov_y(k.focal) };
+                    let cam = render::Camera {
+                        jitter: glam::Vec2::ZERO,
+                        eye: k.eye,
+                        target: k.target,
+                        up: glam::Vec3::NEG_Y,
+                        fov_y: fov_y(k.focal),
+                    };
                     frames.push((cam, out_dir.join(format!("{scheduler}_{path}_{i}.png")), lighting));
                 }
             }
@@ -3979,6 +4020,7 @@ fn fx_shot(
         seq: 0,
     };
     let camera = render::Camera {
+        jitter: glam::Vec2::ZERO,
         eye: v3(eye),
         target: (c + t) / 2.0 + Vec3::new(0.0, -1.2, 0.0),
         up: Vec3::NEG_Y,
@@ -3999,8 +4041,10 @@ fn fx_shot(
                     l: Option<&dat::weather::Lighting>,
                     zr: &mut render::ZoneRenderer|
      -> anyhow::Result<()> {
-        render::effects::fits(gpu)?;
-        let eg = eg.get_or_insert_with(|| render::effects::EffectsGpu::new(gpu, wgpu::TextureFormat::Rgba8Unorm));
+        if eg.is_none() {
+            eg = Some(render::effects::EffectsGpu::new(gpu, wgpu::TextureFormat::Rgba8Unorm)?);
+        }
+        let Some(eg) = eg.as_mut() else { unreachable!() };
         eg.set_lights(&zr.lights);
         // Lit elements (op-1 flag 16), as the client sets them with no gamma boost.
         eg.set_light(l.map(|l| (l.dir, l.diffuse, l.ambient)));

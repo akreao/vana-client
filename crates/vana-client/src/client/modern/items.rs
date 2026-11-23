@@ -179,13 +179,6 @@ fn list(p: &mut Panels, w: &mut World) {
                     Color32::WHITE,
                 );
             }
-            painter.text(
-                pos2(r.min.x + 42.0, r.center().y),
-                Align2::LEFT_CENTER,
-                &row.name,
-                FontId::proportional(m.theme.ui),
-                tint(m, row.tint),
-            );
             let starred = !direct
                 && super::favs::star(ui, m, r, favs.get(k).copied().unwrap_or(false), resp.hovered() && sub.is_none());
             if starred {
@@ -207,8 +200,12 @@ fn list(p: &mut Panels, w: &mut World) {
                     - 8.0;
             }
             if let Some(price) = bazaar.get(k).copied().flatten() {
-                bazaar_tag(ui, m, right, r.center().y, price);
+                right = bazaar_tag(ui, m, right, r.center().y, price) - 8.0;
             }
+            // The name in the room left of the count and the bazaar tag.
+            let (name, font) =
+                super::kit::fit(ui, &row.name, &FontId::proportional(m.theme.ui), right - 2.0 - r.min.x - 42.0, 0.85);
+            ui.painter().text(pos2(r.min.x + 42.0, r.center().y), Align2::LEFT_CENTER, name, font, tint(m, row.tint));
             if resp.clicked() && !starred {
                 mouse.click = Some(k);
             }

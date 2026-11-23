@@ -31,9 +31,14 @@ pub fn frame_ticks() -> f32 {
     FRAME_TICKS.load(std::sync::atomic::Ordering::Relaxed) as f32
 }
 
-/// Movement Rate (config move_rate): 60 runs one tick a frame, anything else the game's 30 (two ticks).
+/// Movement Rate (config move_rate): the game's 30 retail frames a second (two ticks a frame).
+pub const MOVE_RATE_GAME: u32 = 30;
+/// Movement Rate 60: one tick a frame, as retail with a frame rate add-on.
+pub const MOVE_RATE_TICK: u32 = 60;
+
+/// Movement Rate (config move_rate): MOVE_RATE_TICK runs one tick a frame, anything else the game's two.
 pub fn set_move_rate(rate: u32) {
-    let ticks = if rate == 60 { 1 } else { STEP_TICKS as u32 };
+    let ticks = if rate == MOVE_RATE_TICK { 1 } else { STEP_TICKS as u32 };
     FRAME_TICKS.store(ticks, std::sync::atomic::Ordering::Relaxed);
 }
 /// walk() simulates steps at run speed 5.0.

@@ -26,11 +26,14 @@ struct Uniforms {
     // Config 0017 off: the sun and the moon (direction the light travels, colour) as two lights (FUN_10181b50).
     two: array<vec4<f32>, 4>,
     // x: 1 with bump mapping on (one eased light, vertex range fog), 0 off (two lights, table fog); y: 1 with
-    // Settings' Light Shading Smooth (point lights per pixel, ours), 0 Retail (per vertex); z: Settings' Surface
-    // Detail strength (ours, `detail_normal`), 0 off.
+    // Settings' Light Shading Smooth (point lights per pixel, ours), 0 Retail (per vertex); z: 1 with Material Maps, w
+    // their strength.
     modes: vec4<f32>,
     // Windowed mode's light boost (render light_boost, FUN_1000be50): rgb factors, w = 1 on.
     boost: vec4<f32>,
+    // x: the textures' LOD bias while upscaling (render lod_bias), else 0.
+    // y: Settings' Surface Detail strength (ours, `detail_normal`), 0 off.
+    lod: vec4<f32>,
 };
 
 // FUN_1000bf30 -> FUN_1000be50 on every SetLight while windowed: a diffuse colour all of whose parts are below 0.8 is
@@ -93,15 +96,19 @@ struct LampShadowU {
 // '#' placements' stage 0: the scenery sampler with CLAMP addressing.
 @group(0) @binding(6) var samp_clamp: sampler;
 
-fn part_k(time: vec4<f32>) -> f32 {
-    return select(clamp((u.area_info.y - time.x) / time.y, 0.0, 1.0), 1.0, time.y <= 0.0);
+fn part_k(time: vec4<f32>, now: f32) -> f32 {
+    return select(clamp((now - time.x) / time.y, 0.0, 1.0), 1.0, time.y <= 0.0);
 }
 
 // FUN_100acef0: the part's world matrix = base * T(t) * Rx(a.x) * Ry(a.y) * Rz(a.z) (column vectors).
 fn part_matrix(slot: u32) -> mat4x4<f32> {
+    return part_matrix_at(slot, u.area_info.y);
+}
+
+fn part_matrix_at(slot: u32, now: f32) -> mat4x4<f32> {
     let p = parts[slot];
-    let a = mix(p.rot_from.xyz, p.rot_to.xyz, part_k(p.rot_time));
-    let t = mix(p.pos_from.xyz, p.pos_to.xyz, part_k(p.pos_time));
+    let a = mix(p.rot_from.xyz, p.rot_to.xyz, part_k(p.rot_time, now));
+    let t = mix(p.pos_from.xyz, p.pos_to.xyz, part_k(p.pos_time, now));
     let cx = cos(a.x); let sx = sin(a.x);
     let cy = cos(a.y); let sy = sin(a.y);
     let cz = cos(a.z); let sz = sin(a.z);
@@ -113,6 +120,10 @@ fn part_matrix(slot: u32) -> mat4x4<f32> {
 }
 @group(1) @binding(0) var tex: texture_2d<f32>;
 @group(1) @binding(1) var samp: sampler;
+// Material maps (ours, material.rs): the normal map's x, y (DirectX: y along +v) and roughness, metal. Textures
+// without maps get a flat normal and roughness 1.
+@group(1) @binding(2) var mat_normal: texture_2d<f32>;
+@group(1) @binding(3) var mat_rm: texture_2d<f32>;
 
 struct VertexIn {
     @location(0) pos: vec3<f32>,
@@ -160,6 +171,77 @@ struct VertexOut {
     // Scenery: the transformed normal's length, which scales every N.L (NORMALIZENORMALS off); 1 for actors.
     @location(12) nscale: f32,
 };
+
+struct Surface {
+    n: vec3<f32>,
+    rough: f32,
+    metal: f32,
+    // The ambient's change from the map's tilt toward the sky (1 on a flat map): FFXI's ambient has no direction,
+    // so without it bumps would only show in direct light.
+    sky: f32,
+    // For the diffuse terms: n with the part along the geometric normal that the tilt took put back, so the bumps
+    // shade both ways around the flat value (a bumpier map is not darker on average).
+    nl: vec3<f32>,
+};
+
+// The normal from the material's map in a frame from the screen derivatives (no vertex tangents). Call it before
+// any branch on varyings: it takes derivatives.
+fn surface(in: VertexOut) -> Surface {
+    let g = normalize(in.normal);
+    var s = Surface(g, 1.0, 0.0, 1.0, g);
+    if (u.modes.z < 0.5) {
+        return s;
+    }
+    let dp1 = dpdx(in.world);
+    let dp2 = dpdy(in.world);
+    let du1 = dpdx(in.uv);
+    let du2 = dpdy(in.uv);
+    // Less the map's average tilt (its last mip, 4 x 4): ground tiles are placed at different turns, and a tilt
+    // turned with them lit each tile apart, a checkerboard.
+    let mean = textureSampleLevel(mat_normal, samp, in.uv, 16.0).rg * 2.0 - 1.0;
+    let m = textureSample(mat_normal, samp, in.uv).rg * 2.0 - 1.0 - mean;
+    let rm = textureSample(mat_rm, samp, in.uv).rg;
+    // PBRify rates nearly every texture 0.3..0.6 rough: stretched so that grass, earth and stone read matte. Metal
+    // keeps the map's.
+    s.rough = mix(mix(0.6, 1.0, saturate((rm.x - 0.3) / 0.3)), rm.x, rm.y);
+    s.metal = rm.y;
+    let n = s.n;
+    let p2 = cross(dp2, n);
+    let p1 = cross(n, dp1);
+    let t = p2 * du1.x + p1 * du2.x;
+    let b = p2 * du1.y + p1 * du2.y;
+    let len = max(dot(t, t), dot(b, b));
+    if (len > 1e-20) {
+        let k = inverseSqrt(len);
+        let z = sqrt(max(1.0 - dot(m, m), 0.0));
+        let tilt = m * u.modes.w;
+        s.n = normalize(t * k * tilt.x + b * k * tilt.y + n * z);
+        s.nl = s.n + n * (1.0 - dot(s.n, n));
+        // Y points down.
+        s.sky = 1.0 + 0.4 * u.modes.w * (n.y - s.nl.y);
+    }
+    return s;
+}
+
+// GGX specular for a light toward `l`, x N.L. Fades out at roughness 1, the value of textures without maps.
+fn specular(s: Surface, v: vec3<f32>, l: vec3<f32>, f0: vec3<f32>) -> vec3<f32> {
+    let nl = dot(s.n, l);
+    if (nl <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    let h = normalize(l + v);
+    let nh = max(dot(s.n, h), 0.0);
+    let nv = max(dot(s.n, v), 1e-3);
+    let a = max(s.rough * s.rough, 0.02);
+    let a2 = a * a;
+    let d = a2 / (3.14159265 * pow(nh * nh * (a2 - 1.0) + 1.0, 2.0));
+    let k = a * 0.5;
+    let vis = 0.25 / ((nl * (1.0 - k) + k) * (nv * (1.0 - k) + k));
+    // Rough surfaces lose the grazing sheen (Fresnel toward max(1 - roughness, F0), not 1).
+    let f90 = max(vec3<f32>(1.0 - s.rough), f0);
+    let f = f0 + (f90 - f0) * pow(1.0 - max(dot(l, h), 0.0), 5.0);
+    return d * vis * f * nl * (1.0 - smoothstep(0.85, 1.0, s.rough));
+}
 
 // FUN_100c94a0: of the floor's lights, the strongest w = 1 / max(d^2 Att2, 1e-4) at the actor's position within
 // its range (an unlit one competes too), as a directional light from the lamp: C x w x max(N.L, 0).
@@ -413,6 +495,83 @@ fn skin(v: SkinIn) -> VertexOut {
     return out;
 }
 
+// The upscaler's actor motion (render/upscale): this frame's skinned position against last frame's, from the pose
+// region the actor had then (group 3 at its old offset; its current one when it was not posed), both through the
+// matrices without the jitter.
+struct MotionU {
+    vp: mat4x4<f32>,
+    prev_vp: mat4x4<f32>,
+    // Render size, last frame's part clock (area_info.y).
+    size: vec4<f32>,
+    prev_voyage: mat4x4<f32>,
+};
+@group(3) @binding(20) var<storage, read> prev_pose: array<vec4<f32>>;
+@group(3) @binding(21) var<uniform> motion_u: MotionU;
+
+fn skin_prev(v: SkinIn) -> vec3<f32> {
+    let a = 6u + 3u * v.bones.x;
+    let b = 6u + 3u * v.bones.y;
+    var p = qrot(prev_pose[a], prev_pose[a + 2u].xyz * v.p0) + prev_pose[a + 1u].xyz * v.w.x
+        + qrot(prev_pose[b], prev_pose[b + 2u].xyz * v.p1) + prev_pose[b + 1u].xyz * v.w.y;
+    let c = v.cloth & 0x7fffffffu;
+    if (c != 0u && (v.cloth & 0x80000000u) != 0u && prev_pose[c].w == 1.0) {
+        p = prev_pose[c].xyz;
+    }
+    let model = mat4x4<f32>(prev_pose[0], prev_pose[1], prev_pose[2], prev_pose[3]);
+    return (model * vec4<f32>(p, 1.0)).xyz;
+}
+
+struct MotionOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) cur: vec4<f32>,
+    @location(1) prev: vec4<f32>,
+};
+
+@vertex
+fn vs_skinned_motion(v: SkinIn) -> MotionOut {
+    let s = skin(v);
+    var out: MotionOut;
+    out.clip = s.clip;
+    out.cur = motion_u.vp * vec4<f32>(s.world, 1.0);
+    out.prev = motion_u.prev_vp * vec4<f32>(skin_prev(v), 1.0);
+    return out;
+}
+
+// Moving scenery: door and lift parts at this and last frame's clock, a voyage's world through this and last frame's
+// matrix. Every other instance is left out (pushed past the far plane).
+@vertex
+fn vs_scenery_motion(v: VertexIn) -> MotionOut {
+    let part = u32(v.band.z);
+    let voyaged = v.band.w != 0.0;
+    var out: MotionOut;
+    if (part == 0u && !voyaged) {
+        out.clip = vec4<f32>(0.0, 0.0, 2.0, 1.0);
+        return out;
+    }
+    var model = mat4x4<f32>(v.m0, v.m1, v.m2, v.m3);
+    var prev = model;
+    if (part != 0u) {
+        model = model * part_matrix(part);
+        prev = prev * part_matrix_at(part, motion_u.size.z);
+    }
+    if (voyaged) {
+        model = u.voyage * model;
+        prev = motion_u.prev_voyage * prev;
+    }
+    let world = model * vec4<f32>(v.pos, 1.0);
+    out.clip = u.view_proj * world;
+    out.cur = motion_u.vp * world;
+    out.prev = motion_u.prev_vp * (prev * vec4<f32>(v.pos, 1.0));
+    return out;
+}
+
+// Previous minus current position in render pixels (y down); alpha 1 marks the pixel as the actor's.
+@fragment
+fn fs_motion(i: MotionOut) -> @location(0) vec4<f32> {
+    let d = i.prev.xy / i.prev.w - i.cur.xy / i.cur.w;
+    return vec4<f32>(d.x * 0.5 * motion_u.size.x, -d.y * 0.5 * motion_u.size.y, 0.0, 1.0);
+}
+
 // The shadow silhouette (render/shadow.rs, FUN_100329e0): the actor drawn flat white from its light, through the
 // caster's matrix at group 3 (a dynamic offset into the casters' outputs).
 @group(3) @binding(0) var<storage, read> sil_vp: mat4x4<f32>;
@@ -522,7 +681,7 @@ fn vs_skinned_shine(v: SkinIn, @builtin(vertex_index) vi: u32) -> VertexOut {
 // doubled from the upload. Fog fades it out *(inf: the base pass's fog state)*.
 @fragment
 fn fs_actor_shine(in: VertexOut) -> @location(0) vec4<f32> {
-    let t = textureSample(tex, samp, in.uv);
+    let t = textureSampleBias(tex, samp, in.uv, u.lod.x);
     let rgb = clamp(clamp(2.0 * t.rgb, vec3<f32>(0.0), vec3<f32>(1.0)) * 2.0 * shine.tf.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     let a = clamp(clamp(t.a, 0.0, 1.0) * 2.0 * shine.tf.a, 0.0, 1.0);
     let dist = distance(in.world, u.eye.xyz);
@@ -554,7 +713,7 @@ fn vs_skinned_refract(v: SkinIn) -> VertexOut {
 // MODULATE4X(CURRENT, r); times the draw alpha k (retail composites a translucent actor at k); fogged as the base pass.
 @fragment
 fn fs_actor_refract(in: VertexOut) -> @location(0) vec4<f32> {
-    let c = textureSample(tex, samp, in.uv / in.depth);
+    let c = textureSampleBias(tex, samp, in.uv / in.depth, u.lod.x);
     let enc = u.fog.z > 0.5;
     let lin = select(c.rgb, pow(c.rgb, vec3<f32>(2.2)), enc);
     let rgb = min(lin * 2.0 * (128.0 / 255.0), vec3<f32>(1.0));
@@ -580,9 +739,11 @@ fn shade(in: VertexOut, color: vec4<f32>) -> vec4<f32> {
 fn tex0(in: VertexOut) -> vec4<f32> {
     let dx = dpdx(in.uv);
     let dy = dpdy(in.uv);
-    let t = textureSample(tex, samp, in.uv);
+    let t = textureSampleBias(tex, samp, in.uv, u.lod.x);
     if ((in.area & 0x4000u) != 0u) {
-        return textureSampleGrad(tex, samp_clamp, in.uv, dx, dy);
+        // The LOD bias as a scale of the derivatives (a gradient sample takes no bias).
+        let k = exp2(u.lod.x);
+        return textureSampleGrad(tex, samp_clamp, in.uv, dx * k, dy * k);
     }
     return t;
 }
@@ -612,7 +773,7 @@ fn fs_actor(in: VertexOut) -> @location(0) vec4<f32> {
 }
 
 fn actor_colour(in: VertexOut) -> vec4<f32> {
-    let texel = textureSample(tex, samp, in.uv);
+    let texel = textureSampleBias(tex, samp, in.uv, u.lod.x);
     if (texel.a < 0.3) {
         discard;
     }
@@ -754,26 +915,27 @@ fn d3d_out_fog(in: VertexOut, rgb: vec3<f32>, fog_color: vec3<f32>) -> vec4<f32>
 // lit = clamp(vc * (ambient bytes / 255 + sun * max(N.-L, 0))); out = tex * lit * 2. The light, ambient and fog are the zone's,
 // or the area's (FUN_10183da0: FUN_10188ca0 lights, FUN_10188e00 ambient, FUN_10189120 fog).
 fn lit_zone(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
-    let n = normalize(in.normal);
-    var nd = n;
-    if (u.modes.z > 0.0) {
-        nd = detail_normal(in, n, t);
+    let s = surface(in);
+    var nd = s.nl;
+    if (u.lod.y > 0.0) {
+        nd = detail_normal(in, s.nl, t);
     }
-    return lit_zone_n(in, t, nd);
+    return lit_zone_n(in, t, s, nd);
 }
 
 // lit_zone with Surface Detail's pack (the slopes at group 2) in place of the texture's own estimate.
 fn lit_zone_pack(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
-    let n = normalize(in.normal);
-    var nd = n;
-    if (u.modes.z > 0.0) {
-        nd = detail_normal_pack(in, n);
+    let s = surface(in);
+    var nd = s.nl;
+    if (u.lod.y > 0.0) {
+        nd = detail_normal_pack(in, s.nl);
     }
-    return lit_zone_n(in, t, nd);
+    return lit_zone_n(in, t, s, nd);
 }
 
-// `nd`: the normal of the sun's and moon's terms (Surface Detail's, or the surface's own).
-fn lit_zone_n(in: VertexOut, t: vec4<f32>, nd: vec3<f32>) -> vec4<f32> {
+// `s`: the surface (Material Maps); `nd`: the normal of the sun's and moon's diffuse terms (Surface Detail's, or the
+// surface's own).
+fn lit_zone_n(in: VertexOut, t: vec4<f32>, s: Surface, nd: vec3<f32>) -> vec4<f32> {
     var sun = u.sun.xyz;
     var sun_color = u.sun_color.rgb;
     var ambient = u.ambient.rgb;
@@ -788,12 +950,16 @@ fn lit_zone_n(in: VertexOut, t: vec4<f32>, nd: vec3<f32>) -> vec4<f32> {
         fog_color = a.fog_color.rgb;
         fog = select(a.fog.xy, u.fog.xy, (in.area & 0x8000u) != 0u);
     }
-    let n = normalize(in.normal);
-    // Surface Detail (ours) bends the normal of the sun's and moon's terms only (`nd`); the vertex colours (the baked
-    // light), the ambient and the point lights keep the surface's own.
+    let n = s.nl;
+    let v = normalize(u.eye.xyz - in.world);
+    let albedo = to_gamma(t.rgb);
+    let f0 = mix(vec3<f32>(0.04), albedo, s.metal);
+    // Surface Detail (ours) bends the normal of the sun's and moon's diffuse terms only (`nd`); the vertex colours
+    // (the baked light), the ambient, the point lights and the specular keep the surface's own.
     // Config 0017 (FUN_10174610): on, the one eased light and vertex fog over the eye range; off, the sun and the
     // moon as two lights (the zone's, or the area's) and table fog over the view depth.
     var direct = boost(sun_color) * max(dot(nd, -sun), 0.0);
+    var spec = boost(sun_color) * specular(s, v, -sun, f0);
     var d = in.range;
     if (u.modes.x < 0.5) {
         var two = u.two;
@@ -801,17 +967,28 @@ fn lit_zone_n(in: VertexOut, t: vec4<f32>, nd: vec3<f32>) -> vec4<f32> {
             two = areas[slot].two;
         }
         direct = boost(two[1].rgb) * max(dot(nd, -two[0].xyz), 0.0) + boost(two[3].rgb) * max(dot(nd, -two[2].xyz), 0.0);
+        spec = boost(two[1].rgb) * specular(s, v, -two[0].xyz, f0) + boost(two[3].rgb) * specular(s, v, -two[2].xyz, f0);
         d = in.depth;
     }
     // Every N.L takes the normal's length (NORMALIZENORMALS off).
-    let lit = clamp(in.color.rgb * (ambient_rs(ambient) / 255.0 + in.nscale * (direct + point_lights(in.lights, in.world, n))) + in.point, vec3<f32>(0.0), vec3<f32>(1.0));
-    let rgb = clamp(to_gamma(t.rgb) * lit * 2.0, vec3<f32>(0.0), vec3<f32>(1.0));
+    // The baked vertex light shaded by the map against the key light (ours: retail's 0017 bump scales only the
+    // directional diffuse, but FFXI's light is mostly baked, so the maps would hardly show).
+    var key = -sun;
+    if (u.modes.x < 0.5) {
+        key = -u.two[0].xyz;
+    }
+    let geo = normalize(in.normal);
+    let relief = clamp(1.0 + 0.5 * u.modes.w * (dot(n, key) - dot(geo, key)), 0.3, 2.0);
+    let lit = clamp(in.color.rgb * relief * (ambient_rs(ambient) / 255.0 * s.sky + in.nscale * (direct + point_lights(in.lights, in.world, n))) + in.point, vec3<f32>(0.0), vec3<f32>(1.0));
+    // Material Maps: metal takes half the diffuse (no reflections to stand in), specular under the baked vertex light.
+    let shadow = clamp(in.color.rgb * 2.0, vec3<f32>(0.0), vec3<f32>(1.0)) * in.nscale;
+    let rgb = clamp(albedo * lit * 2.0 * (1.0 - 0.5 * s.metal) + spec * shadow, vec3<f32>(0.0), vec3<f32>(1.0));
     let f = clamp((fog.y - d) / (fog.y - fog.x), 0.0, 1.0);
     let c = mix(fog_color, rgb, f);
     return vec4<f32>(select(pow(c, vec3<f32>(2.2)), c, u.fog.z > 0.5), 1.0);
 }
 
-// ---- Surface Detail (ours; Settings' Surface Detail, u.modes.z the strength) ----
+// ---- Surface Detail (ours; Settings' Surface Detail, u.lod.y the strength) ----
 // The texture's own brightness taken as a height field (bright stands out), its slope read by two more taps one
 // texel away (or one pixel's footprint, whichever is wider, so distant surfaces don't sparkle), and put on the surface
 // by the screen-space surface gradient (Mikkelsen, "Bump Mapping Unparametrized Surfaces on the GPU", 2010): no
@@ -840,7 +1017,7 @@ fn detail_normal(in: VertexOut, n: vec3<f32>, t: vec4<f32>) -> vec3<f32> {
     let dy = dpdy(in.uv);
     let px = dpdx(in.world);
     let py = dpdy(in.world);
-    let amp = DETAIL_HEIGHT * u.modes.z * (1.0 - smoothstep(DETAIL_NEAR, DETAIL_FAR, in.depth));
+    let amp = DETAIL_HEIGHT * u.lod.y * (1.0 - smoothstep(DETAIL_NEAR, DETAIL_FAR, in.depth));
     if (amp <= 0.0) {
         return n;
     }
@@ -861,7 +1038,7 @@ fn detail_normal_pack(in: VertexOut, n: vec3<f32>) -> vec3<f32> {
     let dy = dpdy(in.uv);
     let px = dpdx(in.world);
     let py = dpdy(in.world);
-    let amp = DETAIL_PACK_HEIGHT * u.modes.z * (1.0 - smoothstep(DETAIL_NEAR, DETAIL_FAR, in.depth));
+    let amp = DETAIL_PACK_HEIGHT * u.lod.y * (1.0 - smoothstep(DETAIL_NEAR, DETAIL_FAR, in.depth));
     if (amp <= 0.0) {
         return n;
     }
@@ -901,8 +1078,12 @@ fn bend(n: vec3<f32>, dx: vec2<f32>, dy: vec2<f32>, px: vec3<f32>, py: vec3<f32>
 
 @fragment
 fn fs_bump(in: VertexOut) -> @location(0) vec4<f32> {
+    // Material Maps: our maps where the texture has them (the flat pair is 1 x 1), retail's Bp bump where it has none.
+    if (u.modes.z > 0.5 && textureDimensions(mat_normal).x > 1u) {
+        return lit_zone(in, tex0(in));
+    }
     let t0 = tex0(in);
-    let t1 = textureSample(bump_tex, bump_samp, in.uv).rgb;
+    let t1 = textureSampleBias(bump_tex, bump_samp, in.uv, u.lod.x).rgb;
     var sun_color = u.sun_color.rgb;
     var ambient = u.ambient.rgb;
     var fog_color = u.fog_color.rgb;
@@ -929,6 +1110,7 @@ fn fs_bump(in: VertexOut) -> @location(0) vec4<f32> {
 // zone, or by the area they stand in (the actor update FUN_1018b9a0 and draw FUN_1018b9e0 / FUN_1018ba20 with vtable
 // +0x188's area).
 fn lit_actor(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
+    let s = surface(in);
     // Area 0x10000: model +0xa8 set (event op 0x59 7 / 8), the scenery's lights (FUN_1018b9a0 mode 0).
     let bg = (in.area & 0x10000u) != 0u;
     let slot = in.area & 0xffffu;
@@ -946,7 +1128,9 @@ fn lit_actor(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
         fog = a.fog.xy;
     }
     color = boost(color);
-    let ndl = max(dot(normalize(in.normal), -sun), 0.0);
+    let ndl = max(dot(s.nl, -sun), 0.0);
+    let albedo = to_gamma(t.rgb);
+    let spec = color * specular(s, normalize(u.eye.xyz - in.world), -sun, mix(vec3<f32>(0.04), albedo, s.metal));
     // D3DRS_AMBIENT (ambient_rs); the target flash mixes those bytes toward 220 and scales the fog colour
     // (FUN_100c94a0).
     let amb = floor(mix(ambient_rs(ambient), vec3<f32>(220.0), in.flash.x)) / 255.0;
@@ -956,8 +1140,18 @@ fn lit_actor(in: VertexOut, t: vec4<f32>) -> vec4<f32> {
     let cloth = in.color.g > 0.5;
     let ga = select(min(floor(amb * 255.0 * mf) / 255.0, vec3<f32>(1.0)), amb, cloth);
     let em = select(0.0, max(mf - 1.5, 0.0), cloth);
-    let lit = clamp((ga + 0.5 * mf * (color * ndl + in.point)) * in.tint + em, vec3<f32>(0.0), vec3<f32>(1.0));
-    let rgb = clamp(to_gamma(t.rgb) * lit * 2.0, vec3<f32>(0.0), vec3<f32>(1.0));
+    let lit = clamp((ga * s.sky + 0.5 * mf * (color * ndl + in.point)) * in.tint + em, vec3<f32>(0.0), vec3<f32>(1.0));
+    // Material Maps: metal mirrors the sky (the room's ambient without one), blurred by roughness and dimmed with the
+    // light the actor stands in.
+    let v = normalize(u.eye.xyz - in.world);
+    var env = mix(sky_at(reflect(-v, s.n)), sky_at(vec3<f32>(0.0, -0.7071, 0.7071)), s.rough);
+    if (u.sky_info.x < 0.5) {
+        env = amb;
+    }
+    let f90 = max(1.0 - s.rough, s.metal * 0.5);
+    let fe = mix(albedo, vec3<f32>(f90), pow(1.0 - max(dot(s.n, v), 0.0), 5.0));
+    let mirror = env * fe * s.metal * min(dot(lit, vec3<f32>(0.667)), 1.0) * in.tint;
+    let rgb = clamp(albedo * lit * 2.0 * (1.0 - 0.75 * s.metal) + spec * in.tint + mirror, vec3<f32>(0.0), vec3<f32>(1.0));
     let f = clamp((fog.y - in.depth) / (fog.y - fog.x), 0.0, 1.0);
     let c = mix(fog_color * in.flash.y, rgb, f);
     return vec4<f32>(select(pow(c, vec3<f32>(2.2)), c, u.fog.z > 0.5), 1.0);
@@ -985,7 +1179,12 @@ fn sky_stop(k: u32) -> f32 {
 @fragment
 fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
     let far = u.inv_view_proj * vec4<f32>(in.ndc, 1.0, 1.0);
-    let ray = normalize(far.xyz / far.w - u.eye.xyz);
+    let c = sky_at(normalize(far.xyz / far.w - u.eye.xyz));
+    return vec4<f32>(select(pow(c, vec3<f32>(2.2)), c, u.fog.z > 0.5), 1.0);
+}
+
+// The sky dome's colour toward `ray` (gamma; Y down); the clear colour with no dome.
+fn sky_at(ray: vec3<f32>) -> vec3<f32> {
     let e = asin(clamp(-ray.y, -1.0, 1.0)) / 1.5707963;
     var c = u.clear.rgb;
     if (u.sky_info.x > 0.5) {
@@ -998,7 +1197,7 @@ fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
             }
         }
     }
-    return vec4<f32>(select(pow(c, vec3<f32>(2.2)), c, u.fog.z > 0.5), 1.0);
+    return c;
 }
 
 // Frustum culling (render/cull.rs, ours): cs_cull_vis marks each instance, cs_cull_compact copies each run's visible

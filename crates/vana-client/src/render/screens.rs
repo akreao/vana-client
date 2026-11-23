@@ -147,7 +147,7 @@ pub fn title_screen(lobby: &UiFile, style: &SpriteLib, w: f32, h: f32, st: &Titl
                 && st.hand
                 && let Some(anc) = lobby.lib("anc     anc_s")
             {
-                b.hand = Some((m.name.clone(), c.id, [cx, cy, c.w as f32 * sx, c.h as f32 * sy]));
+                b.set_hand(&m.name, c.id, [cx, cy, c.w as f32 * sx, c.h as f32 * sy]);
                 // Cursor at child pos + child/window header (+6, +8) (FUN_10116b10), unscaled.
                 let ox = (i16::from_le_bytes([c.head[6], c.head[7]])
                     + i16::from_le_bytes([m.elements[0].head[6], m.elements[0].head[7]]))

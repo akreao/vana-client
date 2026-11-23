@@ -356,15 +356,16 @@ pub fn draw(p: &mut Panels, w: &mut World) {
                                 ui.painter().image(t, Rect::from_min_size(pos2(r.min.x + 10.0, r.center().y - ICON / 2.0), vec2(ICON, ICON)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint);
                             }
                             let c = if held_row { m.theme.color("gold") } else if dim { m.theme.color("muted") } else if tints[k] == TINT_WHITE { m.theme.color("text") } else { super::chat::colour(tints[k].to_le_bytes()) };
-                            ui.painter().text(pos2(r.min.x + 42.0, r.center().y), Align2::LEFT_CENTER, name, FontId::proportional(m.theme.ui), c);
                             let count = s.count;
                             let mut right = r.max.x - 12.0;
                             if count > 1 {
                                 right = ui.painter().text(pos2(right, r.center().y), Align2::RIGHT_CENTER, count.to_string(), FontId::proportional(m.theme.ui), m.theme.color("text")).min.x - 8.0;
                             }
                             if let Some(price) = (!bank_side).then(|| inv_bazaar[k]).flatten() {
-                                super::items::bazaar_tag(ui, m, right, r.center().y, price);
+                                right = super::items::bazaar_tag(ui, m, right, r.center().y, price) - 8.0;
                             }
+                            let (shown, font) = super::kit::fit(ui, name, &FontId::proportional(m.theme.ui), right - 2.0 - r.min.x - 42.0, 0.85);
+                            ui.painter().text(pos2(r.min.x + 42.0, r.center().y), Align2::LEFT_CENTER, shown, font, c);
                             if resp.clicked() {
                                 mouse.take = Some((bank_side, k, if shift { How::Split } else { How::Stack }));
                             }

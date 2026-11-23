@@ -2,8 +2,8 @@
 -- starts on it the next time.
 
 local abilities = { [869] = { name = "Rune Enchantment", kind = 1, sub = 21, targets = 1 },
-  [870] = { name = "Ignis", kind = 21, targets = 1, recast = 5 },
-  [877] = { name = "Tenebrae", kind = 21, targets = 1, recast = 5 } }
+  [870] = { name = "Ignis", kind = 21, targets = 1, recast = 5, recast_id = 92 },
+  [877] = { name = "Tenebrae", kind = 21, targets = 1, recast = 5, recast_id = 92 } }
 res = { spell = function() end, ability = function(id) return abilities[id] end,
   job = function(id) return ({ [22] = "RUN" })[id] end }
 game = { player = function() return { main_job = 22, sub_job = 0 } end,
@@ -46,3 +46,21 @@ assert(not chooser.is_open())
 assert(SENT[1] == '/ja "Tenebrae" <me>', tostring(SENT[1]))
 assert(data.last_member(macro) == 2)
 assert(data.current_member(macro).name == "Tenebrae")
+
+-- While the list is open its recasts count down: the rows go out again when a time shown changes, not before.
+local left = 65
+game.recasts = function()
+  return { spells = {}, abilities = { [92] = left }, totals = { spells = {}, abilities = { [92] = 90 } } }
+end
+local sent_rows, update = {}, ui.update
+ui.update = function(w, e, f)
+  if w == "group" and f.rows then sent_rows[#sent_rows + 1] = f.rows end
+  return update(w, e, f)
+end
+chooser.open(macro, nil, nil, 1)
+chooser.tick()
+assert(#sent_rows == 0, "the rows sent again with nothing changed")
+left = 64
+chooser.tick()
+assert(#sent_rows == 1 and sent_rows[1][1][2] == "1:04", tostring(sent_rows[1] and sent_rows[1][1][2]))
+ui.update = update
