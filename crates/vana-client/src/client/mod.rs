@@ -6278,6 +6278,8 @@ struct Actor {
     scale: f32,
     /// Set once the rest-pose top is known.
     top_key: String,
+    /// The pose step has run for this actor (retail's model +0x30 bit 4); a look change keeps it.
+    posed_once: bool,
     /// Motion name lookups (actmotion::find) by name.
     find_cache: actmotion::FindCache,
     /// The model failed to load (the event actor wait takes it as loaded).
@@ -6457,6 +6459,7 @@ impl Actor {
             anchor_at: [None; 2],
             scale: 1.0,
             top_key: String::new(),
+            posed_once: false,
             find_cache: Default::default(),
             failed: false,
             motion_names: None,
@@ -7348,6 +7351,10 @@ impl crate::fx::Actors for FxActors<'_> {
 
     fn posed(&self, id: u32) -> bool {
         self.actors.get(&id).is_some_and(|a| !a.bones.is_empty())
+    }
+
+    fn never_posed(&self, id: u32) -> bool {
+        self.actors.get(&id).is_some_and(|a| !a.posed_once)
     }
 
     fn ready(&self, id: u32) -> Option<bool> {
@@ -20353,6 +20360,9 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
         }
         let Some(ch) = a.character.clone() else { continue };
         let Some(&Place { pos, forward, tilt, status, ratio, size }) = places.get(id) else { continue };
+        // Retail poses a model in its first actor update (model +0x30 bit 4); ours may wait a few frames for the GPU
+        // upload below, which is not that: the model counts as posed once it is here and placed.
+        a.posed_once = true;
         let (pick_status, pick_ratio) = actmotion::sdep_stand(status, ratio, sdep_ids.contains(id));
         if a.gpu.is_none() {
             // Not drawn until its model is on the GPU (a few new models a frame).
