@@ -1444,7 +1444,11 @@ impl Effects {
 
     /// A new zone: the old zone's instances go, and its auto-start world generators start (FUN_10046d30).
     /// Returns the library's registry index, for [`Effects::switch_zone`].
-    pub fn load_zone(&mut self, lib: Library) -> usize {
+    pub fn load_zone(&mut self, mut lib: Library) -> usize {
+        // FUN_1003fee0's colour pass runs only when FUN_10072fd0 prepares the file during the zone load; a file
+        // already resident (an effect file loaded before as the zone's DAT) is a cache hit there and keeps its
+        // colours, so a registered library is kept as it is.
+        lib.mark_zone_load();
         // A zone come back to keeps its library: another copy (and its meshes and textures on the GPU) per visit grew
         // for the whole session. Its caches are the same either way.
         let l = self.reg.lib_of(lib.file_id).unwrap_or_else(|| self.reg.add(lib));
@@ -1453,7 +1457,10 @@ impl Effects {
     }
 
     /// An event area (op 0x34) or the zone again (op 0x35) by its registered library: only the old scene's effects go.
-    pub fn load_area(&mut self, lib: Library) -> usize {
+    pub fn load_area(&mut self, mut lib: Library) -> usize {
+        // Op 0x34 / 0x35 load the scene through the zone loader too: a fresh file's D3m colours are doubled, a file
+        // already registered keeps its own (as in load_zone).
+        lib.mark_zone_load();
         let l = self.reg.lib_of(lib.file_id).unwrap_or_else(|| self.reg.add(lib));
         self.switch_zone(l, true);
         l
@@ -1563,7 +1570,8 @@ impl Effects {
     /// A sub-area DAT (an interior) loaded beside the zone: the old one's generators go and its auto-start world
     /// generators start, as a zone's do *(inf: the chunk loader starts them the same way)*. A file loaded before is
     /// reused.
-    pub fn load_sub_area(&mut self, lib: Library) {
+    pub fn load_sub_area(&mut self, mut lib: Library) {
+        lib.mark_zone_load();
         self.drop_sub_area();
         let l = self.reg.lib_of(lib.file_id).unwrap_or_else(|| self.reg.add(lib));
         self.sub_lib = Some(l);
