@@ -243,7 +243,7 @@ fn commands() -> &'static Commands {
             map: rows.iter().map(|(n, id, f)| (n.clone(), (*id, *f))).collect(),
             rows,
             help: crate::dat::tables::text_help(&dll).map_err(|e| log::warn!("{e:#}")).unwrap_or_default(),
-            help_file: crate::dat::msg::current_slot_file(&dll, 1, 0x24),
+            help_file: crate::dat::msg::current_slot_file(&dll, crate::dat::lang::files() as u8, 0x24),
         }
     })
 }

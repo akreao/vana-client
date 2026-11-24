@@ -4,7 +4,7 @@
 use crate::dat::DatIndex;
 use crate::dat::font::{Font, Quality, encode_sjis};
 use crate::dat::msg::{Messages, group_file};
-use crate::dat::ui::{LOBBY_US, SpriteLib, UiFile, WINDOW_STYLE_BASE, companions};
+use crate::dat::ui::{SpriteLib, UiFile, WINDOW_STYLE_BASE, companions};
 use crate::render::Gpu;
 use crate::render::mtext::{self, Face};
 use crate::render::screens::{self, HudState, LOBBY_CLEAR, TextSlot, TitleState};
@@ -113,8 +113,9 @@ impl GameUiData {
     /// With the font quality of Config-tool 0036.
     pub fn load_with(index: &DatIndex, ffximain: &[u8], quality: Quality) -> Result<Self> {
         let parse = |id: u32| -> Result<UiFile> { UiFile::parse(&index.read(id)?) };
-        let mut lobby = parse(LOBBY_US)?;
-        for &c in companions(LOBBY_US) {
+        let lobby_file = crate::dat::ui::lobby_file();
+        let mut lobby = parse(lobby_file)?;
+        for &c in companions(lobby_file) {
             lobby.absorb(parse(c)?, true);
         }
         match parse(crate::dat::ui::MAP_BACKDROP) {
@@ -140,11 +141,12 @@ impl GameUiData {
         }
         let style =
             parse(WINDOW_STYLE_BASE)?.libs.into_iter().next().context("window style file has no sprite library")?;
-        let font = Font::load(index, ffximain, 1, quality)?;
+        let lang = crate::dat::lang::files() as u8;
+        let font = Font::load(index, ffximain, lang, quality)?;
         let t = crate::dat::tables::of(ffximain)?;
-        let menu_msgs = group_file(ffximain, 1, 0x0e)
+        let menu_msgs = group_file(ffximain, lang, 0x0e)
             .and_then(|f| Messages::load(index, f).map_err(|e| log::warn!("menu messages: {e:#}")).ok());
-        let title_msgs = group_file(ffximain, 1, 0x0d)
+        let title_msgs = group_file(ffximain, lang, 0x0d)
             .and_then(|f| Messages::load(index, f).map_err(|e| log::warn!("title messages: {e:#}")).ok());
         let cmd_help = crate::dat::battle::va_bytes(ffximain, t.cmd_help, 0x1c * 12)
             .map_or(Vec::new(), |b| b.chunks(12).map(|r| u16::from_le_bytes([r[0], r[1]])).collect());
@@ -153,7 +155,7 @@ impl GameUiData {
             .filter_map(|g| {
                 Some((
                     g,
-                    group_file(ffximain, 1, g).and_then(|f| {
+                    group_file(ffximain, lang, g).and_then(|f| {
                         Messages::load(index, f).map_err(|e| log::warn!("message group {g:#x}: {e:#}")).ok()
                     })?,
                 ))
@@ -162,14 +164,14 @@ impl GameUiData {
         let stats = crate::dat::battle::va_bytes(ffximain, t.stats, 8 * 6 * 7).map(<[u8]>::to_vec).unwrap_or_default();
         let map_regions = super::map::regions(ffximain);
         let region_groups = super::map::region_groups(ffximain);
-        let aug_text = crate::dat::msg::slot_file(ffximain, 1, 0x1b)
+        let aug_text = crate::dat::msg::slot_file(ffximain, lang, 0x1b)
             .and_then(|f| Messages::load(index, f).map_err(|e| log::warn!("augment texts: {e:#}")).ok());
-        let servers = crate::dat::msg::group_file(ffximain, 1, 0x16).and_then(|f| Messages::load(index, f).ok());
+        let servers = crate::dat::msg::group_file(ffximain, lang, 0x16).and_then(|f| Messages::load(index, f).ok());
         let aug_tables = super::augment::AugTables::find(ffximain);
         let f81 = index.read(81).ok();
         let mnc2 = f81.as_deref().and_then(super::augment::mnc2);
         let mon_order = f81.as_deref().map(super::monstrosity::order).unwrap_or_default();
-        let item_fmt = crate::dat::msg::slot_file(ffximain, 1, 0x1c)
+        let item_fmt = crate::dat::msg::slot_file(ffximain, lang, 0x1c)
             .and_then(|f| Messages::load(index, f).map_err(|e| log::warn!("item info formats: {e:#}")).ok());
         let area_names = Messages::load(index, 0xd8aa).map_err(|e| log::error!("area names (group 4): {e:#}")).ok();
         let errors = crate::dat::battle::va_bytes(ffximain, t.errors, 16 * 128)
@@ -186,7 +188,7 @@ impl GameUiData {
             .collect();
         let (registry, groups) = menu_registry(ffximain);
         let status = [0x3a, 0x3b].map(|slot| {
-            crate::dat::msg::current_slot_file(ffximain, 1, slot)
+            crate::dat::msg::current_slot_file(ffximain, lang, slot)
                 .and_then(|f| index.read(f).map_err(|e| log::warn!("status info {f}: {e:#}")).ok())
                 .map(std::sync::Arc::new)
         });

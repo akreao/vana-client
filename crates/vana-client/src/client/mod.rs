@@ -10179,13 +10179,14 @@ impl App {
             self.knock_table = crate::dat::tables::knockback(&dll).ok();
             self.search_words =
                 crate::dat::tables::search_words(&dll).map_err(|e| log::warn!("{e:#}")).ok().map(Arc::new);
-            let blu_desc = crate::dat::msg::current_slot_file(&dll, 1, 0x1a);
+            let lang = crate::dat::lang::files() as u8;
+            let blu_desc = crate::dat::msg::current_slot_file(&dll, lang, 0x1a);
             self.blu_data = Some(Arc::new(crate::dat::blumagic::BluData::load(self.index.as_ref().unwrap(), blu_desc)));
             self.cnq_tables = crate::dat::tables::conquest(&dll).map_err(|e| log::warn!("{e:#}")).ok().map(Arc::new);
             self.point_files = [0x1d, 0x1e, 0x1f, 0x20, 0x21, maze::TEXT_SLOT]
-                .map(|slot| crate::dat::msg::current_slot_file(&dll, 1, slot));
+                .map(|slot| crate::dat::msg::current_slot_file(&dll, lang, slot));
             self.msg_files = [0, 0, 0x63, 0x64, 0x65, 0x66, 0x68, 0x69, 0, 0, 0x6a]
-                .map(|slot| (slot != 0).then(|| crate::dat::msg::current_slot_file(&dll, 1, slot)).flatten());
+                .map(|slot| (slot != 0).then(|| crate::dat::msg::current_slot_file(&dll, lang, slot)).flatten());
             self.input.load(&dll);
         }
         Ok((self.index.clone().unwrap(), self.keys_table.clone().unwrap()))
@@ -11276,9 +11277,6 @@ impl App {
                                 w.index = Some(index.clone());
                             }
                             let dll = crate::dat::ffximain(&self.cfg.ffxi_dir());
-                            // The process's language, as retail's global, set once here: the dictionary loading
-                            // next reads it, and so do its blocks and German's quotes after.
-                            crate::dat::lang::set(self.cfg.client_language());
                             let tx = self.tasks_tx.clone();
                             let idx = index.clone();
                             std::thread::spawn(move || {
@@ -11294,7 +11292,7 @@ impl App {
                             });
                             let tx = self.tasks_tx.clone();
                             std::thread::spawn(move || {
-                                let n = crate::dat::names::Names::load(&index, crate::dat::items::Lang::En)
+                                let n = crate::dat::names::Names::load(&index, crate::dat::lang::files())
                                     .map(|n| (Arc::new(n), crate::dat::msgshift::MsgShift::bundled()));
                                 let _ = tx.send(Task::Names(n));
                             });
