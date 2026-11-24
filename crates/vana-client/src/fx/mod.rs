@@ -134,6 +134,10 @@ pub trait Actors {
     fn status(&self, _id: u32) -> u8 {
         0
     }
+    /// The applied status (entity +0x170, FUN_10084390), not a bound actor's posed event status.
+    fn applied_status(&self, id: u32) -> u8 {
+        self.status(id)
+    }
     /// InvisFlag (+0x128 bit 6).
     fn invisible(&self, _id: u32) -> bool {
         false

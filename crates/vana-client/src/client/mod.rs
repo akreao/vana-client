@@ -7152,8 +7152,9 @@ struct FxActors<'a> {
     me_moving: bool,
     /// Our move's quarter (World::my_strafe, +0x598).
     me_strafe: u8,
-    /// Our InvisFlag (+0x128 bit 6).
+    /// Our InvisFlag (+0x128 bit 6) and applied status (+0x170).
     me_invisible: bool,
+    me_status: u8,
     pet: u16,
     /// Our party (roster mode 0, FUN_100e5dd0(0)): ourselves first; our ActIndex (we are not in `entities`).
     party: Vec<u32>,
@@ -7354,6 +7355,10 @@ impl crate::fx::Actors for FxActors<'_> {
 
     fn status(&self, id: u32) -> u8 {
         self.places.get(&id).map_or(0, |p| p.status)
+    }
+
+    fn applied_status(&self, id: u32) -> u8 {
+        if id == self.me { self.me_status } else { self.entities.get(&id).map_or(0, |e| e.motion.status) }
     }
 
     fn invisible(&self, id: u32) -> bool {
@@ -13662,6 +13667,9 @@ impl App {
                 e.sub[1] = want;
             }
         }
+        // Ops 0x75 / 0xa3 set their hide bytes inside the op (FUN_100d5f10 / FUN_100d60e0): applied before this
+        // frame's glow refreshes read them.
+        wepfx::apply_ops(world);
         for id in readies {
             wepfx::refresh(world, id);
         }
@@ -13739,7 +13747,6 @@ impl App {
         for id in std::mem::take(&mut world.effects.releases) {
             combat::fx_release(world, id);
         }
-        wepfx::apply_ops(world);
         for (id, pick) in std::mem::take(&mut world.effects.death_picks) {
             if let Some(a) = world.actors.get_mut(&id) {
                 a.death_pick = pick;
@@ -21493,6 +21500,7 @@ fn draw_effects(
             me_moving: w.moving,
             me_strafe: w.my_strafe,
             me_invisible: w.my_plate.invisible,
+            me_status: w.my_motion.status,
             pet: w.my_pet,
             party,
             my_index: w.my_index,

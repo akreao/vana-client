@@ -2581,13 +2581,13 @@ impl Effects {
                 let Some(id) = self.doll_of(t.a1).id() else { return Flow::Next };
                 let (n, show) = (op.u16_at(0xc) as u8, op.u32_at(8) == 0);
                 // FUN_100d5f10: the glow on while engaged and not invisible (+0x128 bit 6), else off; FUN_100d60e0: off.
-                let glow_on = |actors: &dyn Actors| actors.status(id) == 1 && !actors.invisible(id);
+                let glow_on = |actors: &dyn Actors| actors.applied_status(id) == 1 && !actors.invisible(id);
                 if op.code == 0xa3 {
                     self.weapons.push(crate::fx::WeaponOp { actor: id, n, byte: 1, hide: !show, glow: false });
                     self.glow_in_op(id, n, show && glow_on(actors), actors);
                     return Flow::Next;
                 }
-                if op.u16_at(0xe) != 0 && actors.status(id) != 1 {
+                if op.u16_at(0xe) != 0 && actors.applied_status(id) != 1 {
                     return Flow::Next;
                 }
                 let len = op.dur as f32 * t.speed;
