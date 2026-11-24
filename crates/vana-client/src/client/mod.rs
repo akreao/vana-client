@@ -7155,6 +7155,8 @@ struct FxActors<'a> {
     /// Our InvisFlag (+0x128 bit 6) and applied status (+0x170).
     me_invisible: bool,
     me_status: u8,
+    /// Riders whose applied status a dismount holds at the riding one (ride::applied).
+    ride_held: HashMap<u32, u8>,
     pet: u16,
     /// Our party (roster mode 0, FUN_100e5dd0(0)): ourselves first; our ActIndex (we are not in `entities`).
     party: Vec<u32>,
@@ -7358,6 +7360,9 @@ impl crate::fx::Actors for FxActors<'_> {
     }
 
     fn applied_status(&self, id: u32) -> u8 {
+        if let Some(&s) = self.ride_held.get(&id) {
+            return s;
+        }
         if id == self.me { self.me_status } else { self.entities.get(&id).map_or(0, |e| e.motion.status) }
     }
 
@@ -21501,6 +21506,12 @@ fn draw_effects(
             me_strafe: w.my_strafe,
             me_invisible: w.my_plate.invisible,
             me_status: w.my_motion.status,
+            ride_held: w
+                .rides
+                .keys()
+                .filter_map(|&id| Some((id, ride::applied(w, id, 0xff))))
+                .filter(|x| x.1 != 0xff)
+                .collect(),
             pet: w.my_pet,
             party,
             my_index: w.my_index,

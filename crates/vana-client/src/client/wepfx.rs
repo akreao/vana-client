@@ -6,9 +6,10 @@ use super::actmotion::OPAQUE;
 use super::{World, event, ride};
 use crate::fx::EquipCall;
 
-/// The applied status (+0x170) is 1.
+/// The applied status (+0x170) is 1; a dismount holds it at the riding one (ride::applied).
 fn engaged(w: &World, id: u32) -> bool {
-    if id == w.my_id { w.my_motion.status == 1 } else { w.entities.get(&id).is_some_and(|e| e.motion.status == 1) }
+    let raw = if id == w.my_id { w.my_motion.status } else { w.entities.get(&id).map_or(0, |e| e.motion.status) };
+    ride::applied(w, id, raw) == 1
 }
 
 /// InvisFlag (+0x128 bit 6).
