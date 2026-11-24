@@ -21,8 +21,8 @@ The five "Open" points of "Mog House gardening", read in FFXiMain 30261006:
   own Safe (0x102073f0: DAT_10666e6c for container 9, else DAT_10666e30), by the seed and crystal sources' open hooks
   for the Mog Safe only (0x101d1be0 / 0x101d1c70, even on Safe 2), and by layout mode's furniture list (FUN_101f4130,
   either Safe). So a Safe 2 seed or crystal list shows Safe 2's view 3 as last rebuilt, with the slots changed since
-  appended at the end. Ours: Inventory.view3 (rebuild_view3, viewed3) for the garden and layout lists; the replaced-id
-  rule now also applies to Inventory.order (it only appended newly filled slots).
+  appended at the end. Ours: Inventory.view3 (rebuild_view3, viewed3) for the garden and layout lists, kept by the
+  same replaced-id rule Inventory.order already follows (and carried through the zone-in reset with it).
 - File 0xbf8 (ROM/12/9) 'main', the moogle's trip: sound 4037; generators go02 / go01 / go00 / un00 / un01 / gu01 /
   gu00 / sy00 / kr00 (smoke, cloud and sparkle meshes un, sy, kr, gu, go, md); op 0x2a at tick 75 drives the moogle's
   colour to 0x00808080 (alpha 0) over 65 ticks; op 3 'mdam' (no such scheduler in the file). A vanishing puff; the

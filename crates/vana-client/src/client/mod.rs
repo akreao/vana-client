@@ -12110,15 +12110,7 @@ impl App {
                     // bin on zoning, so slots kept from the last zone would go stale (retail's reset: inferred). The
                     // view stays (a sorted list stays sorted): a slot refilled with its item keeps its row, one with
                     // another item goes last (FUN_1021c210), and slots the resend leaves empty go at the settle.
-                    world.inv = items::Inventory {
-                        sizes: world.inv.sizes,
-                        sizes2: world.inv.sizes2,
-                        order: std::mem::take(&mut world.inv.order),
-                        viewed_ids: std::mem::take(&mut world.inv.viewed_ids),
-                        view3: std::mem::take(&mut world.inv.view3),
-                        view_changed: world.inv.view_changed,
-                        ..Default::default()
-                    };
+                    world.inv.zone_reset();
                     // FUN_10093720: DAT_10487ef5 = 0.
                     world.weather_forced = false;
                     // The resend refills the emptied view: Auto-sort's free-slot count starts again once it settles.

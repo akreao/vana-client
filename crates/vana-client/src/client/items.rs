@@ -154,6 +154,19 @@ impl Inventory {
         }
     }
 
+    /// Zone-in: the slots go (the server resends every container), the bag sizes and the views stay.
+    pub fn zone_reset(&mut self) {
+        *self = Self {
+            sizes: self.sizes,
+            sizes2: self.sizes2,
+            order: std::mem::take(&mut self.order),
+            viewed_ids: std::mem::take(&mut self.viewed_ids),
+            view3: std::mem::take(&mut self.view3),
+            view_changed: self.view_changed,
+            ..Default::default()
+        };
+    }
+
     /// FUN_1021c7e0(0, 3, 0x12, 0): view 3 rebuilt from slots 1..80 in slot order.
     pub fn rebuild_view3(&mut self, container: u8) {
         let v = self.slots.range((container, 1)..=(container, 80)).map(|(&(_, i), _)| i).collect();
@@ -2496,12 +2509,8 @@ mod order_tests {
         inv.set(2, 3, 4099, 1);
         assert_eq!(inv.view3[&2], [5, 8, 3]);
         // The zone reset carries the views; the resend comes in slot order, slot 5 left empty.
-        let mut inv = Inventory {
-            order: std::mem::take(&mut inv.order),
-            viewed_ids: std::mem::take(&mut inv.viewed_ids),
-            view3: std::mem::take(&mut inv.view3),
-            ..Default::default()
-        };
+        inv.zone_reset();
+        assert!(inv.slots.is_empty());
         inv.set(2, 3, 4099, 1);
         inv.set(2, 8, 4097, 1);
         assert_eq!(inv.view3[&2], [5, 8, 3]);
