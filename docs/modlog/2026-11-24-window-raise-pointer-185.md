@@ -41,7 +41,8 @@ Now:
   on its hand's centre, owed until the hand is drawn on a focus change as before). The walk's focus pick
   (FUN_1015fdb0) counts +0x98.
 - A window shown this frame (new to the walk, or opened again in place with `renew`) gives FUN_10126000 on the old
-  focus: +0x48 = 18 and the pointer on that focus's cursor when it is still up.
+  focus: +0x48 = 18 and the pointer on that focus's cursor as it is now (its hand this frame, else last frame's) when
+  it is still up. Windows drawn again after Scroll Lock or the download screen are not new (they stayed open).
 - The frame's pointer moves fold in retail order (shown windows, the window code's cursor warps, the raises, the focus
   step) into one `PtrMove` (where the pointer ends, and whether +0x48 was set to 18 on the way). The app applies it:
   with no position, only the hold (+0x48 = 18 with the pointer where it is); without FUN_10126000, the glide left as
