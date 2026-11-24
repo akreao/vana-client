@@ -7146,6 +7146,8 @@ struct FxActors<'a> {
     places: &'a HashMap<u32, Place>,
     contacts: &'a HashMap<u32, (Vec3, Vec3)>,
     entities: &'a HashMap<u32, Entity>,
+    /// The entity that holds each ActIndex now (a reused index names its new owner).
+    entity_index: &'a HashMap<u16, u32>,
     me: u32,
     me_moving: bool,
     /// Our move's quarter (World::my_strafe, +0x598).
@@ -7192,6 +7194,38 @@ impl FxActors<'_> {
     fn ship(&self, id: u32) -> Option<&(u32, u32, glam::Mat4, Vec3, bool)> {
         self.ships.iter().find(|s| s.0 == id)
     }
+}
+
+#[cfg(test)]
+mod face_owner_tests {
+    use super::{HashMap, face_owner};
+
+    /// Our own index is us; a reused index names the entity that holds it now, not the one the table still lists.
+    #[test]
+    fn reused_index_names_its_new_owner() {
+        let held: HashMap<u32, u16> = [(0x0100_0010, 0x10), (0x0100_0020, 0x22)].into();
+        let of = |id: u32| held.get(&id).copied();
+        let index: HashMap<u16, u32> = [(0x10, 0x0100_0010), (0x21, 0x0100_0020)].into();
+        assert_eq!(face_owner(of, &index, (0x400, 7), 0x400), Some(7));
+        assert_eq!(face_owner(of, &index, (0x400, 7), 0x10), Some(0x0100_0010));
+        // The table's 0x21 points at an entity that now has 0x22.
+        assert_eq!(face_owner(of, &index, (0x400, 7), 0x21), None);
+        assert_eq!(face_owner(of, &index, (0x400, 7), 0x30), None);
+    }
+}
+
+/// The entity that holds ActIndex `f` now (table DAT_10480af0): ours, or the one `entity_index` names while that
+/// entity still has the index (a reused index names its new owner, never an old one).
+fn face_owner(
+    index_of: impl Fn(u32) -> Option<u16>,
+    entity_index: &HashMap<u16, u32>,
+    (my_index, me): (u16, u32),
+    f: u16,
+) -> Option<u32> {
+    if f == my_index {
+        return Some(me);
+    }
+    entity_index.get(&f).copied().filter(|&id| index_of(id) == Some(f))
 }
 
 impl crate::fx::Actors for FxActors<'_> {
@@ -7361,6 +7395,22 @@ impl crate::fx::Actors for FxActors<'_> {
 
     fn posed(&self, id: u32) -> bool {
         self.actors.get(&id).is_some_and(|a| !a.bones.is_empty())
+    }
+
+    /// We are not in `entities` (our own +0x1f8 comes only from a 0x00D about us, which is not kept).
+    fn face_target(&self, id: u32) -> Option<u32> {
+        let f = self.entities.get(&id).map(|e| e.face).filter(|f| *f != 0)?;
+        let t =
+            face_owner(|id| self.entities.get(&id).map(|e| e.index), self.entity_index, (self.my_index, self.me), f)?;
+        // FUN_10098360 takes the entity only with +0x120 bit 9 (its model up).
+        self.actors.get(&t).is_some_and(|a| a.character.is_some()).then_some(t)
+    }
+
+    /// The heading alone (vtable +0x1c0's y), without the ground tilt the frame carries.
+    fn yaw(&self, id: u32) -> Option<f32> {
+        let f = self.places.get(&id)?.forward;
+        let f = Vec3::new(f.x, 0.0, f.z).normalize_or(Vec3::X);
+        Some((-f.z).atan2(f.x))
     }
 
     fn never_posed(&self, id: u32) -> bool {
@@ -21432,6 +21482,7 @@ fn draw_effects(
             places,
             contacts: &w.contacts,
             entities: &w.entities,
+            entity_index: &w.entity_index,
             me: w.my_id,
             me_moving: w.moving,
             me_strafe: w.my_strafe,
