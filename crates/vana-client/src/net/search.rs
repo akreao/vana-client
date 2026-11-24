@@ -201,6 +201,8 @@ pub struct Reply {
     /// Reply +0x0e: every match, not only those sent (LSB sends 40 at most).
     pub total: u16,
     pub records: Vec<Record>,
+    /// A comment fetch's answer (type 8, FUN_10106eb0): the character id and the comment's bytes (at most 0x80).
+    pub comment: Option<(u32, Vec<u8>)>,
 }
 
 /// MSB-first bit writer (FUN_10104200; LSB reads the same order).
@@ -531,6 +533,53 @@ pub fn query(addr: (Ipv4Addr, u16), cond: &Cond) -> Result<Reply> {
     }
 }
 
+/// The comment fetch (slot kind 4, FUN_100e3040 -> FUN_100d8ee0): wire type 8, the character id @0x10. LSB
+/// (HandleSearchComment) answers one type 0x88 packet {id @0x18, u16 length @0x1c, the text}, or nothing for an empty
+/// comment (the connection ends: an error here, as retail's slot fails).
+pub fn comment(addr: (Ipv4Addr, u16), id: u32) -> Result<Reply> {
+    let _slot = Slot::take();
+    let ((session, _), salt) = (session(), random());
+    let mut s = TcpStream::connect_timeout(&SocketAddr::from(addr), Duration::from_secs(10))?;
+    s.set_read_timeout(Some(TIMEOUT))?;
+    s.write_all(&request(8, &id.to_le_bytes(), session, salt))?;
+    let mut head = [0u8; 8];
+    s.read_exact(&mut head)?;
+    let l = u32::from_le_bytes(head[..4].try_into().unwrap()) as usize;
+    if !(0x18..0x56d).contains(&l) {
+        bail!("search reply length {l}");
+    }
+    let mut r = head.to_vec();
+    r.resize(l, 0);
+    s.read_exact(&mut r[8..])?;
+    let (d, _, kind, _) = open(&mut r, session)?;
+    if kind & 0x1f != 8 {
+        bail!("comment reply type {kind:#x}");
+    }
+    Ok(Reply { comment: Some(comment_record(&r[..d])?), ..Default::default() })
+}
+
+/// FUN_10106eb0 on the reply's data from 0x18: u32 id, u16 length (at most 0x80), the bytes.
+fn comment_record(r: &[u8]) -> Result<(u32, Vec<u8>)> {
+    let b = r.get(0x18..0x1e).ok_or_else(|| anyhow!("comment reply too short"))?;
+    let id = u32::from_le_bytes(b[..4].try_into().unwrap());
+    let n = (u16::from_le_bytes([b[4], b[5]]) as usize).min(0x80);
+    let text = r.get(0x1e..0x1e + n).ok_or_else(|| anyhow!("comment reply cut"))?;
+    Ok((id, text.to_vec()))
+}
+
+/// [`comment`] on its own thread.
+pub fn comment_spawn(addr: (Ipv4Addr, u16), id: u32) -> mpsc::Receiver<Result<Reply>> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let r = comment(addr, id);
+        if let Err(e) = &r {
+            log::info!("search comment {id:#x}: {e}");
+        }
+        let _ = tx.send(r);
+    });
+    rx
+}
+
 /// An auction house reply (MODLOG "Auction house"): the item list (0x95) or a price history (0x85).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AhReply {
@@ -813,6 +862,19 @@ mod tests {
             (&p[t + 2..t + 4], p[t + 4], &p[t + 18..t + 25], p.len()),
             (&b"Ab"[..], 0, &b"Lnxtest"[..], t + 2 + 32)
         );
+    }
+
+    /// LSB's SearchCommentPacket: id @0x18, u16 124 @0x1c, the text padded with spaces, a 0 at 0x9a.
+    #[test]
+    fn comment_reply() {
+        let mut r = vec![0u8; 204];
+        r[0x18..0x1c].copy_from_slice(&0x1234u32.to_le_bytes());
+        r[0x1c..0x1e].copy_from_slice(&124u16.to_le_bytes());
+        r[0x1e..0x9a].fill(b' ');
+        r[0x1e..0x23].copy_from_slice(b"Hello");
+        let (id, text) = comment_record(&r[..154]).unwrap();
+        assert_eq!((id, text.len(), &text[..6]), (0x1234, 124, &b"Hello "[..]));
+        assert!(comment_record(&r[..0x1d]).is_err());
     }
 
     /// Type 0xd: three 8-bit ranks, then three 32-bit linkshell ids (the group list's linkshell members).

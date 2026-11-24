@@ -51,6 +51,8 @@ pub enum Owner {
     Primer,
     /// The GM call form (faqmain), scrolled in pixels.
     Faq,
+    /// The block list (blklist).
+    BlockList,
 }
 
 /// A focused list's bar as drawn this frame: x, y, height (8 wide), and its (total, visible, top).
@@ -177,8 +179,11 @@ pub fn frame(gu: &mut GameUi, w: &mut World, input: &UiInput) -> Option<UiInput>
     // during a drag).
     let grabbed =
         on.is_some() || gu.bar_hold.is_some() || (input.released && sites.iter().any(|s| Some(s.owner) == held));
+    // A right click over a bar no button holds still reaches the window under it (a frame's right-click cancel), unless
+    // a classic mod popup is open: that click is the popup's to dismiss, not the list's.
+    let cancel = input.right_clicked && !input.down && gu.bar_hold.is_none() && w.lua.modal().is_none();
     grabbed.then(|| UiInput {
-        pointer: None,
+        pointer: input.pointer.filter(|_| cancel),
         moved: false,
         pressed: false,
         clicked: false,
@@ -214,6 +219,7 @@ fn dispatch(w: &mut World, owner: Owner, m: Msg, bar: (usize, usize, usize)) -> 
         Owner::Auction => super::auction::bar(w, m),
         Owner::Primer => super::primer::bar(w, m),
         Owner::Faq => super::faqmain::bar(w, m, bar),
+        Owner::BlockList => super::blklist::bar(w, m),
         Owner::Points => {
             super::merits::bar(w, m)
                 || super::jobpoints::bar(w, m)

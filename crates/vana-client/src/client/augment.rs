@@ -44,6 +44,11 @@ fn words(t: &[u8]) -> Vec<u16> {
 impl AugTables {
     /// Hints and digests from the 30261006_0 build (va 0x10362738, 0x10362838, 0x10362878, 0x103628f8, 0x10362af8,
     /// 0x10331aa8, 0x10331ca8, 0x1037d378).
+    /// The weapons that never show the Aug mark (DAT_1037d378's list).
+    pub fn no_mark_ids(&self) -> Vec<u16> {
+        self.no_mark.clone()
+    }
+
     pub fn find(dll: &[u8]) -> Option<Self> {
         let t = |hint, len, md5| {
             let r = table(dll, hint, len, md5);
@@ -127,9 +132,14 @@ pub fn applies(id: u16, item_type: u16, ext: &[u8; 24]) -> bool {
 /// FUN_101cb8a0 / FUN_101cb990: Some(ext[1]) when the Aug mark shows (kind 2 not for the no-mark weapons nor a
 /// serialized item; kind 3 always).
 pub fn marked(id: u16, item_type: u16, ext: Option<&[u8; 24]>, t: &AugTables) -> Option<u8> {
+    marked_with(id, item_type, ext, &t.no_mark)
+}
+
+/// [`marked`] with the no-mark weapon list alone ([`AugTables::no_mark_ids`]).
+pub fn marked_with(id: u16, item_type: u16, ext: Option<&[u8; 24]>, no_mark: &[u16]) -> Option<u8> {
     let e = ext.filter(|e| applies(id, item_type, e))?;
     match e[0] {
-        2 if t.no_mark.contains(&id) || e[1] & 0x10 != 0 => None,
+        2 if no_mark.contains(&id) || e[1] & 0x10 != 0 => None,
         _ => Some(e[1]),
     }
 }

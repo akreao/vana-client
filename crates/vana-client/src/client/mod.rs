@@ -1658,12 +1658,22 @@ fn ko_step(w: &mut World) {
         w.ko_open = true;
     }
     if w.homing && w.home_sent.is_none_or(|t| t.elapsed().as_secs_f32() >= 10.0) {
+        // FUN_10096c90 in Monstrosity: 600 ticks after a pick (sub 3 -> 0) mp_dead opens again while the deadline is
+        // ahead (its open hook clears +0x24, the cursor on Retry by registry flag 0x10000) and waits for a new pick;
+        // only past the deadline is the last answer sent again.
+        if w.home_sent.is_some() && !expired && monstrosity::active(w) {
+            (w.homing, w.home_sent, w.mon_dead_sel) = (false, None, 1);
+            close_for_ko(w);
+            w.ko_open = true;
+            return;
+        }
         w.home_sent = Some(Instant::now());
         let _ = w.net.commands.send(NetCommand::HomePoint(w.home_status));
     }
 }
 
-/// mp_dead's pick (+0x24 = the child): the K.O. state machine sends it at once and closes the window.
+/// mp_dead's pick (+0x24 = the child): the K.O. state machine sends it at once and closes the window *(inf: the
+/// handler FUN_101419d0 only sets +0x24)*; ko_step opens it again 10 s later if we are still down.
 fn mon_dead_pick(w: &mut World) {
     w.sounds.push(crate::audio::Ui::Select as u32);
     (w.homing, w.home_status, w.ko_open) = (true, if w.mon_dead_sel == 1 { 2 } else { 1 }, false);
@@ -6278,6 +6288,8 @@ struct Actor {
     scale: f32,
     /// Set once the rest-pose top is known.
     top_key: String,
+    /// The pose step has run for this actor (retail's model +0x30 bit 4); a look change keeps it.
+    posed_once: bool,
     /// Motion name lookups (actmotion::find) by name.
     find_cache: actmotion::FindCache,
     /// The model failed to load (the event actor wait takes it as loaded).
@@ -6457,6 +6469,7 @@ impl Actor {
             anchor_at: [None; 2],
             scale: 1.0,
             top_key: String::new(),
+            posed_once: false,
             find_cache: Default::default(),
             failed: false,
             motion_names: None,
@@ -7350,6 +7363,10 @@ impl crate::fx::Actors for FxActors<'_> {
         self.actors.get(&id).is_some_and(|a| !a.bones.is_empty())
     }
 
+    fn never_posed(&self, id: u32) -> bool {
+        self.actors.get(&id).is_some_and(|a| !a.posed_once)
+    }
+
     fn ready(&self, id: u32) -> Option<bool> {
         if self.furniture(id).is_some() || self.ship(id).is_some() {
             return Some(true);
@@ -8178,6 +8195,8 @@ struct World {
     /// The search server from the lobby's reply (+0x40 IP, +0x44 port) and the queries running on it.
     search_addr: (std::net::Ipv4Addr, u16),
     searches: Vec<(std::sync::mpsc::Receiver<anyhow::Result<crate::net::search::Reply>>, search::Then)>,
+    /// The augment no-mark weapons (GameUi's augment tables), for the item rules outside drawing.
+    aug_no_mark: Option<Vec<u16>>,
     /// The search results window ("menu    scresult") and scoption over it.
     search: Option<search::Results>,
     /// FUN_10104f00's word lists, regions and zone flags (FFXiMain).
@@ -10591,6 +10610,7 @@ impl App {
                             name: login.name.clone(),
                             search_addr: login.search,
                             searches: Vec::new(),
+                            aug_no_mark: None,
                             search: None,
                             search_words: self.search_words.clone(),
                             known_zones: None,
@@ -12117,14 +12137,7 @@ impl App {
                     // bin on zoning, so slots kept from the last zone would go stale (retail's reset: inferred). The
                     // view stays (a sorted list stays sorted): a slot refilled with its item keeps its row, one with
                     // another item goes last (FUN_1021c210), and slots the resend leaves empty go at the settle.
-                    world.inv = items::Inventory {
-                        sizes: world.inv.sizes,
-                        sizes2: world.inv.sizes2,
-                        order: std::mem::take(&mut world.inv.order),
-                        viewed_ids: std::mem::take(&mut world.inv.viewed_ids),
-                        view_changed: world.inv.view_changed,
-                        ..Default::default()
-                    };
+                    world.inv.zone_reset();
                     // FUN_10093720: DAT_10487ef5 = 0.
                     world.weather_forced = false;
                     // The resend refills the emptied view: Auto-sort's free-slot count starts again once it settles.
@@ -13446,6 +13459,9 @@ impl App {
             me.target = target;
         }
         combat::tick(world);
+        if world.aug_no_mark.is_none() {
+            world.aug_no_mark = self.game_ui.as_ref().and_then(|g| g.aug_no_mark());
+        }
         combat::message_queue(world, dt);
         roe::new_challenge(world);
         // FUN_10096640 runs the K.O. machine (FUN_10096c90) only outside events.
@@ -13618,7 +13634,7 @@ impl App {
         for id in spops {
             world.effects.on_scheduler(id, id, u32::from_le_bytes(*b"spop"));
         }
-        search::poll(world);
+        search::poll(world, self.game_ui.as_ref());
         friends::poll(world);
         polmail::update(world);
         world.line_hist.track(world.typing);
@@ -20085,9 +20101,10 @@ fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &Worl
         // Op 0x77 sets the hour and weather while an event runs.
         let ev_weather = w.event.as_ref().and_then(|l| l.st.weather);
         let clock = crate::dat::weather::vana_minute(t, at.elapsed().as_secs_f32());
-        let minute = ev_clock.map_or(clock, |c| c.minute as f32);
-        // An area's `@ini` op 0xc0 fixes its lighting's time (FUN_10182c40, online).
-        let minute = w.effects.zone_clock.map_or(minute, |v| (v % 5_184_000) as f32 / 3600.0);
+        // The zone's `@ini` (scheduler ops 0xc0 / 0xc3): a fixed sky time stands in for the clock in the light and the
+        // weather keys (W+0x1c8 in FUN_10187720 / FUN_10189c60), and the sun's path tilts.
+        let sky = w.effects.sky();
+        let minute = sky.minute(ev_clock.map_or(clock, |c| c.minute as f32));
         // thunk_FUN_1018ade0: each weather object blends its child chain's output into its env by
         // (total - left) / total; a finished one drops the chain before it. Op 0x77's weather stands alone.
         if let Some(k) = w.weather_chain.iter().rposition(|c| c.2 <= 0.0 || c.1.elapsed().as_secs_f32() >= c.2) {
@@ -20128,11 +20145,12 @@ fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &Worl
         let (x, zone) = (crate::dat::weather::clipping_factor(w.game.get(0x3e)), w.zone.unwrap_or(0));
         let step = |ease: &mut crate::dat::weather::LightEase, e: &crate::dat::weather::Env| {
             for _ in 0..steps {
-                ease.step(e, minute);
+                ease.step(e, minute, sky.tilt);
             }
             crate::dat::weather::Lighting::from_env_eased(
                 e,
                 minute,
+                sky.tilt,
                 ease,
                 crate::dat::weather::clipping(e.draw_dist, x, zone).1,
             )
@@ -20140,17 +20158,12 @@ fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &Worl
         let static_env = w.static_env;
         let env = crate::dat::weather::Env::scene(zw.and_then(|zw| mix(&|t| zw.at(t, minute))), static_env);
         r.lighting = Some(step(&mut w.light_ease, &env));
-        // Op 0xc3's yaw turns the sun and moon about x (FUN_10180700: FUN_10026d50 then FUN_100273d0 on both).
-        let yaw = w.effects.zone_yaw;
-        if let Some(l) = r.lighting.as_mut().filter(|l| yaw != 0 && !l.fixed) {
-            let (s, c) = (yaw as f32).to_radians().sin_cos();
-            let turn = |v: Vec3| Vec3::new(v.x, v.y * c - v.z * s, v.y * s + v.z * c);
-            (l.dir, l.actor_dir, l.two[0], l.two[2]) = (turn(l.dir), turn(l.actor_dir), turn(l.two[0]), turn(l.two[2]));
-        }
         // Real character shadows (render/sunshadow.rs): cast by the sun, or by the moon at night (fainter by its
         // colour, softer), faded out around the change at 6:00 and 18:00. Indoors the room light keeps day's edges.
         r.shadow_level = crate::render::sunshadow::twilight(minute);
-        r.shadow_soft = if r.lighting.is_some_and(|l| l.fixed) || crate::dat::weather::sun_moon(minute).0.y >= 0.0 {
+        r.shadow_soft = if r.lighting.is_some_and(|l| l.fixed)
+            || crate::dat::weather::sun_moon_tilted(minute, sky.tilt).0.y >= 0.0
+        {
             1.0
         } else {
             2.0
@@ -20347,6 +20360,9 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
         }
         let Some(ch) = a.character.clone() else { continue };
         let Some(&Place { pos, forward, tilt, status, ratio, size }) = places.get(id) else { continue };
+        // Retail poses a model in its first actor update (model +0x30 bit 4); ours may wait a few frames for the GPU
+        // upload below, which is not that: the model counts as posed once it is here and placed.
+        a.posed_once = true;
         let (pick_status, pick_ratio) = actmotion::sdep_stand(status, ratio, sdep_ids.contains(id));
         if a.gpu.is_none() {
             // Not drawn until its model is on the GPU (a few new models a frame).
@@ -21215,7 +21231,8 @@ fn draw_scene(
         r.set_shadow_texture(&gfx.gpu, &t, scene_fmt);
     }
     if let Some(g) = w.ground.as_ref() {
-        let casters = shadows::casters(&mut w.shadow_slots, g, shadow_modes, &drawn_map);
+        let mannequin = |id: u32| w.furniture.mannequins.iter().any(|m| m.id == id);
+        let casters = shadows::casters(&mut w.shadow_slots, g, shadow_modes, &drawn_map, &mannequin);
         let sun = r.lighting.map_or([0.0; 4], |l| [l.actor_dir.x, l.actor_dir.y, l.actor_dir.z, 1.0]);
         perf::timed(
             || "shadows".into(),
