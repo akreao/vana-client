@@ -20354,6 +20354,9 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
         }
         let Some(ch) = a.character.clone() else { continue };
         let Some(&Place { pos, forward, tilt, status, ratio, size }) = places.get(id) else { continue };
+        // Retail poses a model in its first actor update (model +0x30 bit 4); ours may wait a few frames for the GPU
+        // upload below, which is not that: the model counts as posed once it is here and placed.
+        a.posed_once = true;
         let (pick_status, pick_ratio) = actmotion::sdep_stand(status, ratio, sdep_ids.contains(id));
         if a.gpu.is_none() {
             // Not drawn until its model is on the GPU (a few new models a frame).
@@ -20617,7 +20620,6 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
             })
             .collect();
         a.scale = a.event_scale.unwrap_or_else(|| ch.scale(size)) * w.lua.look_scale(*id);
-        a.posed_once = true;
         // The rest pose's mesh top, once (stub models, plates without attach points).
         if a.top_key.is_empty() {
             a.rest = crate::dat::character::pose(&ch.skeleton, &[]);
