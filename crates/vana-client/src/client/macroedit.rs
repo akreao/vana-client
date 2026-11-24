@@ -1201,9 +1201,12 @@ fn draw_editor(gu: &mut GameUi, w: &World, d: &Editor, sw: f32, sh: f32, free: b
     gu.text(&label, x0 + 34.0, y0 + 36.0, 0, WHITE.to_le_bytes());
     let text = |f: usize| shown(w, &d.fields[f]);
     if let Some(&(_, r)) = win.children.iter().find(|(id, _)| *id == 3) {
-        // The title as it is (FUN_10191db0); the live field takes German's quotation marks (FUN_101c76b0).
-        let title = if d.editing == Some(0) { german_quotes_str(&text(0), 0x41a).into_owned() } else { text(0) };
-        gu.text_fit(&title, r[0] + 2.0, r[1] + 5.0, 120.0, WHITE);
+        // The title as it is, not cut (FUN_10191db0); the live field takes German's quotation marks (FUN_101c76b0).
+        if d.editing == Some(0) {
+            gu.text_fit(&german_quotes_str(&text(0), 0x41a), r[0] + 2.0, r[1] + 5.0, 120.0, WHITE);
+        } else {
+            gu.text(&text(0), r[0] + 2.0, r[1] + 5.0, 0, WHITE.to_le_bytes());
+        }
         if d.editing == Some(0) {
             caret_at(gu, w, &d.fields[0], d.caret, r[0] + 2.0, r[1] + 5.0, 120.0);
             if let Some(f) = &w.field_fep {
@@ -1220,8 +1223,11 @@ fn draw_editor(gu: &mut GameUi, w: &World, d: &Editor, sw: f32, sh: f32, free: b
                 rects.push(super::fep::draw_list(gu, &f.cands, f.sel, x - 8.0, y - 2.0));
             }
         } else {
-            // A line not edited: FUN_10191710 on its 0x98-byte buffer.
-            gu.text_fit(&german_quotes_str(&text(k + 1), 0x98), x, y, 315.0, WHITE);
+            // A line not edited (win_macro_v10 FUN_101a70c0): its bytes expanded with the auto-translate brackets
+            // into a 0x98-byte buffer (FUN_101b8850(.., 0x98, 1, 0)), German's quotation marks on it (FUN_10191710),
+            // cut at 315 (FUN_10191c70(x, y, .., 0x13b, 0)).
+            let line = super::fep::braced_cap(w, &crate::dat::font::decode_sjis(&d.fields[k + 1]), 0x98);
+            gu.text_cut(&german_quotes_str(&line, 0x98), x, y, 315.0, WHITE);
         }
     }
     rects.push(win.frame);

@@ -1020,6 +1020,20 @@ impl GameUi {
         self.text(s, x, y, 0, tint.to_le_bytes());
     }
 
+    /// Game-font text cut to `max` px (FUN_10191c70 with its last argument 0): the last character goes while the
+    /// text (FUN_10191e00) is wider than `max - 14`; a cut text has "..." (DAT_1036d9dc) drawn right after it.
+    pub fn text_cut(&mut self, s: &str, x: f32, y: f32, max: f32, tint: u32) {
+        let mut t = s.to_string();
+        while !t.is_empty() && self.text_width(&t) > max - 14.0 {
+            t.pop();
+        }
+        self.text(&t, x, y, 0, tint.to_le_bytes());
+        if t.len() < s.len() {
+            let wd = self.text_width(&t);
+            self.text("...", x + wd, y, 0, tint.to_le_bytes());
+        }
+    }
+
     /// Sprite-font text fitted into `max` px (FUN_101c04c0).
     pub fn shape_fit(&mut self, s: &str, x: f32, y: f32, max: f32, tint: u32) -> f32 {
         screens::push_shape_fit(&mut self.batch, &self.data.lobby, &encode_sjis(s), x, y, max, tint)

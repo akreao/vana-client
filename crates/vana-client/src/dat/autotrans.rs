@@ -704,30 +704,50 @@ impl Dictionary {
     /// brackets (EF 27 / EF 28, U+E008 / U+E009); an unknown block cuts the line there. A variable block (kind 6)
     /// has no brackets (`variable`).
     pub fn expand(&self, s: &str, names: Option<&dyn NameSource>) -> String {
+        self.expand_cap(s, names, usize::MAX)
+    }
+
+    /// `expand` into a buffer of `cap` bytes (FUN_101adf60's third argument): a character or a block whose Shift-JIS
+    /// bytes would bring the line to `cap` or past it ends the line there, as does a block with under 2 bytes left
+    /// (FUN_101adbb0's -1), so at most `cap - 1` bytes stay.
+    pub fn expand_cap(&self, s: &str, names: Option<&dyn NameSource>, cap: usize) -> String {
         let chars: Vec<char> = s.chars().collect();
         let mut out = String::with_capacity(s.len());
+        let mut used = 0usize;
+        // The piece goes in when it fits; false ends the line.
+        let put = |out: &mut String, used: &mut usize, piece: &str| {
+            let n = encode_sjis(piece).len();
+            if *used + n >= cap {
+                return false;
+            }
+            *used += n;
+            out.push_str(piece);
+            true
+        };
         let mut at = 0;
         while at < chars.len() {
             if is_variable(&chars, at) {
+                if cap - used < 2 {
+                    break;
+                }
                 match self.variable(&chars, &mut at, names) {
-                    Some(t) => out.push_str(&t),
-                    None => break,
+                    Some(t) if put(&mut out, &mut used, &t) => {}
+                    _ => break,
                 }
             } else if let Some(block) = block_at(&chars, at) {
+                if cap - used < 2 {
+                    break;
+                }
                 at += 4;
                 // A 6-byte block of kind 6 is a variable block whose length byte is FD (negative): the line ends.
                 match Some(block).filter(|b| b[0] != KIND_VARIABLE).and_then(|b| self.resolve(b, names)) {
-                    Some(t) => {
-                        out.push('\u{E008}');
-                        out.push_str(&t);
-                        out.push('\u{E009}');
-                    }
-                    None => break,
+                    Some(t) if put(&mut out, &mut used, &format!("\u{E008}{t}\u{E009}")) => {}
+                    _ => break,
                 }
             } else {
                 // A lone phrase char (a cut block) shows nothing, as before.
-                if !is_phrase(chars[at]) {
-                    out.push(chars[at]);
+                if !is_phrase(chars[at]) && !put(&mut out, &mut used, chars[at].encode_utf8(&mut [0; 4])) {
+                    break;
                 }
                 at += 1;
             }
@@ -1072,6 +1092,21 @@ mod tests {
         assert!(d.built().is_empty());
         assert_eq!(d.query("", None).0.len(), 1);
         assert_eq!(d.resolve([8, 2, 0xff, 0xff], None), None);
+    }
+
+    /// FUN_101adf60's buffer: a character or a block that would fill it to `cap` bytes ends the line (the brackets
+    /// count, EF 27 / EF 28), so at most `cap - 1` bytes stay; nothing after a cut block goes in.
+    #[test]
+    fn capped_expand() {
+        let d = small();
+        assert_eq!(d.expand_cap("abcdef", None, 4), "abc");
+        let line = decode_sjis(b"ab\xFD\x02\x02\x01\x01\xFDcd");
+        assert_eq!(d.expand_cap(&line, None, 13), "ab\u{E008}Hello!\u{E009}");
+        assert_eq!(d.expand_cap(&line, None, 15), "ab\u{E008}Hello!\u{E009}cd");
+        assert_eq!(d.expand_cap(&line, None, 12), "ab");
+        assert_eq!(d.expand_cap(&line, None, usize::MAX), d.expand(&line, None));
+        // A two-byte character counts both bytes.
+        assert_eq!(d.expand_cap("\u{3042}\u{3044}", None, 4), "\u{3042}");
     }
 
     /// FUN_101adbb0's variable block: the template's places take the blocks that follow it, else their id bytes; no
