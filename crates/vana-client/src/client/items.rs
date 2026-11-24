@@ -1081,7 +1081,7 @@ fn use_entry(w: &mut World, c: u8, index: u8, id: u16) {
                     w,
                     targets,
                     super::target::SubThen::Item { container: c, index },
-                    None,
+                    Default::default(),
                     String::new(),
                     4,
                 ) && let Some(id) = w.inv.item(c, index)

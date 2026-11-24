@@ -66,7 +66,8 @@ pub struct PartyCursor {
     pub index: usize,
     pub count: usize,
     pub then: SubThen,
-    pub range: Option<f32>,
+    /// The hand's range checks (FUN_102038c0 reads the target object's +0x6c record).
+    pub range: Reaches,
     /// Rearrange's second stage (DAT_106643fc / +0x3f5 / +0x3f6): the member picked first and its window party's
     /// first slot; the cursor stays inside that party.
     pub moving: Option<(u32, usize)>,
@@ -123,7 +124,7 @@ pub fn sub_up(w: &World) -> bool {
 }
 
 /// FUN_10202d80: the cursor opens on the current target's slot when it is below `count`, else on us (slot 0).
-pub fn open_party_cursor(w: &mut World, count: usize, then: SubThen, range: Option<f32>) {
+pub fn open_party_cursor(w: &mut World, count: usize, then: SubThen, range: Reaches) {
     let slots = w.party.slots();
     let row = w
         .target
@@ -341,30 +342,17 @@ pub fn party_cursor_update(w: &mut World) {
     }
 }
 
-/// FUN_101505a0: the cursor hand's tint by the pick's range from us.
-fn hand_tint(w: &World, id: Option<u32>, range: Option<f32>) -> u32 {
-    match (id, range) {
-        (Some(id), Some(r)) => {
-            let p = if id == w.my_id { w.pos } else { w.entities.get(&id).map_or(w.pos, |e| e.pos) };
-            let raw = (p - w.pos).length();
-            let d = Vec3::new(p.x - w.pos.x, 0.0, p.z - w.pos.z).length();
-            if d > r + 0.5 || raw >= 25.0 {
-                0xe0d0_4040
-            } else if d > r - 0.5 {
-                0xe0d0_d040
-            } else {
-                0xa040_40d0
-            }
-        }
-        _ => 0xa040_40d0,
-    }
+/// FUN_102038c0: the cursor hand's tint by the pick's range checks, from base 0xa04040d0 (DAT_10386374 while the
+/// cursor is up).
+fn hand_tint(w: &World, id: Option<u32>, range: &Reaches) -> u32 {
+    reach_tint(w, range, id, 0xa040_40d0)
 }
 
 /// FUN_10202110 with the cursor at -1: the hand at the fellow row (FUN_102022b0), its tint and the fellow to flash.
 pub fn fellow_hand(w: &World) -> Option<(u32, Option<u32>)> {
     let pc = w.party_cursor.as_ref().filter(|pc| pc.fellow)?;
     let id = super::petrow::fellow(w)?.0;
-    let tint = hand_tint(w, Some(id), pc.range);
+    let tint = hand_tint(w, Some(id), &pc.range);
     Some((tint, (tint != 0xe0d0_4040).then_some(id)))
 }
 
@@ -385,7 +373,7 @@ pub fn party_hand(w: &World) -> Option<(usize, u32, Option<u32>)> {
                     None => return slots.slots.get(i).cloned().flatten().map(|_| (pc.index, 0xa040_40d0, None)),
                 },
             };
-            let tint = hand_tint(w, id, pc.range);
+            let tint = hand_tint(w, id, &pc.range);
             Some((pc.index, tint, id.filter(|_| tint != 0xe0d0_4040)))
         }
         None => {
@@ -408,8 +396,8 @@ pub struct Sub {
     pub saved: Option<u32>,
     pub saved_lock: bool,
     pub then: SubThen,
-    /// The arrow colour's range from us (spell +0x45 through table 0x103644a8), if any.
-    pub range: Option<f32>,
+    /// The arrow colour's range checks (+0x6c / +0x70, FUN_10158d50).
+    pub range: Reaches,
     /// The spell or ability name for titlewin slot 2, and helpwind slot 2's text id (group 0xe).
     pub title: String,
     pub help: u16,
@@ -472,7 +460,7 @@ fn sub_kind(w: &World, id: u32) -> u32 {
 /// FUN_10159440: opens the prompt for DAT target `flags`; the first pick (FUN_101591d0) keeps a fitting target
 /// (not an enemy when we may pick ourselves), else us when allowed, else the nearest candidate in front. False when
 /// nothing fits (the caller prints its line).
-pub fn open_sub(w: &mut World, flags: u32, then: SubThen, range: Option<f32>, title: String, help: u16) -> bool {
+pub fn open_sub(w: &mut World, flags: u32, then: SubThen, range: Reaches, title: String, help: u16) -> bool {
     let (inc, exc) = SUB_FLAGS.iter().filter(|f| flags & f.0 != 0).fold((0, 0), |(i, e), f| (i | f.1, e | f.2));
     let sub =
         Sub { inc, exc, saved: w.target, saved_lock: w.locked, then, range, title, help, ground: false, area: None };
@@ -672,25 +660,140 @@ pub fn sub_slot(w: &mut World, slot: usize) {
     }
 }
 
-/// FUN_10150610: the prompt arrow's tint by distance from us against the range (y ignored), less both model radii
-/// (+0x208; the spell and ability records set the radii flag): red past range + 0.5 or at 25 and more, yellow past
-/// range - 0.5, else blue.
-pub fn range_tint(w: &World, t: u32) -> u32 {
-    let Some(r) = w.prompt.as_ref().and_then(|s| s.range) else { return 0xe040_40d0 };
-    let (p, radius) = if t == w.my_id {
-        (w.pos, w.my_plate.hitbox)
-    } else {
-        w.entities.get(&t).map_or((w.pos, 0.0), |e| (e.pos, e.hitbox))
+/// One of the target object's two range checks (+0x6c / +0x70, set by FUN_10158d50, read by FUN_10151be0): from
+/// whom (byte 0: 0 none, 1 us, 2 our pet, us without one), the range in yalms (byte 1), whether height counts
+/// (byte 2) and whether the two model radii (+0x208) come off (byte 3).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Reach {
+    pub from: u8,
+    pub range: u8,
+    pub height: bool,
+    pub radii: bool,
+}
+
+/// Both checks; all zero (no check: the base tint) after a prompt closes (FUN_10159b60) or the party cursor opens
+/// (FUN_10204390).
+pub type Reaches = [Reach; 2];
+
+const fn from_us(range: u8, height: bool, radii: bool) -> Reaches {
+    [Reach { from: 1, range, height, radii }, Reach { from: 0, range: 0, height: false, radii: false }]
+}
+
+/// Table 0x103654a8 by a record's range index.
+fn table_range(i: u8) -> u8 {
+    crate::dat::actions::RANGES[(i & 0xf) as usize] as u8
+}
+
+/// FUN_1022ce60 (the magic list, /magic's dry run): from us, the spell's +0x45 range, flat, less the radii.
+pub fn spell_reaches(w: &World, id: u16) -> Reaches {
+    let r = w.actions.as_ref().and_then(|a| a.spell(id)).map_or(0, |s| table_range(s.range));
+    from_us(r, false, true)
+}
+
+/// FUN_102249f0 (the ability list; /ja, /pet, /bstpet and /ms dry runs): from us, the ability's +0x10 range, flat,
+/// less the radii. A move of sub-list 6 or 10 (record +2) checks twice: from us by the range of the row opening that
+/// list (ability 0x25b / 0x2ac), then from our pet by its own.
+pub fn ability_reaches(w: &World, id: u16) -> Reaches {
+    ability_reaches_in(w.actions.as_ref().map_or(&[], |a| &a.abilities[..]), id)
+}
+
+fn ability_reaches_in(abilities: &[crate::dat::actions::Ability], id: u16) -> Reaches {
+    let rec = |i: u16| abilities.get(i as usize);
+    let own = rec(id).map_or(0, |a| table_range(a.range));
+    let mut out = from_us(own, false, true);
+    out[1].radii = true;
+    let Some(a) = rec(id) else { return out };
+    let opener = match a.kind {
+        6 => Some(0x25b),
+        10 => Some(0x2ac),
+        _ => None,
     };
-    let raw = (p - w.pos).length();
-    let d = Vec3::new(p.x - w.pos.x, 0.0, p.z - w.pos.z).length() - (w.my_plate.hitbox + radius);
-    if d > r + 0.5 || raw >= 25.0 {
-        0xe0d0_4040
-    } else if d > r - 0.5 {
-        0xe0d0_d040
-    } else {
-        0xe040_40d0
+    if let Some(o) = opener.and_then(rec) {
+        out[0].range = table_range(o.range);
+        out[1] = Reach { from: 2, range: own, height: false, radii: true };
     }
+    out
+}
+
+/// FUN_10224d70 (/weaponskill's dry run): from us, the weapon skill's +0x10 range, flat, less the radii.
+pub fn ws_reaches(w: &World, id: u16) -> Reaches {
+    let r = w.actions.as_ref().and_then(|a| a.abilities.get(id as usize)).map_or(0, |a| table_range(a.range));
+    from_us(r, false, true)
+}
+
+/// FUN_10158e20 (the menu's Switch Target, /attack's dry run): table 0x10336388, 30 with height, less the radii.
+pub const ATTACK_REACH: Reaches = from_us(30, true, true);
+/// FUN_10140a30 (the menu's Ranged Attack, /shoot's dry run): 25 with height, the radii kept.
+pub const SHOOT_REACH: Reaches = from_us(25, true, false);
+/// FUN_10141c50 (Trade): 5, flat, less the radii.
+pub const TRADE_REACH: Reaches = from_us(5, false, true);
+
+/// An actor's position and model radius (+0x208).
+fn place(w: &World, id: u32) -> Option<(Vec3, f32)> {
+    if id == w.my_id { Some((w.pos, w.my_plate.hitbox)) } else { w.entities.get(&id).map(|e| (e.pos, e.hitbox)) }
+}
+
+/// FUN_10151b70 -> FUN_10151be0: the tint of `pick` by the range checks, from `base`. Each check measures from its
+/// actor to the pick (with the ground-position cursor up, to whichever of the pick and the cursor is farther, and
+/// height and radii always count), height dropped unless asked for, both radii off when asked for: red when the
+/// distance less the radii is past range + 0.5 or the distance is 25 or more (at once); yellow past range - 0.5
+/// (0 for a range of 0.5 or less); else `base`.
+pub fn reach_tint(w: &World, range: &Reaches, pick: Option<u32>, base: u32) -> u32 {
+    let Some(to) = pick.and_then(|t| place(w, t)) else { return base };
+    let us = (w.pos, w.my_plate.hitbox);
+    // FUN_101cdaf0: our pet (our +0x1fa).
+    let pet = super::area::our_pet(w).and_then(|p| place(w, p));
+    tint_of(range, us, pet, to, ground_cursor(w), base)
+}
+
+/// FUN_10151be0 on places (position, model radius): us, our pet, the pick, and the ground-position cursor.
+fn tint_of(
+    range: &Reaches,
+    us: (Vec3, f32),
+    pet: Option<(Vec3, f32)>,
+    pick: (Vec3, f32),
+    cursor: Option<Vec3>,
+    base: u32,
+) -> u32 {
+    const RED: u32 = 0xe0d0_4040;
+    const YELLOW: u32 = 0xe0d0_d040;
+    let mut out = base;
+    for r in range.iter().filter(|r| r.from != 0) {
+        let range = r.range as f32;
+        let low = if range <= 0.5 { 0.0 } else { range - 0.5 };
+        let high = range + 0.5;
+        // From 2 without a pet is from us.
+        let (mut from, from_radius) = if r.from == 2 { pet.unwrap_or(us) } else { us };
+        let mut at = pick.0;
+        let mut radii = if r.radii { from_radius + pick.1 } else { 0.0 };
+        match cursor {
+            Some(c) => {
+                if at.distance(from) < c.distance(from) {
+                    at = c;
+                }
+                radii = 0.0;
+            }
+            None if !r.height => {
+                from.y = 0.0;
+                at.y = 0.0;
+            }
+            None => {}
+        }
+        let d = at.distance(from);
+        if high < d - radii || d >= 25.0 {
+            return RED;
+        }
+        if low < d - radii {
+            out = YELLOW;
+        }
+    }
+    out
+}
+
+/// FUN_10151770's arrow over the prompt's pick: the range checks from base 0xe04040d0.
+pub fn range_tint(w: &World, t: u32) -> u32 {
+    let range = w.prompt.as_ref().map(|s| s.range).unwrap_or_default();
+    reach_tint(w, &range, Some(t), 0xe040_40d0)
 }
 
 /// FUN_10151280: sets the target with its sound; a different target ends the lock (FUN_10153040), a prompt's pick
@@ -1351,6 +1454,77 @@ pub fn locked_step(pos: Vec3, target: Vec3, fwd: f32, side: f32, dist: f32) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const BASE: u32 = 0xe040_40d0;
+    const RED: u32 = 0xe0d0_4040;
+    const YELLOW: u32 = 0xe0d0_d040;
+
+    /// FUN_10151be0: red past range + 0.5 less the radii, yellow past range - 0.5, base inside; flat unless height
+    /// counts; 25 and more is red whatever the range.
+    #[test]
+    fn reach_tint_bands() {
+        let us = (Vec3::ZERO, 0.5);
+        let at = |x: f32, y: f32| (Vec3::new(x, y, 0.0), 0.5);
+        let spell = from_us(20, false, true);
+        assert_eq!(tint_of(&spell, us, None, at(20.0, 0.0), None, BASE), BASE);
+        assert_eq!(tint_of(&spell, us, None, at(20.8, 0.0), None, BASE), YELLOW);
+        assert_eq!(tint_of(&spell, us, None, at(21.6, 0.0), None, BASE), RED);
+        // Flat: height is dropped, also for the 25 test.
+        assert_eq!(tint_of(&spell, us, None, at(20.0, 30.0), None, BASE), BASE);
+        let shoot = SHOOT_REACH;
+        assert_eq!(tint_of(&shoot, us, None, at(24.0, 0.0), None, BASE), BASE);
+        assert_eq!(tint_of(&shoot, us, None, at(24.0, 8.0), None, BASE), RED);
+        // Range 255 still stops at 25.
+        let far = from_us(255, false, false);
+        assert_eq!(tint_of(&far, us, None, at(24.9, 0.0), None, BASE), BASE);
+        assert_eq!(tint_of(&far, us, None, at(25.0, 0.0), None, BASE), RED);
+        // A range of 0.5 or less: yellow from any distance past the radii, not before.
+        let zero = from_us(0, false, true);
+        assert_eq!(tint_of(&zero, us, None, at(1.0, 0.0), None, BASE), BASE);
+        assert_eq!(tint_of(&zero, us, None, at(1.2, 0.0), None, BASE), YELLOW);
+        // No checks: the base.
+        assert_eq!(tint_of(&Reaches::default(), us, None, at(40.0, 0.0), None, BASE), BASE);
+    }
+
+    /// With the ground-position cursor up the farther of the pick and the cursor counts, in 3D, radii kept.
+    #[test]
+    fn reach_tint_ground_cursor() {
+        let us = (Vec3::ZERO, 2.0);
+        let pick = (Vec3::new(5.0, 0.0, 0.0), 2.0);
+        let r = from_us(10, false, true);
+        assert_eq!(tint_of(&r, us, None, pick, Some(Vec3::new(2.0, 0.0, 0.0)), BASE), BASE);
+        assert_eq!(tint_of(&r, us, None, pick, Some(Vec3::new(10.0, 0.0, 0.0)), BASE), YELLOW);
+        assert_eq!(tint_of(&r, us, None, pick, Some(Vec3::new(5.0, 9.0, 0.0)), BASE), YELLOW);
+    }
+
+    /// FUN_102249f0: one check from us by the ability's own range; a sub-list 6 / 10 move checks from us by the
+    /// opening row's range, then from our pet by its own; the pet check falls back to us without a pet.
+    #[test]
+    fn ability_reach_pairs() {
+        use crate::dat::actions::Ability;
+        let mut abilities = vec![Ability::default(); 0x2ad];
+        abilities[0x210] = Ability { kind: 1, range: 2, ..Default::default() };
+        abilities[0x25b] = Ability { kind: 2, range: 12, sub: 6, ..Default::default() };
+        abilities[0x2ac] = Ability { kind: 2, range: 12, sub: 10, ..Default::default() };
+        abilities[0x2a0] = Ability { kind: 6, range: 4, ..Default::default() };
+        abilities[0x2a1] = Ability { kind: 10, range: 9, ..Default::default() };
+        let ja = ability_reaches_in(&abilities, 0x210);
+        assert_eq!(ja[0], Reach { from: 1, range: 3, height: false, radii: true });
+        assert_eq!(ja[1].from, 0);
+        let ready = ability_reaches_in(&abilities, 0x2a0);
+        assert_eq!(ready[0], Reach { from: 1, range: 20, height: false, radii: true });
+        assert_eq!(ready[1], Reach { from: 2, range: 5, height: false, radii: true });
+        let bp = ability_reaches_in(&abilities, 0x2a1);
+        assert_eq!((bp[0].range, bp[1].from, bp[1].range), (20, 2, 12));
+        // Us at 0, the pet at 15 near the pick at 18: within 20 of us and 5 of the pet.
+        let us = (Vec3::ZERO, 0.0);
+        let pet = Some((Vec3::new(15.0, 0.0, 0.0), 0.0));
+        assert_eq!(tint_of(&ready, us, pet, (Vec3::new(18.0, 0.0, 0.0), 0.0), None, BASE), BASE);
+        // Too far from the pet (red), and without the pet the second check is from us.
+        assert_eq!(tint_of(&ready, us, pet, (Vec3::new(8.0, 0.0, 0.0), 0.0), None, BASE), RED);
+        assert_eq!(tint_of(&ready, us, None, (Vec3::new(4.0, 0.0, 0.0), 0.0), None, BASE), BASE);
+        assert_eq!(tint_of(&ready, us, None, (Vec3::new(18.0, 0.0, 0.0), 0.0), None, BASE), RED);
+    }
 
     /// The ground cursor's d-pad: up away from the camera, right to the screen's right (as walking's
     /// forward.cross(NEG_Y)), whatever the camera's height.

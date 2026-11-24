@@ -338,12 +338,17 @@ fn find_member(w: &mut World) {
 
 /// The party-list cursor over our six slots for a pick (FUN_10202d30 mode 0).
 fn pick(w: &mut World, p: Pick) {
-    super::target::open_party_cursor(w, 6, SubThen::Party(p), None);
+    super::target::open_party_cursor(w, 6, SubThen::Party(p), Default::default());
 }
 
 /// Focus (six slots) and Rearrange (all 18): the menu closes while the cursor is up.
 fn pick_hidden(w: &mut World, p: Pick) {
-    super::target::open_party_cursor(w, if p == Pick::Rearrange { 18 } else { 6 }, SubThen::Party(p), None);
+    super::target::open_party_cursor(
+        w,
+        if p == Pick::Rearrange { 18 } else { 6 },
+        SubThen::Party(p),
+        Default::default(),
+    );
     if let Some(m) = w.partymenu.as_mut() {
         m.hidden = true;
     }

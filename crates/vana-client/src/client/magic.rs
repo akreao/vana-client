@@ -6,7 +6,6 @@ use super::World;
 use super::game_ui::GameUi;
 use super::target::{self, SubThen};
 use crate::audio::Ui;
-use crate::dat::actions::RANGES;
 use crate::dat::effect;
 use crate::dat::names::NameSource;
 use crate::render::invwin::{ActionRow, push_action_list, push_category, push_cost_box};
@@ -842,7 +841,7 @@ pub(super) fn enter(w: &mut World, kind: Kind) {
                 refuse(w, 0xc2);
             } else {
                 w.sounds.push(Ui::Select as u32);
-                target::open_sub(w, 0x7f, SubThen::Command(line), None, String::new(), 0);
+                target::open_sub(w, 0x7f, SubThen::Command(line), Default::default(), String::new(), 0);
             }
             return;
         }
@@ -865,7 +864,8 @@ pub(super) fn enter(w: &mut World, kind: Kind) {
             }
             let Some(r) = w.actions.as_ref().and_then(|a| a.spell(id)).cloned() else { return };
             let name = spell_name(w, id);
-            let range = Some(RANGES[(r.range & 0xf) as usize] as f32);
+            // FUN_1022ddb0 -> FUN_1022ce60: the arrow's range check.
+            let range = target::spell_reaches(w, id);
             let help = 0x4f;
             // FUN_10102430: Pianissimo and Entrust widen a self-only song / geomancy spell to the party.
             let targets = crate::dat::actions::spell_targets(r.targets, r.kind, r.flags, &w.buffs);
@@ -902,7 +902,9 @@ pub(super) fn enter(w: &mut World, kind: Kind) {
             } else {
                 "/jobability"
             };
-            if !target::open_sub(w, a.targets as u32, SubThen::Ability(cmd, name.clone()), None, name, 0x51) {
+            // FUN_102257b0 -> FUN_102249f0: the arrow's range checks.
+            let range = target::ability_reaches(w, id);
+            if !target::open_sub(w, a.targets as u32, SubThen::Ability(cmd, name.clone()), range, name, 0x51) {
                 refuse(w, 0x5d);
                 return;
             }
@@ -993,7 +995,8 @@ pub fn key(w: &mut World, key: egui::Key) -> bool {
                             w,
                             0x20,
                             SubThen::Line { stash: "/range ".into(), quoted: false, from_macro: false },
-                            None,
+                            // FUN_10140c80 -> FUN_10140a30(1).
+                            target::SHOOT_REACH,
                             String::new(),
                             0,
                         ) {

@@ -86,7 +86,7 @@ pub struct Spell {
     pub jp_mask: u32,
 }
 
-/// Table 0x103644a8: spell range by record +0x45.
+/// Table 0x103654a8 (bytes at even offsets): the range by spell record +0x45 or ability record +0x10.
 pub const RANGES: [u16; 16] = [0, 1, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20, 25, 30, 255];
 
 #[derive(Clone, Debug, Default)]
@@ -110,6 +110,8 @@ pub struct Ability {
     /// +0xe: a row opening the sub-list of this type (skipped by /ja); +0xf level (Monstrosity).
     pub sub: u8,
     pub level: u8,
+    /// +0x10: the range index (table 0x103654a8, as the spells' +0x45; FUN_102249f0 / FUN_10224d70).
+    pub range: u8,
     /// The area display (FUN_10224ac0): +0x11 the radius (an index into RANGES), +0x12 the area type, +0x13 the
     /// marked actors' kind; +0x15 nonzero leaves the radius alone, else +0x16 / +0x18 / +0x1a are its scale (-0x100
     /// .. 0x100) at 1000 / 2000 / 3000 TP (FUN_10224cf0).
@@ -174,6 +176,7 @@ impl Actions {
                 tp16: u16_at(r, 0xc),
                 sub: r[0xe],
                 level: r[0xf],
+                range: r[0x10],
                 aoe_radius: r[0x11],
                 area: r[0x12],
                 aoe_kind: r[0x13],

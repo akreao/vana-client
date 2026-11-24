@@ -800,16 +800,28 @@ fn open_prompt(w: &mut World, stash: &str, mask: u32, target_cmd: bool, quoted: 
         _ => None,
     };
     // The area display's callback the command's dry run registers: /magic FUN_1007b710 -> FUN_1022ce60, /ja and /pet
-    // FUN_1007b900 -> FUN_102249f0, /weaponskill FUN_1007b820 -> FUN_10224d70.
+    // FUN_1007b900, /bstpet FUN_1007b9d0 and /ms FUN_1007bad0 -> FUN_102249f0, /weaponskill FUN_1007b820 ->
+    // FUN_10224d70.
+    use super::area::Of;
+    let word = args.get(1).map(String::as_str);
     let area = match cid {
-        Some(id::MAGIC | id::NINJUTSU | id::SONG) => spell.map(super::area::Of::Spell),
-        Some(id::JA | id::PET) => args.get(1).and_then(|n| ja_named(w, n)).map(super::area::Of::Ability),
-        Some(id::WS) => args.get(1).and_then(|n| ability_named(w, n, 0..0x200)).map(super::area::Of::WeaponSkill),
+        Some(id::MAGIC | id::NINJUTSU | id::SONG) => spell.map(Of::Spell),
+        Some(id::JA | id::PET) => word.and_then(|n| ja_named(w, n)).map(Of::Ability),
+        Some(id::BSTPET) => word.and_then(|n| bstpet_named(w, n)).map(Of::Ability),
+        Some(id::MONSTERSKILL) => word.and_then(|n| ms_named(w, n)).map(Of::Ability),
+        Some(id::WS) => word.and_then(|n| ability_named(w, n, 0..0x200)).map(Of::WeaponSkill),
         _ => None,
     };
-    let range = spell
-        .and_then(|s| w.actions.as_ref()?.spell(s))
-        .map(|r| crate::dat::actions::RANGES[(r.range & 0xf) as usize] as f32);
+    // The arrow's (or the party hand's) range checks the same dry runs set (FUN_10158d50); /attack FUN_1007a7a0 ->
+    // FUN_10158e20, /shoot FUN_1007a730 -> FUN_10140a30(1). Any other command leaves none.
+    let range = match (cid, area) {
+        (_, Some(Of::Spell(s))) => target::spell_reaches(w, s),
+        (_, Some(Of::Ability(a))) => target::ability_reaches(w, a),
+        (_, Some(Of::WeaponSkill(a))) => target::ws_reaches(w, a),
+        (Some(id::ATTACK), _) => target::ATTACK_REACH,
+        (Some(id::SHOOT), _) => target::SHOOT_REACH,
+        _ => Default::default(),
+    };
     let then = target::SubThen::Line { stash, quoted, from_macro: mode == Mode::Macro };
     if matches!(mask, 5 | 0xd) {
         target::open_party_cursor(w, if mask == 5 { 6 } else { 18 }, then, range);
@@ -3152,12 +3164,16 @@ fn monster_skill(w: &mut World, args: &[String], mode: Mode) -> Done {
     if !status_gate(w, 0x7f) {
         return Ok(());
     }
-    let name = args.get(1).ok_or(())?;
-    let moves: Vec<u16> = w.mon_moves.iter().map(|m| m.0).filter(|&m| m != 0).collect();
-    let id = ability_named(w, name, moves.into_iter()).filter(|id| (0x700..0xb00).contains(id)).ok_or(())?;
+    let id = ms_named(w, args.get(1).ok_or(())?).ok_or(())?;
     let t = resolve(w, args.get(2).map(String::as_str), false, true, mode).ok_or(())?;
     act(w, t, 0x19, (id - 0x600) as u32);
     Ok(())
+}
+
+/// FUN_1007bad0's lookup: the name among our 16 moves, an id in 0x700..0xaff.
+fn ms_named(w: &World, name: &str) -> Option<u16> {
+    let moves: Vec<u16> = w.mon_moves.iter().map(|m| m.0).filter(|&m| m != 0).collect();
+    ability_named(w, name, moves.into_iter()).filter(|id| (0x700..0xb00).contains(id))
 }
 
 /// FUN_1007ffa0 (/?): no word lists the commands with flag 1 or 4, "normal" those with flag 1 (none with 0x1e00), in
@@ -3238,15 +3254,24 @@ fn bstpet(w: &mut World, args: &[String], mode: Mode) -> Done {
         }
         return if ready.is_empty() { Err(()) } else { Ok(()) };
     };
-    let id = match number(word).filter(|n| word.len() <= 2 && (1..=99).contains(n)) {
-        Some(n) => ready.get(n as usize - 1).map(|a| a.id),
-        None => ability_named(w, word, super::magic::ability_rows(w, 0x12).into_iter()),
-    }
-    .filter(|&id| (0x200..0x700).contains(&id))
-    .ok_or(())?;
+    let id = bstpet_named(w, word).ok_or(())?;
     let t = resolve(w, args.get(2).map(String::as_str), false, false, mode).ok_or(())?;
     act(w, t, cat::JA, (id - 0x200) as u32);
     Ok(())
+}
+
+/// FUN_1007b9d0's lookup: the n-th known Ready move (1..99 in one or two characters) or one by name, an id in
+/// 0x200..0x6ff.
+fn bstpet_named(w: &World, word: &str) -> Option<u16> {
+    let rows = super::magic::ability_rows(w, 0x12);
+    match number(word).filter(|n| word.len() <= 2 && (1..=99).contains(n)) {
+        Some(n) => {
+            let acts = w.actions.as_ref()?;
+            rows.iter().filter_map(|&i| acts.abilities.get(i as usize)).nth(n as usize - 1).map(|a| a.id)
+        }
+        None => ability_named(w, word, rows.into_iter()),
+    }
+    .filter(|&id| (0x200..0x700).contains(&id))
 }
 
 #[cfg(test)]

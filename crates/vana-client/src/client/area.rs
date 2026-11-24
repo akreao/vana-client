@@ -110,7 +110,7 @@ const KINDS: [u8; 0x24] =
     [4, 4, 1, 2, 1, 2, 1, 2, 3, 3, 3, 3, 1, 2, 1, 2, 1, 2, 1, 7, 5, 5, 1, 2, 0, 0, 3, 3, 3, 3, 6, 6, 0, 0, 0, 0];
 
 /// FUN_101cdae0: our pet's actor (our +0x1fa), by its server id.
-fn our_pet(w: &World) -> Option<u32> {
+pub(super) fn our_pet(w: &World) -> Option<u32> {
     (w.my_pet != 0).then(|| w.entity_at(w.my_pet).map(|(id, _)| id)).flatten()
 }
 

@@ -11,7 +11,7 @@ use super::magic;
 pub struct Info {
     /// The kinds it may target, in the prompt's order ("Self", "Party", "Enemy" ...).
     pub targets: Vec<&'static str>,
-    /// The spell's reach in yalms (record +0x45 through table 0x103644a8); abilities carry none in the DAT.
+    /// The reach in yalms (spell +0x45 or ability +0x10 through table 0x103654a8).
     pub range: Option<f32>,
     /// The current target's distance (flat, as the prompt's arrow measures it) when the action may take it.
     pub distance: Option<f32>,
@@ -100,7 +100,12 @@ pub fn ability(w: &World, i: u16) -> Option<Info> {
         return Some(Info { targets: Vec::new(), ..Default::default() });
     }
     let why = magic::ability_check(w, i).map(|id| line(w, id)).or_else(|| effect_reason(w, false).map(String::from));
-    Some(Info { targets: target_names(a.targets), range: None, distance: distance(w, a.targets), why })
+    Some(Info {
+        targets: target_names(a.targets),
+        range: Some(crate::dat::actions::RANGES[(a.range & 0xf) as usize] as f32).filter(|&r| r < 255.0),
+        distance: distance(w, a.targets),
+        why,
+    })
 }
 
 #[cfg(test)]
