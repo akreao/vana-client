@@ -121,6 +121,8 @@ pub struct Friends {
     started: bool,
     /// The in-game ChangeMyStatus went (after the map session exists, so friends see the character).
     announced: bool,
+    /// A failed active-character call is made again from then.
+    announce_at: Option<Instant>,
     /// The loads of `start` are out: our status is not known yet.
     loading: bool,
     /// The status job runs (its busy byte, job +1): a change asked meanwhile is dropped (FUN_100f7bd0).
@@ -292,7 +294,7 @@ fn spawn(w: &mut World, job: impl FnOnce(&Cred) -> Done + Send + 'static) {
     w.friends.jobs.push(rx);
 }
 
-/// In game: the IRC sign-on and the loads (as xiloader's login: our status first, then the lists).
+/// In game: the IRC sign-on; the loads follow it (`load`).
 pub fn start(w: &mut World) {
     let f = &mut w.friends;
     if f.started || f.cred.is_none() {
@@ -300,6 +302,12 @@ pub fn start(w: &mut World) {
     }
     (f.started, f.loading) = (true, true);
     f.irc = f.cred.clone().map(profile::irc);
+}
+
+/// Once signed on: our status, then the lists (the Viewer's order: the chat sign-in, then LoadMyStatus, so the status
+/// is the one the session holds; xi_profile answers LoadMyStatus with its default, Online, until the sign-on has read
+/// the saved one).
+fn load(w: &mut World) {
     spawn(w, |c| {
         Done::Loaded((|| {
             let status = profile::load_my_status(c)?;
@@ -486,6 +494,7 @@ pub fn poll(w: &mut World) {
             Irc::SignedOn => {
                 log::info!("friends: signed on to xi_profile's IRC");
                 w.friends.signed_on = true;
+                load(w);
                 load_mail(w);
                 fetch(w);
             }
@@ -517,7 +526,8 @@ pub fn poll(w: &mut World) {
     // 0xe / 0xf: its handle, its entry, flag 0, presence kept, p5 kept, activity 1), then the status object is built
     // from polcore's getters (FUN_100f78d0).
     let f = &w.friends;
-    if f.signed_on && f.loaded && !f.announced && w.zone.is_some() {
+    if f.signed_on && f.loaded && !f.announced && w.zone.is_some() && f.announce_at.is_none_or(|t| Instant::now() >= t)
+    {
         w.friends.announced = true;
         let Some(index) = slot(w) else {
             log::warn!("friends: our character is not in PlayOnline's character list");
@@ -529,9 +539,15 @@ pub fn poll(w: &mut World) {
             let r = change_once(c, &pol, [handle as i32, index as i32, 0, -2, -1, 1]);
             let st = pol.lock().unwrap().status.clone();
             Done::Then(Box::new(move |w| {
+                // Retail goes no further than lobby step 3 when this call fails, so the status object is built only
+                // after it went through; ours tries again 30 s later, and status changes wait until then.
                 if let Err(e) = r {
                     log::warn!("friends: making our character the active one: {e:#}");
+                    (w.friends.announced, w.friends.announce_at) =
+                        (false, Some(Instant::now() + Duration::from_secs(30)));
+                    return;
                 }
+                w.friends.announce_at = None;
                 w.friends.in_force = Some([st.content, st.service, st.flag, st.presence, -1, st.activity]);
                 w.friends.my_status = st.presence as u8;
             }))

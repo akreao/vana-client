@@ -62,7 +62,11 @@ Not built, as it sends nothing (a comment in `Profile::register`).
   ChangeMyStatus goes through polcore's rules with FFXiMain's arguments: the active-character call `(its handle, its
   entry, 0, -2, -1, 1)`, after which the status object's block in force is read from polcore (`in_force`); the job's
   two requests (the first not sent); the return from the viewer's `(in force, flag and status from polcore, -1)`.
-  LoadMyStatus is asked with polcore's 0x14-byte zero body. Our open status after the loads is polcore's presence
+  LoadMyStatus is asked with polcore's 0x14-byte zero body, and only after the IRC sign-on, the Viewer's order (chat
+  sign-in, then LoadMyStatus): xi_profile reads the saved open status at the sign-on and answers its default, Online,
+  before it, which the active-character call (presence kept = polcore's) would then have written back over an
+  Invisible. A failed active-character call builds no status object (retail stops at lobby step 3); ours tries it
+  again 30 s later and holds status changes until it goes through. Our open status after the loads is polcore's presence
   (4 when LoadMyStatus says none).
 - Tests: change_my_status_sends_only_a_change, change_my_status_refusals, load_my_status_reply,
   an_unchanged_status_is_not_sent, bound_refusals_read_their_body, a_change_is_sent_once.
@@ -70,8 +74,9 @@ Not built, as it sends nothing (a comment in `Profile::register`).
 **Not done, not checked.**
 - Not run against PlayOnline (no server) nor live on LSB; LSB's xi_profile reads the same bytes (found / slot / flag
   / open status / bNoChange) and answers ChangeMyStatus the same whatever the body says beyond those.
-- An LSB character past the handle's 8 slots is unlinked; retail would register it first (row 146's path), ours
-  sends the active-character call with "not found" (the xi_profile path has no registration).
+- An LSB character past the handle's 8 slots is unlinked (LSB attaches only the first 8 to its one handle): polcore
+  finds no slot and sends "not found", so LSB shows that character as not in game. Retail would register it to a
+  handle with a free slot first and, with none, stop at lobby step 3 (-1); the fix is on LSB's side (more handles).
 - ChangeMyStatus's 0x72 leaves retail's transaction slot busy with its socket open until it times out (100 s) or is
   cancelled; ours closes the connection.
 - LoadMyStatus's other kept fields (the byte at 0x76 -> 0x10104da0, dwords @8 / @0xc -> 0x1010339c / 98) are
