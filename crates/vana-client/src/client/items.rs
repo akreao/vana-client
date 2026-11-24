@@ -1077,14 +1077,18 @@ fn use_entry(w: &mut World, c: u8, index: u8, id: u16) {
                 && gate_line(w, 0x77).is_none();
             if garden || status_gate(w, 0x7f) {
                 let targets = it.map_or(0x7f, |i| i.targets as u32);
-                super::target::open_sub(
+                if super::target::open_sub(
                     w,
                     targets,
                     super::target::SubThen::Item { container: c, index },
                     None,
                     String::new(),
                     4,
-                );
+                ) && let Some(id) = w.inv.item(c, index)
+                {
+                    // FUN_101f4870 -> FUN_101f4b40: the item's area display.
+                    super::area::register(w, super::area::Of::Item(id));
+                }
             }
         }
     }

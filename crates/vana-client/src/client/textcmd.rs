@@ -794,8 +794,17 @@ fn open_prompt(w: &mut World, stash: &str, mask: u32, target_cmd: bool, quoted: 
         return;
     }
     let args = tokens(&stash, mode != Mode::Typed);
-    let spell = match args.first().and_then(|a| table().get(a.as_str())).map(|e| e.0) {
+    let cid = args.first().and_then(|a| table().get(a.as_str())).map(|e| e.0);
+    let spell = match cid {
         Some(id::MAGIC | id::NINJUTSU | id::SONG) => args.get(1).and_then(|n| find_spell(w, n, 0).ok()),
+        _ => None,
+    };
+    // The area display's callback the command's dry run registers: /magic FUN_1007b710 -> FUN_1022ce60, /ja and /pet
+    // FUN_1007b900 -> FUN_102249f0, /weaponskill FUN_1007b820 -> FUN_10224d70.
+    let area = match cid {
+        Some(id::MAGIC | id::NINJUTSU | id::SONG) => spell.map(super::area::Of::Spell),
+        Some(id::JA | id::PET) => args.get(1).and_then(|n| ja_named(w, n)).map(super::area::Of::Ability),
+        Some(id::WS) => args.get(1).and_then(|n| ability_named(w, n, 0..0x200)).map(super::area::Of::WeaponSkill),
         _ => None,
     };
     let range = spell
@@ -804,12 +813,19 @@ fn open_prompt(w: &mut World, stash: &str, mask: u32, target_cmd: bool, quoted: 
     let then = target::SubThen::Line { stash, quoted, from_macro: mode == Mode::Macro };
     if matches!(mask, 5 | 0xd) {
         target::open_party_cursor(w, if mask == 5 { 6 } else { 18 }, then, range);
+        // 0x10076ef0 / 0x10076f43: the cursor's dry run registers the area callback as the prompt's does.
+        if let Some(of) = area {
+            super::area::register_cursor(w, of);
+        }
         return;
     }
     if target::open_sub(w, mask, then, range, String::new(), 0) {
         // 0x1007b7a8: /magic's prompt asks FUN_1022b850 too.
         if let Some(sp) = spell {
             target::ground_mode(w, sp);
+        }
+        if let Some(of) = area {
+            super::area::register(w, of);
         }
     } else {
         refuse(w, 0x46);
@@ -3107,22 +3123,28 @@ fn weapon_skill(w: &mut World, args: &[String], mode: Mode) -> Done {
     Ok(())
 }
 
+/// FUN_1007b900's lookup: a job ability (not hidden, in s2c 0x0AC's bits) or a pet command by name, the later match
+/// winning.
+fn ja_named(w: &World, name: &str) -> Option<u16> {
+    let hidden = |i: u16| w.actions.as_ref().and_then(|a| a.abilities.get(i as usize)).is_some_and(|a| a.sub != 0);
+    let ja = ability_named(w, name, (0x200..0x400).filter(|&i| !hidden(i)));
+    let id = ability_named(w, name, 0x400..0x600).or(ja)?;
+    if (0x200..0x400).contains(&id) {
+        let bit = (id - 0x200) as usize;
+        if !w.commands_known.get(64 + bit / 8).is_some_and(|b| b & (1 << (bit % 8)) != 0) {
+            return None;
+        }
+    }
+    Some(id)
+}
+
 /// FUN_1007b900: /ja and /pet: records 0x200..0x3ff (not hidden), then 0x400..0x5ff, the later match winning;
 /// 0x01A category 9 with id - 0x200. A job ability must be in s2c 0x0AC's bits (pet commands: not checked, inf).
 fn ability(w: &mut World, _pet: bool, args: &[String], mode: Mode) -> Done {
     if !status_gate(w, 0x7f) {
         return Ok(());
     }
-    let name = args.get(1).ok_or(())?;
-    let hidden = |i: u16| w.actions.as_ref().and_then(|a| a.abilities.get(i as usize)).is_some_and(|a| a.sub != 0);
-    let ja = ability_named(w, name, (0x200..0x400).filter(|&i| !hidden(i)));
-    let id = ability_named(w, name, 0x400..0x600).or(ja).ok_or(())?;
-    if (0x200..0x400).contains(&id) {
-        let bit = (id - 0x200) as usize;
-        if !w.commands_known.get(64 + bit / 8).is_some_and(|b| b & (1 << (bit % 8)) != 0) {
-            return Err(());
-        }
-    }
+    let id = ja_named(w, args.get(1).ok_or(())?).ok_or(())?;
     let t = resolve(w, args.get(2).map(String::as_str), false, true, mode).ok_or(())?;
     act(w, t, cat::JA, (id - 0x200) as u32);
     Ok(())
