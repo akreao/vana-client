@@ -72,7 +72,7 @@ pub fn kind_bits(w: &World, id: u32, e: &Entity) -> u32 {
 
 /// FUN_10098210(0) as far as we have its inputs: no door / lift / ship, not hidden or asleep (@0x20 bits 1 / 2), not
 /// invisible, not untargetable or radar-off, not an object model, not hidden for the s2c 0x077 list (+0xb2 bit 7).
-/// Not modelled: +0x120 bit 15.
+/// Not modelled: +0x120 bit 15. Its despawn-mark test (+0x124 bit 12 on an actor no event holds) is `dots`'s.
 pub fn shown(e: &Entity) -> bool {
     !matches!(e.sub_kind, 2..=4)
         && !e.server_hidden()
@@ -116,7 +116,8 @@ pub fn colour(bits: u32, monstrosity: u16, status: u8, mobs: bool) -> Option<u32
 
 /// The dots as (local x, local y, ARGB) in slot order: local (P.x - E.x, E.z - P.z), kept within the range and 4 high.
 pub fn dots(w: &World, a: u32, s: &Sample) -> Vec<(f64, f64, u32)> {
-    let mut ents: Vec<(&u32, &Entity)> = w.entities.iter().filter(|(id, _)| **id != w.my_id).collect();
+    let mut ents: Vec<(&u32, &Entity)> =
+        w.entities.iter().filter(|(id, _)| **id != w.my_id && !super::event::is_parked(w, **id)).collect();
     ents.sort_by_key(|(_, e)| e.index);
     let p = w.pos;
     ents.into_iter()

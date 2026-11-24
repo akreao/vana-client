@@ -964,7 +964,9 @@ pub(super) fn install(
             if kinds.as_ref().is_none_or(|k| k.iter().any(|k| k == "player")) {
                 out.push(self_entity(lua, w)?)?;
             }
-            let mut list: Vec<(&u32, &super::super::Entity)> = w.entities.iter().collect();
+            // A despawned slot (kept until the zone changes) is not in the zone for mods.
+            let mut list: Vec<(&u32, &super::super::Entity)> =
+                w.entities.iter().filter(|(id, _)| !super::super::event::is_parked(w, **id)).collect();
             list.sort_by_key(|(_, e)| e.index);
             let slots = w.party.slots();
             for (id, e) in list {

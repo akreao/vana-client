@@ -508,7 +508,8 @@ pub(super) fn resolve(w: &World, text: Option<&str>, fallback: bool, wide: bool,
             let range =
                 (0x400..0x700).contains(&e.index) || (wide && (0x700..0x900).contains(&e.index) && ours(**id, e.index));
             let same = e.name == name || (wide && name_case(&e.name).is_some_and(|n| n == name));
-            range && e.targetable() && same
+            // FUN_1007a4c0 also passes over a slot with the despawn mark no event holds (0x1007a561).
+            range && e.targetable() && !super::event::is_parked(w, **id) && same
         });
         if let Some((id, e)) = hit {
             return Some((*id, e.index));
