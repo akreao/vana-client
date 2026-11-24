@@ -187,12 +187,14 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
             close(w);
         }
         K::Enter => match l.rows.get(cursor) {
-            Some((_, theirs)) if !l.busy => {
-                let name = acts_for(l.rank, *theirs);
+            Some((r, theirs)) if !l.busy => {
+                let (name, r) = (acts_for(l.rank, *theirs), r.clone());
                 w.sounds.push(Ui::Select as u32);
                 if let Some(l) = w.linklist.as_mut() {
                     l.acts = Some((name, 1));
                 }
+                // FUN_101e4d10 then fetches the member's comment as scresult does (FUN_1020b3e0), silent when busy.
+                super::search::fetch_comment(w, &r);
             }
             _ => w.sounds.push(Ui::Error as u32),
         },
