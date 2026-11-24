@@ -572,8 +572,10 @@ mod tests {
         it.description = format!("{long}\nshort");
         let i = build(&it, None, &Ctx::default(), &msg, &|_: &str| 0.0, None);
         assert_eq!(i.desc, vec![long, "short".to_string()]);
-        // At real widths the lines are the buffer's, as before.
+        // At real widths (7 px a char, 316 px a line) the paragraph wraps at 45 chars, as before.
         let i = build(&it, None, &Ctx::default(), &msg, &width, None);
+        assert_eq!(i.desc.len(), 8);
+        assert!(i.desc[..6].iter().all(|l| l.len() == 45), "{:?}", i.desc);
         assert_eq!(i.desc.concat().len(), 305);
     }
 
