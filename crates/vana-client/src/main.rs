@@ -3915,10 +3915,13 @@ fn fx_shot(
     let keys = dat::zone::Keys::from_ffximain(&std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir()))?)?;
     let file = index.read(dat::zone::file_id(zone))?;
     let scene = dat::zone::load_scene(&keys, &file)?;
+    // The zone's `@ini` fixes the time or tilts the sun for the scenery as for the effects (Effects::load_zone).
+    let sky = dat::weather::Sky::of_zone_file(&file);
+    let m = sky.minute(hour * 60.0);
     let lighting = dat::weather::ZoneWeather::parse(&file)
         .ok()
-        .and_then(|w| w.at("suny", hour * 60.0))
-        .map(|e| dat::weather::Lighting::from_env(&e, hour * 60.0));
+        .and_then(|w| w.at("suny", m))
+        .map(|e| dat::weather::Lighting::from_env_k(&e, m, sky.tilt, 1.0));
     let v3 = |v: &[f32]| Vec3::new(v[0], v[1], v[2]);
     let (mut c, mut t) = (v3(caster), v3(victim));
     let g = client::ground::Ground::build(&scene);
