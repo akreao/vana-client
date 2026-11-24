@@ -261,22 +261,27 @@ pub fn store_friend_list(
     Ok((0..count(&a)).filter_map(|k| FriendInfo::from_bytes(a.get(8 + k * FRIEND_INFO..)?)).collect())
 }
 
-/// LoadHandleNameList (0x00 / 0x09): our handle's id and name (LSB: the account's first character).
-pub fn load_handle(c: &Cred) -> Result<(u64, String)> {
+/// LoadHandleNameList (0x00 / 0x09): the 0x88-byte records ([0] the handle's index, the id @8, the name @0x10; LSB:
+/// one, the account's first character).
+pub fn load_handles(c: &Cred) -> Result<Vec<[u8; 0x88]>> {
     let b = ok(request(c, 0, 9, &[])?, "LoadHandleNameList")?;
-    let h = b.get(8..8 + 0x88).context("no handle")?;
-    Ok((u64::from_le_bytes(h[8..16].try_into().unwrap()) & 0xfff_ffff_ffff, name16(&h[0x10..0x20])))
+    Ok((0..count(&b)).filter_map(|k| b.get(8 + k * 0x88..8 + (k + 1) * 0x88)?.try_into().ok()).collect())
 }
 
-/// LoadCharacterList (0x01 / 0x03): (slot, character id, name) in the account's order.
-pub fn load_characters(c: &Cred) -> Result<Vec<(u8, u32, String)>> {
+/// A handle record's id and name.
+pub fn handle_name(h: &[u8; 0x88]) -> (u64, String) {
+    (u64::from_le_bytes(h[8..16].try_into().unwrap()) & 0xfff_ffff_ffff, name16(&h[0x10..0x20]))
+}
+
+/// LoadCharacterList (0x01 / 0x03): the 0x68-byte records in the account's order.
+pub fn load_characters(c: &Cred) -> Result<Vec<[u8; 0x68]>> {
     let b = ok(request(c, 1, 3, &[])?, "LoadCharacterList")?;
-    Ok((0..count(&b))
-        .filter_map(|k| {
-            let e = b.get(8 + k * 0x68..8 + (k + 1) * 0x68)?;
-            Some((e[0], u64::from_le_bytes(e[0x10..0x18].try_into().unwrap()) as u32, name16(&e[0x18..0x28])))
-        })
-        .collect())
+    Ok((0..count(&b)).filter_map(|k| b.get(8 + k * 0x68..8 + (k + 1) * 0x68)?.try_into().ok()).collect())
+}
+
+/// A character record's (entry index, character id, name).
+pub fn character_row(e: &[u8; 0x68]) -> (u8, u32, String) {
+    (e[0], u64::from_le_bytes(e[0x10..0x18].try_into().unwrap()) as u32, name16(&e[0x18..0x28]))
 }
 
 /// SearchPolId (0x01 / 0x0B) for a character in game: its owner's POL id and the character's name.
@@ -291,22 +296,19 @@ pub fn search_pol_id(c: &Cred, char_id: u32) -> Result<Option<(u64, String)>> {
     Ok(Some((u64::from_le_bytes(a[..8].try_into().unwrap()), name16(&a[0x10..0x20]))))
 }
 
-/// LoadMyStatus (0x04 / 0x06): our open status (0 Online, 1 Away, 4 Invisible).
-pub fn load_my_status(c: &Cred) -> Result<u8> {
-    let b = ok(request(c, 4, 6, &[])?, "LoadMyStatus")?;
-    Ok(b.get(6).map_or(0, |&s| s.saturating_sub(1)))
+/// LoadMyStatus (0x04 / 0x06) with polcore's 0x14-byte zero request: the reply as polcore reads it
+/// (`polpro::Status::loaded`; the open status is [6] - 1).
+pub fn load_my_status(c: &Cred) -> Result<Vec<u8>> {
+    let b = ok(request(c, 4, 6, &sealed(vec![0; 0x14]))?, "LoadMyStatus")?;
+    if b.len() < 8 {
+        bail!("LoadMyStatus: a {}-byte answer", b.len());
+    }
+    Ok(b)
 }
 
-/// ChangeMyStatus (0x04 / 0x05): in game with character `slot` (None: not in game), `open` the open status to set
-/// (None keeps it).
-pub fn change_my_status(c: &Cred, slot: Option<u8>, open: Option<u8>) -> Result<()> {
-    let mut b = vec![0u8; 0x24];
-    b[0x11] = slot.is_some() as u8;
-    b[0x12] = slot.unwrap_or(0);
-    b[0x13] = 1;
-    b[0x14..0x16].copy_from_slice(&1u16.to_le_bytes());
-    b[0x16] = open.map_or(0, |o| o + 1);
-    ok(request(c, 4, 5, &sealed(b))?, "ChangeMyStatus").map(|_| ())
+/// ChangeMyStatus (0x04 / 0x05) with the payload polcore built (`polpro::change_my_status`).
+pub fn change_my_status(c: &Cred, payload: &[u8; 0x24]) -> Result<()> {
+    ok(request(c, 4, 5, &sealed(payload.to_vec()))?, "ChangeMyStatus").map(|_| ())
 }
 
 /// ProfFileHead (0x198): target (0 our files), path, offset, length.
@@ -757,8 +759,8 @@ mod tests {
         println!("irc: {:?}", link.events.recv_timeout(Duration::from_secs(10)));
         println!("status {:?}", load_my_status(&c));
         println!("friends {:?}", load_friend_list(&c));
-        println!("handle {:?}", load_handle(&c));
-        println!("chars {:?}", load_characters(&c));
+        println!("handles {:?}", load_handles(&c).map(|h| h.iter().map(handle_name).collect::<Vec<_>>()));
+        println!("chars {:?}", load_characters(&c).map(|e| e.iter().map(character_row).collect::<Vec<_>>()));
         println!("mail {:?}", mail_list(&c));
         let _ = link.quit.send(());
         println!("irc: {:?}", link.events.recv_timeout(Duration::from_secs(5)));
