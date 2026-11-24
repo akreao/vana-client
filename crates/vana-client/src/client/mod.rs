@@ -5497,6 +5497,15 @@ fn timers_foot(gu: &GameUi, world: &World, sw: f32, sh: f32) -> f32 {
     foot
 }
 
+/// The config block at a zone-in: FUN_100fa000 zero-fills the character data (+0x2cfd8 with it) and FUN_100fae40
+/// writes the 0x00A's first four bytes (the anonymous and seek-party bits among them); the rest stay 0 until a 0x0B4
+/// brings all twelve, so the zone-in walk's 0x0DB carries them as 0.
+fn zone_conf(conf: [u8; 4]) -> [u8; 12] {
+    let mut out = [0; 12];
+    out[..4].copy_from_slice(&conf);
+    out
+}
+
 /// What a lobycwin change needs from the app (FUN_10196390): title music 0xaf, volume 0xa8 / aspect 0xab.
 #[derive(Default)]
 struct LobbyApply {
@@ -12037,9 +12046,7 @@ impl App {
                     world.my_pull = 0;
                     // 0x10094e12: the new entity's team byte (+0x1ff) starts at 0; 0x037 sets it.
                     world.my_team = 0;
-                    // FUN_100fae40: the 0x00A's config bytes (the anonymous and seek-party bits among them) until a
-                    // 0x0B4 brings all twelve.
-                    world.conf_sys[..4].copy_from_slice(&conf);
+                    world.conf_sys = zone_conf(conf);
                     config_anon(world.config.as_mut(), &world.conf_sys);
                     // FUN_100fa000 (the map session's setup, run for every zone) zero-fills the whole character data
                     // block, the auction parcel store with it: the slots start empty in each zone and come back
@@ -22441,6 +22448,11 @@ pub(crate) fn egui_pass(ctx: &egui::Context, raw: egui::RawInput, ui: impl FnMut
 mod tests {
     /// The zone-in walk's sends as a retail capture has them after c2s 0x00F: 0x0DB kind 1, 0x112 kind 0, 0x05A; again
     /// at the next zone-in, within the conquest gate's 120 s and with no reply to either request.
+    #[test]
+    fn zone_in_config_block() {
+        assert_eq!(super::zone_conf([4, 0x18, 0, 1]), [4, 0x18, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
     #[test]
     fn zone_walk_sends_in_retail_order() {
         let mut conquest = super::region::Data::new(None);

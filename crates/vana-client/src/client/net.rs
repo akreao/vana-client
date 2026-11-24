@@ -3363,6 +3363,16 @@ mod tests {
         assert_eq!(plate(8), plate(0));
     }
 
+    /// FUN_1009d0f0 0x1009d534: 0x037 Flags3 u32 @0x38 bit 5 is our +0x130 bit 11 (the PvP mark's switch); the 0x00A
+    /// has no such bit and its new entity starts with it clear.
+    #[test]
+    fn pvp_only_flag() {
+        let plate = |f3: u32| self_plate(&sub(0x037, 0x60, &[(0x38, &f3.to_le_bytes())]));
+        assert!(plate(1 << 5).pvp_only && !plate(1 << 4).pvp_only && !plate(1 << 6).pvp_only);
+        let all = sub(0x00A, 0x104, &[(0x18, &[0xff; 4]), (0x20, &[0xff; 4]), (0x24, &[0xff; 4]), (0x28, &[0xff; 4])]);
+        assert!(!zone_in_plate(&all).pvp_only);
+    }
+
     /// 0x00E's name rules (asm 0x1009b666..0x1009b7b5) and FUN_100dde40's length.
     #[test]
     fn npc_name_rules() {
