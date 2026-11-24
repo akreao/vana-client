@@ -199,19 +199,26 @@ impl RestTick {
     }
 
     /// Whether stat `s`'s rise of `a` is its tick: the amount it rose by a look or two before (or less, filling it).
-    /// The held amount this one repeats exactly was one too, and no longer counts; a smaller rise that fills the bar
-    /// drops nothing (a rest heal held before a Regen top-off is not that top-off's twin).
+    /// The held amount this one repeats exactly was one too, and no longer counts. A smaller rise that fills the bar
+    /// drops a larger held amount only when no rise of its own size came before (a new effect's clipped first repeat):
+    /// after an established pulse of that size it is a top-off, and the rest heal held before it still counts.
     fn own_rise(&mut self, s: usize, now: Instant, a: u32, full: bool) -> bool {
         let like = |b: u32| a == b || (full && a < b);
         let near = |at: Instant| (OWN_GAP.0..=OWN_GAP.1).contains(&secs(at, now));
         let recent = &mut self.recent[s];
         recent.retain(|&(at, _)| secs(at, now) <= OWN_GAP.1);
+        let exact = recent.iter().any(|&(at, b)| near(at) && b == a);
         let own = recent.iter().any(|&(at, b)| near(at) && like(b));
         recent.push((now, a));
+        // The held amount it repeats exactly; with no pulse of its own size seen (a new effect's first repeat, clipped
+        // by the full bar), the larger held amount it fills after is that effect's first pulse, not a rest heal.
         if own
             && let Some(h) = self.held.as_mut()
             && near(h.at)
-            && let Some(i) = h.amounts[s].iter().position(|x| x.1 == a)
+            && let Some(i) = h.amounts[s]
+                .iter()
+                .position(|x| x.1 == a)
+                .or_else(|| h.amounts[s].iter().position(|x| !exact && full && a < x.1))
         {
             h.amounts[s].remove(i);
             if h.amounts.iter().all(Vec::is_empty) {
@@ -511,6 +518,22 @@ mod tests {
         let r = feed_mp(&[(20.5, 1), (21.7, 12), (23.5, 1), (26.5, 1)], 40.0, 30.0);
         assert_eq!(r.rises.len(), 1, "{:?}", r.rises);
         assert!((r.rises[0] - 21.7).abs() < 0.05, "{:?}", r.rises);
+    }
+
+    /// A new +2 Refresh before any rest heal: +2 at 3.7 s, then its second pulse clipped to +1 by the full bar at 6.7 s.
+    /// With no +1 pulse before it, the held +2 is that effect's first pulse: no first heal is learnt from it.
+    #[test]
+    fn a_new_effect_clipped_by_the_bar_is_no_heal() {
+        let base = Instant::now();
+        let mut r = RestTick { chain: true, ..Default::default() };
+        let events = [(3.7f32, 2u32), (6.7, 1)];
+        let max = 500;
+        for i in 0..=(12.0 * 60.0) as u32 {
+            let t = i as f32 / 60.0;
+            let mp = (497 + events.iter().filter(|e| e.0 <= t).map(|e| e.1).sum::<u32>()).min(max);
+            r.feed(base + std::time::Duration::from_secs_f32(t), true, 1, [1000, mp], [true, mp >= max]);
+        }
+        assert!(r.rises.is_empty(), "{:?}", r.rises);
     }
 
     #[test]
