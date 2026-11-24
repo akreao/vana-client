@@ -596,8 +596,9 @@ fn has_siblings(l: &List) -> bool {
     l.mode == 3 && l.stack.len() > 1 && l.siblings.0 != 0 && l.siblings.1 != 0
 }
 
-/// Mouse: rows hover and click as Enter, the arrows as Left / Right, a click in a description as Enter.
-pub fn pointer(w: &mut World, l: &List, hit: Option<u16>, moved: bool, clicked: bool) {
+/// Mouse: a row takes the cursor when `takes` (winhits::takes) and a click on the cursor's row is Enter, the arrows
+/// are Left / Right, a click in a description is Enter.
+pub fn pointer(w: &mut World, l: &List, hit: Option<u16>, takes: bool, clicked: bool) {
     let Some(c) = hit else { return };
     let mut l = l.clone();
     match c {
@@ -609,10 +610,10 @@ pub fn pointer(w: &mut World, l: &List, hit: Option<u16>, moved: bool, clicked: 
             if row >= l.rows.len() {
                 return;
             }
-            if row != l.cursor && (moved || clicked) {
+            if row != l.cursor && takes {
                 l.cursor = row;
                 w.sounds.push(Ui::Cursor as u32);
-            } else if clicked {
+            } else if clicked && row == l.cursor {
                 key(w, &mut l, egui::Key::Enter, false);
             }
         }

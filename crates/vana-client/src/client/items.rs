@@ -2278,7 +2278,7 @@ fn draw_count(gu: &mut GameUi, n: usize, size: u8, sw: f32, sh: f32) {
     gu.shape_text(&(size.saturating_sub(1)).to_string(), x1 - 1.0, y1 - 16.0, white, true);
 }
 
-/// Mouse on the item list: hover moves the cursor, a click on the highlighted row acts as Enter.
+/// Mouse on the item list: a row takes the cursor by winhits::takes, a click on the highlighted row acts as Enter.
 pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     if matches!(w.win, Some(Win::Equip(_))) {
         super::equipwin::pointer(w, gu, sw, sh, p, moved, clicked);
@@ -2303,19 +2303,19 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         && p.1 < r[1] + r[3]
         && row >= 0.0
         && (row as usize) < VISIBLE_ROWS;
-    if inside && matches!(w.win, Some(Win::Items { .. })) {
-        gu.hover.set(true);
-    }
-    if !inside || !(moved || clicked) {
+    if !inside || !matches!(w.win, Some(Win::Items { .. })) {
         return;
     }
     let row = row as usize;
+    let takes = super::winhits::takes(gu, "menu    inventor", row as u16 + 1, super::winhits::inside(r, p));
     let (cur, enter) = match &mut w.win {
         Some(Win::Items { cursor, .. }) => (cursor, true),
         _ => return,
     };
     let same = *cur == row;
-    *cur = row;
+    if takes {
+        *cur = row;
+    }
     if clicked && same && enter {
         key(w, egui::Key::Enter, false, false, false);
     }

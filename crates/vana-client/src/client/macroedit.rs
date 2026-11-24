@@ -1251,12 +1251,11 @@ pub(super) fn generic(
     cursor: u16,
     ids: std::ops::RangeInclusive<u16>,
     p: (f32, f32),
-    moved: bool,
     clicked: bool,
     right: bool,
     set: impl FnOnce(&mut World, u16),
 ) {
-    super::winhits::generic(w, gu, name, cursor, ids, p, moved, clicked, right, set, key);
+    super::winhits::generic(w, gu, name, cursor, ids, p, clicked, right, set, key);
 }
 
 /// The mouse on the chain (no typing field open). Over the other palette the focus moves there at that column
@@ -1272,7 +1271,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, _sw: f32, _sh: f32, p: (f32, f32), mo
     }
     let Some(b) = me.book.as_ref() else {
         let sel = me.menu_sel;
-        generic(w, gu, MENU, sel, 1..=2, p, moved, clicked, right, |w, id| {
+        generic(w, gu, MENU, sel, 1..=2, p, clicked, right, |w, id| {
             if let Some(m) = w.macroedit.as_mut() {
                 m.menu_sel = id;
             }
@@ -1285,13 +1284,13 @@ pub fn pointer(w: &mut World, gu: &GameUi, _sw: f32, _sh: f32, p: (f32, f32), mo
     let (sel, opt) = (b.sel, b.opt);
     let Some(e) = b.edit.as_ref() else {
         match opt {
-            Some(o) => generic(w, gu, SELOP, o, 1..=5, p, moved, clicked, right, |w, id| {
+            Some(o) => generic(w, gu, SELOP, o, 1..=5, p, clicked, right, |w, id| {
                 if let Some(b) = w.macroedit.as_mut().and_then(|m| m.book.as_mut()) {
                     b.opt = Some(id);
                 }
             }),
             // The rows and the page arrows (21 / 22): the arrows are parts like the rows (mcres20's too, esmenu.rs).
-            None => generic(w, gu, SELEC, sel, 1..=22, p, moved, clicked, right, |w, id| {
+            None => generic(w, gu, SELEC, sel, 1..=22, p, clicked, right, |w, id| {
                 if let Some(b) = w.macroedit.as_mut().and_then(|m| m.book.as_mut()) {
                     b.sel = id;
                 }
@@ -1302,7 +1301,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, _sw: f32, _sh: f32, p: (f32, f32), mo
     match (&e.editor, e.bopt) {
         (Some(d), _) if d.editing.is_some() => {}
         (Some(d), _) => match d.lopt {
-            Some(o) => generic(w, gu, LEDIT, o, 1..=3, p, moved, clicked, right, |w, id| {
+            Some(o) => generic(w, gu, LEDIT, o, 1..=3, p, clicked, right, |w, id| {
                 if let Some(d) = edit_mut(w).and_then(|e| e.editor.as_mut()) {
                     d.lopt = Some(id);
                 }
@@ -1315,14 +1314,14 @@ pub fn pointer(w: &mut World, gu: &GameUi, _sw: f32, _sh: f32, p: (f32, f32), mo
                     return;
                 }
                 let sel = d.sel;
-                generic(w, gu, MACRO, sel, 1..=9, p, moved, clicked, right, |w, id| {
+                generic(w, gu, MACRO, sel, 1..=9, p, clicked, right, |w, id| {
                     if let Some(d) = edit_mut(w).and_then(|e| e.editor.as_mut()) {
                         d.sel = id;
                     }
                 });
             }
         },
-        (None, Some(o)) => generic(w, gu, BEDIT, o, 1..=3, p, moved, clicked, right, |w, id| {
+        (None, Some(o)) => generic(w, gu, BEDIT, o, 1..=3, p, clicked, right, |w, id| {
             if let Some(e) = edit_mut(w) {
                 e.bopt = Some(id);
             }
@@ -1349,7 +1348,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, _sw: f32, _sh: f32, p: (f32, f32), mo
                 return;
             }
             let p_name = format!("palette{focus}");
-            generic(w, gu, &p_name, cols[focus as usize - 1] + 1, 1..=10, p, moved, clicked, right, |w, id| {
+            generic(w, gu, &p_name, cols[focus as usize - 1] + 1, 1..=10, p, clicked, right, |w, id| {
                 if let Some(e) = edit_mut(w) {
                     e.cols[focus as usize - 1] = id - 1;
                 }

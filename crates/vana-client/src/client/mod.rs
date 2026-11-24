@@ -2715,6 +2715,7 @@ fn world_hud(
     gu.set_ttf(world.opts.ttf_text);
     let (sw, sh) = (size[0] as f32, size[1] as f32);
     world.ui_wh = (sw, sh);
+    world.ptr_button = (input.pressed, input.down);
     world.battlefield.frame();
     world.lua.set_view_proj(view_proj);
     // The focused list's scroll bar and the wheel, before the windows see the press.
@@ -3573,7 +3574,7 @@ fn world_hud(
         world.list_arrow_hover = false;
     }
 
-    // Mouse on the main menu: hover moves the cursor, a click picks; the arrows swap pages. Not while the group walk
+    // Mouse on the main menu: a row takes the cursor by winhits::takes, a click on the cursor's row picks it; the arrows swap pages. Not while the group walk
     // suspends it (a window over it, e.g. MacroPalette's).
     if let (Some(sel), Some(p), None, None, None, None) = (
         world.menu,
@@ -3586,11 +3587,17 @@ fn world_hud(
         && gu.want(crate::render::screens::menu_window(world.menu_page))
     {
         if let Some(k) = items.iter().position(|(_, r)| inside(r, p)) {
-            gu.hover.set(true);
-            if input.moved || input.clicked {
+            // A disabled row (state 5) shows no hand.
+            let (name, child) = (crate::render::screens::menu_window(world.menu_page), items[k].0 as u16 + 1);
+            let frame = winhits::in_frame(gu, name, sw, sh, p);
+            let takes = if menu_disabled(world).contains(&child) {
+                winhits::takes_no_hand(gu, name, child, frame)
+            } else {
+                winhits::takes(gu, name, child, frame)
+            };
+            if takes && k != sel {
                 world.menu = Some(k);
-            }
-            if input.clicked && k == sel {
+            } else if input.clicked && k == sel {
                 pick = Some(k);
             }
         }
@@ -3766,10 +3773,9 @@ fn world_hud(
     if let (Some(c), Some(p), None, false) =
         (world.config.as_mut(), input.pointer, world.settings.as_ref(), modern_page)
     {
-        let out = c.pointer(gu, &mut world.game, p, input.moved, input.clicked, sw, sh);
+        let out = c.pointer(gu, &mut world.game, p, input.clicked, sw, sh);
         config_out(world, out);
     }
-    world.ptr_button = (input.pressed, input.down);
     // Mouse on an open window's item list (the modern layer's list takes it there).
     if world.win.is_some()
         && !(world.modern && items::modern_list(world))
@@ -3785,75 +3791,75 @@ fn world_hud(
             && world.confirm.is_none()
             && world.seacom_edit.is_none()
     }) {
-        linkshell::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
+        linkshell::pointer(world, gu, sw, sh, p, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.concierge_ui.is_some() && world.confirm.is_none()) {
-        concierge::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
+        concierge::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.arealist.is_some() && world.confirm.is_none())
         && !world.modern
     {
-        arealist::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
+        arealist::pointer(world, gu, sw, sh, p, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.blklist.is_some() && world.confirm.is_none()) {
-        blklist::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
+        blklist::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.loot.is_some() && world.confirm.is_none()) {
         treasure::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.layout.is_some() && world.confirm.is_none()) {
-        layout::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
+        layout::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.garden.is_some() && world.confirm.is_none()) {
-        garden::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
+        garden::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| post::active(world) && world.confirm.is_none()) {
-        post::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
+        post::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.moogle.is_some() && world.confirm.is_none()) {
-        moogle::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
+        moogle::pointer(world, gu, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.chatctrl.is_some() && world.confirm.is_none()) {
-        chatctrl::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
+        chatctrl::pointer(world, gu, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.primer.is_some() && world.confirm.is_none()) {
-        primer::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked, input.page);
+        primer::pointer(world, gu, p, input.clicked, input.right_clicked, input.page);
     }
     if let Some(p) = input.pointer.filter(|_| helpdesk::focused(world)) {
-        helpdesk::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
+        helpdesk::pointer(world, gu, p, input.clicked, input.right_clicked);
     }
     // The software keyboard is on top of the windows it types for.
     if let Some(p) = input.pointer.filter(|_| world.swkbd.is_some()) {
-        swkbd::pointer(world, gu, p, input.moved, input.clicked);
+        swkbd::pointer(world, gu, p, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.inspect.up() && world.confirm.is_none()) {
-        inspect::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
+        inspect::pointer(world, gu, p, input.clicked, input.right_clicked);
     }
     if let Some(p) =
         input.pointer.filter(|_| (world.region_menu.is_some() || world.cnq.is_some()) && world.confirm.is_none())
     {
-        region::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
+        region::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.auction.is_some() && world.confirm.is_none()) {
-        auction::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
+        auction::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| synth::active(world) && world.confirm.is_none()) {
-        synth::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
+        synth::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| shop::active(world) && world.confirm.is_none()) {
-        shop::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
+        shop::pointer(world, gu, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.macroedit.is_some() && world.confirm.is_none()) {
         macroedit::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.remodel.is_some() && world.confirm.is_none()) {
-        remodel::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
+        remodel::pointer(world, gu, sw, sh, p, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| mannequin::active(world) && world.confirm.is_none()) {
         mannequin::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| trade::active(world) && world.confirm.is_none()) {
-        trade::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
+        trade::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
     }
     if input.right_clicked && world.seacom_edit.is_some() && world.confirm.is_none() {
         seacom::right_click(world);
@@ -3865,45 +3871,45 @@ fn world_hud(
             && world.confirm.is_none()
     }) && !world.modern
     {
-        search::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
+        search::pointer(world, gu, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| polmail::focused(world) && !world.modern) {
-        polmail::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
+        polmail::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
     } else if let Some(p) =
         input.pointer.filter(|_| friendlist::focused(world) && !polmail::composing(world) && !world.modern)
     {
-        friendlist::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
+        friendlist::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.charlnk.is_some() && world.confirm.is_none() && !world.modern) {
-        charlnk::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
+        charlnk::pointer(world, gu, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.linklist.is_some() && world.confirm.is_none()) {
-        linklist::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
+        linklist::pointer(world, gu, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| !world.modern && searchmenu::focused(world)) {
-        searchmenu::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
+        searchmenu::pointer(world, gu, sw, sh, p, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| !world.modern && partymenu::focused(world)) {
-        partymenu::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
+        partymenu::pointer(world, gu, sw, sh, p, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| viewhouse::focused(world))
         && !world.modern
     {
-        viewhouse::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
+        viewhouse::pointer(world, gu, sw, sh, p, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| bazaar::focused(world))
         && !world.modern
     {
-        bazaar::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
+        bazaar::pointer(world, gu, sw, sh, p, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| !world.modern && world.keyitems.is_some() && world.confirm.is_none()) {
-        keyitems::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
+        keyitems::pointer(world, gu, sw, sh, p, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| !world.modern && world.quests.is_some() && world.confirm.is_none()) {
-        quests::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.page);
+        quests::pointer(world, gu, sw, sh, p, input.clicked, input.page);
     }
     if let Some(p) = input.pointer.filter(|_| !world.modern && world.missions.is_some() && world.confirm.is_none()) {
-        missions::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.page);
+        missions::pointer(world, gu, sw, sh, p, input.clicked, input.page);
     }
     // Taken before the sub-windows run: a right click closing one must not reach statcom2 the same frame.
     let status_pointer = input.pointer.filter(|_| {
@@ -3918,45 +3924,45 @@ fn world_hud(
             && world.confirm.is_none()
     });
     if let Some(p) = input.pointer.filter(|_| world.currencies.is_some() && world.confirm.is_none()) {
-        currencies::pointer(world, gu, sw, sh, p, input.moved);
+        currencies::pointer(world, gu, sw, sh, p);
     }
     if let Some(p) = input.pointer.filter(|_| world.merits_ui.is_some() && world.confirm.is_none()) {
-        merits::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
+        merits::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.jp_ui.is_some() && world.confirm.is_none()) {
-        jobpoints::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
+        jobpoints::pointer(world, gu, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.ae_ui.is_some() && world.confirm.is_none()) {
-        aepoints::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
+        aepoints::pointer(world, gu, p, input.clicked, input.right_clicked);
     } else if let Some(p) = input.pointer.filter(|_| world.fe_main.is_some() && world.confirm.is_none()) {
-        celestite::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
+        celestite::pointer(world, gu, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.unity.is_some() && world.confirm.is_none()) {
-        unity::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
+        unity::pointer(world, gu, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = status_pointer.filter(|_| world.status.is_some()) {
-        status::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
+        status::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.pupset.is_some() && world.confirm.is_none()) {
         pupset::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.maze.screen.is_some() && world.confirm.is_none()) {
-        maze::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
+        maze::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
     }
     // Mouse on the magic / ability lists and their category windows, or the Set Spells screen over them.
     if let Some(p) = input.pointer.filter(|_| world.bluset.is_some() && world.confirm.is_none()) {
         bluset::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
     } else if let Some(p) = input.pointer.filter(|_| world.moncustom.is_some() && world.confirm.is_none()) {
-        moncustom::pointer(world, gu, p, input.moved, input.clicked, input.right_clicked);
+        moncustom::pointer(world, gu, p, input.clicked, input.right_clicked);
     } else if let Some(p) = input
         .pointer
         .filter(|_| !world.modern && (world.cats.is_some() || world.magic.is_some() || world.ability.is_some()))
     {
-        magic::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
+        magic::pointer(world, gu, sw, sh, p, input.clicked);
     }
     // The party cursor (<stpc>, a party menu pick): the mouse over the party windows' rows.
     if let Some(p) = input.pointer.filter(|_| world.party_cursor.is_some() && world.confirm.is_none()) {
-        target::party_cursor_pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
+        target::party_cursor_pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
     }
     // The GM prompt's rows: hovering moves the cursor, a click picks.
     if let Some(p) = input.pointer.filter(|_| gmtell::open(world) && !world.modern && world.confirm.is_none())
@@ -3966,11 +3972,9 @@ fn world_hud(
             .iter()
             .position(|c| inside(&[r[0] + c[0], r[1] + c[1], c[2].max(132.0), c[3].max(16.0)], p))
     {
-        gu.hover.set(true);
+        let takes = winhits::takes(gu, gmtell::WINDOW, k as u16 + 1, winhits::inside(r, p));
         let k = k + world.gmtell.open.as_ref().map_or(0, |o| o.scroll);
-        if input.moved || input.clicked {
-            gmtell::pointer(world, k, input.clicked);
-        }
+        gmtell::pointer(world, k, takes, input.clicked);
     }
     // Mouse in an event: a click on a choice row picks it, anywhere else advances a prompt.
     if input.clicked && world.event.is_some() {
@@ -3999,17 +4003,18 @@ fn world_hud(
     if let (Some(p), Some(m)) = (input.pointer, world.mogdoor.as_mut())
         && let Some(k) = door_rows.iter().position(|r| inside(r, p))
     {
-        gu.hover.set(true);
+        let takes = winhits::takes(gu, myroom::WINDOW, k as u16 + 1, winhits::in_frame(gu, myroom::WINDOW, sw, sh, p));
         let k = if m.list { k } else { myroom::ROWS.iter().position(|r| r.0 as usize == k + 1).unwrap_or(k) };
-        if input.moved || input.clicked {
+        let at = m.sel;
+        if takes {
             m.sel = k;
         }
-        if input.clicked {
+        if input.clicked && at == k {
             mogdoor_pick(world);
         }
     }
 
-    // Action menu rows: hover moves the cursor; on the focused menu the left release over the cursor row picks it
+    // Action menu rows: a row takes the cursor by winhits::takes; on the focused menu the left release over the cursor row picks it
     // (FUN_1015de50; on no row SE 0004), the button held 60 ticks on a row runs its Right function and starts again
     // (FUN_1012b4b0; a row change restarts it), and a right click is Escape (msg 6, FUN_1015def0; ours only over it).
     let action_rows = world.action_menu.as_ref().filter(|_| world.prompt.is_none() && !world.modern).and_then(|m| {
@@ -4027,8 +4032,8 @@ fn world_hud(
     if let (Some((r, rows)), Some(p), Some(m)) = (&action_rows, input.pointer, world.action_menu.as_mut()) {
         match rows.iter().position(|r| inside(r, p)) {
             Some(k) => {
-                gu.hover.set(true);
-                if (input.moved || input.pressed) && k != m.sel {
+                let name = combat::window_name(m.items.len());
+                if winhits::takes(gu, &name, k as u16 + 1, winhits::inside(*r, p)) && k != m.sel {
                     m.sel = k;
                     m.hold = input.down.then(Instant::now);
                 }
@@ -4602,6 +4607,7 @@ fn world_hud(
     let mut blockers: Vec<[f32; 4]> = [party.as_str()].iter().filter_map(|n| gu.window_rect(n, sw, sh)).collect();
     let mut sidebar_eases = None;
     winhits::clear(world);
+    gu.clear_disabled_parts();
     for (k, n) in ["menu    raid1", "menu    raid2"].iter().enumerate() {
         if st.alliance[k].is_some() {
             blockers.extend(gu.window_rect(n, sw, sh));
@@ -5054,12 +5060,11 @@ fn world_hud(
                 gu.text(line, fx + 4.0, fy + 4.0 + 16.0 * i as f32, 0, WHITE);
             }
             for (id, r) in win.children.iter().filter(|(id, _)| matches!(id, 1 | 2)) {
-                if input.pointer.is_some_and(|p| inside(r, p)) {
-                    gu.hover.set(true);
-                    if input.moved || input.clicked {
+                if let Some(p) = input.pointer.filter(|p| inside(r, *p)) {
+                    let cur = if on_yes { 1 } else { 2 };
+                    if winhits::takes(gu, layout, *id, winhits::inside(win.frame, p)) && *id != cur {
                         world.confirm = Some((kind, *id == 1));
-                    }
-                    if input.clicked {
+                    } else if input.clicked && *id == cur {
                         answer = Some(*id == 1);
                     }
                 }
@@ -5215,13 +5220,16 @@ fn world_hud(
         );
         let mut pick = false;
         for (id, r) in &win.children {
-            if world.confirm.is_none() && input.pointer.is_some_and(|p| inside(r, p)) {
-                gu.hover.set(true);
-                if (input.moved || input.clicked) && world.mon_dead_sel != *id {
+            if world.confirm.is_none()
+                && let Some(p) = input.pointer.filter(|p| inside(r, *p))
+            {
+                let cur = world.mon_dead_sel;
+                if winhits::takes(gu, "menu    mp_dead", *id, winhits::inside(win.frame, p)) && cur != *id {
                     world.mon_dead_sel = *id;
                     world.sounds.push(crate::audio::Ui::Cursor as u32);
+                } else if input.clicked && cur == *id {
+                    pick = true;
                 }
-                pick |= input.clicked;
             }
         }
         if pick {
@@ -5257,8 +5265,8 @@ fn world_hud(
         blockers.push(win.frame);
     }
     // The raise prompt "menu    resynus" (FUN_10210da0, registry flag 0x1000: stacked on the log like comyn).
-    // Stacked by lobby_window_off itself. The hover runs every frame (FUN_10125360: the cursor moves when the child
-    // under the pointer changes, SE 0001); the release confirms the cursor child (FUN_1015de50, SE 0002).
+    // Stacked by lobby_window_off itself. The cursor moves by winhits::takes (SE 0001); the release confirms the cursor
+    // child (FUN_1015de50, SE 0002).
     if dead && world.ko_offer == 2 && world.confirm.is_none() && !world.modern {
         // Ours (the user's call): the frame a little larger so the baked text does not touch its edges.
         if let Some(win) = gu.lobby_window_padded(
@@ -5270,27 +5278,20 @@ fn world_hud(
             [8.0, 4.0, 8.0, 4.0],
         ) {
             let hovered = input.pointer.and_then(|p| {
-                win.children.iter().find(|(id, r)| matches!(id, 1 | 2) && inside(r, p)).map(|(id, _)| *id)
+                win.children.iter().find(|(id, r)| matches!(id, 1 | 2) && inside(r, p)).map(|(id, _)| (*id, p))
             });
-            if hovered.is_some() {
-                gu.hover.set(true);
-            }
-            if let Some(id) = hovered.filter(|&id| Some(id) != world.raise_hover && (id == 1) != world.raise_yes) {
-                world.raise_yes = id == 1;
-                world.sounds.push(crate::audio::Ui::Cursor as u32);
-            }
-            world.raise_hover = hovered;
-            if input.clicked
-                && let Some(id) = hovered
-            {
-                world.raise_yes = id == 1;
-                answer_raise(world, id == 1);
-                world.sounds.push(crate::audio::Ui::Select as u32);
+            if let Some((id, p)) = hovered {
+                let on = (id == 1) == world.raise_yes;
+                if winhits::takes(gu, "menu    resynus", id, winhits::inside(win.frame, p)) && !on {
+                    world.raise_yes = id == 1;
+                    world.sounds.push(crate::audio::Ui::Cursor as u32);
+                } else if input.clicked && on {
+                    answer_raise(world, id == 1);
+                    world.sounds.push(crate::audio::Ui::Select as u32);
+                }
             }
             blockers.push(win.frame);
         }
-    } else {
-        world.raise_hover = None;
     }
     let answer = answer.or(world.confirm_click.take().filter(|_| world.confirm.is_some()));
     match (answer, world.confirm) {
@@ -8087,8 +8088,6 @@ struct World {
     /// offer waiting for an answer; after accepting a raise, nothing until (sub 4, 1200 ticks).
     ko_offer: u8,
     raise_yes: bool,
-    /// The prompt row under the pointer last frame (the hover moves the cursor only when it changes).
-    raise_hover: Option<u16>,
     /// The pointer's shift while the log moves a stacked window under it (UI px, y).
     ptr_dy: f32,
     ko_wait: Option<Instant>,
@@ -8416,10 +8415,10 @@ struct World {
     info_page: std::cell::Cell<(usize, u16, usize)>,
     /// Windows as drawn this frame (name, frame, children), for the mouse (winhits.rs).
     win_hits: std::cell::RefCell<Vec<(String, [f32; 4], Vec<(u16, [f32; 4])>)>>,
-    /// The left button this frame (pressed, held), for the windows' held buttons (winhits::ctr).
+    /// The left button this frame (pressed, held), for the windows' held buttons (winhits::takes, winhits::ctr).
     ptr_button: (bool, bool),
-    /// itemctrl / moneyctr's - / + held under the pointer, and when it repeats next (winhits::ctr).
-    ctr_hold: Option<(u16, Instant)>,
+    /// The held button's count on the cursor's child (window +0xb0, FUN_1015f360; winhits::ctr).
+    ctr_hold: winhits::Held,
     /// The ops' shared extdata buffer (DAT_104886bc).
     event_ext: [u8; 24],
     event_mem: crate::event_vm::Memory,
@@ -10814,7 +10813,6 @@ impl App {
                             home_sent: None,
                             ko_offer: 0,
                             raise_yes: true,
-                            raise_hover: None,
                             ptr_dy: 0.0,
                             ko_wait: None,
                             clock: None,
@@ -11052,7 +11050,7 @@ impl App {
                             info_page: std::cell::Cell::new((0, 0, 1)),
                             win_hits: Default::default(),
                             ptr_button: (false, false),
-                            ctr_hold: None,
+                            ctr_hold: Default::default(),
                             event_ext: [0; 24],
                             event_mem: Default::default(),
                             event_end_at: None,
@@ -15980,6 +15978,10 @@ impl App {
         {
             gu.hover.set(false);
         }
+        // The mouse routine's frame (FUN_101267f0) before any window takes the pointer.
+        if let Some(gu) = &self.game_ui {
+            winhits::frame(gu, input.down);
+        }
         let busy = self.busy || self.lobby_popup.is_some();
         let status = self.status.clone();
         let (mut apply, mut save) = (false, false);
@@ -16614,13 +16616,13 @@ impl App {
                                 .enumerate()
                                 .map(|(i, r)| (CHILD[i], r))
                                 .collect();
+                            // The shared window steps (winhits::takes); a click picks the cursor's button.
                             for (m, r) in &rects {
                                 if !config_open && input.pointer.is_some_and(|p| inside(r, p)) {
-                                    lu.hover.set(true);
-                                    if input.moved {
+                                    let at = *menu;
+                                    if winhits::takes(lu, "lobby title", *m as u16 + 1, true) && at != *m {
                                         *menu = *m;
-                                    }
-                                    if input.clicked {
+                                    } else if input.clicked && at == *m {
                                         chosen = Some(*m);
                                     }
                                 }
@@ -16769,15 +16771,7 @@ impl App {
                                         if input.clicked {
                                             lu.press_at(p);
                                         }
-                                        outs.push(c.pointer(
-                                            lu,
-                                            &mut self.lobby_values,
-                                            p,
-                                            input.moved,
-                                            input.clicked,
-                                            sw,
-                                            sh,
-                                        ));
+                                        outs.push(c.pointer(lu, &mut self.lobby_values, p, input.clicked, sw, sh));
                                     }
                                     for out in outs {
                                         if let Some(a) = self.audio.as_mut() {
@@ -17293,15 +17287,16 @@ impl App {
                                 ok |= input.clicked;
                             }
                         } else if let Some(ws) = self.creator_world.as_mut().filter(|_| step == 5) {
-                            // worldsel's rows: hover moves the cursor (0001), a click is Enter (inf: the generic list).
+                            // worldsel's rows: a row takes the cursor by winhits::takes (0001), a click on the cursor's
+                            // row is Enter (inf: the generic list).
                             if let Some(p) = pointer
                                 && let Some(i) = rects.iter().position(|r| inside(r, p))
                             {
-                                gu.hover.set(true);
-                                if (input.moved || input.clicked) && ws.hover(i) {
+                                let on = ws.top + i == ws.cursor;
+                                if winhits::takes(gu, "creator worldsel", i as u16 + 1, true) && ws.hover(i) {
                                     world_se.push(crate::audio::Ui::Cursor);
-                                }
-                                if input.clicked
+                                } else if input.clicked
+                                    && on
                                     && let creator::WorldAct::Sound(s) = ws.pick()
                                 {
                                     world_se.push(s);
@@ -17311,11 +17306,10 @@ impl App {
                             if let Some(p) = pointer
                                 && let Some(i) = rects.iter().position(|r| inside(r, p))
                             {
-                                gu.hover.set(true);
-                                if input.moved || input.clicked {
+                                let at = sel;
+                                if winhits::takes(gu, "creator step", i as u16 + 1, true) && at != i {
                                     sel = i;
-                                }
-                                if input.clicked {
+                                } else if input.clicked && at == i {
                                     next = true;
                                 }
                             }
@@ -17325,11 +17319,10 @@ impl App {
                             && let Some(p) = pointer
                             && let Some(&(id, _)) = children.iter().find(|(_, r)| inside(r, p))
                         {
-                            gu.hover.set(true);
-                            if input.moved || input.clicked {
+                            let on = (id == 1) == self.creator_yes;
+                            if winhits::takes(gu, "creator yes no", id, true) && !on {
                                 self.creator_yes = id == 1;
-                            }
-                            if input.clicked {
+                            } else if input.clicked && on {
                                 answer = Some(id == 1);
                             }
                         }

@@ -19,7 +19,7 @@ pub fn record_rects(w: &World, name: &str, frame: [f32; 4], children: Vec<(u16, 
 }
 
 /// Both ends of a box take the mouse (FUN_1011a140: `jg` / `jl` around each bound).
-fn inside(r: [f32; 4], p: (f32, f32)) -> bool {
+pub(super) fn inside(r: [f32; 4], p: (f32, f32)) -> bool {
     p.0 >= r[0] && p.0 <= r[0] + r[2] && p.1 >= r[1] && p.1 <= r[1] + r[3]
 }
 
@@ -65,13 +65,74 @@ pub fn parts<'a>(gu: &'a GameUi, name: &'a str) -> impl Fn(u16) -> Option<(f32, 
     }
 }
 
+/// The hover hit of last frame and of this one (mouse object +0x52): a window and its child under the pointer.
+#[derive(Default)]
+pub struct Hover {
+    prev: Option<(String, u16)>,
+    now: Option<(String, u16)>,
+    down: bool,
+}
+
+impl Hover {
+    fn frame(&mut self, down: bool) {
+        self.prev = self.now.take();
+        self.down = down;
+    }
+
+    /// `takes` without the hand.
+    fn take(&mut self, name: &str, child: u16, frame: bool) -> bool {
+        let fresh = self.prev.as_ref().is_none_or(|(n, c)| n != name || *c != child);
+        self.now = Some((name.to_string(), child));
+        fresh || (self.down && frame)
+    }
+}
+
+/// A new frame of the mouse routine (FUN_101267f0): this frame's hit starts as none (+0x52 = -1, also when the pointer
+/// is hidden or no window is active) and the last one is kept to compare with; `down` is the left button.
+pub fn frame(gu: &GameUi, down: bool) {
+    gu.ptr_hover.borrow_mut().frame(down);
+}
+
+/// The mouse on child `child` of window `name`, hit under the pointer this frame (`frame`: the pointer is inside the
+/// window's frame, FUN_1011a0a0). Whether the child takes the cursor (FUN_1011a240), by retail's two steps:
+/// - the hover (tail of FUN_101267f0, 0x10127220): every frame, with no frame test, the cursor moves only when the
+///   hit child is not the one of the frame before (`cmp ax, di; je` at 0x10127231); a pointer resting on a child does
+///   not take the cursor back from the keys;
+/// - the held button (FUN_1015f360, FUN_10124f00(0x3e, 0x8b, 4)): while the left button is down and the pointer is
+///   inside the frame, a hit child other than the cursor's takes it every frame.
+///
+/// The caller moves the cursor only when the child is not already the cursor's. Also the pointer's hand: only over a
+/// child not in state 5 (FUN_1011a140's out flag, mouse +0x4c = 1 at 0x10127422; `GameUi::disabled_parts`).
+/// Ours keys the hit by window as well as child: ours runs more than one window's mouse in a frame, retail only the
+/// active one's.
+pub fn takes(gu: &GameUi, name: &str, child: u16, frame: bool) -> bool {
+    if !gu.disabled_part(name, child) {
+        gu.hover.set(true);
+    }
+    gu.ptr_hover.borrow_mut().take(name, child, frame)
+}
+
+/// `takes` over a child that shows no hand all the same (the page arrows of the lists that disable themselves under
+/// the pointer, FUN_10221cd0).
+pub fn takes_no_hand(gu: &GameUi, name: &str, child: u16, frame: bool) -> bool {
+    let hand = gu.hover.get();
+    let t = takes(gu, name, child, frame);
+    gu.hover.set(hand);
+    t
+}
+
+/// The pointer inside window `name`'s frame as laid out (FUN_1011a0a0: both ends in), for `takes`.
+pub fn in_frame(gu: &GameUi, name: &str, sw: f32, sh: f32, p: (f32, f32)) -> bool {
+    gu.window_rect(name, sw, sh).is_some_and(|r| inside(r, p))
+}
+
 /// The pointer on a recorded window.
 pub fn over(w: &World, name: &str, p: (f32, f32)) -> bool {
     child_under(w, name, p, 0..=0, |_| None).1
 }
 
-/// The generic handler on the focused window: a child under the pointer takes the cursor (SE 0001), a click on the
-/// cursor's child is Enter, a right click on the window Escape (ours only over it; retail's message 6 takes any right
+/// The generic handler on the focused window: a child under the pointer takes the cursor by `takes` (SE 0001), a
+/// click (the release, FUN_1015f420) on the cursor's child is Enter and on another child nothing, a right click on the window Escape (ours only over it; retail's message 6 takes any right
 /// click, FUN_1015def0). `key` is the window's key handler.
 pub fn generic(
     w: &mut World,
@@ -80,7 +141,6 @@ pub fn generic(
     cursor: u16,
     ids: std::ops::RangeInclusive<u16>,
     p: (f32, f32),
-    moved: bool,
     clicked: bool,
     right: bool,
     set: impl FnOnce(&mut World, u16),
@@ -92,11 +152,11 @@ pub fn generic(
         return;
     }
     let Some(id) = child else { return };
-    gu.hover.set(true);
-    if id != cursor && (moved || clicked) {
+    let takes = takes(gu, name, id, on);
+    if id != cursor && takes {
         set(w, id);
         w.sounds.push(Ui::Cursor as u32);
-    } else if clicked {
+    } else if clicked && id == cursor {
         key(w, gu, egui::Key::Enter);
     }
 }
@@ -116,13 +176,53 @@ pub fn ctr_key(child: u16) -> Option<egui::Key> {
     })
 }
 
-/// A held - / + repeats (retail's message 0x1d re-sends 1 / 2 for children 4 / 5; how often it comes is not traced,
-/// ours: after 400 ms, every 60 ms).
-const HOLD: std::time::Duration = std::time::Duration::from_millis(400);
-const REPEAT: std::time::Duration = std::time::Duration::from_millis(60);
+/// The held button's count (window +0xb0) and the child it moves to, for the windows ours gives no cursor to the mouse
+/// (itemctrl / moneyctr): the child stands in for the window's cursor.
+#[derive(Default)]
+pub struct Held {
+    child: Option<u16>,
+    count: i16,
+    /// Real ticks not yet a whole retail frame, and when they were counted.
+    acc: f32,
+    last: Option<std::time::Instant>,
+}
 
-/// The mouse on itemctrl / moneyctr (`name`, as drawn this frame): a click on a child is its message (ctr_key), - / +
-/// step on the press and repeat while held, a right click on the window is Escape. `key` is the window's key handler.
+/// The count passes this, and every retail frame after it is a held repeat (`cmp word [esi + 0xb0], 0x1e; jle` at
+/// 0x1015f3e3).
+const REPEAT_AFTER: i16 = 0x1e;
+
+impl Held {
+    /// One frame of ours with the button held on the cursor's child: the retail frames that went by in it, each adding
+    /// its ticks to the count (`fiadd` of FUN_10014cf0, at least 1, then `__ftol`) or, once the count is past 0x1e,
+    /// sending the held message 0x1d (FUN_1015f2d0(0x1d)) instead. Returns how many held messages to send.
+    fn tick(&mut self, now: std::time::Instant, frame: f32) -> u32 {
+        // The first held frame is one retail frame.
+        let dt = self.last.map_or(frame, |l| (now - l).as_secs_f32().min(0.5) * 60.0);
+        self.last = Some(now);
+        self.acc += dt;
+        let mut sent = 0;
+        while self.acc >= frame {
+            self.acc -= frame;
+            if self.count > REPEAT_AFTER {
+                sent += 1;
+            } else {
+                self.count = (self.count as f32 + frame.max(1.0)) as i16;
+            }
+        }
+        sent
+    }
+
+    /// The release (FUN_1015f420) and any frame without the button: the count starts again.
+    fn reset(&mut self) {
+        (self.count, self.acc, self.last) = (0, 0.0, None);
+    }
+}
+
+/// The mouse on itemctrl / moneyctr (`name`, as drawn this frame), by the shared window steps: the button held inside
+/// the frame puts the cursor on the child under the pointer (FUN_1015f360), the release on the cursor's child is its
+/// message 5 (FUN_1015f420; ctr_key), and held there past 0x1e ticks it sends message 0x1d every retail frame, which
+/// re-sends - / + (FUN_1013a6c0 / FUN_10140bc0 case 0x1d: children 4 / 5 only). A right click on the window is
+/// Escape. `key` is the window's key handler.
 pub fn ctr(
     w: &mut World,
     gu: &GameUi,
@@ -132,29 +232,42 @@ pub fn ctr(
     right: bool,
     mut key: impl FnMut(&mut World, &GameUi, egui::Key),
 ) {
-    let (pressed, down) = w.ptr_button;
+    let (_, down) = w.ptr_button;
     let (child, on) = child_under(w, name, p, 1..=5, parts(gu, name));
-    if !down || w.ctr_hold.is_some_and(|(c, _)| Some(c) != child) {
-        w.ctr_hold = None;
-    }
     if right && on {
         key(w, gu, egui::Key::Escape);
         return;
     }
-    let Some(id) = child else { return };
-    gu.hover.set(true);
-    let Some(k) = ctr_key(id) else { return };
-    if matches!(id, 4 | 5) {
-        let now = std::time::Instant::now();
-        if pressed {
-            w.ctr_hold = Some((id, now + HOLD));
-            key(w, gu, k);
-        } else if w.ctr_hold.is_some_and(|(_, next)| now >= next) {
-            w.ctr_hold = Some((id, now + REPEAT));
+    let Some(id) = child else {
+        if !down {
+            w.ctr_hold.reset();
+        }
+        return;
+    };
+    let takes = takes(gu, name, id, on);
+    if !down {
+        if clicked && w.ctr_hold.child == Some(id) {
+            ctr_key(id).inspect(|&k| key(w, gu, k));
+        }
+        w.ctr_hold.reset();
+        return;
+    }
+    if w.ctr_hold.child != Some(id) {
+        if takes {
+            w.ctr_hold.child = Some(id);
+        }
+        return;
+    }
+    if !on {
+        return;
+    }
+    let n = w.ctr_hold.tick(std::time::Instant::now(), super::ground::frame_ticks());
+    if matches!(id, 4 | 5)
+        && let Some(k) = ctr_key(id)
+    {
+        for _ in 0..n {
             key(w, gu, k);
         }
-    } else if clicked {
-        key(w, gu, k);
     }
 }
 
@@ -183,6 +296,49 @@ mod tests {
         assert_eq!(pick(&kids, (20.0, -3.0), 1..=3, dead), None);
         assert_eq!(pick(&kids, (30.0, 4.0), 1..=2, live), None);
         assert_eq!(pick(&kids, (30.0, 6.0), 1..=3, dead), Some(1));
+    }
+
+    /// FUN_101267f0's hover moves the cursor only onto a child that was not the hit of the frame before; the held
+    /// button (FUN_1015f360) moves it every frame, inside the frame only.
+    #[test]
+    fn hover_takes_only_a_new_hit() {
+        let mut h = Hover::default();
+        let mut step = |down: bool, hit: Option<u16>, frame: bool| {
+            h.frame(down);
+            hit.map(|c| h.take("menu    w", c, frame))
+        };
+        // The pointer comes onto child 2, rests there (the keys may move the cursor away meanwhile), moves within it.
+        assert_eq!(step(false, Some(2), true), Some(true));
+        assert_eq!(step(false, Some(2), true), Some(false));
+        assert_eq!(step(false, Some(2), true), Some(false));
+        // Onto child 3, then off every child for a frame and back onto 3: a new hit again.
+        assert_eq!(step(false, Some(3), true), Some(true));
+        assert_eq!(step(false, None, true), None);
+        assert_eq!(step(false, Some(3), true), Some(true));
+        // The button held on the same child: every frame inside the frame, never outside it.
+        assert_eq!(step(true, Some(3), true), Some(true));
+        assert_eq!(step(true, Some(3), true), Some(true));
+        assert_eq!(step(true, Some(3), false), Some(false));
+        // Another window's child of the same number is another hit (ours keys by window too).
+        h.frame(false);
+        assert!(h.take("menu    v", 3, false));
+    }
+
+    /// FUN_1015f360: the count takes each retail frame's ticks (2 at 30 frames a second) up to past 0x1e, then
+    /// every retail frame is a held message.
+    #[test]
+    fn held_count_repeats_past_thirty_ticks() {
+        let t0 = std::time::Instant::now();
+        let mut h = Held::default();
+        // A little over 1/30 s a frame: one retail frame (2 ticks) each.
+        let at = |n: u64| t0 + std::time::Duration::from_millis(n * 34);
+        let sent: Vec<u32> = (0..20).map(|f| h.tick(at(f), 2.0)).collect();
+        // Frames 0..=15 count 2..32; the count is past 30 after frame 15, so frame 16 on repeat.
+        assert_eq!(&sent[..16], &[0; 16]);
+        assert_eq!(&sent[16..], &[1, 1, 1, 1]);
+        h.reset();
+        assert_eq!(h.tick(at(30), 2.0), 0);
+        assert_eq!(h.count, 2);
     }
 
     #[test]

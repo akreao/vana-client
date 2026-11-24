@@ -439,7 +439,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32, chat_w: f32) -> Vec<[f
 }
 
 /// The mouse: mes1rcv / mes2frnd as the generic window, msglist's rows.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     let keys = |w: &mut World, _: &GameUi, k: egui::Key| key(w, k);
     if let Some((_, frnd, c)) = w.polmail.read.clone() {
         let name = if frnd { FRND } else { RCV };
@@ -450,7 +450,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
             c,
             1..=4,
             p,
-            moved,
             clicked,
             right,
             |w, id| {
@@ -485,12 +484,13 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     if row >= rows.len() {
         return;
     }
-    if row != cursor && (moved || clicked) {
+    let takes = super::winhits::takes(gu, LIST, e.id, super::winhits::in_frame(gu, LIST, sw, sh, p));
+    if row != cursor && takes {
         if let Some(l) = w.polmail.list.as_mut() {
             l.2 = row;
         }
         w.sounds.push(Ui::Cursor as u32);
-    } else if clicked {
+    } else if clicked && row == cursor {
         key(w, egui::Key::Enter);
     }
 }

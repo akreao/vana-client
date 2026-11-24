@@ -270,7 +270,7 @@ pub fn menu_key(w: &mut World, gu: &GameUi, key: egui::Key, sw: f32, sh: f32) {
 }
 
 /// The mouse: the region menu as the generic window; on a map a right click is its Escape (message 6 takes any).
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     if w.cnq.is_some() {
         if right {
             key(w, egui::Key::Escape);
@@ -286,7 +286,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         sel,
         1..=4,
         p,
-        moved,
         clicked,
         right,
         |w, id| {

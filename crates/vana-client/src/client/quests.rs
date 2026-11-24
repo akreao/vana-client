@@ -320,16 +320,15 @@ fn list_key(w: &mut World, l: &mut List, key: egui::Key, page: bool) {
 }
 
 /// Mouse: rows, the cursor row's click as Enter, the arrows (quest01 children 9 / 10) as Left / Right.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, page: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, page: bool) {
     let Some(q) = w.quests.clone() else { return };
     // The shared hit test: the arrows' boxes are moved by their header offsets ((-2, 2) and (0, 2)).
     let hit = |name: &str| gu.hit(name, sw, sh, p);
+    let frame = super::winhits::in_frame(gu, LIST, sw, sh, p);
     if let Some(l) = &q.roe {
         let c = hit(LIST);
-        if c.is_some() {
-            gu.hover.set(true);
-        }
-        super::roe::pointer(w, l, c, moved, clicked);
+        let takes = c.is_some_and(|c| super::winhits::takes(gu, LIST, c, frame));
+        super::roe::pointer(w, l, c, takes, clicked);
         return;
     }
     if let Some(l) = &q.list {
@@ -337,28 +336,29 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         // FUN_10221cd0: over the page arrows the list is disabled (no hand, no list keys); a click on them is Left /
         // Right through the 0xa8 test, so with Ctrl / Alt held it pages the disabled list, i.e. does nothing.
         if matches!(c, 9 | 10) && l.state == 0 {
+            let takes = super::winhits::takes_no_hand(gu, LIST, c, frame);
             // The click's Left / Right switches the area before the hover disables the list.
             if clicked && !page {
                 w.list_arrow_hover = false;
                 key(w, if c == 9 { egui::Key::ArrowLeft } else { egui::Key::ArrowRight }, false);
-            } else if moved {
+            } else if takes {
                 w.list_arrow_hover = true;
             }
             return;
         }
-        gu.hover.set(true);
+        let takes = super::winhits::takes(gu, LIST, c, frame);
         match c {
             1..=8 if l.state == 0 => {
                 let row = l.top + c as usize - 1;
                 if row >= l.rows.len() {
                     return;
                 }
-                if row != l.cursor && (moved || clicked) {
+                if row != l.cursor && takes {
                     if let Some(ll) = w.quests.as_mut().and_then(|q| q.list.as_mut()) {
                         ll.cursor = row;
                     }
                     w.sounds.push(Ui::Cursor as u32);
-                } else if clicked {
+                } else if clicked && row == l.cursor {
                     key(w, egui::Key::Enter, false);
                 }
             }
@@ -378,11 +378,11 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     }) else {
         return;
     };
-    gu.hover.set(true);
-    if r != q.sel && (moved || clicked) {
+    let takes = super::winhits::takes(gu, CHOOSER, r as u16 + 1, super::winhits::in_frame(gu, CHOOSER, sw, sh, p));
+    if r != q.sel && takes {
         w.quests.as_mut().unwrap().sel = r;
         w.sounds.push(Ui::Cursor as u32);
-    } else if clicked {
+    } else if clicked && r == q.sel {
         key(w, egui::Key::Enter, false);
     }
 }

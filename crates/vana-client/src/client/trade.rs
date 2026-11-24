@@ -653,7 +653,7 @@ pub(super) fn over(gu: &GameUi, name: &str, sw: f32, sh: f32, p: (f32, f32)) -> 
 
 /// The mouse on the focused trade window: a child under it takes the cursor, a click on the cursor's child is Enter
 /// and a right click on the window Escape; the picker's rows as the item list's (items::pointer).
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     // The modern layer draws these and takes their mouse.
     if w.modern {
         return;
@@ -680,8 +680,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
             return;
         }
         let Some(id) = child_at(gu, name, sw, sh, p, ids) else { return };
-        gu.hover.set(true);
-        if id != cursor && (moved || clicked) {
+        if super::winhits::takes(gu, name, id, super::winhits::in_frame(gu, name, sw, sh, p)) && id != cursor {
             match (&mut w.handover, &mut w.p2p.ui) {
                 (Some(h), _) => h.cursor = id,
                 (None, Some(u)) if u.focus == PFocus::Gift => u.gift = id,
@@ -690,7 +689,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                 _ => return,
             }
             w.sounds.push(Ui::Cursor as u32);
-        } else if clicked {
+        } else if clicked && id == cursor {
             key(w, gu, egui::Key::Enter);
         }
     } else if let Some((sc, cu)) = picker {
@@ -702,14 +701,13 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         else {
             return;
         };
-        gu.hover.set(true);
-        if row != cu && (moved || clicked) {
+        if super::winhits::takes(gu, "menu    inventor", row as u16 + 1, true) && row != cu {
             match (&mut w.handover, &mut w.p2p.ui) {
                 (Some(h), _) => h.list.1 = row,
                 (None, Some(u)) => u.list.1 = row,
                 _ => {}
             }
-        } else if clicked {
+        } else if clicked && row == cu {
             key(w, gu, egui::Key::Enter);
         }
     } else if let Some(name) = ctr {

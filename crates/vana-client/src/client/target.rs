@@ -274,15 +274,14 @@ pub fn party_cursor_pick(w: &mut World, index: usize) -> bool {
     party_cursor_key(w, egui::Key::Enter)
 }
 
-/// The cursor with the mouse over the party windows' rows (the windows' generic events *(inf)*): hovering a used row
-/// moves it (SE 0001), a click on the cursor row is Enter, a right click on a party window Escape.
+/// The cursor with the mouse over the party windows' rows (the windows' generic events *(inf)*): a used row takes it
+/// by winhits::takes (SE 0001), a click on the cursor row is Enter, a right click on a party window Escape.
 pub fn party_cursor_pointer(
     w: &mut World,
     gu: &super::game_ui::GameUi,
     sw: f32,
     sh: f32,
     p: (f32, f32),
-    moved: bool,
     clicked: bool,
     right: bool,
 ) {
@@ -301,10 +300,11 @@ pub fn party_cursor_pointer(
         if !used.iter().skip(base).take(6).any(|&u| u) {
             continue;
         }
-        over |= gu.window_rect(&name, sw, sh).is_some_and(inside);
+        let on = gu.window_rect(&name, sw, sh).is_some_and(inside);
+        over |= on;
         for e in l.elements.iter().skip(1).filter(|e| (1..=6).contains(&e.id)) {
             if inside([x + e.x as f32, y + e.y as f32, e.w as f32, e.h as f32]) {
-                hit = Some(base + e.id as usize - 1);
+                hit = Some((base + e.id as usize - 1, name.clone(), e.id, on));
             }
         }
     }
@@ -314,14 +314,16 @@ pub fn party_cursor_pointer(
         }
         return;
     }
-    let Some(i) = hit.filter(|&i| used.get(i).copied().unwrap_or(false) && (lo..hi).contains(&i)) else { return };
-    gu.hover.set(true);
-    if (moved || clicked) && i != index {
+    let Some((i, name, child, on)) = hit.filter(|h| used.get(h.0).copied().unwrap_or(false) && (lo..hi).contains(&h.0))
+    else {
+        return;
+    };
+    if super::winhits::takes(gu, &name, child, on) && i != index {
         if let Some(pc) = w.party_cursor.as_mut() {
             (pc.index, pc.fellow) = (i, false);
         }
         w.sounds.push(crate::audio::Ui::Cursor as u32);
-    } else if clicked {
+    } else if clicked && i == index {
         party_cursor_key(w, egui::Key::Enter);
     }
 }

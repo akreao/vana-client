@@ -704,38 +704,33 @@ impl ConfigUi {
         }
     }
 
-    /// The pointer: hover moves the top window's cursor, a click is Enter; on a slider the click sets the value
-    /// under the pointer (not retail: retail only steps with the keys).
-    pub fn pointer(
-        &mut self,
-        gu: &GameUi,
-        v: &mut Values,
-        p: (f32, f32),
-        moved: bool,
-        clicked: bool,
-        sw: f32,
-        sh: f32,
-    ) -> Out {
+    /// The pointer: a child takes the top window's cursor by winhits::takes, a click on the cursor's child is Enter;
+    /// on a slider the click sets the value under the pointer (not retail: retail only steps with the keys).
+    pub fn pointer(&mut self, gu: &GameUi, v: &mut Values, p: (f32, f32), clicked: bool, sw: f32, sh: f32) -> Out {
         let mut out = Out::default();
         self.narrow(v, &mut out, sw);
-        if super::configui2::pointer(self, gu, v, p, moved, clicked, sw, sh, &mut out) {
+        if super::configui2::pointer(self, gu, v, p, clicked, sw, sh, &mut out) {
             return out;
         }
         let Some(w) = self.stack.last() else { return out };
+        let full = w.full();
+        let in_frame = gu.window_rect(&full, sw, sh).is_some_and(|r| {
+            let (dx, dy) = Self::offset(w, sw, sh);
+            super::winhits::inside([r[0] + dx, r[1] + dy, r[2], r[3]], p)
+        });
         if let Some(r) = settings_rect(gu, w, sw, sh)
             && p.0 >= r[0]
             && p.1 >= r[1]
             && p.0 < r[0] + r[2]
             && p.1 < r[1] + r[3]
         {
-            gu.hover.set(true);
-            if (moved || clicked) && w.cursor != SETTINGS {
+            let at = w.cursor;
+            if super::winhits::takes(gu, &full, SETTINGS, in_frame) && at != SETTINGS {
                 out.sounds.push(Se::Cursor);
                 if let Some(w) = self.stack.last_mut() {
                     w.cursor = SETTINGS;
                 }
-            }
-            if clicked {
+            } else if clicked && at == SETTINGS {
                 out.sounds.push(Se::Select);
                 out.open_settings = true;
             }
@@ -747,14 +742,13 @@ impl ConfigUi {
             && let Some((id, _, _)) = our_rows()
                 .find(|(_, _, r)| p.0 >= x + r[0] && p.1 >= y + r[1] && p.0 < x + r[0] + r[2] && p.1 < y + r[1] + r[3])
         {
-            gu.hover.set(true);
-            if (moved || clicked) && w.cursor != id {
+            let at = w.cursor;
+            if super::winhits::takes(gu, &full, id, in_frame) && at != id {
                 out.sounds.push(Se::Cursor);
                 if let Some(w) = self.stack.last_mut() {
                     w.cursor = id;
                 }
-            }
-            if clicked {
+            } else if clicked && at == id {
                 out.sounds.push(Se::Select);
                 if id == SETTINGS {
                     out.open_settings = true;
@@ -770,15 +764,13 @@ impl ConfigUi {
                 p.0 >= x + r[0] && p.1 >= y + r[1] && p.0 < x + r[0] + r[2] && p.1 < y + r[1] + r[3]
             })
         {
-            gu.hover.set(true);
             let (name, at) = (w.name.clone(), w.cursor);
-            if (moved || clicked) && at != id {
+            if super::winhits::takes(gu, &full, id, in_frame) && at != id {
                 out.sounds.push(Se::Cursor);
                 if let Some(w) = self.stack.last_mut() {
                     w.cursor = id;
                 }
-            }
-            if clicked {
+            } else if clicked && at == id {
                 self.enter(v, &name, id, sw, &mut out);
             }
             return out;
@@ -788,17 +780,18 @@ impl ConfigUi {
             p.0 >= r[0] && p.1 >= r[1] && p.0 < r[0] + r[2] && p.1 < r[1] + r[3] && Self::ctl(&w.name, c.id).is_some()
         });
         let Some(c) = hit else { return out };
-        gu.hover.set(true);
         let (id, cx, cw) = (c.id, x + c.x as f32, c.w as f32);
         let name = w.name.clone();
         let editing = w.edit.is_some();
-        if (moved || clicked) && w.cursor != id && !editing {
+        let at = w.cursor;
+        if super::winhits::takes(gu, &full, id, in_frame) && at != id && !editing {
             out.sounds.push(Se::Cursor);
             if let Some(w) = self.stack.last_mut() {
                 w.cursor = id;
             }
         }
-        if !clicked {
+        // The release acts on the cursor's child only (FUN_1015f420); the button held put the cursor there.
+        if !clicked || at != id {
             return out;
         }
         match Self::ctl(&name, id) {

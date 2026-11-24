@@ -209,7 +209,7 @@ pub fn set_cursor(w: &mut World, id: i32) -> bool {
 
 /// The mouse: faqsub's rows as the generic window's children (winhits.rs); faqmain only the right click. The modern
 /// layer takes it there.
-pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool, right: bool) {
     let Some(h) = w.helpdesk.as_ref().filter(|_| !w.modern) else { return };
     if h.main.is_some() {
         if right && super::winhits::over(w, "menu    faqmain", p) {
@@ -224,7 +224,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
         h.cursor as u16 + 1,
         1..=6,
         p,
-        moved,
         clicked,
         right,
         |w, id| {
