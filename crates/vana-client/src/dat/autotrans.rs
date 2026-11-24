@@ -716,6 +716,11 @@ impl Dictionary {
         let mut used = 0usize;
         // The piece goes in when it fits; false ends the line.
         let put = |out: &mut String, used: &mut usize, piece: &str| {
+            // Uncapped (`expand`, every chat line): nothing to count.
+            if cap == usize::MAX {
+                out.push_str(piece);
+                return true;
+            }
             let n = encode_sjis(piece).len();
             if *used + n >= cap {
                 return false;

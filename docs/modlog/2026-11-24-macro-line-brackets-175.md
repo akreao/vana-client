@@ -19,5 +19,7 @@
 
 Ours: `Dictionary::expand_cap` / `fep::braced_cap` (the buffer rule; `expand` is the uncapped call),
 `GameUi::text_cut` (FUN_10191c70), macroedit's classic editor draws a line not being edited bracketed and the title
-uncut. The modern macro panel keeps the plain text (its fields are edited in place). Test
+uncut. A phrase in the title (only ours' modern panel can put one there, by Tab) is drawn as its plain text; retail's
+FUN_10191db0 would draw the block's raw bytes. With TrueType Text on, the brackets are drawn as a green "{" and a red
+"}" (GameUi::modern_runs), as the modern chat log draws them; that face has no EF 27 / EF 28 glyphs. The modern macro panel keeps the plain text (its fields are edited in place). Test
 `dat::autotrans::tests::capped_expand`. Not checked on screen.

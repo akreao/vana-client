@@ -833,6 +833,13 @@ impl GameUi {
                     }
                 }
                 '\0' => break,
+                // The auto-translate brackets (EF 27 / EF 28, gaiji the TrueType face lacks): a green "{" and a red
+                // "}", as the modern chat log draws them.
+                '\u{E008}' | '\u{E009}' => {
+                    let (t, col) = if c == '\u{E008}' { ("{", [0x28, 0x68, 0x28]) } else { ("}", [0x28, 0x28, 0x70]) };
+                    out.push((t.to_string(), [col[0], col[1], col[2], base[3]]));
+                    out.push((String::new(), out[out.len() - 2].1));
+                }
                 // The same codes kept as one character (decode_sjis), as event item names.
                 c if (crate::dat::font::CODE_BASE..crate::dat::font::CODE_BASE + 0x200).contains(&(c as u32)) => {
                     let k = c as u32 - crate::dat::font::CODE_BASE;
