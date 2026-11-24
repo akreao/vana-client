@@ -134,6 +134,14 @@ pub trait Actors {
     fn status(&self, _id: u32) -> u8 {
         0
     }
+    /// The applied status (entity +0x170, FUN_10084390), not a bound actor's posed event status.
+    fn applied_status(&self, id: u32) -> u8 {
+        self.status(id)
+    }
+    /// InvisFlag (+0x128 bit 6).
+    fn invisible(&self, _id: u32) -> bool {
+        false
+    }
     /// The wade point in the world (actor+0x64c, attach point 0x35): the position, y the water surface while wading.
     fn wade(&self, _id: u32) -> Option<Vec3> {
         None
@@ -709,6 +717,8 @@ pub struct WeaponOp {
     pub n: u8,
     pub byte: u8,
     pub hide: bool,
+    /// The glow call is the client's to make; an op made it already (`Effects::glow_in_op`).
+    pub glow: bool,
 }
 
 pub use equip::{EquipCall, EquipState};

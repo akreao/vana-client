@@ -49,7 +49,7 @@ Not modelled (new queue row 181):
   FUN_10097a80 -> FUN_100c4730 -> FUN_10056b20); virtual calls not traced. Ours starts those outside the walk.
 - Tasks retail's ops make that ours has no object for: 0x04 / 0x81's camera task outside an event (FUN_1003c8a0 ->
   FUN_1003cc80; none when the camera object's +0x70 bit count is 1 and the op's second argument 0; its place in the
-  list is modelled for every scheduler, the +0x70 count taken as 1), 0x82 / 0x83
+  list is modelled for every scheduler, the +0x70 count read from the path since row 181), 0x82 / 0x83
   (FUN_10074790), 0x1a (FUN_10085e40 with DAT_1047e840 set),
   the schedulers 0x2b / 0x71 start for a message (FUN_1009e090) and 0x75 / 0xa3 for a weapon (FUN_100d5f10 /
   FUN_100d60e0), the weather generators of 0x7b / 0x7c / 0x7e / 0xae (ours applies them after the walk), 0x7f

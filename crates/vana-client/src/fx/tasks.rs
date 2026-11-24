@@ -1555,8 +1555,17 @@ impl Effects {
                 Flow::Next
             }
             // No case in FUN_10057fb0's switch: 0x01 opens most schedulers, 0x69 opens a block (0x64 / 0x65 take it);
-            // 0x50, 0x74; 0x7f and 0x86 write fields nothing reads.
-            0x01 | 0x50 | 0x74 | 0x69 | 0x7f | 0x86 => Flow::Next,
+            // 0x50, 0x74; 0x86 writes fields nothing reads.
+            0x01 | 0x50 | 0x74 | 0x69 | 0x86 => Flow::Next,
+            // Case 0x7f (0x1005ba4b): on actor1 (through its dolls) a child task (FUN_100613d0 -> FUN_100610c0 ->
+            // FUN_10074790) ramps the actor's +0x668 (vtable +0x38 / +0x34, FUN_100a4870 / FUN_100a4860) to u32 @8 over
+            // dur x speed; nothing reads that field, so only the task's link is kept.
+            0x7f => {
+                if self.doll_of(t.a1).id().is_some() {
+                    self.list.made(tasklist::Made::After);
+                }
+                Flow::Next
+            }
             // Reached in the main flow (no 0x64 took the block): the task is killed (vtable +0x18).
             0x6a | 0x67 => Flow::End,
             0x3b => match scope(self, kind::SCHEDULER) {
@@ -2413,11 +2422,19 @@ impl Effects {
             // FUN_10057000 case 4 / 0x81 (0x1005908c): the camera path 4cc @8 (resource kind 6) for dur x speed. Only an
             // event's tasks move the cutscene camera; the event's scheduler is client/event.rs's to play.
             0x04 | 0x81 => {
-                // FUN_1003c8a0 (0x1005a0a1) makes the camera task (FUN_1003cc80: FUN_10074740 alone) for any scheduler,
-                // unless trunc(dur x speed) is 0 and the camera object's +0x70 count is 1 (that count is not modelled:
-                // taken as 1).
-                if (op.dur as f32 * t.speed).trunc() != 0.0 {
-                    self.list.made(tasklist::Made::After);
+                // 0x1005a03c: the path found (FUN_10071060), FUN_1003c8a0 deletes the last camera task and makes the new
+                // one (FUN_1003cc80 -> FUN_10074740, then a child, FUN_100747d0), in any scheduler; none when the path
+                // counts one camera (keys, +0x70 low byte, and its current / follow bits 19 / 20) and trunc(dur x
+                // speed) is 0 (FUN_1003c970 sets it at once).
+                if let Some(r) = scope(self, 6) {
+                    let flags = self.reg.libs[r.0]
+                        .data(r.1)
+                        .get(0x10..0x14)
+                        .map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap_or_default()));
+                    let cams = (flags & 0xff) + (flags >> 19 & 1) + (flags >> 20 & 1);
+                    if !(cams == 1 && (op.dur as f32 * t.speed) as i32 == 0) {
+                        self.list.made(tasklist::Made::After);
+                    }
                 }
                 if t.event && !t.event_root {
                     let file = self.reg.libs[t.res.0].file_id;
@@ -2563,16 +2580,21 @@ impl Effects {
             0x75 | 0xa3 => {
                 let Some(id) = self.doll_of(t.a1).id() else { return Flow::Next };
                 let (n, show) = (op.u16_at(0xc) as u8, op.u32_at(8) == 0);
+                // FUN_100d5f10: the glow on while engaged and not invisible (+0x128 bit 6), else off; FUN_100d60e0: off.
+                let glow_on = |actors: &dyn Actors| actors.applied_status(id) == 1 && !actors.invisible(id);
                 if op.code == 0xa3 {
-                    self.weapons.push(crate::fx::WeaponOp { actor: id, n, byte: 1, hide: !show });
+                    self.weapons.push(crate::fx::WeaponOp { actor: id, n, byte: 1, hide: !show, glow: false });
+                    self.glow_in_op(id, n, show && glow_on(actors), actors);
                     return Flow::Next;
                 }
-                if op.u16_at(0xe) != 0 && actors.status(id) != 1 {
+                if op.u16_at(0xe) != 0 && actors.applied_status(id) != 1 {
                     return Flow::Next;
                 }
                 let len = op.dur as f32 * t.speed;
-                self.weapons.push(crate::fx::WeaponOp { actor: id, n, byte: 0, hide: !show || len != 0.0 });
+                let hide = !show || len != 0.0;
+                self.weapons.push(crate::fx::WeaponOp { actor: id, n, byte: 0, hide, glow: false });
                 if len != 0.0 {
+                    // FUN_10061960: the timer (a child, FUN_10074790) is linked before its hide starts `!w02`.
                     self.list.made(tasklist::Made::After);
                     self.wep_timers.push(super::equip::WepTimer {
                         owner: t.uid,
@@ -2582,6 +2604,7 @@ impl Effects {
                         show,
                     });
                 }
+                self.glow_in_op(id, n, !hide && glow_on(actors), actors);
                 Flow::Next
             }
             // Actor1's move input (FUN_10062310, +0xfc: the player's walk is ignored; a child of the scheduler) and
@@ -4161,6 +4184,11 @@ mod tests {
 
     /// A library of schedulers (name, ops), with no DAT behind it.
     fn sched_lib(file: u32, schedulers: &[(u32, Vec<SOp>)]) -> Library {
+        Library::load(file, sched_dat(schedulers)).unwrap()
+    }
+
+    /// The DAT bytes of `sched_lib`.
+    fn sched_dat(schedulers: &[(u32, Vec<SOp>)]) -> Vec<u8> {
         let mut dat = Vec::new();
         for (name, ops) in schedulers {
             let mut chunk = vec![0; 0x30];
@@ -4174,7 +4202,7 @@ mod tests {
             chunk[4..8].copy_from_slice(&header.to_le_bytes());
             dat.extend(chunk);
         }
-        Library::load(file, dat).unwrap()
+        dat
     }
 
     /// A frame of `dt` ticks.
@@ -4388,6 +4416,146 @@ mod tests {
         // Started before frame 0's walk (8 left after its first update); the child starts in frame 4's walk.
         assert_eq!(run(false), [8.0, 6.0, 4.0, 2.0, 98.0, 96.0]);
         assert_eq!(run(true), [8.0, 6.0, 4.0, 2.0, 100.0, 98.0]);
+    }
+
+    /// Row 181: ops 0x7f (FUN_100613d0's ramp on actor1) and 0x04 (FUN_1003c8a0's camera task) make a task, so either
+    /// in a child's first update runs the parent again. Op 0x04 makes none for a path that counts one camera when
+    /// trunc(dur x speed) is 0, nor for a path not found; op 0x7f none without actor1.
+    #[test]
+    fn ramp_and_camera_ops_make_a_task() {
+        let name = |n: &[u8; 4]| u32::from_le_bytes(*n);
+        let (parent, child, path) = (name(b"prnt"), name(b"chld"), name(b"cm01"));
+        let run = |first: SOp, flags: u32, a1: Who| -> Vec<f32> {
+            let ops = vec![sop(0x01, 10, 0, 0), sop(0x03, 0, 0, child), sop(0x01, 100, 0, 0), sop(0x00, 0, 0, 0)];
+            let mut lib = sched_dat(&[(parent, ops), (child, vec![first, sop(0x01, 50, 0, 0), sop(0x00, 0, 0, 0)])]);
+            // A camera path (kind 6): 16-byte header, then its payload with the key count and flags at 0x10.
+            let mut cam = vec![0u8; 0x20 + 0x20 + 0x30];
+            cam[..4].copy_from_slice(&path.to_le_bytes());
+            let header = ((cam.len() as u32 / 16) << 7) | 6;
+            cam[4..8].copy_from_slice(&header.to_le_bytes());
+            cam[0x20..0x24].copy_from_slice(&flags.to_le_bytes());
+            lib.extend(cam);
+            let mut fx = Effects::new();
+            fx.reg.add(Library::load(1, lib).unwrap());
+            let r = (fx.lib_for(1).unwrap(), 0);
+            let ops = fx.sched_ops(r);
+            fx.tasks.push(Some(Task::new(r, ops, a1, Who::None, None, 1.0)));
+            let f = ticks_frame(RETAIL_FRAME);
+            let mut out = Vec::new();
+            for _ in 0..6 {
+                fx.tick(&f, &Two);
+                let named = |t: &Task| fx.reg.libs[t.res.0].tree.nodes[t.res.1].name == parent.to_le_bytes();
+                out.push(fx.tasks.iter().flatten().find(|t| named(t)).map_or(-1.0, |t| t.countdown));
+            }
+            out
+        };
+        let (twice, once) = ([8.0, 6.0, 4.0, 2.0, 98.0, 96.0], [8.0, 6.0, 4.0, 2.0, 100.0, 98.0]);
+        assert_eq!(run(sop(0x7f, 0, 30, 0x80), 0, Who::Actor(HUME)), twice);
+        assert_eq!(run(sop(0x7f, 0, 30, 0x80), 0, Who::None), once);
+        assert_eq!(run(sop(0x04, 0, 0, path), 1, Who::None), once);
+        assert_eq!(run(sop(0x04, 0, 30, path), 1, Who::None), twice);
+        assert_eq!(run(sop(0x04, 0, 0, path), 2, Who::None), twice);
+        // Bit 19 (the current camera first) counts as one.
+        assert_eq!(run(sop(0x04, 0, 0, path), 1 << 19, Who::None), once);
+        assert_eq!(run(sop(0x04, 0, 0, path), 1 | 1 << 20, Who::None), twice);
+        assert_eq!(run(sop(0x04, 0, 30, name(b"cm02")), 2, Who::None), once);
+    }
+
+    /// An engaged actor whose part file (2) holds the `wep0` glow schedulers.
+    struct Armed {
+        invisible: bool,
+    }
+
+    impl Actors for Armed {
+        fn matrix(&self, _: u32) -> Option<Mat4> {
+            Some(Mat4::IDENTITY)
+        }
+        fn point(&self, _: u32, _: u16) -> Option<Vec3> {
+            Some(Vec3::ZERO)
+        }
+        fn scale(&self, _: u32) -> f32 {
+            1.0
+        }
+        fn files(&self, _: u32) -> (Vec<u32>, Vec<u32>) {
+            (vec![2], Vec::new())
+        }
+        fn hidden(&self, _: u32) -> bool {
+            false
+        }
+        fn models(&self) -> Vec<(u32, Vec<u32>)> {
+            Vec::new()
+        }
+        fn status(&self, _: u32) -> u8 {
+            1
+        }
+        fn invisible(&self, _: u32) -> bool {
+            self.invisible
+        }
+    }
+
+    /// Op 0x75 / 0xa3 on `wepN` (u32 @8 hide, i16 @0xc N, i16 @0xe engaged only), dur `dur`.
+    fn wep_op(code: u8, hide: bool, n: i16, dur: i16) -> SOp {
+        let mut raw = vec![0u8; 16];
+        (raw[0], raw[1]) = (code, 4);
+        raw[6..8].copy_from_slice(&dur.to_le_bytes());
+        raw[8] = u8::from(hide);
+        raw[0xc..0xe].copy_from_slice(&n.to_le_bytes());
+        SOp { code, wait: 0, dur, raw }
+    }
+
+    /// Row 181: ops 0x75 / 0xa3 start the glow schedulers inside the op (FUN_100d5f10 / FUN_100d60e0 ->
+    /// FUN_100d5fe0 / FUN_100d6180 -> FUN_100cef00 -> FUN_10056c70): `!w02` runs its first update at once, so a task
+    /// it makes there runs its scheduler again in the same walk, as a child of any op would. The glow's call is not
+    /// left to the client (`WeaponOp::glow`), and an invisible actor's show turns the glow off.
+    #[test]
+    fn weapon_op_glow_starts_inside_the_op() {
+        let name = |n: &[u8; 4]| u32::from_le_bytes(*n);
+        let (parent, off, on) = (name(b"prnt"), name(b"!w02"), name(b"!w01"));
+        const A: u32 = 0x0001_0005;
+        let run = |op: SOp, makes: bool, invisible: bool| -> (Vec<f32>, Vec<String>, Vec<crate::fx::WeaponOp>) {
+            let mut fx = Effects::new();
+            let ops = vec![sop(0x01, 10, 0, 0), op, sop(0x01, 100, 0, 0), sop(0x00, 0, 0, 0)];
+            fx.reg.add(sched_lib(1, &[(parent, ops)]));
+            let glow = |first: Vec<SOp>| [first, vec![sop(0x01, 50, 0, 0), sop(0x00, 0, 0, 0)]].concat();
+            let first = if makes { vec![sop(0x72, 0, 0, 0)] } else { Vec::new() };
+            fx.reg.add(sched_lib(2, &[(off, glow(first.clone())), (on, glow(first))]));
+            let actors = Armed { invisible };
+            let mut glow_names = Vec::new();
+            let r = (fx.lib_for(1).unwrap(), 0);
+            let ops = fx.sched_ops(r);
+            fx.tasks.push(Some(Task::new(r, ops, Who::Actor(A), Who::None, None, 1.0)));
+            let f = ticks_frame(RETAIL_FRAME);
+            let mut out = Vec::new();
+            let mut weapons = Vec::new();
+            for _ in 0..6 {
+                fx.tick(&f, &actors);
+                weapons.append(&mut fx.weapons);
+                let named = |t: &Task, n: u32| fx.reg.libs[t.res.0].tree.nodes[t.res.1].name == n.to_le_bytes();
+                out.push(fx.tasks.iter().flatten().find(|t| named(t, parent)).map_or(-1.0, |t| t.countdown));
+                for t in fx.tasks.iter().flatten().filter(|t| named(t, off) || named(t, on)) {
+                    let n = String::from_utf8_lossy(&fx.reg.libs[t.res.0].tree.nodes[t.res.1].name).into_owned();
+                    if !glow_names.contains(&n) {
+                        glow_names.push(n);
+                    }
+                }
+            }
+            (out, glow_names, weapons)
+        };
+        let op = |hide: bool| crate::fx::WeaponOp { actor: A, n: 0, byte: 0, hide, glow: false };
+        // The hide's `!w02` makes a task in its first update: the scheduler runs again in frame 4's walk.
+        let (counts, names, weapons) = run(wep_op(0x75, true, 0, 0), true, false);
+        assert_eq!(counts, [8.0, 6.0, 4.0, 2.0, 98.0, 96.0]);
+        assert_eq!((names, weapons), (vec!["!w02".to_string()], vec![op(true)]));
+        assert_eq!(run(wep_op(0x75, true, 0, 0), false, false).0, [8.0, 6.0, 4.0, 2.0, 100.0, 98.0]);
+        // Op 0xa3 does the same on byte 1; a timed hide links its timer before the start.
+        assert_eq!(run(wep_op(0xa3, true, 0, 0), true, false).0, [8.0, 6.0, 4.0, 2.0, 98.0, 96.0]);
+        assert_eq!(run(wep_op(0x75, false, 0, 30), true, false).0, [8.0, 6.0, 4.0, 2.0, 98.0, 96.0]);
+        // A show of a glow that is not off starts nothing; on `wep2` (no glow schedulers) neither.
+        assert_eq!(run(wep_op(0x75, false, 0, 0), true, false).1, Vec::<String>::new());
+        assert_eq!(run(wep_op(0x75, true, 2, 0), true, false).0, [8.0, 6.0, 4.0, 2.0, 100.0, 98.0]);
+        // An invisible actor's show is the glow off.
+        let (counts, names, _) = run(wep_op(0x75, false, 0, 0), true, true);
+        assert_eq!((counts.as_slice(), names), (&[8.0, 6.0, 4.0, 2.0, 98.0, 96.0][..], vec!["!w02".to_string()]));
     }
 
     /// Op 0x2e (dur 30): the root holds while its counter is not below 0, so the restart comes on the 31st frame;
@@ -6069,7 +6237,7 @@ mod skillchain_tests {
         fx.weapons.clear();
         fx.on_scheduler(1, 1, name(b"hwat"));
         fx.tick(&f, &Pair);
-        let op = |n, hide| crate::fx::WeaponOp { actor: 1, n, byte: 0, hide };
+        let op = |n, hide| crate::fx::WeaponOp { actor: 1, n, byte: 0, hide, glow: false };
         assert_eq!(fx.weapons, [op(0, false), op(1, false), op(2, true)]);
         // An explicit stop (model vtable +0x29c) frees the stopped task's holds too.
         fx.on_scheduler_alone(1, name(b"bntg"));
