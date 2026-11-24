@@ -4686,13 +4686,12 @@ fn world_hud(
     if let Some(r) = swkbd::draw(gu, world, sw, sh) {
         blockers.push(r);
     }
-    // The chat line and its auto-translate list are windows that take the focus while up (FUN_101b5590 opens
-    // "menu    inline" with FUN_1015f920(.., 1, 0)); the modern layer draws them its own way.
+    // The chat line is a window that takes the focus while up (FUN_101b5590 opens "menu    inline" with
+    // FUN_1015f920(.., 1, 0)), in both layers. Its auto-translate list joins the walk where it is drawn as retail's
+    // window (fep::draw_list); the modern layer's egui list, like its other egui panels, has no window parts for the
+    // focus to warp to, so the focus stays on the chat line there.
     if world.typing {
         gu.want(fep::INLINE);
-        if world.modern && world.fep.is_some() {
-            gu.want(fep::WINDOW);
-        }
     }
     // The chat line ("menu    inline") (16, H - 38), (textw + 14) x 22, windowps 37; FUN_101b7fd0.
     if world.typing && !world.modern {

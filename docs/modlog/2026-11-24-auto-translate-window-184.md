@@ -43,10 +43,12 @@ open moved no pointer; the chat line was outside the walk too; the walk stacked 
 chooser recorded its plate as child 0.
 
 Now:
-- `fep::draw_list` (the chat line's list and the macro editor's and search comment's lists) opens "menu    fep" in
+- `fep::draw_list` (the classic chat line's list; the macro editor's and search comment's lists are the modern
+  layer's only, ours, drawn by egui) opens "menu    fep" in
   the walk and records the hand on child 2 + row with that child's rect. Opening the list, entering a category and
   backing out of one ask the open hook's pointer move to the first row (`GameUi::warp_to_part`, paid at the frame's
-  end). While typing, "menu    inline" is in the walk (both layers); the modern layer's chat list is in the walk too.
+  end). While typing, "menu    inline" is in the walk (both layers). The modern layer's egui list stays outside the
+  walk, as its other egui panels do (no window parts to record or warp to), so the focus stays on the chat line.
 - The registry's layer byte is read (`GameUiData.layers`), and a new window of layer 4 or less takes its raise stamp
   as FUN_1015f0e0 places it (`under_high_layers`).
 - Several windows may draw a hand in one frame; the focus and the window-code warps take the last hand of their own

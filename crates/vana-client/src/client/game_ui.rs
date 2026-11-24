@@ -395,7 +395,7 @@ pub struct GameUi {
     presses: std::cell::RefCell<std::collections::HashMap<String, (u16, f32)>>,
     /// A cursor move from window code that puts the pointer on the new cursor child (FUN_1011a240(child, 1), or a
     /// cursor set followed by FUN_10126000): the window and child, owed until that hand is drawn.
-    cursor_warp: std::cell::RefCell<Option<(String, u16)>>,
+    cursor_warp: std::cell::RefCell<Option<(String, u16, bool)>>,
     /// A pointer move window code made to a part it knows (`GameUi::warp_to_part`), paid at the frame's end.
     part_warp: std::cell::Cell<Option<(f32, f32)>>,
     /// The windows marked for the frame pass's raise (raise_focus_next_frame FUN_1015f150: window +0x71 the mark's
@@ -805,7 +805,7 @@ impl GameUi {
     /// Both give +0x48 = 18, the glide of a focus change; the pointer goes to the child's centre as soon as the window
     /// draws its hand there. Call it only when the cursor changed (FUN_1011a240 does nothing for the same child).
     pub fn warp_to_cursor(&self, name: &str, child: u16) {
-        *self.cursor_warp.borrow_mut() = Some((crate::dat::ui::norm_name(name.as_bytes()), child));
+        *self.cursor_warp.borrow_mut() = Some((crate::dat::ui::norm_name(name.as_bytes()), child, false));
     }
 
     /// Window code set `name`'s cursor on a part whose rect it gives and put the pointer there (FUN_1011a240(child, 1)
@@ -3278,15 +3278,18 @@ impl Focus {
 }
 
 /// A frame's end for an owed cursor warp (`GameUi::warp_to_cursor`): paid with the centre of the hand drawn on that
-/// window's child; kept while the window still draws its hand elsewhere (the move came after this frame's draw);
-/// dropped when no hand of that window was drawn (closed, or no longer the one with the hand).
-fn cursor_warp_due(owed: &mut Option<(String, u16)>, hand: Option<&Hand>) -> Option<(f32, f32)> {
-    let (name, child) = owed.take()?;
+/// window's child. Retail moves the pointer at once, so it waits one frame at most: the move came after this frame's
+/// draw, which still shows the old child. Next frame it is paid or dropped (another key moved the cursor on before
+/// the draw, the window drew no hand, or another window has it).
+fn cursor_warp_due(owed: &mut Option<(String, u16, bool)>, hand: Option<&Hand>) -> Option<(f32, f32)> {
+    let (name, child, waited) = owed.take()?;
     let h = hand.filter(|h| crate::dat::ui::norm_name(h.0.as_bytes()) == name)?;
     if h.1 == child {
         return Some(centre(h.2));
     }
-    *owed = Some((name, child));
+    if !waited {
+        *owed = Some((name, child, true));
+    }
     None
 }
 
@@ -3476,14 +3479,19 @@ mod tests {
     #[test]
     fn cursor_warp_waits_for_the_new_child() {
         let on = |c: u16| ("menu    trade".to_string(), c, [100.0, 40.0, 63.0, 15.0]);
-        let mut owed = Some(("menu    trade".to_string(), 10));
+        let mut owed = Some(("menu    trade".to_string(), 10, false));
         assert_eq!(cursor_warp_due(&mut owed, Some(&on(9))), None);
         assert_eq!(cursor_warp_due(&mut owed, Some(&on(10))), Some((131.0, 47.0)));
         assert_eq!((owed.clone(), cursor_warp_due(&mut owed, Some(&on(10)))), (None, None));
-        let mut owed = Some(("menu    trade".to_string(), 10));
+        // The cursor moved on before the next draw: dropped, not paid when the child comes back later.
+        let mut owed = Some(("menu    trade".to_string(), 10, false));
+        assert_eq!(cursor_warp_due(&mut owed, Some(&on(9))), None);
+        assert_eq!(cursor_warp_due(&mut owed, Some(&on(8))), None);
+        assert_eq!((owed.clone(), cursor_warp_due(&mut owed, Some(&on(10)))), (None, None));
+        let mut owed = Some(("menu    trade".to_string(), 10, false));
         assert_eq!(cursor_warp_due(&mut owed, Some(&hand("menu    gift"))), None);
         assert_eq!(owed, None);
-        let mut owed = Some(("menu    trade".to_string(), 10));
+        let mut owed = Some(("menu    trade".to_string(), 10, false));
         assert_eq!((cursor_warp_due(&mut owed, None), owed), (None, None));
     }
 
