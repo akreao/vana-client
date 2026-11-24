@@ -359,6 +359,10 @@ pub struct GameUi {
     /// The pointer is over an enabled item (mouse cursor kind 1); set by the windows' hit tests, cleared when the
     /// pointer moves.
     pub hover: std::cell::Cell<bool>,
+    /// The children drawn in state 5 this frame by window (disabled_children), for the hand (winhits::takes).
+    off_parts: std::collections::HashMap<String, Vec<u16>>,
+    /// The window child under the pointer last frame and this frame, and the left button (winhits::takes).
+    pub ptr_hover: std::cell::RefCell<super::winhits::Hover>,
     /// Ours: the retail windows the modern layer draws as one column this frame, their children top to bottom.
     pub modern_order: std::cell::RefCell<std::collections::HashMap<String, Vec<u16>>>,
     /// The focused lists' bars drawn this frame, and a press held on one (client/scrollbar.rs).
@@ -492,6 +496,8 @@ impl GameUi {
             temp_swept: std::time::Instant::now(),
             style_saved: Default::default(),
             hover: Default::default(),
+            off_parts: Default::default(),
+            ptr_hover: Default::default(),
             modern_order: Default::default(),
             bars: Vec::new(),
             bar_hold: None,
@@ -1066,6 +1072,7 @@ impl GameUi {
     /// kind 0 or 4 wins; a kind-4 sprite at full tint (cursor 0x80805020 at +1 px), a kind-0 one dimmed to 0x30808080
     /// (cursor 0x40402810 at +1 px).
     pub fn disabled_children(&mut self, name: &str, x: f32, y: f32, off: &[u16], cursor: Option<u16>) {
+        self.off_parts.insert(name.to_string(), off.to_vec());
         let Some(l) = self.layout(name).cloned() else { return };
         for e in l.elements.iter().skip(1).filter(|e| off.contains(&e.id)) {
             let Some(r) = e.refs.iter().rfind(|r| r.kind == 0 || r.kind == 4) else { continue };
@@ -2404,6 +2411,16 @@ impl GameUi {
         self.data.lobby.menu(name).map_or(Vec::new(), |m| {
             m.elements.iter().skip(1).map(|e| [e.x as f32, e.y as f32, e.w as f32, e.h as f32]).collect()
         })
+    }
+
+    /// Child `id` of window `name` was drawn in state 5 (disabled_children): the pointer over it is no hand.
+    pub fn disabled_part(&self, name: &str, id: u16) -> bool {
+        self.off_parts.get(name).is_some_and(|off| off.contains(&id))
+    }
+
+    /// Before the windows draw: forget last frame's state-5 children.
+    pub fn clear_disabled_parts(&mut self) {
+        self.off_parts.clear();
     }
 
     pub fn window_rect(&self, name: &str, w: f32, h: f32) -> Option<[f32; 4]> {

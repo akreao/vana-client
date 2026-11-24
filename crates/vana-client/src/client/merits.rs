@@ -595,9 +595,9 @@ pub(super) fn set_sortyn(w: &mut World, yes: bool) -> bool {
     true
 }
 
-/// Mouse: hover moves the cursor over the focused window's rows, a click is Enter, a right click Escape *(inf: the
+/// Mouse: a row of the focused window takes the cursor by winhits::takes, a click on the cursor's row is Enter, a right click Escape *(inf: the
 /// generic window and list events)*.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     // The modern layer draws them and takes their mouse.
     if w.modern {
         return;
@@ -631,7 +631,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         .find(|e| inside([wx + e.x as f32, wy + e.y as f32, e.w as f32, e.h as f32]))
         .map(|e| e.id);
     let Some(id) = hit else { return };
-    gu.hover.set(true);
     let cur = match focus {
         EDIT => m.edit.as_ref().map_or(0, |e| e.sel),
         LIST => m.list.as_ref().map_or(0, |l| (l.cursor - l.top + 1) as u16),
@@ -641,7 +640,13 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     if focus == LIST && m.list.as_ref().is_some_and(|l| l.top + id as usize > l.rows.len()) {
         return;
     }
-    if (moved || clicked) && id != cur {
+    let takes = super::winhits::takes(
+        gu,
+        focus,
+        id,
+        gu.window_rect(focus, sw, sh).is_some_and(|r| super::winhits::inside(r, p)),
+    );
+    if takes && id != cur {
         if let Some(m) = w.merits_ui.as_mut() {
             match focus {
                 EDIT => m.edit.iter_mut().for_each(|e| e.sel = id),
@@ -651,7 +656,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
             }
         }
         w.sounds.push(Ui::Cursor as u32);
-    } else if clicked {
+    } else if clicked && id == cur {
         key(w, gu, egui::Key::Enter);
     }
 }

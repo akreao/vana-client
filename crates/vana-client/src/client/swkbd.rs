@@ -371,7 +371,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Option<[f32; 4]> {
 
 /// The mouse on the keyboard (the generic window's): hovering a key moves the cursor, a click presses it; the right
 /// click does nothing here.
-pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool) -> bool {
+pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool) -> bool {
     let Some(cursor) = w.swkbd.as_ref().filter(|_| !w.modern).map(|k| k.cursor) else { return false };
     if !super::winhits::over(w, NAME, p) {
         return false;
@@ -383,7 +383,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
         cursor,
         6..=0x57,
         p,
-        moved,
         clicked,
         false,
         |w, id| {

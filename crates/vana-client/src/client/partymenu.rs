@@ -593,19 +593,18 @@ pub fn focused(w: &World) -> bool {
         && w.levelsync.is_none()
 }
 
-/// Mouse (the hover in FUN_101267f0 and the release FUN_1015f420, over `GameUi::hit`): hover moves the cursor, a
-/// click on the cursor row is Enter.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
+/// Mouse (the hover in FUN_101267f0 and the release FUN_1015f420, over `GameUi::hit`): a row takes the cursor
+/// by winhits::takes, a click on the cursor row is Enter.
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool) {
     let Some(top) = w.partymenu.as_ref().and_then(|m| m.stack.last()).cloned() else { return };
     let Some(id) = gu.hit(top.name, sw, sh, p) else { return };
-    gu.hover.set(true);
-    if (moved || clicked)
+    if super::winhits::takes(gu, top.name, id, super::winhits::in_frame(gu, top.name, sw, sh, p))
         && id != top.sel
         && let Some(t) = w.partymenu.as_mut().and_then(|m| m.stack.last_mut())
     {
         t.sel = id;
         w.sounds.push(Ui::Cursor as u32);
-    } else if clicked {
+    } else if clicked && id == top.sel {
         key(w, gu, egui::Key::Enter);
     }
 }

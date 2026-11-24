@@ -94,8 +94,8 @@ pub(super) fn set_sel(w: &mut World, k: usize) -> bool {
     true
 }
 
-/// The generic list's mouse: hover moves the cursor, a click on the cursor row is Enter.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
+/// The generic list's mouse: a row takes the cursor by winhits::takes, a click on the cursor row is Enter.
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool) {
     // The modern layer draws it and takes its mouse.
     if w.modern {
         return;
@@ -112,13 +112,13 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     if row >= ROWS.len() {
         return;
     }
-    gu.hover.set(true);
-    if row != r.sel && (moved || clicked) {
+    let takes = super::winhits::takes(gu, WINDOW, e.id, super::winhits::in_frame(gu, WINDOW, sw, sh, p));
+    if row != r.sel && takes {
         if let Some(r) = w.remodel.as_mut() {
             r.sel = row;
         }
         w.sounds.push(Ui::Cursor as u32);
-    } else if clicked {
+    } else if clicked && row == r.sel {
         pick(w);
     }
 }

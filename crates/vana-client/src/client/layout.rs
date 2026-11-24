@@ -1004,14 +1004,13 @@ pub(super) fn set_row(w: &mut World, k: usize) -> bool {
 }
 
 /// The mouse (winhits.rs): an rmlo window or bankmenu as the generic window; the furniture list's rows as the item
-/// list (hover moves the row, a click on it is Enter, a right click Escape). The dressing windows have theirs.
+/// list (a row takes the cursor by winhits::takes, a click on it is Enter, a right click Escape). The dressing windows have theirs.
 pub fn pointer(
     w: &mut World,
     gu: &super::game_ui::GameUi,
     sw: f32,
     sh: f32,
     p: (f32, f32),
-    moved: bool,
     clicked: bool,
     right: bool,
 ) {
@@ -1036,13 +1035,13 @@ pub fn pointer(
         if !on || row < 0.0 || row as usize >= crate::inventory::VISIBLE_ROWS || scroll + row as usize >= n {
             return;
         }
-        gu.hover.set(true);
         let row = row as usize;
-        if row != cursor && (moved || clicked) {
+        let takes = super::winhits::takes(gu, INVENTOR, row as u16 + 1, on);
+        if row != cursor && takes {
             if let Some(l) = w.layout.as_mut() {
                 l.list = Some((c, scroll, row));
             }
-        } else if clicked {
+        } else if clicked && row == cursor {
             key(w, egui::Key::Enter);
         }
     } else if let Some(row) = l.bank {
@@ -1053,7 +1052,6 @@ pub fn pointer(
             row,
             1..=2,
             p,
-            moved,
             clicked,
             right,
             |w, id| {
@@ -1072,7 +1070,6 @@ pub fn pointer(
             sel,
             1..=n,
             p,
-            moved,
             clicked,
             right,
             |w, id| {

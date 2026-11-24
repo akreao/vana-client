@@ -236,7 +236,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Option<[f32; 4]> {
 }
 
 /// The mouse (winhits.rs): the generic window.
-pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool, right: bool) {
     let Some(c) = w.charlnk.as_ref() else { return };
     super::winhits::generic(
         w,
@@ -245,7 +245,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
         c.cursor,
         1..=9,
         p,
-        moved,
         clicked,
         right,
         |w, id| {

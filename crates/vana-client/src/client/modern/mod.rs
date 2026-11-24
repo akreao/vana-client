@@ -963,7 +963,9 @@ fn gm_prompt(p: &mut Panels, w: &mut World) {
     let rows: Vec<(String, [u8; 4])> = g.options.iter().map(|o| (o.clone(), [0x80; 4])).collect();
     let (question, cursor) = (g.question.clone(), g.cursor);
     if let Some(k) = log_list(p, "gm prompt", &question, &rows, cursor, w.confirm.is_none()) {
-        super::gmtell::pointer(w, k, true);
+        // A click moves the cursor there and picks it.
+        super::gmtell::pointer(w, k, true, false);
+        super::gmtell::pointer(w, k, false, true);
     }
 }
 

@@ -541,7 +541,7 @@ pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
 }
 
 /// The mouse on the focused window: ut_menu as the generic window, quest00's two plates, quest01's rows.
-pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool, right: bool) {
     use super::winhits::generic;
     let Some(u) = w.unity.as_ref() else { return };
     // The modern layer draws them and takes their mouse.
@@ -557,7 +557,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
             u.sel,
             1..=3,
             p,
-            moved,
             clicked,
             right,
             |w, id| {
@@ -575,7 +574,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
                 i.sel,
                 1..=2,
                 p,
-                moved,
                 clicked,
                 right,
                 |w, id| {
@@ -594,7 +592,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
                     (r.cursor - top + 1) as u16,
                     1..=VISIBLE as u16,
                     p,
-                    moved,
                     clicked,
                     right,
                     |w, id| {

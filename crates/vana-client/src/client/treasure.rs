@@ -345,8 +345,8 @@ pub fn key(w: &mut World, key: egui::Key) {
     w.loot = Some(l);
 }
 
-/// The mouse (the generic window messages 9 / 5 / 6): hovering a row of loot (or Cast Lot / Pass of lootope) moves
-/// the hand there, a click on the hand's child is Enter, a right click on the window is Escape.
+/// The mouse (the generic window messages 9 / 5 / 6): a row of loot (or Cast Lot / Pass of lootope) takes the hand by
+/// winhits::takes, a click on the hand's child is Enter, a right click on the window is Escape.
 pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     // The modern layer draws these and takes their mouse.
     if w.modern {
@@ -395,13 +395,19 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
             return;
         }
         let Some(e) = ol.elements.iter().skip(1).find(|e| inside(x, y, e) && matches!(e.id, 1 | 2)) else { return };
-        gu.hover.set(true);
-        if e.id != o.cursor && (moved || clicked) {
+        // Cast Lot in state 5 once we lotted: no hand over it.
+        let frame = super::winhits::inside([x, y, ow, oh], p);
+        let takes = if e.id == 1 && o.own_lot != 0 && o.own_lot != -1 {
+            super::winhits::takes_no_hand(gu, LOOTOPE, e.id, frame)
+        } else {
+            super::winhits::takes(gu, LOOTOPE, e.id, frame)
+        };
+        if e.id != o.cursor && takes {
             if let Some(o) = w.loot.as_mut().and_then(|l| l.ope.as_mut()) {
                 o.cursor = e.id;
             }
             w.sounds.push(Ui::Cursor as u32);
-        } else if clicked {
+        } else if clicked && e.id == o.cursor {
             key(w, egui::Key::Enter);
         }
         return;
@@ -416,13 +422,13 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         return;
     }
     let Some(e) = lay.elements.iter().skip(1).find(|e| inside(lx, ly, e) && e.id >= 1 && e.id <= n) else { return };
-    gu.hover.set(true);
-    if e.id != l.cursor && (moved || clicked) {
+    let takes = super::winhits::takes(gu, LOOT, e.id, super::winhits::in_frame(gu, LOOT, sw, sh, p));
+    if e.id != l.cursor && takes {
         if let Some(l) = w.loot.as_mut() {
             l.cursor = e.id;
         }
         w.sounds.push(Ui::Cursor as u32);
-    } else if clicked {
+    } else if clicked && e.id == l.cursor {
         key(w, egui::Key::Enter);
     }
 }

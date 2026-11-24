@@ -1491,7 +1491,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32, log_top: f32) -> Vec<[
 /// The mouse on the shop's focused window: shopmain / guildsho and shopbuy / shopsell as the generic window; the
 /// list's rows as the item list (hover moves the row, a click on it is Enter, a right click Escape); itemctrl and
 /// moneyctr as retail's (winhits::ctr).
-pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool, right: bool) {
     use super::winhits::{child_under, generic};
     // The modern layer draws these and takes their mouse.
     if w.modern {
@@ -1508,7 +1508,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
             child,
             1..=2,
             p,
-            moved,
             clicked,
             right,
             |w, id| {
@@ -1528,13 +1527,14 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
             key(w, egui::Key::Escape);
             return;
         }
-        let Some(r) = row.map(|r| r as usize - 1) else { return };
-        gu.hover.set(true);
-        if r != cursor && (moved || clicked) {
+        let Some(c) = row else { return };
+        let r = c as usize - 1;
+        let takes = super::winhits::takes(gu, SHOP, c, on);
+        if r != cursor && takes {
             if let Some(s) = w.shop.as_mut() {
                 s.list = (scroll, r);
             }
-        } else if clicked {
+        } else if clicked && r == cursor {
             key(w, egui::Key::Enter);
         }
     } else {
@@ -1546,7 +1546,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
             main,
             1..=2,
             p,
-            moved,
             clicked,
             right,
             |w, id| {
