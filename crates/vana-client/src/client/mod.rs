@@ -19512,20 +19512,35 @@ impl App {
             use mousecur::{AUTOSCROLL, CAMERA_DRAG, MOVE_DRAG, SCROLL_DRAG};
             let dragging = matches!(self.mouse.kind, SCROLL_DRAG | MOVE_DRAG | CAMERA_DRAG | AUTOSCROLL)
                 || lu.bar_hold.as_ref().is_some_and(|h| h.dragging());
-            if let Some(at) = lu.take_focus_warp()
-                && !dragging
-            {
+            if let Some(mv) = lu.take_focus_warp() {
                 let k = self.ui_k;
                 let mouse = self.last_cursor.map(|(x, y)| (x as f32 * k.0, y as f32 * k.1 + dy));
-                let drawn = self.ptr_warp.map(|pw| pw.shifted(dy).drawn).or(mouse).unwrap_or(at);
-                match os_pointer_warp(&self.cfg, k, &gfx.window, at) {
-                    OsWarp::Skipped => self.ptr_warp = Some(ptrwarp::PtrWarp::new(at, drawn, dy)),
-                    OsWarp::Moved(phys) => {
-                        self.ptr_warp = Some(ptrwarp::PtrWarp::new(at, drawn, dy));
-                        self.last_cursor = Some(phys);
+                let cur = self.ptr_warp.map(|pw| pw.shifted(dy));
+                // +0x48: 18 when FUN_10126000 ran this frame, else what the last glide left.
+                let glide = if mv.glide { 18.0 } else { cur.map_or(0.0, |pw| pw.glide) };
+                let here = cur.map(|pw| pw.at).or(mouse);
+                let drawn = cur.map(|pw| pw.drawn).or(mouse);
+                match mv.at.filter(|_| !dragging) {
+                    Some(at) => {
+                        let pw = ptrwarp::PtrWarp::with_glide(at, drawn.unwrap_or(at), dy, glide);
+                        match os_pointer_warp(&self.cfg, k, &gfx.window, at) {
+                            OsWarp::Skipped => self.ptr_warp = Some(pw),
+                            OsWarp::Moved(phys) => {
+                                self.ptr_warp = Some(pw);
+                                self.last_cursor = Some(phys);
+                            }
+                            // The arrow stayed: so does the windows' pointer, which is where the arrow is.
+                            OsWarp::Refused => {}
+                        }
                     }
-                    // The arrow stayed: so does the windows' pointer, which is where the arrow is.
-                    OsWarp::Refused => {}
+                    // FUN_10126000 with no cursor to go to (or FUN_10125b90 refusing during a drag): only +0x48 = 18,
+                    // the pointer where it is.
+                    None if mv.glide => {
+                        if let Some(at) = here {
+                            self.ptr_warp = Some(ptrwarp::PtrWarp::new(at, drawn.unwrap_or(at), dy));
+                        }
+                    }
+                    None => {}
                 }
             }
             if let Some(pw) = &mut self.ptr_warp {

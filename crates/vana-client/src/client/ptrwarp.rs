@@ -24,6 +24,12 @@ impl PtrWarp {
         Self { at, drawn, glide: 18.0, dy, acc: 0.0 }
     }
 
+    /// FUN_10125b90(at, 0.0) after a frame's moves: the pointer on `at` with +0x48 at `glide` (18 when FUN_10126000
+    /// ran on the way, else what was left of it).
+    pub fn with_glide(at: (f32, f32), drawn: (f32, f32), dy: f32, glide: f32) -> Self {
+        Self { at, drawn, glide, dy, acc: 0.0 }
+    }
+
     /// This warp with the stacked windows' shift now `dy`: the pointer and the sprite moved by its change.
     pub fn shifted(&self, dy: f32) -> Self {
         let d = dy - self.dy;

@@ -390,7 +390,7 @@ pub struct GameUi {
     /// The window manager's focus (+0x54) and the warp it owes (`Focus`), and the pointer put on the cursor child of a
     /// window that took it (FUN_1015fe20 -> FUN_10126000), for the app to apply.
     focus_state: Focus,
-    focus_warp: Option<(f32, f32)>,
+    focus_warp: Option<PtrMove>,
     /// Window +0x5e, the generic press (FUN_10118260 on Enter: 9 ticks down): the child pressed and the count.
     presses: std::cell::RefCell<std::collections::HashMap<String, (u16, f32)>>,
     /// A cursor move from window code that puts the pointer on the new cursor child (FUN_1011a240(child, 1), or a
@@ -398,6 +398,31 @@ pub struct GameUi {
     cursor_warp: std::cell::RefCell<Option<(String, u16)>>,
     /// A pointer move window code made to a part it knows (`GameUi::warp_to_part`), paid at the frame's end.
     part_warp: std::cell::Cell<Option<(f32, f32)>>,
+    /// The windows marked for the frame pass's raise (raise_focus_next_frame FUN_1015f150: window +0x71 the mark's
+    /// order, +0x98 `take`), in marking order.
+    raises: std::cell::RefCell<Vec<(String, bool)>>,
+}
+
+/// What the frame's window code and frame pass did to the game pointer (the mouse object DAT_104e2f04), in order:
+/// `at` where the last FUN_10125b90 put it (+4 / +8), `glide` whether FUN_10126000 set +0x48 = 18 on the way (a
+/// FUN_10125b90 with 0.0 leaves +0x48 as it was, DAT_1032a5d8; FUN_10126000 sets it before it looks for a cursor).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PtrMove {
+    pub at: Option<(f32, f32)>,
+    pub glide: bool,
+}
+
+impl PtrMove {
+    /// FUN_10126000: +0x48 = 18, and the pointer on `at` when the focus has a cursor part.
+    fn glide_to(&mut self, at: Option<(f32, f32)>) {
+        self.glide = true;
+        self.at = at.or(self.at);
+    }
+
+    /// FUN_10125b90(at, 0.0): the pointer moved, the glide left as it is.
+    fn put(&mut self, at: (f32, f32)) {
+        self.at = Some(at);
+    }
 }
 
 /// FUN_1015fa00's group walk (MODLOG "Window group walk"): the windows wanted this frame and last with their
@@ -415,6 +440,11 @@ struct Walk {
     gens: std::collections::HashMap<String, u32>,
     /// What each window renewed by key showed last (GameUi::renew_on).
     shown: std::collections::HashMap<String, u64>,
+    /// Windows opened again in place this frame (`renew`): new window objects, shown as new ones are.
+    fresh: std::collections::HashSet<String>,
+    /// Window +0x98: raised with `take` (FUN_1015f150), so FUN_1015fdb0 gives it the focus even with registry bit 0;
+    /// cleared when it loses the focus (FUN_1015fe20) or by a raise without it.
+    take: std::collections::HashSet<String>,
 }
 
 /// One window's open / close state (window +0x26 open count, +0x64 close count, +0x68 opened animated).
@@ -523,6 +553,7 @@ impl GameUi {
             presses: Default::default(),
             cursor_warp: Default::default(),
             part_warp: Default::default(),
+            raises: Default::default(),
         }
     }
 
@@ -641,22 +672,53 @@ impl GameUi {
         }
         self.anims.retain(|_, a| a.seen == frame || a.close > 0.0);
         self.anim_frame += 1;
+        // Windows shown this frame: new ones, and ones opened again in place.
+        let mut fresh = std::mem::take(&mut self.walk.fresh);
+        fresh.extend(self.walk.now.keys().filter(|k| !self.walk.last.contains_key(*k)).cloned());
         self.run_walk();
         let hands = std::mem::take(&mut self.batch.hands);
         // A window's hand is the last one it drew; with no focus window, the last one drawn.
         let hand_of = |name: Option<&str>| {
             hands.iter().rev().find(|h| name.is_none_or(|n| crate::dat::ui::norm_name(h.0.as_bytes()) == n)).cloned()
         };
+        let mut mv = PtrMove::default();
+        // FUN_1015f920 -> FUN_1015fb00 -> FUN_10126000 for each window shown: +0x48 = 18, and the pointer on the
+        // cursor of the window that has the focus then (still the old one: the new window takes it in the frame pass),
+        // when that one is still up (FUN_10160380).
+        if !fresh.is_empty() {
+            let old = self.focus.as_ref().filter(|h| self.was_up(&h.0)).map(|h| centre(h.2));
+            mv.glide_to(old);
+        }
+        // The window code's cursor moves with the pointer (FUN_1011a240(child, 1), FUN_10126000).
         let owed = self.cursor_warp.borrow().as_ref().map(|o| o.0.clone());
-        let moved = cursor_warp_due(&mut self.cursor_warp.borrow_mut(), hand_of(owed.as_deref()).as_ref())
-            .or(self.part_warp.take());
+        if let Some(at) = cursor_warp_due(&mut self.cursor_warp.borrow_mut(), hand_of(owed.as_deref()).as_ref())
+            .or(self.part_warp.take())
+        {
+            mv.glide_to(Some(at));
+        }
+        // The frame pass (FUN_10160fd0 0x10161190..0x10161248): the marked windows raised in marking order.
+        let raises = self.raises.take();
+        for (key, take) in raises {
+            self.raise_now(&key, take, hand_of(Some(&key)), &mut mv);
+        }
         let top = self.walk_focus();
         let hand = hand_of(top.as_ref().map(|t| t.0.as_str()));
+        let before = self.focus_state.was.clone();
         let (focus, warp) = self.focus_state.step(top, !self.walk.last.is_empty(), hand);
         self.focus = focus;
-        // The frame pass's focus change (FUN_10160fd0 -> FUN_1015fe20) comes after the window code's cursor moves.
-        if let Some(at) = warp.or(moved) {
-            self.focus_warp = Some(at);
+        if before != self.focus_state.was
+            && let Some(b) = before
+        {
+            self.walk.take.remove(&b.0);
+        }
+        // Then FUN_1015fdb0 -> FUN_1015fe20: a focus change gives FUN_10126000 to the new focus.
+        if let Some(at) = warp {
+            mv.glide_to(Some(at));
+        }
+        let open = &self.walk.last;
+        self.walk.take.retain(|k| open.contains_key(k));
+        if mv != PtrMove::default() {
+            self.focus_warp = Some(mv);
         }
         self.presses.borrow_mut().retain(|_, p| {
             p.1 -= ticks;
@@ -665,22 +727,45 @@ impl GameUi {
     }
 
     /// FUN_1015fdb0 on the walk's windows, top first: the first one the walk did not suspend whose registry flags lack
-    /// bit 0 (the log, the gauges, the party list, the help line ... never take the focus). Its key and generation.
-    /// Not modelled: +0x98 (such a window asked to take it anyway) and state 0xe.
+    /// bit 0 (the log, the gauges, the party list, the help line ... never take the focus) or that a raise gave +0x98.
+    /// Its key and generation. Not modelled: state 0xe.
     fn walk_focus(&self) -> Option<(String, u32)> {
         let mut order: Vec<(&String, &i64)> = self.walk.last.iter().collect();
         order.sort_by_key(|o| std::cmp::Reverse(*o.1));
         order
             .into_iter()
             .map(|(n, _)| n)
-            .find(|n| !self.walk.suspended.contains(*n) && self.reg_flags(n) & 1 == 0)
+            .find(|n| !self.walk.suspended.contains(*n) && self.can_focus(n))
             .map(|n| (n.clone(), self.walk.gens.get(n).copied().unwrap_or(0)))
+    }
+
+    /// Registry bit 0 clear, or +0x98 set.
+    fn can_focus(&self, key: &str) -> bool {
+        self.reg_flags(key) & 1 == 0 || self.walk.take.contains(key)
+    }
+
+    /// One marked window in the frame pass (`raise_in`).
+    fn raise_now(&mut self, key: &str, take: bool, hand: Option<Hand>, mv: &mut PtrMove) {
+        let layers: std::collections::HashMap<String, u8> =
+            self.walk.last.keys().map(|n| (n.clone(), self.layer(n))).collect();
+        let no_focus: std::collections::HashSet<String> =
+            self.walk.last.keys().filter(|n| self.reg_flags(n) & 1 != 0).cloned().collect();
+        raise_in(&mut self.walk, &mut self.focus_state, key, take, &layers, &no_focus, hand, mv);
     }
 
     /// `name` was opened again in place (a new window object under the same name, with no frame between): the focus
     /// moves to it as to any new window.
     pub fn renew(&mut self, name: &str) {
-        *self.walk.gens.entry(crate::dat::ui::norm_name(name.as_bytes())).or_default() += 1;
+        let key = crate::dat::ui::norm_name(name.as_bytes());
+        *self.walk.gens.entry(key.clone()).or_default() += 1;
+        self.walk.fresh.insert(key);
+    }
+
+    /// raise_focus_next_frame (FUN_1015f150): `name` is marked for the frame pass (FUN_10160fd0), which raises the
+    /// marked windows in marking order and gives each the focus when it can take it (registry bit 0 clear, or
+    /// `take`), with the pointer on its cursor part's centre. A window not open by then is not raised.
+    pub fn raise(&self, name: &str, take: bool) {
+        self.raises.borrow_mut().push((crate::dat::ui::norm_name(name.as_bytes()), take));
     }
 
     /// `renew` when what `name` shows (`key`) changed since the last call: a window the game opens again in place for
@@ -714,7 +799,7 @@ impl GameUi {
     }
 
     /// The pointer warp a focus change or a window's cursor move asked for at the last frame's end (UI pixels), once.
-    pub fn take_focus_warp(&mut self) -> Option<(f32, f32)> {
+    pub fn take_focus_warp(&mut self) -> Option<PtrMove> {
         self.focus_warp.take()
     }
 
@@ -3187,6 +3272,59 @@ fn cursor_warp_due(owed: &mut Option<(String, u16)>, hand: Option<&Hand>) -> Opt
     None
 }
 
+/// One marked window in the frame pass: FUN_1015f1a0 takes it out of the window list and FUN_1015f0e0 puts it back
+/// (on top, or for layer 4 or less under the high-layer windows on top); +0x71 and +0x98 are its mark's. When it can
+/// take the focus (not in `no_focus`, registry bit 0, or `take`), FUN_1015fe20 gives it (a change: the old focus loses
+/// +0x98, FUN_10126000) and FUN_1011c080 / FUN_10125b90(centre, 0.0) put the pointer on its cursor part (`hand`), also
+/// when it had the focus already. A window not open is not raised.
+#[allow(clippy::too_many_arguments)]
+fn raise_in(
+    walk: &mut Walk,
+    focus: &mut Focus,
+    key: &str,
+    take: bool,
+    layers: &std::collections::HashMap<String, u8>,
+    no_focus: &std::collections::HashSet<String>,
+    hand: Option<Hand>,
+    mv: &mut PtrMove,
+) {
+    if !walk.last.contains_key(key) {
+        return;
+    }
+    let layer = |n: &str| layers.get(n).copied().unwrap_or(0);
+    let open: Vec<(i64, u8)> =
+        walk.last.iter().filter(|(n, _)| n.as_str() != key).map(|(n, &s)| (s, layer(n))).collect();
+    let stamp = under_high_layers(open, layer(key)).unwrap_or_else(|| {
+        walk.top += 1000;
+        walk.top
+    });
+    walk.last.insert(key.to_string(), stamp);
+    if take {
+        walk.take.insert(key.to_string());
+    } else {
+        walk.take.remove(key);
+    }
+    if no_focus.contains(key) && !take {
+        return;
+    }
+    let at = hand.map(|h| centre(h.2));
+    let id = Some((key.to_string(), walk.gens.get(key).copied().unwrap_or(0)));
+    if focus.was != id {
+        if let Some((old, _)) = focus.was.take()
+            && old != key
+        {
+            walk.take.remove(&old);
+        }
+        focus.was = id.clone();
+        // With no hand drawn yet the warp is owed, as for any focus change.
+        focus.owed = if at.is_some() { None } else { id };
+        mv.glide_to(at);
+    }
+    if let Some(at) = at {
+        mv.put(at);
+    }
+}
+
 /// `GameUi::layer_stamp` on the open windows' (stamp, layer).
 fn under_high_layers(mut open: Vec<(i64, u8)>, layer: u8) -> Option<i64> {
     if layer >= 5 {
@@ -3212,7 +3350,7 @@ fn faq_hand_frame(frames: f32) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{Focus, cursor_warp_due, faq_hand_frame, under_high_layers};
+    use super::{Focus, PtrMove, Walk, cursor_warp_due, faq_hand_frame, raise_in, under_high_layers};
 
     /// Registry flag 0x200000 (FUN_1015f920 at 0x1015fa80 -> FUN_1011a580) puts a window's last child in state 0x10.
     /// In every layout that child is the caption: it has no cursor link, and no window with the flag ends in a row.
@@ -3329,6 +3467,73 @@ mod tests {
         assert_eq!(owed, None);
         let mut owed = Some(("menu    trade".to_string(), 10));
         assert_eq!((cursor_warp_due(&mut owed, None), owed), (None, None));
+    }
+
+    fn walk_of(open: &[(&str, i64)]) -> Walk {
+        let mut w = Walk::default();
+        for (n, st) in open {
+            w.last.insert(n.to_string(), *st);
+            w.top = w.top.max(*st);
+        }
+        w
+    }
+
+    /// FUN_10160fd0's raise: the hand-over's Enter on a slot raises the inventory list over it, which takes the focus
+    /// and the pointer on its cursor row with the 18-tick glide (FUN_1015fe20 -> FUN_10126000); raised again while it
+    /// has the focus, the pointer goes back on its cursor with the glide as it is (FUN_10125b90(centre, 0.0)).
+    #[test]
+    fn raise_puts_the_window_on_top_with_the_focus_and_the_pointer() {
+        let (inv, ho) = ("menu    inventor", "menu    handover");
+        let mut walk = walk_of(&[(inv, 1000), (ho, 2000)]);
+        let mut f = Focus::default();
+        f.step(win(ho, 0), true, Some(hand(ho)));
+        let none = Default::default();
+        let mut mv = PtrMove::default();
+        raise_in(&mut walk, &mut f, inv, false, &Default::default(), &none, Some(hand(inv)), &mut mv);
+        assert_eq!(mv, PtrMove { at: Some((131.0, 47.0)), glide: true });
+        assert!(walk.last[inv] > walk.last[ho]);
+        assert_eq!(f.was, win(inv, 0));
+        // The frame's focus step agrees: no second warp.
+        assert_eq!(f.step(win(inv, 0), true, Some(hand(inv))).1, None);
+        let mut mv = PtrMove::default();
+        raise_in(&mut walk, &mut f, inv, false, &Default::default(), &none, Some(hand(inv)), &mut mv);
+        assert_eq!(mv, PtrMove { at: Some((131.0, 47.0)), glide: false });
+        // A closed window is not raised.
+        let mut mv = PtrMove::default();
+        raise_in(&mut walk, &mut f, "menu    gone", false, &Default::default(), &none, None, &mut mv);
+        assert_eq!((mv, f.was.clone()), (PtrMove::default(), win(inv, 0)));
+    }
+
+    /// A registry bit-0 window raised without `take` only moves up; with it (+0x98) it takes the focus, and keeps
+    /// +0x98 until it loses the focus. A low-layer window raised goes under the high-layer ones on top.
+    #[test]
+    fn raise_take_and_layers() {
+        let (log, menu, line) = ("menu    log", "menu    menuwind", "menu    inline");
+        let mut walk = walk_of(&[(log, 1000), (menu, 2000), (line, 3000)]);
+        let layers = [(line.to_string(), 6u8)].into_iter().collect();
+        let no_focus = [log.to_string()].into_iter().collect();
+        let mut f = Focus::default();
+        f.step(win(menu, 0), true, Some(hand(menu)));
+        let mut mv = PtrMove::default();
+        raise_in(&mut walk, &mut f, log, false, &layers, &no_focus, None, &mut mv);
+        assert_eq!((walk.last[log], f.was.clone(), mv), (2001, win(menu, 0), PtrMove::default()));
+        raise_in(&mut walk, &mut f, log, true, &layers, &no_focus, None, &mut mv);
+        assert_eq!((f.was.clone(), f.owed.clone(), mv.glide), (win(log, 0), win(log, 0), true));
+        assert!(walk.take.contains(log));
+        raise_in(&mut walk, &mut f, menu, false, &layers, &no_focus, Some(hand(menu)), &mut mv);
+        assert!(!walk.take.contains(log));
+        assert_eq!(walk.last[menu], 2002);
+    }
+
+    /// The frame's pointer moves in order: the last position wins, and the glide once FUN_10126000 ran stays.
+    #[test]
+    fn pointer_moves_fold_in_order() {
+        let mut mv = PtrMove::default();
+        mv.glide_to(None);
+        assert_eq!(mv, PtrMove { at: None, glide: true });
+        mv.put((5.0, 6.0));
+        mv.glide_to(None);
+        assert_eq!(mv, PtrMove { at: Some((5.0, 6.0)), glide: true });
     }
 
     /// The Help Desk hand: six frames, four drawn frames each, a 24-frame cycle.
