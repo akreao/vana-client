@@ -7152,6 +7152,8 @@ struct FxActors<'a> {
     me_moving: bool,
     /// Our move's quarter (World::my_strafe, +0x598).
     me_strafe: u8,
+    /// Our InvisFlag (+0x128 bit 6).
+    me_invisible: bool,
     pet: u16,
     /// Our party (roster mode 0, FUN_100e5dd0(0)): ourselves first; our ActIndex (we are not in `entities`).
     party: Vec<u32>,
@@ -7352,6 +7354,10 @@ impl crate::fx::Actors for FxActors<'_> {
 
     fn status(&self, id: u32) -> u8 {
         self.places.get(&id).map_or(0, |p| p.status)
+    }
+
+    fn invisible(&self, id: u32) -> bool {
+        if id == self.me { self.me_invisible } else { self.entities.get(&id).is_some_and(|e| e.invisible) }
     }
 
     fn decal_cell(&self, c: Vec3) -> Option<(usize, usize)> {
@@ -21486,6 +21492,7 @@ fn draw_effects(
             me: w.my_id,
             me_moving: w.moving,
             me_strafe: w.my_strafe,
+            me_invisible: w.my_plate.invisible,
             pet: w.my_pet,
             party,
             my_index: w.my_index,

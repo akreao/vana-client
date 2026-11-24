@@ -156,11 +156,15 @@ pub fn status_start(w: &mut World, id: u32, status: u8) {
     }
 }
 
-/// Fx's ops 0x75 / 0xa3 (and their timed shows) on our actors.
+/// Fx's ops 0x75 / 0xa3 (and their timed shows) on our actors; the ops' glows started inside the op already.
 pub fn apply_ops(w: &mut World) {
     for op in std::mem::take(&mut w.effects.weapons) {
         let (n, b) = (op.n as usize, op.byte as usize);
-        if op.hide {
+        if !op.glow {
+            if let Some(a) = w.actors.get_mut(&op.actor).filter(|_| n < 16) {
+                a.wep_hide[n][b] = op.hide;
+            }
+        } else if op.hide {
             hide(w, op.actor, n, b);
         } else {
             show(w, op.actor, n, b);
