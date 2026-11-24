@@ -382,6 +382,9 @@ pub struct GameUi {
     focus_warp: Option<(f32, f32)>,
     /// Window +0x5e, the generic press (FUN_10118260 on Enter: 9 ticks down): the child pressed and the count.
     presses: std::cell::RefCell<std::collections::HashMap<String, (u16, f32)>>,
+    /// A cursor move from window code that puts the pointer on the new cursor child (FUN_1011a240(child, 1), or a
+    /// cursor set followed by FUN_10126000): the window and child, owed until that hand is drawn.
+    cursor_warp: std::cell::RefCell<Option<(String, u16, bool)>>,
 }
 
 /// FUN_1015fa00's group walk (MODLOG "Window group walk"): the windows wanted this frame and last with their
@@ -505,6 +508,7 @@ impl GameUi {
             focus_state: Focus::default(),
             focus_warp: None,
             presses: Default::default(),
+            cursor_warp: Default::default(),
         }
     }
 
@@ -625,11 +629,13 @@ impl GameUi {
         self.anim_frame += 1;
         self.run_walk();
         let hand = self.batch.hand.take();
+        let moved = cursor_warp_due(&mut self.cursor_warp.borrow_mut(), hand.as_ref());
         let top = self.walk_focus();
         let (focus, warp) = self.focus_state.step(top, !self.walk.last.is_empty(), hand);
         self.focus = focus;
-        if warp.is_some() {
-            self.focus_warp = warp;
+        // The frame pass's focus change (FUN_10160fd0 -> FUN_1015fe20) comes after the window code's cursor moves.
+        if let Some(at) = warp.or(moved) {
+            self.focus_warp = Some(at);
         }
         self.presses.borrow_mut().retain(|_, p| {
             p.1 -= ticks;
@@ -670,7 +676,15 @@ impl GameUi {
         self.batch.set_hand(name, child, rect);
     }
 
-    /// The pointer warp a focus change asked for at the last frame's end (UI pixels), once.
+    /// Window code moved `name`'s cursor to `child` and puts the pointer on it: FUN_1011a240(child, 1) (the hand-over's
+    /// and the player trade's Escape and OK / Cancel steps) and the title's Escape (cursor set, then FUN_10126000).
+    /// Both give +0x48 = 18, the glide of a focus change; the pointer goes to the child's centre as soon as the window
+    /// draws its hand there. Call it only when the cursor changed (FUN_1011a240 does nothing for the same child).
+    pub fn warp_to_cursor(&self, name: &str, child: u16) {
+        *self.cursor_warp.borrow_mut() = Some((crate::dat::ui::norm_name(name.as_bytes()), child, false));
+    }
+
+    /// The pointer warp a focus change or a window's cursor move asked for at the last frame's end (UI pixels), once.
     pub fn take_focus_warp(&mut self) -> Option<(f32, f32)> {
         self.focus_warp.take()
     }
@@ -3117,6 +3131,22 @@ impl Focus {
     }
 }
 
+/// A frame's end for an owed cursor warp (`GameUi::warp_to_cursor`): paid with the centre of the hand drawn on that
+/// window's child. Retail moves the pointer at once, so it waits one frame at most: the move came after this frame's
+/// draw, which still shows the old child. Next frame it is paid or dropped (another key moved the cursor on before
+/// the draw, the window drew no hand, or another window has it).
+fn cursor_warp_due(owed: &mut Option<(String, u16, bool)>, hand: Option<&Hand>) -> Option<(f32, f32)> {
+    let (name, child, waited) = owed.take()?;
+    let h = hand.filter(|h| crate::dat::ui::norm_name(h.0.as_bytes()) == name)?;
+    if h.1 == child {
+        return Some(centre(h.2));
+    }
+    if !waited {
+        *owed = Some((name, child, true));
+    }
+    None
+}
+
 /// FUN_1011c080: the cursor part's centre, x + w / 2 and y + h / 2 on its shorts (C division).
 fn centre(r: [f32; 4]) -> (f32, f32) {
     let [x, y, w, h] = r.map(|v| v as i32);
@@ -3130,7 +3160,7 @@ fn faq_hand_frame(frames: f32) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{Focus, faq_hand_frame};
+    use super::{Focus, cursor_warp_due, faq_hand_frame};
 
     /// Registry flag 0x200000 (FUN_1015f920 at 0x1015fa80 -> FUN_1011a580) puts a window's last child in state 0x10.
     /// In every layout that child is the caption: it has no cursor link, and no window with the flag ends in a row.
@@ -3218,6 +3248,27 @@ mod tests {
         assert_eq!(f.step(None, true, Some(hand("menu    titlehan"))).1, None);
         // Only windows that never take the focus up: none has it.
         assert_eq!(f.step(None, true, None), (None, None));
+    }
+
+    /// A cursor move with the pointer (FUN_1011a240(child, 1)) waits for the window to draw its hand on the new child,
+    /// then puts the pointer on that child's centre once; another window's hand, or none, drops it.
+    #[test]
+    fn cursor_warp_waits_for_the_new_child() {
+        let on = |c: u16| ("menu    trade".to_string(), c, [100.0, 40.0, 63.0, 15.0]);
+        let mut owed = Some(("menu    trade".to_string(), 10, false));
+        assert_eq!(cursor_warp_due(&mut owed, Some(&on(9))), None);
+        assert_eq!(cursor_warp_due(&mut owed, Some(&on(10))), Some((131.0, 47.0)));
+        assert_eq!((owed.clone(), cursor_warp_due(&mut owed, Some(&on(10)))), (None, None));
+        // The cursor moved on before the next draw: dropped, not paid when the child comes back later.
+        let mut owed = Some(("menu    trade".to_string(), 10, false));
+        assert_eq!(cursor_warp_due(&mut owed, Some(&on(9))), None);
+        assert_eq!(cursor_warp_due(&mut owed, Some(&on(8))), None);
+        assert_eq!((owed.clone(), cursor_warp_due(&mut owed, Some(&on(10)))), (None, None));
+        let mut owed = Some(("menu    trade".to_string(), 10, false));
+        assert_eq!(cursor_warp_due(&mut owed, Some(&hand("menu    gift"))), None);
+        assert_eq!(owed, None);
+        let mut owed = Some(("menu    trade".to_string(), 10, false));
+        assert_eq!((cursor_warp_due(&mut owed, None), owed), (None, None));
     }
 
     /// The Help Desk hand: six frames, four drawn frames each, a 24-frame cycle.
