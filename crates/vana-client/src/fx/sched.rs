@@ -146,7 +146,8 @@ pub struct Task {
     pub ends_loop: bool,
     /// The end op was reached on a loop: FUN_10057c20 resets it at the next step (no op runs then).
     pub restart: bool,
-    /// The serial of the walk it last took a retail frame's ticks in: that walk passes it by.
+    /// The serial of the walk whose frame its first update took outside the walk (a start asked for before the walk,
+    /// as retail's starts from a waiting task inside it are): that walk passes it by.
     pub walked: u32,
     /// The end op was run (+0x88 clear) and it does not loop: the update after sets +0x145 (FUN_10057c20 found no
     /// loop), the one after that deletes it (FUN_10057e10's first test). Its children, its action and a parent that
