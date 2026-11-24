@@ -14010,14 +14010,16 @@ impl App {
         ride::dig_update(world);
         actmotion::update(world, dt * world.opts.anim_rate);
         // FUN_10096640: the lock goes with its target; inferred, after 10 s (a talk the server never answers).
-        // FUN_10096640 (0x10096bd7): the talked-to index is dropped once that actor is gone.
-        if world.talked_index != 0 && world.entity_at(world.talked_index).is_none() {
+        // FUN_10096640 (0x10096bd7): the talked-to index is dropped once that actor is gone: its slot is, or it is a
+        // talkable pet / trust (+0x12c bit 30) with the despawn mark (+0x124 bit 12), as a dismissed trust's slot stays.
+        let gone = |e: Option<&Entity>| e.is_none_or(|e| e.marks.npc_pet && e.despawned);
+        if world.talked_index != 0 && gone(world.entity_at(world.talked_index).map(|(_, e)| e)) {
             world.talked_index = 0;
         }
         if !event::active(world)
             && world
                 .control_lock
-                .is_some_and(|(t, id)| t.elapsed().as_secs_f32() > 10.0 || !world.entities.contains_key(&id))
+                .is_some_and(|(t, id)| t.elapsed().as_secs_f32() > 10.0 || gone(world.entities.get(&id)))
         {
             world.control_lock = None;
         }

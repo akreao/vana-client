@@ -935,7 +935,8 @@ pub(super) fn install(
             }
             let e =
                 w.entities.get(&key).map(|e| (key, e)).or_else(|| u16::try_from(key).ok().and_then(|i| w.entity_at(i)));
-            e.map(|(id, e)| entity(lua, w, id, e)).transpose()
+            // A despawned slot is out of range for mods, as in `entities`.
+            e.filter(|(id, _)| !super::super::event::is_parked(w, *id)).map(|(id, e)| entity(lua, w, id, e)).transpose()
         })?,
     )?;
     game.set(

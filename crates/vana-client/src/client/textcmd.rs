@@ -349,13 +349,14 @@ fn current_target(w: &World) -> Option<(u32, u16)> {
     w.entities.get(&t).map(|e| (t, e.index))
 }
 
-/// FUN_10077d80: the first living actor claimed by a party member.
+/// FUN_10077d80: the first living actor claimed by a party member. It wants the actor's model (+0xa0), which
+/// FUN_10096640 frees on a despawned slot: a parked slot is never the battle target.
 fn battle_target(w: &World) -> Option<(u32, u16)> {
     let party: Vec<u32> = w.party.members().map(|m| m.id).filter(|&id| id != 0).chain([w.my_id]).collect();
     let mut found: Vec<(u32, u16)> = w
         .entities
         .iter()
-        .filter(|(_, e)| e.hpp > 0 && e.claim != 0 && party.contains(&e.claim))
+        .filter(|(id, e)| e.hpp > 0 && e.claim != 0 && party.contains(&e.claim) && !super::event::is_parked(w, **id))
         .map(|(id, e)| (*id, e.index))
         .collect();
     found.sort_by_key(|f| f.1);
