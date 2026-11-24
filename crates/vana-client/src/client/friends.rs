@@ -518,11 +518,11 @@ pub fn poll(w: &mut World) {
                 let f = &mut w.friends;
                 (f.irc, f.signed_on, f.announced) = (None, false, false);
                 f.retry_at = Some(Instant::now() + Duration::from_secs(30));
-                // A new sign-on is a new PlayOnline session: polcore starts over (FUN_10018d60, no change gone
-                // through yet), our status is read again and our character made the active one again (xi_profile
-                // clears it at each sign-on).
-                (f.loaded, f.loading, f.in_force) = (false, true, None);
-                f.pol.lock().unwrap().status = polpro::Status::start();
+                // A new sign-on is a new PlayOnline session: polcore starts over (FUN_10018d60: its status, no change
+                // gone through yet, and its handle and character tables cleared), the lists and our status are read
+                // again and our character made the active one again (xi_profile clears it at each sign-on).
+                (f.loaded, f.loading, f.in_force, f.tables) = (false, true, None, false);
+                *f.pol.lock().unwrap() = PolSide::default();
             }
         }
     }
