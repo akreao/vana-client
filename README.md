@@ -98,7 +98,7 @@ VS Code, see [docs/building-windows.md](docs/building-windows.md).
 
 NVIDIA DLSS (Settings > Graphics > Upscaling, for NVIDIA RTX cards) is in builds with the `dlss` cargo feature only,
 off by default. Its build needs NVIDIA's DLSS SDK (`DLSS_SDK`), the Vulkan headers (`VULKAN_SDK`, `/usr` on Linux)
-and clang; `release/build-dlss.sh` fetches the part of the SDK it needs (under 1 MB) and builds
+and clang; `release/build-dlss.sh` fetches the part of the SDK it needs (under 1 MB on Linux, 8 MB on Windows) and builds
 (`release/build-dlss.sh --profile dist` for the dist profile). Plain `cargo build --features dlss` without
 `DLSS_SDK` fails in dlss_wgpu's build script. More in [docs/upscaler-engine.md](docs/upscaler-engine.md).
 

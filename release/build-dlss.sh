@@ -2,7 +2,7 @@
 # A build with NVIDIA DLSS (cargo feature `dlss`, render/upscale/dlss.rs; docs/upscaler-engine.md). The feature links
 # NVIDIA's NGX library, so cargo needs NVIDIA's DLSS SDK (github.com/NVIDIA/DLSS at v310.9.1, the tag dlss_wgpu 6.0 is
 # made for; NVIDIA RTX SDKs License, not in this repository). This fetches the part the build needs (the headers and
-# this platform's NGX library, under 1 MB) once, into <target dir>/dlss-sdk, sets DLSS_SDK and VULKAN_SDK, and runs
+# this platform's NGX library: under 1 MB on Linux, 8 MB on Windows) once, into <target dir>/dlss-sdk, sets DLSS_SDK and VULKAN_SDK, and runs
 # `cargo build --features dlss` with any arguments given (default --release).
 #   release/build-dlss.sh                  target/release/vana-client
 #   release/build-dlss.sh --profile dist   target/dist/vana-client
@@ -13,8 +13,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 tag=v310.9.1
 case "$(uname -s)" in
-    Linux) lib="/lib/Linux_$(uname -m)/libnvsdk_ngx.a" ;;
-    MINGW* | MSYS* | CYGWIN*) lib="/lib/Windows_x86_64/x64/" ;;
+    Linux) libs=("/lib/Linux_$(uname -m)/libnvsdk_ngx.a") ;;
+    # dlss_wgpu links nvsdk_ngx_d (dynamic C runtime) or nvsdk_ngx_s (static, crt-static); not the debug ones.
+    MINGW* | MSYS* | CYGWIN*) libs=(/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib /lib/Windows_x86_64/x64/nvsdk_ngx_s.lib) ;;
     *) echo "DLSS builds on Linux and Windows only" >&2; exit 1 ;;
 esac
 if [ -n "${DLSS_SDK:-}" ]; then
@@ -28,11 +29,11 @@ else
     [[ $target == /* ]] || target=$(pwd)/$target
     sdk=$target/dlss-sdk
     if [ ! -f "$sdk/include/nvsdk_ngx.h" ]; then
-        echo "fetching the DLSS SDK $tag (headers and ${lib#/}) into $sdk"
+        echo "fetching the DLSS SDK $tag (headers and ${libs[*]}) into $sdk"
         rm -rf "$sdk"
         git clone --quiet --depth 1 --branch "$tag" --filter=blob:none --no-checkout https://github.com/NVIDIA/DLSS.git "$sdk"
         # The patterns through stdin: Git Bash would turn "/include/" given as an argument into a Windows path.
-        printf '%s\n' /include/ "$lib" /LICENSE.txt | git -C "$sdk" sparse-checkout set --no-cone --stdin
+        printf '%s\n' /include/ "${libs[@]}" /LICENSE.txt | git -C "$sdk" sparse-checkout set --no-cone --stdin
         git -C "$sdk" -c advice.detachedHead=false checkout --quiet
     fi
 fi
