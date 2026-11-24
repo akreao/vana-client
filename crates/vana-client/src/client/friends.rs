@@ -143,6 +143,8 @@ pub struct Friends {
     /// What the last zone-in still owes our status, held until the loads are in.
     zone_owed: Option<ZoneStatus>,
     retry_at: Option<Instant>,
+    /// A failed handle / character list load is asked again from then.
+    tables_at: Option<Instant>,
     /// The friends' characters asked of xi_search (2.3): the queries out, the chunks left of a round, the next round.
     lookups: Vec<(mpsc::Receiver<anyhow::Result<crate::net::search::Reply>>, Vec<u32>)>,
     round: Vec<Vec<u32>>,
@@ -310,6 +312,11 @@ pub fn start(w: &mut World) {
     (f.started, f.loading) = (true, true);
     f.irc = f.cred.clone().map(profile::irc);
     spawn(w, |c| Done::List(profile::load_friend_list(c)));
+    load_tables(w);
+}
+
+/// The handle and character lists (LoadHandleNameList, LoadCharacterList); a failed load is asked again 30 s later.
+fn load_tables(w: &mut World) {
     spawn(w, |c| {
         Done::Tables((|| Ok(Tables { handles: profile::load_handles(c)?, chars: profile::load_characters(c)? }))())
     });
@@ -475,7 +482,11 @@ pub fn poll(w: &mut World) {
                 (f.loaded, f.loading) = (true, false);
                 log::info!("friends: status {}", f.my_status);
             }
-            Done::List(Err(e)) | Done::Tables(Err(e)) => log::warn!("friends: loading: {e:#}"),
+            Done::List(Err(e)) => log::warn!("friends: loading the friend list: {e:#}"),
+            Done::Tables(Err(e)) => {
+                log::warn!("friends: loading the handle and character lists: {e:#}");
+                w.friends.tables_at = Some(Instant::now() + Duration::from_secs(30));
+            }
             Done::MyStatus(Err(e)) => {
                 w.friends.loading = false;
                 log::warn!("friends: loading our status: {e:#}");
@@ -518,6 +529,9 @@ pub fn poll(w: &mut World) {
                 let f = &mut w.friends;
                 (f.irc, f.signed_on, f.announced) = (None, false, false);
                 f.retry_at = Some(Instant::now() + Duration::from_secs(30));
+                // The session's status jobs end with it (as at a logout), so none builds a request from the tables
+                // cleared below.
+                f.stop = StopOnDrop::default();
                 // A new sign-on is a new PlayOnline session: polcore starts over (FUN_10018d60: its status, no change
                 // gone through yet, and its handle and character tables cleared), the lists and our status are read
                 // again and our character made the active one again (xi_profile clears it at each sign-on).
@@ -527,6 +541,10 @@ pub fn poll(w: &mut World) {
         }
     }
     // A dropped session comes back and loads again.
+    if w.friends.tables_at.is_some_and(|t| Instant::now() >= t) && w.friends.started && !w.friends.tables {
+        w.friends.tables_at = None;
+        load_tables(w);
+    }
     if w.friends.retry_at.is_some_and(|t| Instant::now() >= t) {
         (w.friends.retry_at, w.friends.started) = (None, false);
         start(w);
