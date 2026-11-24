@@ -748,7 +748,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Option<[f32; 4]> {
     let (entries, total) = layout(gu, w, f, fw);
     let focused = w.confirm.is_none() && w.search.is_none();
     if focused {
-        super::helpdesk::focus_part(gu, WIN, &win);
+        super::helpdesk::focus_part(gu, WIN, sw, sh);
     }
     gu.clip(Some([fx, fy, fw, view]));
     let shown = |y: f32, h: f32| y >= fy && y + h <= fy + view;
