@@ -254,7 +254,7 @@ fn change_retried(c: &Cred, stop: &AtomicBool, pol: &Mutex<PolSide>, args: [i32;
         if stop.load(Ordering::Relaxed) {
             anyhow::bail!("the session ended");
         }
-        match change_once(c, pol, args) {
+        match change_once(c, stop, pol, args) {
             Err(e) if transient(&e) => {
                 n += 1;
                 log::debug!("friends: ChangeMyStatus try {n} (run {}): {e:#}", n.div_ceil(STATUS_TRIES));
@@ -266,15 +266,19 @@ fn change_retried(c: &Cred, stop: &AtomicBool, pol: &Mutex<PolSide>, args: [i32;
 }
 
 /// One ChangeMyStatus through polcore (`PolSide::plan`): nothing is sent when it changes nothing; a request that
-/// goes through sets polcore's status.
-fn change_once(c: &Cred, pol: &Mutex<PolSide>, args: [i32; 6]) -> anyhow::Result<()> {
+/// goes through sets polcore's status, unless its session ended meanwhile (`stop`: polcore has started over).
+fn change_once(c: &Cred, stop: &AtomicBool, pol: &Mutex<PolSide>, args: [i32; 6]) -> anyhow::Result<()> {
     let plan = pol.lock().unwrap().plan(args).map_err(polpro::Local)?;
     let Some((payload, status)) = plan else {
         log::info!("friends: ChangeMyStatus {args:?} changes nothing, not sent");
         return Ok(());
     };
     profile::change_my_status(c, &payload)?;
-    pol.lock().unwrap().status = status;
+    let mut p = pol.lock().unwrap();
+    if stop.load(Ordering::Relaxed) {
+        anyhow::bail!("the session ended");
+    }
+    p.status = status;
     Ok(())
 }
 
@@ -527,7 +531,7 @@ pub fn poll(w: &mut World) {
             Irc::Closed(why) => {
                 log::warn!("friends: IRC closed: {why}");
                 let f = &mut w.friends;
-                (f.irc, f.signed_on, f.announced) = (None, false, false);
+                (f.irc, f.signed_on, f.announced, f.tables_at) = (None, false, false, None);
                 f.retry_at = Some(Instant::now() + Duration::from_secs(30));
                 // The session's status jobs end with it (as at a logout), so none builds a request from the tables
                 // cleared below.
@@ -573,11 +577,15 @@ pub fn poll(w: &mut World) {
             return;
         };
         let handle = w.friends.pol.lock().unwrap().tables.entries[index as usize & 0x3f].handle;
-        let pol = w.friends.pol.clone();
+        let (pol, stop) = (w.friends.pol.clone(), w.friends.stop.0.clone());
         spawn(w, move |c| {
-            let r = change_once(c, &pol, [handle as i32, index as i32, 0, -2, -1, 1]);
+            let r = change_once(c, &stop, &pol, [handle as i32, index as i32, 0, -2, -1, 1]);
             let st = pol.lock().unwrap().status.clone();
             Done::Then(Box::new(move |w| {
+                // Answered after its session ended: the next sign-on makes the call again.
+                if stop.load(Ordering::Relaxed) {
+                    return;
+                }
                 // Retail goes no further than lobby step 3 when this call fails, so the status object is built only
                 // after it went through; ours tries again 30 s later, and status changes wait until then.
                 if let Err(e) = r {
