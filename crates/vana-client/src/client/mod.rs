@@ -2737,12 +2737,14 @@ fn world_hud(
     // the draws since the open (taken at 30 a second, inferred); the HUD windows are not drawn meanwhile.
     if let Some(t) = world.downloading {
         gu.clear();
+        gu.hide_frame();
         downloading(gu, (t.elapsed().as_secs_f32() * 30.0) as usize + 1, sw, sh);
         return Vec::new();
     }
     // Scroll Lock hid the UI: nothing draws; Esc shows it again (FUN_101202a0 consumes the key).
     if world.ui_hidden {
         gu.clear();
+        gu.hide_frame();
         if input.events.iter().any(|e| matches!(e, egui::Event::Key { key: egui::Key::Escape, pressed: true, .. })) {
             world.ui_hidden = false;
         }

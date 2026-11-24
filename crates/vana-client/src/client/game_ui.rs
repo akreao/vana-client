@@ -442,6 +442,10 @@ struct Walk {
     shown: std::collections::HashMap<String, u64>,
     /// Windows opened again in place this frame (`renew`): new window objects, shown as new ones are.
     fresh: std::collections::HashSet<String>,
+    /// The UI is hidden this frame (Scroll Lock, the download screen): the windows stay open in retail, only not
+    /// drawn. `hidden` is this frame's, `was_hidden` set from it at the frame's end.
+    hidden: bool,
+    was_hidden: bool,
     /// Window +0x98: raised with `take` (FUN_1015f150), so FUN_1015fdb0 gives it the focus even with registry bit 0;
     /// cleared when it loses the focus (FUN_1015fe20) or by a raise without it.
     take: std::collections::HashSet<String>,
@@ -674,7 +678,10 @@ impl GameUi {
         self.anim_frame += 1;
         // Windows shown this frame: new ones, and ones opened again in place.
         let mut fresh = std::mem::take(&mut self.walk.fresh);
-        fresh.extend(self.walk.now.keys().filter(|k| !self.walk.last.contains_key(*k)).cloned());
+        let reshown = std::mem::replace(&mut self.walk.was_hidden, std::mem::take(&mut self.walk.hidden));
+        if !reshown {
+            fresh.extend(self.walk.now.keys().filter(|k| !self.walk.last.contains_key(*k)).cloned());
+        }
         self.run_walk();
         let hands = std::mem::take(&mut self.batch.hands);
         // A window's hand is the last one it drew; with no focus window, the last one drawn.
@@ -685,8 +692,13 @@ impl GameUi {
         // FUN_1015f920 -> FUN_1015fb00 -> FUN_10126000 for each window shown: +0x48 = 18, and the pointer on the
         // cursor of the window that has the focus then (still the old one: the new window takes it in the frame pass),
         // when that one is still up (FUN_10160380).
+        // FUN_1011c080 reads the old focus's cursor as it is now: its hand this frame, or last frame's when it drew
+        // none this frame.
         if !fresh.is_empty() {
-            let old = self.focus.as_ref().filter(|h| self.was_up(&h.0)).map(|h| centre(h.2));
+            let old = self.focus.as_ref().filter(|h| self.was_up(&h.0)).map(|h| {
+                let now = crate::dat::ui::norm_name(h.0.as_bytes());
+                centre(hand_of(Some(&now)).map_or(h.2, |n| n.2))
+            });
             mv.glide_to(old);
         }
         // The window code's cursor moves with the pointer (FUN_1011a240(child, 1), FUN_10126000).
@@ -764,6 +776,12 @@ impl GameUi {
     /// raise_focus_next_frame (FUN_1015f150): `name` is marked for the frame pass (FUN_10160fd0), which raises the
     /// marked windows in marking order and gives each the focus when it can take it (registry bit 0 clear, or
     /// `take`), with the pointer on its cursor part's centre. A window not open by then is not raised.
+    /// The UI is hidden this frame (Scroll Lock, the download screen): the windows it does not draw are still open,
+    /// so showing them again opens nothing.
+    pub fn hide_frame(&mut self) {
+        self.walk.hidden = true;
+    }
+
     pub fn raise(&self, name: &str, take: bool) {
         self.raises.borrow_mut().push((crate::dat::ui::norm_name(name.as_bytes()), take));
     }
