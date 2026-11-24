@@ -3968,7 +3968,7 @@ fn world_hud(
     }
     // Mouse on the magic / ability lists and their category windows, or the Set Spells screen over them.
     if let Some(p) = input.pointer.filter(|_| world.bluset.is_some() && world.confirm.is_none()) {
-        bluset::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
+        bluset::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
     } else if let Some(p) = input.pointer.filter(|_| world.moncustom.is_some() && world.confirm.is_none()) {
         moncustom::pointer(world, gu, p, input.clicked, input.right_clicked);
     } else if let Some(p) = input

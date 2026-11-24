@@ -440,19 +440,19 @@ fn hit(gu: &GameUi, sw: f32, sh: f32, p: (f32, f32)) -> Option<(Focus, usize)> {
 
 /// Mouse *(inf)*: over the other list the focus moves there (message 8) while nothing is picked; a row takes the
 /// cursor by winhits::takes, a click on the cursor row is Enter.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     // The modern layer draws it and takes its mouse.
     if w.modern {
         return;
     }
     // bluesibo over the lists has the mouse (win_bluequip_onkey 0x101e1210: Enter on child n filters by family n, + 1
-    // past 14), as a generic window.
+    // past 14), as a generic window: a right click on it is Escape (message 6).
     if let Some(r) = w.bluset.as_ref().and_then(|s| s.sibo) {
         let set = |w: &mut World, id: u16| {
             set_sibo(w, id);
         };
         let keys = |w: &mut World, _: &GameUi, k: egui::Key| key(w, k);
-        super::winhits::generic(w, gu, SIBO, r, 1..=SIBO_ROWS, p, clicked, false, set, keys);
+        super::winhits::generic(w, gu, SIBO, r, 1..=SIBO_ROWS, p, clicked, right, set, keys);
         return;
     }
     let Some(s) = w.bluset.clone() else { return };
