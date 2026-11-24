@@ -474,7 +474,7 @@ mod tests {
     #[test]
     #[ignore]
     fn view_sel_census() {
-        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let Ok(index) = crate::dat::DatIndex::open_stock(&crate::config::Config::load().ffxi_dir()) else { return };
         let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
         let mut rows: std::collections::BTreeMap<
             (u32, u8, u32),
