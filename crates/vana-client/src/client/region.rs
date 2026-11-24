@@ -465,6 +465,11 @@ impl CnqMap {
     pub fn warped(&mut self, at: (f32, f32)) {
         self.anchor = Some(at);
     }
+
+    /// The window lost the focus: the sprite cursor counts again from the first pointer seen once it is back.
+    pub fn forget_mouse(&mut self) {
+        self.anchor = None;
+    }
 }
 
 /// FUN_101e6ca0(zone, named): the zone has a conquest zone record (and, `named`, a name).

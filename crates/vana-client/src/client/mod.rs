@@ -15092,6 +15092,16 @@ impl App {
             }
         }
         let active = self.gfx.as_ref().is_some_and(|g| g.window.has_focus());
+        if !active {
+            // Motion over the inactive window is not the map cursor's: the next sample after the focus comes back
+            // starts the sprite cursor's count afresh (a hidden pointer after a warp keeps its anchor).
+            if let Some(m) = world.map.as_mut() {
+                m.forget_mouse();
+            }
+            if let Some(m) = world.cnq.as_mut() {
+                m.forget_mouse();
+            }
+        }
         let mouse = self
             .last_cursor
             .filter(|_| active && self.mouse.visible && self.cursor_in && world.confirm.is_none())

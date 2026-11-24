@@ -1433,6 +1433,12 @@ impl MapWin {
         self.anchor = Some(at);
     }
 
+    /// The window lost the focus: the sprite cursor's motion counts again from the first pointer seen once it is back,
+    /// not from where it was before (the pointer may have moved over the inactive window).
+    pub fn forget_mouse(&mut self) {
+        self.anchor = None;
+    }
+
     /// Op 0xb4 sub 0x14 (FUN_101fb070): view to (x, y) map pixels at zoom factor zf of the base zoom, `speed` (x 0.005
     /// a tick) in mode flags & 0x7f (1 linear, 2 eases out, 3 eases in); speed 0 jumps; flag 0x80 shows the map at once.
     /// The keys, a fade and the closing all stop (the flags become 0x400).
@@ -3337,6 +3343,17 @@ mod cursor_tests {
         assert!(steps.iter().all(|&t| t == 0.0 || t == 2.0));
         let mut acc = 0.0;
         assert!((0..5).all(|_| key_ticks(&mut acc, 2.0) == 2.0));
+    }
+
+    /// Two retail frames in one update are two cursor steps, not one double step: at the box's right edge each step
+    /// past it scrolls by its own d / zoom rounded (at least one map pixel), so two steps of 2 scroll 2, one of 4 scrolls 1.
+    #[test]
+    fn two_frames_are_two_steps_at_the_edge() {
+        let (bx, by) = ([80.0, 900.0], [100.0, 500.0]);
+        let mut p = (900.0, 300.0);
+        let over: f32 = (0..2).map(|_| cursor_move(&mut p, (2.0, 0.0), 4.6, bx, by).0).sum();
+        let mut q = (900.0, 300.0);
+        assert_eq!((over, cursor_move(&mut q, (4.0, 0.0), 4.6, bx, by).0), (2.0, 1.0));
     }
 
     #[test]
