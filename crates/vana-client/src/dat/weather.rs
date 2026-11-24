@@ -397,6 +397,7 @@ impl Sky {
 const DEG: f32 = 0.017_452_778;
 
 /// FUN_10187720: the sun and moon light directions (the way the light travels, +y down) at `minute`.
+#[cfg(test)]
 pub fn sun_moon(minute: f32) -> (Vec3, Vec3) {
     sun_moon_tilted(minute, 0)
 }

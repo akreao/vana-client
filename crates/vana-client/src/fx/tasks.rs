@@ -5974,9 +5974,9 @@ mod auto_tests {
         Frame { dayfrac, eye: Vec3::new(0.0, -2.0, -10.0), ..super::tests::ticks_frame(crate::fx::RETAIL_FRAME) }
     }
 
-    /// FUN_1018b500: the load runs the zone file's `@ini` at once. Escha - Zi'Tah (83923) and Ru'Aun (83924) fix the sky at 10:00,
-    /// Reisenjima Sanctorium (83928) at 14:00, Reisenjima (83926) and its Henge (83927) tilt the sun 36 degrees; the next load clears
-    /// both, and the sun generator's point follows them.
+    /// FUN_1018b500: the load runs the zone file's `@ini` at once. Escha - Zi'Tah (83923) and Ru'Aun (83924) fix the
+    /// sky at 10:00, Reisenjima Sanctorium (83928) at 14:00, Reisenjima (83926) and its Henge (83927) tilt the sun 36
+    /// degrees; the next load clears both, and the sun generator's point follows them.
     #[test]
     fn zone_ini_sky() {
         use crate::dat::weather::Sky;
