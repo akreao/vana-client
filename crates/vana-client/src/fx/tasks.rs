@@ -4905,7 +4905,9 @@ mod tests {
                 fx.stop_generator(g, Who::None, Who::None, soft);
             }
             fx.list.leave(saved);
-            assert_ne!(fx.list.advance(), Some(tasklist::Node::Task(parent)), "soft {soft}");
+            // The parent stands just before anchor 9 (linked with none running): the walk goes on there, with no
+            // node made between the child and the parent.
+            assert_eq!(fx.list.advance(), Some(tasklist::Node::Anchor(9)), "soft {soft}");
             let live = fx.tasks.iter().flatten().map(|t| t.uid).collect();
             while fx.list.advance().is_some() {}
             fx.list.purge(&live);
