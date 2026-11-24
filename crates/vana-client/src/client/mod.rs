@@ -3568,10 +3568,12 @@ fn world_hud(
     }
     (world.key_shift, world.key_repeat) = (false, false);
     world.key_shift = false;
-    // Set again by the pointer handlers when the pointer moves onto a page arrow, and cleared by an arrow's click (it
-    // rebuilds the list, FUN_10221ce0). Ours also drops it when the pointer moves anywhere else.
+    // Set by the pointer handlers when the hover takes a page arrow (message 9 there), kept while the pointer moves on
+    // that arrow, and cleared by an arrow's click (it rebuilds the list, FUN_10221ce0). Ours also drops it when the
+    // pointer moves anywhere else.
+    world.list_arrow_keep = false;
     if input.moved {
-        world.list_arrow_hover = false;
+        world.list_arrow_keep = std::mem::take(&mut world.list_arrow_hover);
     }
 
     // Mouse on the main menu: a row takes the cursor by winhits::takes, a click on the cursor's row picks it; the arrows swap pages. Not while the group walk
@@ -7745,6 +7747,9 @@ struct World {
     /// The pointer is over a paged list's page arrows (children 9 / 10), which disables the list itself
     /// (FUN_10221cd0: window +0x62 = 0, list +0x5c bit 1): no hand, and the list ignores keys.
     list_arrow_hover: bool,
+    /// The flag as it was before this frame's pointer move: an arrow handler keeps it while the pointer is still on
+    /// the arrow.
+    list_arrow_keep: bool,
     /// Shift was held with the key being dispatched by world_hud's loop (Shift+Tab turns a modern window's tabs back;
     /// the pad's LB sends it); false anywhere else.
     key_shift: bool,
@@ -9005,6 +9010,8 @@ pub struct App {
     tasks: Receiver<Task>,
     keys: HashSet<KeyCode>,
     dragging: bool,
+    /// The left button's gesture since its press turned into a camera look (the release is no window's).
+    left_look: bool,
     left_down: bool,
     middle_down: bool,
     /// Where and when the middle button went down (a click is told from a look drag on release).
@@ -9433,6 +9440,7 @@ impl App {
             tasks,
             keys: HashSet::new(),
             dragging: false,
+            left_look: false,
             left_down: false,
             middle_down: false,
             middle_press: None,
@@ -10943,6 +10951,7 @@ impl App {
                             key_repeat: false,
                             macro_palette: (1, [0, 0]),
                             list_arrow_hover: false,
+                            list_arrow_keep: false,
                             my_face: None,
                             ui_hidden: false,
                             shot_request: None,
@@ -15743,6 +15752,7 @@ impl App {
                 if pressed {
                     self.press_at = self.last_cursor;
                     self.press_time = Some(Instant::now());
+                    self.left_look = false;
                 } else if let Some((b, drag)) =
                     release(self.press_at.take().zip(self.press_time.take()), self.last_cursor, self.ui_k)
                 {
@@ -15968,7 +15978,8 @@ impl App {
             clicked: i.pointer.primary_clicked() && !swallow && mine,
             pressed: i.pointer.primary_pressed() && mine,
             down: i.pointer.primary_down() && mine,
-            released: i.pointer.primary_released() && !swallow && mine,
+            // A left drag that turned into a camera look is the camera's gesture: no window takes its release.
+            released: i.pointer.primary_released() && !swallow && mine && !self.left_look,
             right_clicked: i.pointer.secondary_clicked() && mine,
             page: i.modifiers.ctrl || i.modifiers.alt,
             events: i.events.clone(),
@@ -16986,7 +16997,8 @@ impl App {
                             events: &input.events,
                             pointer: input.pointer,
                             moved: input.moved,
-                            clicked: input.clicked,
+                            // The windows act on the release (FUN_1015f420), not egui's click.
+                            clicked: input.released,
                             busy,
                             modern: modern_ui,
                         };
@@ -21988,6 +22000,7 @@ impl ApplicationHandler for App {
                     || (self.left_down
                         && self.press_at.is_some_and(|a| (a.0 - position.x).abs() + (a.1 - position.y).abs() >= 5.0));
                 if let (true, Some((x, y))) = (looking, self.last_cursor) {
+                    self.left_look |= self.left_down;
                     if self.look_grab.is_none() {
                         self.grab_pointer();
                     }

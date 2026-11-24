@@ -293,9 +293,9 @@ pub fn pointer(w: &mut World, gu: &GameUi, pt: (f32, f32), clicked: bool, right:
             // FUN_10221cd0: over the page arrows the list is disabled (no hand, no list keys); the click is Left /
             // Right through the 0xa8 test, so with Ctrl / Alt held it pages the disabled list, i.e. does nothing.
             if let (Some(a), frame) = child_under(w, PAGES, pt, 9..=10, super::winhits::parts(gu, PAGES)) {
-                // The arrow keeps the list off while the pointer is on it (message 9 there cleared +0x62; only a hover
-                // onto another child sets it again).
-                super::winhits::takes_no_hand(gu, PAGES, a, frame);
+                // The hover taking the arrow (message 9 there) turns the list off (+0x62 = 0); it stays off while the
+                // pointer moves on the arrow, and after the click (the list rebuilt) only a new hover turns it off again.
+                let takes = super::winhits::takes_no_hand(gu, PAGES, a, frame) || w.list_arrow_keep;
                 // The click is Enter on child 9 / 10: the generic layer's SE 0002 first (guide01's open clears only
                 // the move sound, window +0x85), then FUN_10235980 re-sends it as Left / Right (SE 0001).
                 if clicked {
@@ -305,7 +305,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, pt: (f32, f32), clicked: bool, right:
                 if clicked && !page {
                     w.list_arrow_hover = false;
                     key(w, if a == 9 { egui::Key::ArrowLeft } else { egui::Key::ArrowRight }, false);
-                } else {
+                } else if takes {
                     w.list_arrow_hover = true;
                 }
                 return;
