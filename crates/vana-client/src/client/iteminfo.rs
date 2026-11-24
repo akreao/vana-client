@@ -105,7 +105,8 @@ fn time(s: u32) -> String {
 
 /// FUN_1015c9e0: the description's lines, at most 20, cut by the game's line breaker (tail 0x14, a 0xff buffer): 316 px
 /// wide, but a Japanese client's third line on is 366 and a 、。！ where a line ends hangs on it (FUN_1011ee70). Each line
-/// is the text it took (no '-' at a soft hyphen), up to a line break.
+/// is the text it took (no '-' at a soft hyphen), up to a line break. A line the 0xff buffer cut short (only with the
+/// modern panel's zero widths: at 316 px a line never nears 254 bytes) keeps the rest of its source up to the break.
 fn desc_lines(text: &str, width: &dyn Fn(&str) -> f32) -> Vec<String> {
     use crate::dat::{items::Lang, lang, linebreak};
     let ja = lang::client() == Lang::Ja;
@@ -114,7 +115,12 @@ fn desc_lines(text: &str, width: &dyn Fn(&str) -> f32) -> Vec<String> {
     linebreak::str_lines(text, &cut)
         .into_iter()
         .take(20)
-        .map(|l| text[l.start..l.end].chars().filter(|&c| c != linebreak::SOFT_HYPHEN as char).collect())
+        .map(|l| {
+            let took = &text[l.start..l.next];
+            let full = took.find(['\x07', '\r', '\n']).map_or(took, |k| &took[..k]).trim_end_matches(' ');
+            let end = l.end.max(l.start + full.len());
+            text[l.start..end].chars().filter(|&c| c != linebreak::SOFT_HYPHEN as char).collect()
+        })
         .collect()
 }
 
@@ -555,6 +561,20 @@ mod tests {
         assert_eq!(*i.pages[0].last().unwrap(), 0x50);
         assert_eq!(i.pages[1][0], 1);
         assert!(i.pages[1].contains(&(10 + 10)));
+    }
+
+    /// The modern panel's zero widths: a paragraph past the 0xff line buffer stays whole, up to its line break.
+    #[test]
+    fn zero_width_keeps_long_paragraphs() {
+        let mut it = Item::default();
+        it.item_type = 1;
+        let long: String = (0..300).map(|k| (b'a' + (k % 26) as u8) as char).collect();
+        it.description = format!("{long}\nshort");
+        let i = build(&it, None, &Ctx::default(), &msg, &|_: &str| 0.0, None);
+        assert_eq!(i.desc, vec![long, "short".to_string()]);
+        // At real widths the lines are the buffer's, as before.
+        let i = build(&it, None, &Ctx::default(), &msg, &width, None);
+        assert_eq!(i.desc.concat().len(), 305);
     }
 
     #[test]
