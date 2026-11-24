@@ -16965,9 +16965,14 @@ impl App {
                             }
                             _ => {}
                         }
-                        // Escape does not leave: the cursor goes to Back (0001).
+                        // Escape does not leave: the cursor goes to Back (0001). loby2win's handler (FUN_10241c00
+                        // message 6) sets its cursor child 4 and calls FUN_10126000, so the pointer goes onto Back
+                        // too, whether or not the cursor was already there.
                         if escape && !config_open {
                             *menu = 4;
+                            if let Some(lu) = self.game_ui.as_ref() {
+                                lu.warp_to_cursor("menu    loby2win", 4);
+                            }
                             if let Some(a) = self.audio.as_mut() {
                                 a.ui(crate::audio::Ui::Cursor);
                             }
