@@ -22000,7 +22000,10 @@ impl ApplicationHandler for App {
                     || (self.left_down
                         && self.press_at.is_some_and(|a| (a.0 - position.x).abs() + (a.1 - position.y).abs() >= 5.0));
                 if let (true, Some((x, y))) = (looking, self.last_cursor) {
-                    self.left_look |= self.left_down;
+                    // Only a drag that turns the camera owns the release (no camera in the lobby, none while the map
+                    // takes the drag).
+                    self.left_look |=
+                        self.left_down && matches!(&self.phase, Phase::World(w) if w.map.is_none() && w.cnq.is_none());
                     if self.look_grab.is_none() {
                         self.grab_pointer();
                     }
