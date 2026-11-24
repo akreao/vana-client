@@ -16,7 +16,7 @@ The "Left" / "Open" points of "Fishing", read in FFXiMain 30261006:
   bit 15 set through FUN_100ad660 with no prefix. Mode 0x96 is the event message mode (ops 0x1d / 0x2b / 0x49 / 0xb0):
   the line goes into both event message queues and opens the rem (pages reach the log as they open), with its
   key waits, instead of being printed straight to the log as 0x036's modes are. LSB never sends it.
-  **Not built yet** (ours keeps the event message inside the running event; a 0x03B arrives outside one).
+  Built since: client/event.rs queues 0x03B lines into the event message queues (zone_text, LAB_100a1600).
 - Plain rods draw their line as part of the rod model. Hume willow (39317, ROM/90/68) and Hume rod 39307 hold mesh
   `hf_s` (0x2a) with its texture, skeleton `sao` (0x29, 9 bones) and the fh00..fhd0 / idl0 motions (0x2b); the +1 rod
   (Mithra 39481, ROM/334/82) has the same plus the `!f00..!f02` / fgl / mfs / flp0 / fkla schedulers and their

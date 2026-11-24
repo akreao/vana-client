@@ -504,6 +504,8 @@ mod tests {
         r.attr(&AttrUpdate { id: 0x2000, ..Default::default() });
         assert_eq!((r.recs[first].mon, r.recs[first].mon_short.as_str()), (0, ""));
         // A record freed by a 0x0C8 is zeroed, so a member placed there starts clean.
+        r.attr(&AttrUpdate { id: 0x2000, mon: 0x8001, mon_ids: [3, 4], ..Default::default() });
+        assert_eq!(r.recs[first].mon, 0x8001);
         r.table(&[(ME, 0x400, 0, 230)]);
         r.table(&[(ME, 0x400, 0, 230), (0x3000, 0x98, 0, 230)]);
         let m = &r.recs[r.find(0x3000).unwrap()];
