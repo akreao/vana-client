@@ -51,10 +51,8 @@ impl Friend {
     }
 }
 
-struct Loaded {
-    /// LoadMyStatus's reply.
-    status: Vec<u8>,
-    list: Vec<FriendInfo>,
+/// The handle and character lists.
+struct Tables {
     handles: Vec<[u8; 0x88]>,
     chars: Vec<[u8; 0x68]>,
 }
@@ -83,7 +81,12 @@ impl PolSide {
 }
 
 enum Done {
-    Loaded(anyhow::Result<Loaded>),
+    /// LoadFriendList (at the start, apart from the IRC sign-on).
+    List(anyhow::Result<Vec<FriendInfo>>),
+    /// The handle and character lists (at the start).
+    Tables(anyhow::Result<Tables>),
+    /// LoadMyStatus's reply (after the sign-on).
+    MyStatus(anyhow::Result<Vec<u8>>),
     /// ChangeMyStatus answered: the open status it set (None: only the in-game flag).
     Status(anyhow::Result<()>, Option<u8>),
     /// Anything else: applied on the main thread.
@@ -117,13 +120,17 @@ pub struct Friends {
     pub handle: Option<(u64, String)>,
     pub chars: Vec<(u8, u32, String)>,
     pub signed_on: bool,
+    /// This sign-on's LoadMyStatus is in: our status is known.
     pub loaded: bool,
+    /// The friend list and the handle / character lists are in.
+    lists: bool,
+    tables: bool,
     started: bool,
     /// The in-game ChangeMyStatus went (after the map session exists, so friends see the character).
     announced: bool,
     /// A failed active-character call is made again from then.
     announce_at: Option<Instant>,
-    /// The loads of `start` are out: our status is not known yet.
+    /// Our status is not known yet: from `start` until this sign-on's LoadMyStatus answers.
     loading: bool,
     /// The status job runs (its busy byte, job +1): a change asked meanwhile is dropped (FUN_100f7bd0).
     status_job: bool,
@@ -302,21 +309,17 @@ pub fn start(w: &mut World) {
     }
     (f.started, f.loading) = (true, true);
     f.irc = f.cred.clone().map(profile::irc);
+    spawn(w, |c| Done::List(profile::load_friend_list(c)));
+    spawn(w, |c| {
+        Done::Tables((|| Ok(Tables { handles: profile::load_handles(c)?, chars: profile::load_characters(c)? }))())
+    });
 }
 
-/// Once signed on: our status, then the lists (the Viewer's order: the chat sign-in, then LoadMyStatus, so the status
-/// is the one the session holds; xi_profile answers LoadMyStatus with its default, Online, until the sign-on has read
-/// the saved one).
-fn load(w: &mut World) {
-    spawn(w, |c| {
-        Done::Loaded((|| {
-            let status = profile::load_my_status(c)?;
-            let list = profile::load_friend_list(c)?;
-            let handles = profile::load_handles(c)?;
-            let chars = profile::load_characters(c)?;
-            Ok(Loaded { status, list, handles, chars })
-        })())
-    });
+/// Once signed on, our status (the Viewer's order: the chat sign-in, then LoadMyStatus, so the status is the one the
+/// session holds; xi_profile answers LoadMyStatus with its default, Online, until the sign-on has read the saved one).
+fn load_status(w: &mut World) {
+    w.friends.loading = true;
+    spawn(w, |c| Done::MyStatus(profile::load_my_status(c)));
 }
 
 /// Our character's slot in LoadCharacterList's order.
@@ -442,32 +445,40 @@ pub fn poll(w: &mut World) {
     });
     for d in done {
         match d {
-            Done::Loaded(Ok(l)) => {
+            Done::List(Ok(list)) => {
+                let f = &mut w.friends;
+                f.list = list.iter().map(Friend::from_info).collect();
+                f.lists = true;
+                log::info!("friends: {} entries", f.list.len());
+            }
+            Done::Tables(Ok(t)) => {
+                let f = &mut w.friends;
+                {
+                    let mut p = f.pol.lock().unwrap();
+                    p.tables.load_handles(&t.handles);
+                    p.tables.load_characters(&t.chars);
+                }
+                f.handle = t.handles.first().map(profile::handle_name);
+                f.chars = t.chars.iter().map(profile::character_row).collect();
+                f.tables = true;
+                log::info!("friends: handle {:?}, {} characters", f.handle, f.chars.len());
+            }
+            Done::MyStatus(Ok(s)) => {
                 let f = &mut w.friends;
                 {
                     let mut p = f.pol.lock().unwrap();
                     let p = &mut *p;
-                    p.tables.load_handles(&l.handles);
-                    p.tables.load_characters(&l.chars);
-                    p.status.loaded(&l.status, &p.tables.slots);
+                    p.status.loaded(&s, &p.tables.slots);
                     // FFXiMain's open status is polcore's presence (slot 0x338).
                     f.my_status = p.status.presence as u8;
                 }
-                f.list = l.list.iter().map(Friend::from_info).collect();
-                f.handle = l.handles.first().map(profile::handle_name);
-                f.chars = l.chars.iter().map(profile::character_row).collect();
                 (f.loaded, f.loading) = (true, false);
-                log::info!(
-                    "friends: status {}, {} entries, handle {:?}, {} characters",
-                    f.my_status,
-                    f.list.len(),
-                    f.handle,
-                    f.chars.len()
-                );
+                log::info!("friends: status {}", f.my_status);
             }
-            Done::Loaded(Err(e)) => {
+            Done::List(Err(e)) | Done::Tables(Err(e)) => log::warn!("friends: loading: {e:#}"),
+            Done::MyStatus(Err(e)) => {
                 w.friends.loading = false;
-                log::warn!("friends: loading: {e:#}");
+                log::warn!("friends: loading our status: {e:#}");
             }
             Done::Status(r, open) => {
                 if open.is_some() {
@@ -494,7 +505,7 @@ pub fn poll(w: &mut World) {
             Irc::SignedOn => {
                 log::info!("friends: signed on to xi_profile's IRC");
                 w.friends.signed_on = true;
-                load(w);
+                load_status(w);
                 load_mail(w);
                 fetch(w);
             }
@@ -507,6 +518,11 @@ pub fn poll(w: &mut World) {
                 let f = &mut w.friends;
                 (f.irc, f.signed_on, f.announced) = (None, false, false);
                 f.retry_at = Some(Instant::now() + Duration::from_secs(30));
+                // A new sign-on is a new PlayOnline session: polcore starts over (FUN_10018d60, no change gone
+                // through yet), our status is read again and our character made the active one again (xi_profile
+                // clears it at each sign-on).
+                (f.loaded, f.loading, f.in_force) = (false, true, None);
+                f.pol.lock().unwrap().status = polpro::Status::start();
             }
         }
     }
@@ -526,7 +542,12 @@ pub fn poll(w: &mut World) {
     // 0xe / 0xf: its handle, its entry, flag 0, presence kept, p5 kept, activity 1), then the status object is built
     // from polcore's getters (FUN_100f78d0).
     let f = &w.friends;
-    if f.signed_on && f.loaded && !f.announced && w.zone.is_some() && f.announce_at.is_none_or(|t| Instant::now() >= t)
+    if f.signed_on
+        && f.loaded
+        && f.tables
+        && !f.announced
+        && w.zone.is_some()
+        && f.announce_at.is_none_or(|t| Instant::now() >= t)
     {
         w.friends.announced = true;
         let Some(index) = slot(w) else {
@@ -600,7 +621,7 @@ fn refresh(w: &mut World) {
             f.fresh = f.record.is_some();
         }
     }
-    if !w.friends.loaded || w.zone.is_none() || !w.friends.lookups.is_empty() {
+    if !w.friends.lists || w.zone.is_none() || !w.friends.lookups.is_empty() {
         return;
     }
     let f = &mut w.friends;

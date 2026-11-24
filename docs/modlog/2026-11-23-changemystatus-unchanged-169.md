@@ -66,7 +66,10 @@ Not built, as it sends nothing (a comment in `Profile::register`).
   sign-in, then LoadMyStatus): xi_profile reads the saved open status at the sign-on and answers its default, Online,
   before it, which the active-character call (presence kept = polcore's) would then have written back over an
   Invisible. A failed active-character call builds no status object (retail stops at lobby step 3); ours tries it
-  again 30 s later and holds status changes until it goes through. Our open status after the loads is polcore's presence
+  again 30 s later and holds status changes until it goes through. The friend, handle and character lists still load
+  at the start, apart from the sign-on, so a failed sign-on leaves them in. A dropped IRC session is a new PlayOnline
+  session: polcore's status starts over (FUN_10018d60), LoadMyStatus is read again at the next sign-on and the
+  active-character call made again (xi_profile clears the active character at each sign-on). Our open status after the loads is polcore's presence
   (4 when LoadMyStatus says none).
 - Tests: change_my_status_sends_only_a_change, change_my_status_refusals, load_my_status_reply,
   an_unchanged_status_is_not_sent, bound_refusals_read_their_body, a_change_is_sent_once.
