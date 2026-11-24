@@ -72,6 +72,23 @@ pub struct PartyCursor {
     pub moving: Option<(u32, usize)>,
     /// Row -1, the fellow row (batch 1 §4): only for `<stpt>` / `<stal>` (modes 2 / 3), never in a two-step pick.
     pub fellow: bool,
+    /// Target object +0xd0 / +0x78 while the cursor is up: the line's dry run (FUN_10076ab0 0x10076ef0 / 0x10076f43, FUN_10081440(1)
+    /// then FUN_102045f0(1)) registers the area callback too; FUN_10204510 clears it on close (client/area.rs).
+    pub area: Option<super::area::Of>,
+}
+
+/// FUN_10159280 with +0x59 set: the cursor's row (FUN_10204ad0(0, 0) +0x70), the fellow's actor on row -1 (FUN_101cdb20),
+/// none for an away member.
+pub fn cursor_pick(w: &World) -> Option<u32> {
+    let pc = w.party_cursor.as_ref()?;
+    if pc.fellow {
+        return super::petrow::fellow(w).map(|f| f.0);
+    }
+    if pc.index == 0 {
+        return Some(w.my_id);
+    }
+    let m = w.party.slots().here(pc.index, w.pos_zone)?.index;
+    w.entity_at(m).map(|(id, _)| id)
 }
 
 /// FUN_10202d80's low bound -1 (modes 2 / 3: the text-command picks, not the party menu's) and a fellow here.
@@ -131,7 +148,8 @@ pub fn open_party_cursor(w: &mut World, count: usize, then: SubThen, range: Opti
         .filter(|&i| i < count);
     // FUN_10203540 failing: -1 when the target is the fellow.
     let fellow = row.is_none() && fellow_ok(w, &then) && super::petrow::fellow(w).map(|f| f.0) == w.target;
-    w.party_cursor = Some(PartyCursor { index: row.unwrap_or(0), count, then, range, moving: None, fellow });
+    w.party_cursor =
+        Some(PartyCursor { index: row.unwrap_or(0), count, then, range, moving: None, fellow, area: None });
 }
 
 /// FUN_10203570 / FUN_10203630 (FUN_102035c0 / FUN_10203680 in a stage-2 range): the next / previous used slot in
