@@ -565,6 +565,46 @@ mod tests {
         }
     }
 
+    /// View-matrix census for gaps item 133 over every DAT (by hand: `cargo test --release view_sel_census --
+    /// --ignored --nocapture`): the elements whose op-1 flags 0x2000 / 0x4000 pick the camera's d10 / d50 / c10
+    /// (FUN_10045c50), by selector, element kind and the flags that change what the matrix does (1 billboard, 4
+    /// camera-relative, 8 no matrix, 0x1c0 orientation, 0x20000 parent offset).
+    #[test]
+    #[ignore]
+    fn view_sel_census() {
+        let Ok(index) = crate::dat::DatIndex::open_stock(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let mut rows: std::collections::BTreeMap<
+            (u32, u8, u32),
+            (usize, std::collections::BTreeSet<u32>, Vec<String>),
+        > = Default::default();
+        let mut all = 0usize;
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            for node in tree.of_kind(kind::GENERATOR).collect::<Vec<_>>() {
+                let Ok(g) = Generator::parse(&tree, node, &file) else { continue };
+                let Some(t) = g.template() else { continue };
+                all += 1;
+                let (k, flags) = (t.byte(0x21), t.u32(1));
+                let sel = flags >> 13 & 3;
+                if sel == 0 {
+                    continue;
+                }
+                let e = rows.entry((sel, k, flags & 0x201cd)).or_default();
+                e.0 += 1;
+                e.1.insert(id);
+                if e.2.len() < 5 {
+                    e.2.push(format!("{id} {} mode {:#x}", trim(g.name), g.attach_mode()));
+                }
+            }
+        }
+        println!("{all} generators with a template");
+        for ((sel, k, f), (n, files, eg)) in &rows {
+            println!("sel {sel} kind {k:#04x} flags {f:#07x}: {n} in {} files, e.g. {}", files.len(), eg.join(", "));
+        }
+    }
+
     /// FUN_1003fee0 on the two meshes it changes (d3m_probe_census): DAT 148 `2cor` (vertex 1's normal is 13.55
     /// long) and DAT 170 `ike2` (vertex 0's is 0.099996) are format 6 by their header and read as format 7, six bytes
     /// early, as retail does; NaN normals (DAT 3559 `md`) pass (needs the game's files).
