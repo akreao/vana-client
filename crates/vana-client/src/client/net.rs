@@ -21,6 +21,8 @@ pub enum EntityKind {
 pub struct EntityUpdate {
     /// 0x00D u16 @0x30 (0x10099cd6): the costume, an NPC model id (0 none; FUN_1008cce0).
     pub costume: Option<u16>,
+    /// 0x00D u16 @0x3c without the despawn bit (FUN_10099ae0: actor +0x1fa): the character's pet by ActIndex (0 none).
+    pub pet: Option<u16>,
     pub id: u32,
     pub index: u16,
     pub kind: EntityKind,
@@ -627,6 +629,8 @@ pub enum NetEvent {
         level: u8,
         sync: u8,
         custom: [u32; 2],
+        /// u16 @0x0c: the character's adventuring fellow by ActIndex (+0x2a0).
+        fellow: u16,
     },
     /// s2c 0x067 kind 3 (FUN_1009b4xx, 2019 asm 0x1009b6ad): ActIndex @6, id @8, the master's ActIndex u16 @0x0C.
     EntityMaster {
@@ -1749,6 +1753,7 @@ fn entity(p: &SubPacket, kind: EntityKind) -> EntityUpdate {
         status: p.u8(0x20) & 7,
         look_kind: p.u8(0x30) & 7,
         costume: (kind == EntityKind::Player && flags & 0x20 == 0 && p.data.len() >= 0x32).then(|| p.u16(0x30)),
+        pet: (kind == EntityKind::Player && flags & 0x20 == 0 && p.data.len() >= 0x3e).then(|| p.u16(0x3c)),
         door: (kind == EntityKind::Npc && p.u8(0x30) & 7 == 2 && p.data.len() >= 0x38)
             .then(|| p.u32(0x34))
             .filter(|d| *d != 0),
@@ -1826,6 +1831,7 @@ impl EntityUpdate {
             mask: 0,
             king: false,
             costume: None,
+            pet: None,
             hpp: None,
             look: None,
             npc: None,
@@ -2709,6 +2715,7 @@ impl Session<'_> {
                 level: p.u8(0x25),
                 sync: p.u8(0x10),
                 custom: [p.u32(0x18), p.u32(0x1c)],
+                fellow: p.u16(0xc),
             })?,
             0x02E => self.tx.send(NetEvent::MogMenu)?,
             0x11A => self.tx.send(NetEvent::EmoteUnlocks { jobs: p.u32(4), chairs: p.u16(8) })?,

@@ -94,8 +94,9 @@ pub fn member_login(se_id: &str, secret20: &[u8; 20], otp: Option<&str>, now: u3
     b
 }
 
-/// The member's status as polcore keeps it: LoadMyStatus's, then each ChangeMyStatus that went through. -1 is
-/// "none" for the content and the character (service).
+/// The member's status as polcore 1.18.12 keeps it (its globals 0x100c99d0..0x100c99dc, 0x10104dc4, 0x10103340):
+/// LoadMyStatus's, then each ChangeMyStatus that went through. -1 is "none" for the content and the character
+/// (service).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Status {
     pub content: i32,
@@ -104,26 +105,100 @@ pub struct Status {
     pub presence: i32,
     pub p5: i32,
     pub activity: i32,
-    /// A ChangeMyStatus has gone through (0x100ac548).
+    /// A ChangeMyStatus has gone through (0x10104dc0: set at its end, FUN_10019f70 state 6; cleared only by the
+    /// session reset FUN_10018d60 and FUN_10018d00).
     pub changed: bool,
 }
 
-/// ChangeMyStatus's 0x24-byte payload (4/5, 0x1001d7e0) and the status it sets. Arguments as polcore takes them,
-/// [content, character, flag, presence, p5, activity]: -2 keeps (any negative for p5, outside 0..0x3ff for the
-/// activity). `slots(content)` is the handle's 8 slot bytes (`character << 1 | 1`). Bytes 0x20..0x23 are stale buffer
-/// bytes in retail; zeros here.
-pub fn change_my_status(cur: &Status, a: [i32; 6], slots: impl Fn(i32) -> [u8; 8]) -> ([u8; 0x24], Status) {
+impl Status {
+    /// polcore's starting status (FUN_10018d60: no handle or character, presence 4, activity 1000).
+    pub fn start() -> Self {
+        Self { content: -1, service: -1, flag: 0, presence: 4, p5: 0, activity: 1000, changed: false }
+    }
+
+    /// LoadMyStatus's reply (4/6, FUN_10019860 state 6): the content and presence ([6] - 1, none: 4), the character
+    /// from the handle's slot [2] when [1], the flag ([3] == 1), activity and p5. `changed` is left as it was.
+    pub fn loaded(&mut self, s: &[u8], slots: &[[u8; 8]; 64]) {
+        if s[6] == 0 {
+            (self.content, self.presence) = (-1, 4);
+        } else {
+            if s[0] < 0x40 {
+                self.content = s[0] as i32;
+            }
+            self.presence = s[6] as i32 - 1;
+        }
+        if s[1] == 0 || self.content < 0 {
+            self.service = -1;
+        } else if s[2] < 8 {
+            self.service = (slots[self.content as usize][s[2] as usize] >> 1 & 0x3f) as i32;
+        }
+        self.flag = (s[3] == 1) as i32;
+        self.activity = u16::from_le_bytes([s[4], s[5]]) as i32;
+        self.p5 = s[7] as i32;
+    }
+}
+
+/// ChangeMyStatus (polcore 1.18.12 slot 0x30c, FUN_10019bc0): the 0x24-byte payload of 4/5 and the status it sets
+/// once it goes through, or `Ok(None)` when polcore sends nothing at all. Arguments as polcore takes them, [content,
+/// character, flag, presence, p5, activity]: -2 keeps (any negative for p5, outside 0..0x3ff for the activity).
+/// `slots(content)` is the handle's 8 slot bytes (`character << 1 | 1`). Bytes 0x20..0x23 are stale buffer bytes in
+/// retail; zeros here.
+///
+/// Nothing is sent when no argument changes a value and a ChangeMyStatus has gone through before: the flag
+/// FUN_10019bc0 leaves at the transaction's +0xde starts as `!changed` and is set by any argument that is not kept
+/// and differs; FUN_10019f70 state 1 ends the transaction with success (state 6, code 0) when it is clear. polcore's
+/// status, the session value and the authCode then stay as they were. So byte 0x18 ("all kept" after a change) is
+/// never sent.
+///
+/// `Err` is polcore's code for arguments it refuses, before anything is built or sent: content above 0x3f or below
+/// -2 -0x1c16, character above 0x3f -0x1c03 or below -2 -0x1c16, flag other than 0 / 1 / -2 or presence outside
+/// 0..4 / -2 -0x1c11, and -0x107 for presence 3 with no content. (The last also refuses presence 3 for a handle whose
+/// byte at 0x10103358 is 1; only the Viewer sets those bytes, slot 0x13d0, and LoadHandleList clears them, so they
+/// stay 0 here.)
+#[allow(clippy::type_complexity)]
+pub fn change_my_status(
+    cur: &Status,
+    a: [i32; 6],
+    slots: impl Fn(i32) -> [u8; 8],
+) -> Result<Option<([u8; 0x24], Status)>, i32> {
+    let [content, service, flag, presence, p5, activity] = a;
+    if content > 0x3f {
+        return Err(-0x1c16);
+    }
+    if service > 0x3f {
+        return Err(-0x1c03);
+    }
+    if service < -2 || content < -2 {
+        return Err(-0x1c16);
+    }
+    if !matches!(flag, -2 | 0 | 1) || !(presence == -2 || (0..=4).contains(&presence)) {
+        return Err(-0x1c11);
+    }
     let keep = |v: i32, c: i32| if v == -2 { c } else { v };
     let new = Status {
-        content: keep(a[0], cur.content),
-        service: keep(a[1], cur.service),
-        flag: keep(a[2], cur.flag),
-        presence: keep(a[3], cur.presence),
-        p5: if a[4] < 0 { cur.p5 } else { a[4] },
-        activity: if (0..0x400).contains(&a[5]) { a[5] } else { cur.activity },
+        content: keep(content, cur.content),
+        service: keep(service, cur.service),
+        flag: keep(flag, cur.flag),
+        presence: keep(presence, cur.presence),
+        p5: if p5 < 0 { cur.p5 } else { p5 },
+        activity: if (0..0x400).contains(&activity) { activity } else { cur.activity },
         changed: true,
     };
-    let kept = a[..4].iter().all(|&v| v == -2) && a[4] < 0 && !(0..0x400).contains(&a[5]);
+    if new.presence == 3 && new.content < 0 {
+        return Err(-0x107);
+    }
+    // An argument polcore takes (not kept) that differs from its value; any at all before the first change.
+    let differs = !cur.changed
+        || (service != -2 && service != cur.service)
+        || (content != -2 && content != cur.content)
+        || (flag != -2 && flag != cur.flag)
+        || (presence != -2 && presence != cur.presence)
+        || ((0..0x400).contains(&activity) && activity != cur.activity)
+        || (p5 >= 0 && p5 != cur.p5);
+    if !differs {
+        return Ok(None);
+    }
+    let kept = a[..4].iter().all(|&v| v == -2) && p5 < 0 && !(0..0x400).contains(&activity);
     let mut b = [0u8; 0x24];
     if new.content >= 0 {
         b[0x10] = new.content as u8;
@@ -139,7 +214,7 @@ pub fn change_my_status(cur: &Status, a: [i32; 6], slots: impl Fn(i32) -> [u8; 8
     b[0x17] = (new.p5 != 0) as u8;
     b[0x18] = (kept && cur.changed) as u8;
     b[0x19] = 1;
-    (b, new)
+    Ok(Some((b, new)))
 }
 
 /// One entry of polcore's character table (0x104533e0, 0x68 bytes each; addresses here are polcore 1.18.12, the one
@@ -381,13 +456,16 @@ impl std::fmt::Display for Refused {
 
 impl std::error::Error for Refused {}
 
-/// A failure polcore codes itself: -0x140f, a reply that fails its checksum.
+/// A failure polcore codes itself: -0x140f, a reply that fails its checksum; ChangeMyStatus's refused arguments.
 #[derive(Debug)]
 pub struct Local(pub i32);
 
 impl std::fmt::Display for Local {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "a PlayOnline reply failed its checksum (POL-{})", -self.0)
+        match self.0 {
+            -0x140f => write!(f, "a PlayOnline reply failed its checksum (POL-{})", -self.0),
+            c => write!(f, "PlayOnline refused the request's arguments (POL-{})", -c),
+        }
     }
 }
 
@@ -424,9 +502,25 @@ pub enum ReplyBody {
     Sized,
 }
 
+/// What polcore 1.18.12's LoadMyStatus and ChangeMyStatus do with a refusal of status 0x72 (-0x14c2, "bound to an
+/// Xbox profile"), the only status any polcore transaction treats apart (FUN_10019860 state 4, FUN_10019f70 state
+/// 4): the reply's body is still read, `body` bytes with its checksum (a bad one is -0x140f), and its byte 0 and
+/// dwords @8 / @0xc are kept for slot 0x718 (FUN_10018b50), which neither FFXiMain nor the Viewer's app.dll ever
+/// calls, so they are not kept here. Then the code is -0x14c2. ChangeMyStatus's path returns the code without ending
+/// the transaction (FUN_10018480 is not called), so the cached server stays (`keeps_server`); LoadMyStatus's ends
+/// it, which drops it.
+#[derive(Clone, Copy)]
+pub struct Bound {
+    pub body: usize,
+    pub keeps_server: bool,
+}
+
 /// One transaction on a separate connection (0x1001f0f0's states): the plain handshake and its token, the header
 /// (keystream reset) and body (continued), the reply header (reset) and body (continued). `server` is the address a
-/// reply cached, else the host is resolved.
+/// reply cached, else the host is resolved. Every failure forgets that address, as each ends its transaction with a
+/// negative code (FUN_10018480 -> FUN_10018b10 clears the 0x14 bytes at 0x1045bf78), but ChangeMyStatus's status
+/// 0x72 (`Bound::keeps_server`).
+#[allow(clippy::too_many_arguments)]
 pub fn transact<S: Stream>(
     cipher: &mut S,
     member: &mut Member,
@@ -435,6 +529,37 @@ pub fn transact<S: Stream>(
     opcode: u8,
     payload: Option<&[u8]>,
     reply: ReplyBody,
+    bound: Option<Bound>,
+) -> Result<Vec<u8>> {
+    let r = transact_once(cipher, member, server, category, opcode, payload, reply, bound);
+    if let Err(e) = &r
+        && e.downcast_ref::<KeptServer>().is_none()
+    {
+        *server = None;
+    }
+    r
+}
+
+/// ChangeMyStatus's status 0x72: the transaction is left as it is, its cached server too.
+#[derive(Debug)]
+struct KeptServer;
+
+impl std::fmt::Display for KeptServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("ChangeMyStatus")
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn transact_once<S: Stream>(
+    cipher: &mut S,
+    member: &mut Member,
+    server: &mut Option<SocketAddr>,
+    category: u8,
+    opcode: u8,
+    payload: Option<&[u8]>,
+    reply: ReplyBody,
+    bound: Option<Bound>,
 ) -> Result<Vec<u8>> {
     let mut sock = match member.fixed.as_ref().or(server.as_ref()) {
         Some(a) => TcpStream::connect_timeout(a, Duration::from_secs(15)),
@@ -469,8 +594,20 @@ pub fn transact<S: Stream>(
     sock.read_exact(&mut rh).context("the profile server closed the transaction")?;
     cipher.apply(&mut rh, true);
     log::info!("PlayOnline {category}/{opcode}: reply header {}", hex::encode(rh));
+    if rh[1] == 0x72
+        && let Some(b) = bound
+    {
+        let mut d = vec![0u8; b.body];
+        sock.read_exact(&mut d).context("the profile server's reply was cut short")?;
+        cipher.apply(&mut d, false);
+        let (payload, sum) = d.split_at(d.len() - 4);
+        if checksum(payload).to_le_bytes() != sum {
+            bail!(Local(-0x140f));
+        }
+        let refused = anyhow::Error::from(Refused(0x72));
+        return Err(if b.keeps_server { refused.context(KeptServer) } else { refused });
+    }
     if rh[1] != 0 {
-        *server = None;
         bail!(Refused(rh[1]));
     }
     // The first reply naming a server is where later transactions go (0x1001f690).
@@ -748,13 +885,71 @@ mod tests {
     #[test]
     fn change_my_status_bodies() {
         let cur = Status { content: 3, service: 5, flag: 1, presence: 2, p5: 1, activity: 0x123, changed: false };
-        let (b, cur) = change_my_status(&cur, [-2, -1, 0, -2, -1, 1], |_| [0; 8]);
+        let (b, cur) = change_my_status(&cur, [-2, -1, 0, -2, -1, 1], |_| [0; 8]).unwrap().unwrap();
         assert_eq!(b[..0x20].to_vec(), h("0000000000000000000000000000000003000001010003010001000000000000"));
-        let (b, _) = change_my_status(&cur, [3, -2, 1, 2, 0, -2], |_| [0; 8]);
+        let (b, _) = change_my_status(&cur, [3, -2, 1, 2, 0, -2], |_| [0; 8]).unwrap().unwrap();
         assert_eq!(b[..0x20].to_vec(), h("0000000000000000000000000000000003000000010003000001000000000000"));
         // A character in the handle's slot 2: 1 / 2 (0x11 / 0x12).
-        let (b, _) = change_my_status(&cur, [3, 9, 0, -2, -1, 1], |_| [0, 0, 9 << 1 | 1, 0, 0, 0, 0, 0]);
+        let (b, _) =
+            change_my_status(&cur, [3, 9, 0, -2, -1, 1], |_| [0, 0, 9 << 1 | 1, 0, 0, 0, 0, 0]).unwrap().unwrap();
         assert_eq!((b[0x11], b[0x12]), (1, 2));
+    }
+
+    /// FUN_10019bc0's +0xde flag: before any change went through everything is sent, even all kept; after one, only
+    /// an argument polcore takes that differs from its value makes a request (FUN_10019f70 state 1 ends it unsent).
+    #[test]
+    fn change_my_status_sends_only_a_change() {
+        let none = |_| [0; 8];
+        let fresh = Status { content: 1, service: 4, flag: 0, presence: 0, p5: 0, activity: 1, changed: false };
+        let (b, _) = change_my_status(&fresh, [-2; 6], none).unwrap().unwrap();
+        assert_eq!(b[0x18], 0);
+        assert!(change_my_status(&fresh, [1, 4, 0, 0, 0, 1], none).unwrap().is_some());
+        let cur = Status { changed: true, ..fresh };
+        // All kept, or every value as it is: nothing (so byte 0x18, "all kept", is never sent).
+        assert_eq!(change_my_status(&cur, [-2; 6], none), Ok(None));
+        assert_eq!(change_my_status(&cur, [1, 4, 0, 0, 0, 1], none), Ok(None));
+        // Out-of-range activity and negative p5 keep, and keep nothing from going.
+        assert_eq!(change_my_status(&cur, [1, 4, 0, 0, -7, 0x400], none), Ok(None));
+        // Any one value changed.
+        for a in [[2, 4, 0, 0, 0, 1], [1, 5, 0, 0, 0, 1], [1, 4, 1, 0, 0, 1], [1, 4, 0, 1, 0, 1], [1, 4, 0, 0, 1, 1]] {
+            assert!(change_my_status(&cur, a, none).unwrap().is_some(), "{a:?}");
+        }
+        assert!(change_my_status(&cur, [-2, -2, -2, -2, -1, 2], none).unwrap().is_some());
+        assert!(change_my_status(&cur, [-1, -2, -2, -2, -1, -2], none).unwrap().is_some());
+        // The status job's pair (FFXiMain FUN_100f1a10): the block in force repeats polcore's status, then the new one.
+        let in_force = [1, 4, 0, 0, -1, 1];
+        assert_eq!(change_my_status(&cur, in_force, none), Ok(None));
+        let (b, new) = change_my_status(&cur, [1, 4, 0, 1, -1, 1], none).unwrap().unwrap();
+        assert_eq!((b[0x16], new.presence), (2, 1));
+    }
+
+    /// FUN_10019bc0's argument checks, in its order, before anything is built.
+    #[test]
+    fn change_my_status_refusals() {
+        let cur = Status::start();
+        let c = |a| change_my_status(&cur, a, |_| [0; 8]).map(|_| ());
+        assert_eq!(c([0x40, 0x40, 9, 9, -1, 1]), Err(-0x1c16));
+        assert_eq!(c([0, 0x40, 9, 9, -1, 1]), Err(-0x1c03));
+        assert_eq!(c([0, -3, 0, 0, -1, 1]), Err(-0x1c16));
+        assert_eq!(c([-3, 0, 0, 0, -1, 1]), Err(-0x1c16));
+        assert_eq!(c([0, 0, 2, 0, -1, 1]), Err(-0x1c11));
+        assert_eq!(c([0, 0, 0, 5, -1, 1]), Err(-0x1c11));
+        assert_eq!(c([0, 0, 0, -1, -1, 1]), Err(-0x1c11));
+        // Presence 3 needs a handle.
+        assert_eq!(c([-1, -2, -2, 3, -1, -2]), Err(-0x107));
+        assert_eq!(c([0, -2, -2, 3, -1, -2]), Ok(()));
+    }
+
+    /// LoadMyStatus's reply as polcore 1.18.12 reads it (FUN_10019860 state 6); `changed` is left alone.
+    #[test]
+    fn load_my_status_reply() {
+        let mut slots = [[0u8; 8]; 64];
+        slots[2][3] = 7 << 1 | 1;
+        let mut st = Status { changed: true, ..Status::start() };
+        st.loaded(&[2, 1, 3, 1, 0x23, 1, 2, 1], &slots);
+        assert_eq!(st, Status { content: 2, service: 7, flag: 1, presence: 1, p5: 1, activity: 0x123, changed: true });
+        st.loaded(&[2, 0, 3, 0, 1, 0, 0, 0], &slots);
+        assert_eq!((st.content, st.service, st.presence, st.flag), (-1, -1, 4, 0));
     }
 
     fn record(index: u8, order: u8, link: Option<(u8, u8)>, ids: [u32; 2]) -> [u8; 0x68] {

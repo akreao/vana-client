@@ -108,5 +108,5 @@ log-in still goes through (lobby 0x07 / 0x0B, zone-in).
 - polcore 1.18.12's ChangeMyStatus sends nothing when no argument changes a value and one has gone through
   before (FUN_10019bc0's flag at the transaction's +0xde, FUN_10019f70 state 1); ours always sends (the logout's
   with no active character, for one). And status 0x72 comes with a 0x20-byte body it keeps (FUN_10019f70 state
-  4). New gaps row.
+  4). New gaps row. Built: docs/modlog/2026-11-23-changemystatus-unchanged-169.md.
 - The handle list's store (0/8, FUN_10019300) is not built: nothing in the game changes a handle.

@@ -3179,8 +3179,9 @@ impl Effects {
             if !hit {
                 continue;
             }
-            // FUN_100531d0 makes the stopped object's new task (FUN_10053370), moved before the running one.
-            self.list.made(tasklist::Made::Moved);
+            // No task is made: ops 0x1e / 0x2d and op 2's 0x1000 stop (0x10059d51 / 0x10059d95 / 0x10059d21 /
+            // 0x10059d77 / 0x10059ab4) pass FUN_10053a00 / FUN_100538e0 a null hand-over, so FUN_100538e0 only deletes
+            // (FUN_10053370 / FUN_100496f0 run for a non-null one) and FUN_10053890 marks in place.
             if soft {
                 if let Some(x) = self.insts[i].as_mut() {
                     x.stopping = true;
@@ -5037,6 +5038,50 @@ mod tests {
         assert!(counts[0] > 0 && counts.iter().all(|&c| c == counts[0]), "{counts:?}");
     }
 
+    /// Ops 0x1e / 0x2d make no task (FUN_100538e0 / FUN_10053890 with a null hand-over): a child scheduler that only
+    /// stops a generator in its first update leaves the walk's next where it was, so the parent does not run again.
+    #[test]
+    fn generator_stop_makes_no_task() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let index = std::sync::Arc::new(index);
+        let mut fx = Effects::new();
+        fx.set_index(index.clone());
+        fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
+        fx.preload(&[52742]);
+        while fx.reg.lib_of(52742).is_none() {
+            fx.poll_loads();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let model = fx.reg.lib_of(52742).unwrap();
+        let a = Coming { files: vec![52742], present: std::cell::Cell::new(true) };
+        let f = Frame { eye: Vec3::new(0.0, -2.0, -10.0), ..ticks_frame(1.0) };
+        fx.on_scheduler_quiet(ORC, u32::from_le_bytes(*b"init"));
+        for _ in 0..120 {
+            fx.tick(&f, &a);
+        }
+        let srcs: Vec<Ref> = fx.insts.iter().flatten().filter(|x| x.src.0 == model).map(|x| x.src).collect();
+        assert!(!srcs.is_empty());
+        for soft in [true, false] {
+            // The parent runs with nothing after it but the anchor; its child is linked before it and updates.
+            let (parent, child) = (u64::MAX - 1, u64::MAX - 2);
+            fx.list.new_scheduler(parent);
+            fx.list.step(tasklist::Node::Task(parent));
+            fx.list.new_scheduler(child);
+            let saved = fx.list.enter(tasklist::Node::Task(child));
+            for &g in &srcs {
+                fx.stop_generator(g, Who::None, Who::None, soft);
+            }
+            fx.list.leave(saved);
+            // The parent stands just before anchor 9 (linked with none running): the walk goes on there, with no
+            // node made between the child and the parent.
+            assert_eq!(fx.list.advance(), Some(tasklist::Node::Anchor(9)), "soft {soft}");
+            let live = fx.tasks.iter().flatten().map(|t| t.uid).collect();
+            while fx.list.advance().is_some() {}
+            fx.list.purge(&live);
+        }
+    }
+
     /// FUN_100d62c0: a part file's looping generators start on the actor too (Hume M main 8700: `gm01..gm06`).
     #[test]
     fn part_file_gens() {
@@ -6839,8 +6884,8 @@ mod auto_tests {
     }
 
     /// Port Jeuno's Kazham berth, leaving (file 31010 `seq7`): `ptv2` (backward, 2040 ticks from 900, made in the
-    /// frame the clock reaches 900 with that frame's ticks off, two frames sooner for the
-    /// sequence's second runs, row 172) has its last running frame at k 1466 and ends in the next. The end's point at u = 1.0 (the path's far end, where `ptv2` began) never
+    /// frame the clock reaches 900 with that frame's ticks off, a frame sooner for the sequence's second run, row 172;
+    /// a generator stop makes no task) has its last running frame at k 1467 and ends in the next. The end's point at u = 1.0 (the path's far end, where `ptv2` began) never
     /// reaches the model (FUN_100a57f0 takes the position back from +0x34): the ship stays where it stopped.
     #[test]
     fn jeuno_leaving_drive_end() {
@@ -6850,11 +6895,11 @@ mod auto_tests {
         }) else {
             return;
         };
-        assert!(driving[1466] && !driving[1467], "ptv2's last frame");
-        let stop = run[1466].0;
+        assert!(driving[1467] && !driving[1468], "ptv2's last frame {:?}", driving.iter().rposition(|&d| d));
+        let stop = run[1467].0;
         assert!(run[450].0.distance(stop) > 100.0, "ptv2 starts far from its end: {} .. {stop}", run[450].0);
-        for k in 1467..1520 {
-            assert_eq!((run[k].0, run[k].1), (stop, run[1466].1), "frame {k}");
+        for k in 1468..1520 {
+            assert_eq!((run[k].0, run[k].1), (stop, run[1467].1), "frame {k}");
         }
     }
 

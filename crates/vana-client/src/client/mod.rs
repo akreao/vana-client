@@ -1,6 +1,7 @@
 //! The windowed client: login and character select (in place of PlayOnline), then the world.
 
 mod actmotion;
+mod area;
 mod border;
 mod chair;
 mod charlnk;
@@ -747,6 +748,10 @@ struct Entity {
     marks: net::Marks,
     female: bool,
     sub_kind: u8,
+    /// +0x1fa: a character's pet by ActIndex (0x00D @0x3c), 0 none; ours is `World::my_pet`.
+    pet: u16,
+    /// +0x2a0: a character's adventuring fellow by ActIndex (0x067 kind 2 @0x0c), 0 none; ours is `World::my_fellow`.
+    fellow: u16,
 }
 
 impl Entity {
@@ -2289,6 +2294,8 @@ fn self_entity(w: &World) -> Entity {
         marks: net::Marks::default(),
         female: false,
         sub_kind: 0,
+        pet: 0,
+        fellow: 0,
     }
 }
 
@@ -5998,6 +6005,8 @@ fn place_mogdoor(w: &mut World) {
             female: false,
             // +0xee 3 is SubKind 2 + 1 (MODLOG "0x00E SubKind 5 / 6"): a door, kind bit 0x20 (FUN_1008e290).
             sub_kind: 2,
+            pet: 0,
+            fellow: 0,
         },
     );
 }
@@ -6931,6 +6940,10 @@ fn actor_place(w: &World, id: u32, my_dir: u8) -> Option<Place> {
             size: 0,
         });
     }
+    // FUN_100ca310 / FUN_100ca730: the area display's rings, at the pick and at the ground cursor.
+    if let Some((pos, forward)) = area::place_of(w, id) {
+        return Some(Place { pos, forward, tilt: [0.0; 2], status: 0, ratio: 0.0, size: 0 });
+    }
     // FUN_100c9c10: a border part on its arc.
     if let Some((pos, yaw)) = w.border.place_of(id) {
         return Some(Place {
@@ -7406,7 +7419,9 @@ impl crate::fx::Actors for FxActors<'_> {
         let Some(&[b0, b1, b2, b3, b4, b5]) = a.character.as_ref().and_then(|c| c.skeleton.boxes.first()) else {
             return [1.0; 3];
         };
-        [a.scale * (b2 - b3) / 1.7, a.scale * (b1 - b0) / 1.9, a.scale * (b4 - b5) / 1.9]
+        // Each axis its own scale where one is set (+0x1d8 / +0x1d7 / +0x1d6: chairs, the area rings), else +0x1d5.
+        let s = a.axes.unwrap_or(Vec3::splat(a.scale));
+        [s.x * (b2 - b3) / 1.7, s.y * (b1 - b0) / 1.9, s.z * (b4 - b5) / 1.9]
     }
 
     fn posed(&self, id: u32) -> bool {
@@ -7813,6 +7828,8 @@ struct World {
     my_ride: net::Ride,
     /// Our Geomancer Indi aura (s2c 0x037 @0x58, client/indi.rs).
     my_aura: indi::Aura,
+    /// The area display (config 0xc0): our entity's fields and the two ring actors (client/area.rs).
+    aoe: area::Area,
     /// Our fenced-content gate (s2c 0x037 @0x5a high nibble, asm 0x1009d8d1).
     my_gate: u8,
     /// Our actor's "init" ran (+0x128 bit 29; again after each zone-in, as a new actor).
@@ -10985,6 +11002,7 @@ impl App {
                             rebuild_models: false,
                             my_ride: Default::default(),
                             my_aura: Default::default(),
+                            aoe: Default::default(),
                             my_gate: 0,
                             my_init_done: false,
                             my_motion_bases: Vec::new(),
@@ -12505,7 +12523,12 @@ impl App {
                         // FUN_1008a350: +0x124 = 0x880, bit 25 clear (female) until a mask-4 update.
                         female: true,
                         sub_kind: 0,
+                        pet: 0,
+                        fellow: 0,
                     });
+                    if let Some(p) = e.pet {
+                        entry.pet = p;
+                    }
                     if e.mask & 7 != 0 {
                         entry.flags = e.status;
                     }
@@ -12873,7 +12896,11 @@ impl App {
                         e.master = master;
                     }
                 }
-                NetEvent::CharSync { id, owner, floors, open, level, sync, custom } => {
+                NetEvent::CharSync { id, owner, floors, open, level, sync, custom, fellow } => {
+                    // FUN_1009cee0: +0x2a0, the character's fellow.
+                    if let Some(e) = world.entities.get_mut(&id) {
+                        e.fellow = fellow;
+                    }
                     if id == world.my_id {
                         world.my_ride.custom = custom;
                     }
@@ -13972,6 +13999,7 @@ impl App {
         rest::update(world);
         indi::update(world, dt);
         border::update(world);
+        area::update(world);
         racing::step(world, dt * 60.0);
         combat::run_map_schedulers(world);
         ride::dig_update(world);
