@@ -855,6 +855,13 @@ impl GameUi {
                     }
                 }
                 '\0' => break,
+                // The auto-translate brackets (EF 27 / EF 28, gaiji the TrueType face lacks): a green "{" and a red
+                // "}", as the modern chat log draws them.
+                '\u{E008}' | '\u{E009}' => {
+                    let (t, col) = if c == '\u{E008}' { ("{", [0x28, 0x68, 0x28]) } else { ("}", [0x28, 0x28, 0x70]) };
+                    out.push((t.to_string(), [col[0], col[1], col[2], base[3]]));
+                    out.push((String::new(), out[out.len() - 2].1));
+                }
                 // The same codes kept as one character (decode_sjis), as event item names.
                 c if (crate::dat::font::CODE_BASE..crate::dat::font::CODE_BASE + 0x200).contains(&(c as u32)) => {
                     let k = c as u32 - crate::dat::font::CODE_BASE;
@@ -1040,6 +1047,20 @@ impl GameUi {
             }
         }
         self.text(s, x, y, 0, tint.to_le_bytes());
+    }
+
+    /// Game-font text cut to `max` px (FUN_10191c70 with its last argument 0): the last character goes while the
+    /// text (FUN_10191e00) is wider than `max - 14`; a cut text has "..." (DAT_1036d9dc) drawn right after it.
+    pub fn text_cut(&mut self, s: &str, x: f32, y: f32, max: f32, tint: u32) {
+        let mut t = s.to_string();
+        while !t.is_empty() && self.text_width(&t) > max - 14.0 {
+            t.pop();
+        }
+        self.text(&t, x, y, 0, tint.to_le_bytes());
+        if t.len() < s.len() {
+            let wd = self.text_width(&t);
+            self.text("...", x + wd, y, 0, tint.to_le_bytes());
+        }
     }
 
     /// Sprite-font text fitted into `max` px (FUN_101c04c0).
