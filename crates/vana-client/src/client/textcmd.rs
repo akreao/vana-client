@@ -815,7 +815,7 @@ fn open_prompt(w: &mut World, stash: &str, mask: u32, target_cmd: bool, quoted: 
         target::open_party_cursor(w, if mask == 5 { 6 } else { 18 }, then, range);
         // 0x10076ef0 / 0x10076f43: the cursor's dry run registers the area callback as the prompt's does.
         if let Some(of) = area {
-            super::area::register(w, of);
+            super::area::register_cursor(w, of);
         }
         return;
     }

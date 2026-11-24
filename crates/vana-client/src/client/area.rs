@@ -421,21 +421,31 @@ pub fn item(w: &World, id: u16) -> Out {
     pack(&c, 0)
 }
 
-/// The prompt opener's FUN_10158e30: the open prompt (or party cursor) shows `of`'s area.
+/// The prompt opener's FUN_10158e30: the open 3D prompt shows `of`'s area. The target object has one slot (+0xd0):
+/// the last registration wins, so the party cursor's goes.
 pub fn register(w: &mut World, of: Of) {
     if let Some(s) = w.prompt.as_mut() {
         s.area = Some(of);
-    } else if let Some(pc) = w.party_cursor.as_mut() {
-        pc.area = Some(of);
+        if let Some(pc) = w.party_cursor.as_mut() {
+            pc.area = None;
+        }
     }
 }
 
-/// Target object +0xd0: the callback the 3D prompt or the party cursor registered.
-fn registered(w: &World) -> Option<Of> {
-    match &w.prompt {
-        Some(s) => s.area,
-        None => w.party_cursor.as_ref().and_then(|pc| pc.area),
+/// FUN_10158e30 from the party cursor's dry run (0x10076ef0 / 0x10076f43): the cursor shows `of`'s area, and the
+/// 3D prompt's registration goes.
+pub fn register_cursor(w: &mut World, of: Of) {
+    if let Some(pc) = w.party_cursor.as_mut() {
+        pc.area = Some(of);
+        if let Some(s) = w.prompt.as_mut() {
+            s.area = None;
+        }
     }
+}
+
+/// Target object +0xd0: the callback the 3D prompt or the party cursor registered (at most one holds one).
+fn registered(w: &World) -> Option<Of> {
+    w.prompt.as_ref().and_then(|s| s.area).or_else(|| w.party_cursor.as_ref().and_then(|pc| pc.area))
 }
 
 /// FUN_1009aec0: the radius in yalms, (scale + 0x100) x RADII[index] / 0x100, 0..40.
