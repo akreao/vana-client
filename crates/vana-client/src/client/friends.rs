@@ -145,6 +145,8 @@ pub struct Friends {
     retry_at: Option<Instant>,
     /// A failed handle / character list load is asked again from then.
     tables_at: Option<Instant>,
+    /// A handle / character list load is out.
+    tables_loading: bool,
     /// The friends' characters asked of xi_search (2.3): the queries out, the chunks left of a round, the next round.
     lookups: Vec<(mpsc::Receiver<anyhow::Result<crate::net::search::Reply>>, Vec<u32>)>,
     round: Vec<Vec<u32>>,
@@ -274,6 +276,11 @@ fn change_once(c: &Cred, stop: &AtomicBool, pol: &Mutex<PolSide>, args: [i32; 6]
         return Ok(());
     };
     profile::change_my_status(c, &payload)?;
+    answered(stop, pol, status)
+}
+
+/// A ChangeMyStatus went through: polcore's status becomes the one it set, unless its session ended meanwhile.
+fn answered(stop: &AtomicBool, pol: &Mutex<PolSide>, status: polpro::Status) -> anyhow::Result<()> {
     let mut p = pol.lock().unwrap();
     if stop.load(Ordering::Relaxed) {
         anyhow::bail!("the session ended");
@@ -321,6 +328,7 @@ pub fn start(w: &mut World) {
 
 /// The handle and character lists (LoadHandleNameList, LoadCharacterList); a failed load is asked again 30 s later.
 fn load_tables(w: &mut World) {
+    w.friends.tables_loading = true;
     spawn(w, |c| {
         Done::Tables((|| Ok(Tables { handles: profile::load_handles(c)?, chars: profile::load_characters(c)? }))())
     });
@@ -463,6 +471,7 @@ pub fn poll(w: &mut World) {
                 log::info!("friends: {} entries", f.list.len());
             }
             Done::Tables(Ok(t)) => {
+                w.friends.tables_loading = false;
                 let f = &mut w.friends;
                 {
                     let mut p = f.pol.lock().unwrap();
@@ -488,6 +497,7 @@ pub fn poll(w: &mut World) {
             }
             Done::List(Err(e)) => log::warn!("friends: loading the friend list: {e:#}"),
             Done::Tables(Err(e)) => {
+                w.friends.tables_loading = false;
                 log::warn!("friends: loading the handle and character lists: {e:#}");
                 w.friends.tables_at = Some(Instant::now() + Duration::from_secs(30));
             }
@@ -545,7 +555,11 @@ pub fn poll(w: &mut World) {
         }
     }
     // A dropped session comes back and loads again.
-    if w.friends.tables_at.is_some_and(|t| Instant::now() >= t) && w.friends.started && !w.friends.tables {
+    if w.friends.tables_at.is_some_and(|t| Instant::now() >= t)
+        && w.friends.started
+        && !w.friends.tables
+        && !w.friends.tables_loading
+    {
         w.friends.tables_at = None;
         load_tables(w);
     }
@@ -1074,6 +1088,19 @@ mod tests {
         assert!(!transient(&anyhow::anyhow!("ChangeMyStatus: xi_profile error 0x1")));
         let tls = std::io::Error::from(std::io::ErrorKind::InvalidData);
         assert!(!transient(&anyhow::Error::from(crate::net::tls::HandshakeFailed(tls)).context("connecting")));
+    }
+
+    /// An answer that comes after its IRC session ended leaves polcore's reset status alone.
+    #[test]
+    fn a_late_answer_keeps_the_reset_status() {
+        let (stop, pol) = (AtomicBool::new(false), Mutex::new(PolSide::default()));
+        let set = polpro::Status { content: 0, service: 3, flag: 0, presence: 0, p5: 0, activity: 1, changed: true };
+        answered(&stop, &pol, set.clone()).unwrap();
+        assert_eq!(pol.lock().unwrap().status, set);
+        *pol.lock().unwrap() = PolSide::default();
+        stop.store(true, Ordering::Relaxed);
+        assert!(answered(&stop, &pol, set).is_err());
+        assert_eq!(pol.lock().unwrap().status, polpro::Status::start());
     }
 
     /// A stopped session sends nothing more.
