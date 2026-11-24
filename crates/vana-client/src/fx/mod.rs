@@ -11,6 +11,7 @@ pub mod math;
 pub mod sched;
 pub mod sound;
 pub mod spline;
+mod tasklist;
 mod tasks;
 pub use tasks::is_skill_file;
 pub mod trail;
@@ -1040,6 +1041,8 @@ pub struct Effects {
     /// The tasks being run, outermost first (their slots are empty meanwhile; a task an op creates runs inside its
     /// creator's step).
     stepping: Vec<usize>,
+    /// Retail's task list: the walk's order of the tasks and where it goes next (tasklist.rs).
+    list: tasklist::TaskList,
     dolls: Vec<tasks::Doll>,
     pending: Vec<tasks::Pending>,
     /// Furniture actors whose model file is still to come (tasks.rs on_furniture): actor, file.
@@ -1304,6 +1307,7 @@ impl Effects {
             weather_serial: 0,
             tasks: Vec::new(),
             stepping: Vec::new(),
+            list: Default::default(),
             dolls: Vec::new(),
             pending: Vec::new(),
             furn_starts: Vec::new(),
