@@ -2149,10 +2149,10 @@ fn player(lua: &Lua) -> mlua::Result<Table> {
     t.set("pos", pos)?;
     t.set("heading", my_heading(w))?;
     t.set("status", w.my_motion.status)?;
-    // Our 0x037 flags word: bit 4 seeking a party, 5 anonymous, 7 away.
-    t.set("seeking", w.self_flags >> 4 & 1 != 0)?;
-    t.set("anonymous", w.self_flags >> 5 & 1 != 0)?;
-    t.set("away", w.self_flags >> 7 & 1 != 0)?;
+    // Our entity's flags (+0x124 bits 20 / 23 / 22): the 0x00A's at the zone-in, then 0x037 @0x28 bits 4 / 5 / 7.
+    t.set("seeking", w.my_plate.marks.lfg)?;
+    t.set("anonymous", w.my_plate.marks.anon)?;
+    t.set("away", w.my_plate.marks.away)?;
     if let Some((hp, mp, tp, hpp, mpp)) = w.vitals {
         t.set("hp", hp)?;
         t.set("mp", mp)?;

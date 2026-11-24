@@ -156,7 +156,8 @@ fn press(w: &mut World, c: u16) {
             let mut cfg = super::configui::ConfigUi::open("configwi");
             cfg.mon = super::monstrosity::active(w);
             cfg.cam_keys = w.cam_keys;
-            cfg.anon = w.self_flags & 1 << 5 != 0;
+            // conf3win's Show / Hide: the 0x0B4 config block's anonymous bit (FUN_100e4830(0)).
+            cfg.anon = w.conf_sys[0] & 4 != 0;
             cfg.recall(w.cursor_recall(super::configui::CONFIGWI_MENU));
             w.config = Some(cfg);
         }

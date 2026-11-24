@@ -3723,11 +3723,17 @@ pub fn shot_name(w: &World) -> Option<String> {
 /// as FUN_10095900 acts on it: /hidetrust's, then the server's SleepFlag (+0x120 bit 18, tested with the hide bit as
 /// 0x44000 at 0x1008e686) and the event's filter of non-participants by (DAT_10481aac | Mode) & 0x02 for player
 /// characters and & 0x10 for the rest, both of which an event-reserved actor (+0x138 bit 31, op 0xac sub 2) skips.
-/// `server` is that 0x44000 test: the hide bit 14 marks like the sleep bit. Doors, elevators and ships (+0xee 3..5,
-/// FUN_10096200) are never unloaded. Addresses are 30261102_0.
-fn unloads(pc: bool, flags: u32, structure: bool, reserved: bool, trust: bool, server: bool) -> bool {
+/// `server` is that 0x44000 test: the hide bit 14 marks like the sleep bit. `own` is a mark no reservation skips:
+/// /hidetrust's or the PvP one (`HideRule::gone`). Doors, elevators and ships (+0xee 3..5, FUN_10096200) are never
+/// unloaded. Addresses are 30261102_0.
+fn unloads(pc: bool, flags: u32, structure: bool, reserved: bool, own: bool, server: bool) -> bool {
     let filtered = !reserved && (server || flags & if pc { 0x02 } else { 0x10 } != 0);
-    !structure && (trust || filtered)
+    !structure && (own || filtered)
+}
+
+/// FUN_1008e4d0's PvP mark on another actor (`HideRule::gone`): `pvp_only` and `my_team` ours, the rest its.
+fn pvp_unloads(pvp_only: bool, my_team: u8, pc: bool, gm: u8, team: u8) -> bool {
+    pvp_only && super::net::pvp_team(my_team) && pc && gm < 3 && !super::net::pvp_team(team)
 }
 
 /// FUN_1008cdc0, per actor: a bound actor while the event runs is hidden only by the script (+0x120 bit
@@ -3810,14 +3816,20 @@ impl<'a> HideRule<'a> {
     /// stays); the server's hide and sleep bits (0x00D / 0x00E @0x20 bits 1 / 2: +0x120 & 0x44000) and the event's
     /// filter take it from an actor that is not reserved. None for an actor that takes part (bits 7 / 8,
     /// FUN_100961d0).
+    ///
+    /// The PvP mark (0x1008e582..0x1008e5cc): while our 0x037 Flags3 bit 5 is set (`SelfPlate::pvp_only`, +0x130 bit
+    /// 11) and our team byte (+0x1ff) is a PvP team, every other player character (+0x1d0 bit 0) below GM level 3
+    /// (+0x128 bits 11..13) whose team byte is none of them goes, reserved or not.
     fn gone(&self, w: &World, id: u32, e: &super::Entity) -> bool {
+        let pc = id >> 24 == 0;
         let trust = w.game.get(0x99) & 0x20 != 0 && e.marks.trust && !w.party.party().any(|m| m.index == e.index);
-        self.marks(id, id >> 24 == 0, matches!(e.sub_kind, 2..=4), e.ev_reserved, trust, e.server_hidden())
+        let pvp = pvp_unloads(w.my_plate.pvp_only, w.my_team, pc, e.marks.gm, e.marks.alleg);
+        self.marks(id, pc, matches!(e.sub_kind, 2..=4), e.ev_reserved, trust || pvp, e.server_hidden())
     }
 
     /// The unload mark (`unloads`) on an actor that has not taken part (bit 8 skips FUN_1008e4d0's mark block).
-    fn marks(&self, id: u32, pc: bool, structure: bool, reserved: bool, trust: bool, server: bool) -> bool {
-        !self.takes_part(id) && unloads(pc, self.flags, structure, reserved, trust, server)
+    fn marks(&self, id: u32, pc: bool, structure: bool, reserved: bool, own: bool, server: bool) -> bool {
+        !self.takes_part(id) && unloads(pc, self.flags, structure, reserved, own, server)
     }
 
     /// `gone` for our own actor: our 0x037 / 0x00A hide and sleep bits, and the event's filter of player characters.
@@ -4683,6 +4695,21 @@ mod tests {
         assert!(!unloads(false, 0x10, true, false, false, false), "a door keeps its model");
         assert!(!unloads(false, 0x10, false, true, false, false), "op 0xac sub 2 holds it");
         assert!(unloads(false, 0, false, true, true, false) && !unloads(false, 0, true, false, true, false));
+    }
+
+    #[test]
+    fn pvp_mark_takes_outsiders() {
+        // Our flag on and our team a PvP one: a player below GM level 3 on no PvP team goes.
+        assert!(pvp_unloads(true, 2, true, 0, 0));
+        assert!(pvp_unloads(true, 0x2b, true, 2, 1));
+        assert!(pvp_unloads(true, 4, true, 0, 7), "team 7 is no PvP team");
+        assert!(!pvp_unloads(true, 2, true, 0, 3), "another PvP team stays");
+        assert!(!pvp_unloads(true, 2, true, 0, 0x28));
+        assert!(!pvp_unloads(true, 2, true, 3, 0), "GM level 3 stays");
+        assert!(!pvp_unloads(true, 2, false, 0, 0), "an NPC stays");
+        assert!(!pvp_unloads(false, 2, true, 0, 0), "flag off");
+        assert!(!pvp_unloads(true, 1, true, 0, 0), "our team no PvP one");
+        assert!(!pvp_unloads(true, 7, true, 0, 0));
     }
 
     /// FUN_10095900: a marked actor's model is freed and its look kept; a look the loader leaves while the mark stays
