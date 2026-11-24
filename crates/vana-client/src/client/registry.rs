@@ -15,14 +15,17 @@ pub struct Info {
     pub range: Option<f32>,
     /// The current target's distance (flat, as the prompt's arrow measures it) when the action may take it.
     pub distance: Option<f32>,
+    /// The prompt's arrow would be red on the current target (target::reach_tint with the action's range checks:
+    /// both radii, Blood Pacts and Ready moves from the pet too).
+    pub out: bool,
     /// Why the action can't be used now: retail's refusal line, or the effect that stops it.
     pub why: Option<String>,
 }
 
 impl Info {
-    /// The current target is a valid pick but beyond the range (the prompt's red arrow, past r + 0.5).
+    /// The current target is a valid pick but beyond the range (the prompt's red arrow).
     pub fn out_of_range(&self) -> bool {
-        matches!((self.distance, self.range), (Some(d), Some(r)) if d > r + 0.5)
+        self.distance.is_some() && self.out
     }
 }
 
@@ -73,6 +76,11 @@ fn line(w: &World, id: usize) -> String {
         .unwrap_or_else(|| "Can't be used now.".into())
 }
 
+/// Whether the arrow would be red on the current target with `range`.
+fn red(w: &World, range: &super::target::Reaches) -> bool {
+    super::target::reach_tint(w, range, w.target, 0) == super::target::RED
+}
+
 /// The current target's flat distance when `bits` may take it (target::takes).
 fn distance(w: &World, bits: u16) -> Option<f32> {
     let t = w.target.filter(|&t| t != w.my_id && super::target::takes(w, bits as u32, t))?;
@@ -89,6 +97,7 @@ pub fn spell(w: &World, s: u16) -> Option<Info> {
         targets: target_names(targets),
         range: Some(crate::dat::actions::RANGES[(r.range & 0xf) as usize] as f32).filter(|&r| r < 255.0),
         distance: distance(w, targets),
+        out: red(w, &super::target::spell_reaches(w, s)),
         why,
     })
 }
@@ -104,6 +113,7 @@ pub fn ability(w: &World, i: u16) -> Option<Info> {
         targets: target_names(a.targets),
         range: Some(crate::dat::actions::RANGES[(a.range & 0xf) as usize] as f32).filter(|&r| r < 255.0),
         distance: distance(w, a.targets),
+        out: red(w, &super::target::ability_reaches(w, i)),
         why,
     })
 }
@@ -120,11 +130,11 @@ mod tests {
         assert!(target_names(0).is_empty());
     }
 
+    /// Out of range only with a target the action may take and a red arrow.
     #[test]
-    fn out_of_range_past_half_a_yalm() {
-        let i = |d, r| Info { distance: Some(d), range: Some(r), ..Default::default() };
-        assert!(!i(20.4, 20.0).out_of_range());
-        assert!(i(20.6, 20.0).out_of_range());
-        assert!(!Info { distance: Some(50.0), range: None, ..Default::default() }.out_of_range());
+    fn out_of_range_needs_a_target() {
+        assert!(Info { distance: Some(30.0), out: true, ..Default::default() }.out_of_range());
+        assert!(!Info { distance: Some(30.0), out: false, ..Default::default() }.out_of_range());
+        assert!(!Info { distance: None, out: true, ..Default::default() }.out_of_range());
     }
 }

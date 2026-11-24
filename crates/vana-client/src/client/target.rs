@@ -728,6 +728,10 @@ pub const SHOOT_REACH: Reaches = from_us(25, true, false);
 /// FUN_10141c50 (Trade): 5, flat, less the radii.
 pub const TRADE_REACH: Reaches = from_us(5, false, true);
 
+/// FUN_10151be0's red and yellow.
+pub const RED: u32 = 0xe0d0_4040;
+const YELLOW: u32 = 0xe0d0_d040;
+
 /// An actor's position and model radius (+0x208).
 fn place(w: &World, id: u32) -> Option<(Vec3, f32)> {
     if id == w.my_id { Some((w.pos, w.my_plate.hitbox)) } else { w.entities.get(&id).map(|e| (e.pos, e.hitbox)) }
@@ -755,8 +759,6 @@ fn tint_of(
     cursor: Option<Vec3>,
     base: u32,
 ) -> u32 {
-    const RED: u32 = 0xe0d0_4040;
-    const YELLOW: u32 = 0xe0d0_d040;
     let mut out = base;
     for r in range.iter().filter(|r| r.from != 0) {
         let range = r.range as f32;
@@ -1456,8 +1458,6 @@ mod tests {
     use super::*;
 
     const BASE: u32 = 0xe040_40d0;
-    const RED: u32 = 0xe0d0_4040;
-    const YELLOW: u32 = 0xe0d0_d040;
 
     /// FUN_10151be0: red past range + 0.5 less the radii, yellow past range - 0.5, base inside; flat unless height
     /// counts; 25 and more is red whatever the range.
