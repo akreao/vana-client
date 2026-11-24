@@ -15091,9 +15091,14 @@ impl App {
                 (self.mouse.visible, self.cursor_hid_at) = (true, None);
             }
         }
-        let mouse = self.last_cursor.filter(|_| self.mouse.visible && self.cursor_in && world.confirm.is_none()).map(
-            |(x, y)| map::CursorMouse { at: (x as f32 * k.0, y as f32 * k.1), hardware: self.cfg.tool("0021") != 0 },
-        );
+        let active = self.gfx.as_ref().is_some_and(|g| g.window.has_focus());
+        let mouse = self
+            .last_cursor
+            .filter(|_| active && self.mouse.visible && self.cursor_in && world.confirm.is_none())
+            .map(|(x, y)| map::CursorMouse {
+                at: (x as f32 * k.0, y as f32 * k.1),
+                hardware: self.cfg.tool("0021") != 0,
+            });
         if world.cnq.is_some() && !region::update(world, &mut self.input, dt * 60.0, mouse) {
             world.cnq = None;
         }

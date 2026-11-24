@@ -1553,14 +1553,15 @@ impl MapWin {
         if let Some(mut cur) = cur {
             let (sw, sh) = self.screen;
             let dead = |v: f32| if (v * fast).abs() < 2.0 { 0.0 } else { v };
+            // One retail frame's step (2 ticks); a held direction keeps the mouse out even on updates that step none.
             let kt = key_ticks(&mut self.key_acc, ticks);
-            let v = (dead(input.axis(0x9d) * 8.0) * fast * kt * 0.5, dead(input.axis(0x9e) * 8.0) * fast * kt * 0.5);
+            let step = (dead(input.axis(0x9d) * 8.0) * fast, dead(input.axis(0x9e) * 8.0) * fast);
             let (bx, by) = ([sw / 512.0 * 40.0, sw - sw / 512.0 * 150.0], [sh / 448.0 * 65.0, sh - sh / 448.0 * 180.0]);
-            let d = match mouse.filter(|_| v == (0.0, 0.0) && live) {
-                Some(ms) => mouse_step(ms, &mut self.anchor, cur, self.zoom),
-                None => v,
+            let steps = match mouse.filter(|_| step == (0.0, 0.0) && live) {
+                Some(ms) => vec![mouse_step(ms, &mut self.anchor, cur, self.zoom)],
+                None => vec![step; (kt / 2.0) as usize],
             };
-            if d != (0.0, 0.0) {
+            for d in steps.into_iter().filter(|&d| d != (0.0, 0.0)) {
                 if fast > 1.0 {
                     self.scroll_by(d);
                 } else {

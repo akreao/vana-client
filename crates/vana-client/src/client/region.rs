@@ -914,14 +914,15 @@ pub fn update(
         // key (0x9a, flag 0x200) scrolls the view instead.
         let dead = |v: f32| if (v * fast).abs() < 2.0 { 0.0 } else { v };
         let (sw, sh) = m.view.screen;
+        // One retail frame's step (2 ticks), once per retail frame; a held direction keeps the mouse out.
         let kt = super::map::key_ticks(&mut m.key_acc, ticks);
-        let v = (dead(input.axis(0x9d) * 15.0) * fast * kt * 0.5, dead(input.axis(0x9e) * 15.0) * fast * kt * 0.5);
+        let step = (dead(input.axis(0x9d) * 15.0) * fast, dead(input.axis(0x9e) * 15.0) * fast);
         let (bx, by) = ([sw / 512.0 * 40.0, sw - sw / 512.0 * 60.0], [sh / 448.0 * 65.0, sh - sh / 448.0 * 180.0]);
-        let d = match mouse.filter(|_| v == (0.0, 0.0)) {
-            Some(ms) => super::map::mouse_step(ms, &mut m.anchor, m.view.point, m.view.zoom),
-            None => v,
+        let steps = match mouse.filter(|_| step == (0.0, 0.0)) {
+            Some(ms) => vec![super::map::mouse_step(ms, &mut m.anchor, m.view.point, m.view.zoom)],
+            None => vec![step; (kt / 2.0) as usize],
         };
-        if d != (0.0, 0.0) {
+        for d in steps.into_iter().filter(|&d| d != (0.0, 0.0)) {
             if fast > 1.0 {
                 m.view.scroll_by(d);
             } else {
@@ -961,8 +962,8 @@ pub fn key(w: &mut World, key: egui::Key) {
         w.sounds.push(Ui::Cancel as u32);
         m.view.closing = Some(Instant::now() + Duration::from_secs(3));
         m.view.fade = (m.view.fade.0, 255.0, 16.0);
-        (m.conquer1, m.conq6sta, m.legend, m.beseige1, m.beseige2, m.coloresu, m.colorank) =
-            (None, false, false, false, None, None, false);
+        (m.conquer1, m.conq6sta, m.legend, m.beseige1, m.beseige2, m.coloresu, m.colorank, m.camp) =
+            (None, false, false, false, None, None, false, None);
     }
 }
 
