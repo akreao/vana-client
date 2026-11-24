@@ -416,6 +416,8 @@ pub struct Sub {
     /// Field +0x58 (FUN_1022b850): the spell's record +0x44 bit 5 (the Geo- spells) lets LT / RT + the d-pad, or Ctrl /
     /// Alt + the arrows, move a ground-position cursor from the pick (key functions 0xb0..0xb3).
     pub ground: bool,
+    /// Target object +0xd0 / +0x78 (FUN_10158e30): the area display's callback and its argument (client/area.rs).
+    pub area: Option<super::area::Of>,
 }
 
 impl Sub {
@@ -472,7 +474,8 @@ fn sub_kind(w: &World, id: u32) -> u32 {
 /// nothing fits (the caller prints its line).
 pub fn open_sub(w: &mut World, flags: u32, then: SubThen, range: Option<f32>, title: String, help: u16) -> bool {
     let (inc, exc) = SUB_FLAGS.iter().filter(|f| flags & f.0 != 0).fold((0, 0), |(i, e), f| (i | f.1, e | f.2));
-    let sub = Sub { inc, exc, saved: w.target, saved_lock: w.locked, then, range, title, help, ground: false };
+    let sub =
+        Sub { inc, exc, saved: w.target, saved_lock: w.locked, then, range, title, help, ground: false, area: None };
     let current = w.target.filter(|&t| t == w.my_id || w.entities.contains_key(&t));
     let first = match current {
         Some(t) if sub.takes(sub_kind(w, t)) && !(inc & 0x200 != 0 && sub_kind(w, t) & 0x10 != 0) => Some(t),

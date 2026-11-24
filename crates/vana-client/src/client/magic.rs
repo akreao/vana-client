@@ -874,6 +874,8 @@ pub(super) fn enter(w: &mut World, kind: Kind) {
                 return;
             }
             target::ground_mode(w, id);
+            // FUN_1022ddb0 -> FUN_1022ce60: the spell's area display.
+            super::area::register(w, super::area::Of::Spell(id));
             if let Some(m) = w.magic.as_mut() {
                 m.hidden = true;
             }
@@ -904,6 +906,8 @@ pub(super) fn enter(w: &mut World, kind: Kind) {
                 refuse(w, 0x5d);
                 return;
             }
+            // FUN_102257b0 -> FUN_102249f0: the ability's area display.
+            super::area::register(w, super::area::Of::Ability(id));
             if let Some(m) = w.ability.as_mut() {
                 m.hidden = true;
             }
