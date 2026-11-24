@@ -1902,12 +1902,13 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             if cid == id::INVITE && w.party.members().count() > 1 {
                 return Err(());
             }
-            let (which, bit) = if cid == id::ANON { (0, 5) } else { (2, 4) };
+            // No argument toggles the s2c 0x0B4 config block's bit (FUN_100e4590: +0x2cfd8 bit 2 / bit 0).
+            let (which, bit) = if cid == id::ANON { (0, 2) } else { (2, 0) };
             let set = match (args.len(), args.get(1).map(String::as_str)) {
                 (2, Some("on")) => true,
                 (2, Some("off")) => false,
                 (2, _) => return Ok(()),
-                _ => w.self_flags >> bit & 1 == 0,
+                _ => w.conf_sys[0] >> bit & 1 == 0,
             };
             config_flag(w, which, set);
             Ok(())
@@ -2886,13 +2887,21 @@ fn recruitlist(w: &mut World, args: &[String]) -> Done {
 /// FUN_1007d9c0 (/partyrequestcmd, /prcmd): add [target] asks to join that player's party (c2s 0x11C kind 0, group 10
 /// 0x76), remove [target] takes it back (kind 1); someone not here is looked up by name. Refusals 7 0xc4 / 0xc5 (on
 /// our blacklist) / 0xc6 (blacklist not in yet; or we are /anon or /away: own actor +0x124 bit 23 / 22, from 0x037
-/// u32 @0x28 bits 5 / 7, asm 0x1007da8b..0x1007dab7; the name-lookup path does not test them).
+/// u32 @0x28 bits 5 / 7 or the zone-in's 0x00A, asm 0x1007da8b..0x1007dab7, before the target; the name-lookup
+/// callback does not test them).
 fn prcmd(w: &mut World, args: &[String], mode: Mode) -> Done {
     let kind = match args.get(1).map(String::as_str) {
         Some("add") => 0,
         Some("remove") => 1,
         _ => return Ok(()),
     };
+    // Anonymous or Away (our entity's +0x124 bits 23 / 22: the 0x00A's at the zone-in, then 0x037's): "You were
+    // unable to make a request to join." and nothing is sent. Add only, tested before the target is resolved or
+    // looked up (asm 0x1007da8b..0x1007dab7), so before the blacklist too.
+    if kind == 0 && (w.my_plate.marks.anon || w.my_plate.marks.away) {
+        refuse(w, 0xc6);
+        return Ok(());
+    }
     let arg = args.get(2).map(String::as_str);
     let Some((id, index)) = resolve(w, arg, true, false, mode) else {
         if let Some(name) = arg {
@@ -2902,11 +2911,7 @@ fn prcmd(w: &mut World, args: &[String], mode: Mode) -> Done {
     };
     let name =
         if id == w.my_id { w.name.clone() } else { w.entities.get(&id).map(|e| e.name.clone()).unwrap_or_default() };
-    // Anonymous (bit 5) or Away (bit 7): "You were unable to make a request to join." and nothing is sent. Checked
-    // here before the blacklist *(inf: the order between the two tests, and that remove skips it)*.
-    let anon_away = kind == 0 && w.self_flags & (1 << 5 | 1 << 7) != 0;
     match if kind == 0 { super::partyreq::blacklisted(w, &name) } else { 0 } {
-        _ if anon_away => refuse(w, 0xc6),
         1 => refuse(w, 0xc5),
         2 => refuse(w, 0xc6),
         _ if (kind == 0 && id == w.my_id) || id >> 24 == 1 => refuse(w, 0xc4),

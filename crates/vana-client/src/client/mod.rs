@@ -3699,7 +3699,7 @@ fn world_hud(
                 c.mon = monstrosity::active(world);
                 c.cam_keys = world.cam_keys;
                 c.recall(world.cursor_recall(configui::CONFIGWI_MENU));
-                config_anon(Some(&mut c), world.self_flags);
+                config_anon(Some(&mut c), &world.conf_sys);
                 world.config = Some(c);
                 world.menu = None;
                 world.sounds.push(crate::audio::Ui::Select as u32);
@@ -5507,6 +5507,15 @@ fn timers_foot(gu: &GameUi, world: &World, sw: f32, sh: f32) -> f32 {
     foot
 }
 
+/// The config block at a zone-in: FUN_100fa000 zero-fills the character data (+0x2cfd8 with it) and FUN_100fae40
+/// writes the 0x00A's first four bytes (the anonymous and seek-party bits among them); the rest stay 0 until a 0x0B4
+/// brings all twelve, so the zone-in walk's 0x0DB carries them as 0.
+fn zone_conf(conf: [u8; 4]) -> [u8; 12] {
+    let mut out = [0; 12];
+    out[..4].copy_from_slice(&conf);
+    out
+}
+
 /// What a lobycwin change needs from the app (FUN_10196390): title music 0xaf, volume 0xa8 / aspect 0xab.
 #[derive(Default)]
 struct LobbyApply {
@@ -5551,21 +5560,22 @@ fn config_out(world: &mut World, out: configui::Out) {
         textcmd::config_flag(world, 0, hide);
     }
     // The modern page has no conf3win window to close: its Show / Hide goes out when picked.
-    let flags = world.self_flags;
+    let conf = world.conf_sys;
     let modern = world.config.as_mut().filter(|c| c.anon_dirty && !c.stack.iter().any(|w| w.name == "conf3win"));
     if let Some(c) = modern {
         c.anon_dirty = false;
         let hide = c.anon;
         textcmd::config_flag(world, 0, hide);
     } else {
-        config_anon(world.config.as_mut(), flags);
+        config_anon(world.config.as_mut(), &conf);
     }
 }
 
-/// Show / Hide follows our anonymous flag (0x037 flags bit 5, FUN_100e47c0(0)) until one is picked.
-fn config_anon(c: Option<&mut configui::ConfigUi>, flags: u32) {
+/// Show / Hide follows our anonymous flag until one is picked: conf3win reads it from the s2c 0x0B4 config block
+/// (FUN_100e4830(0): +0x2cfd8 bit 2, `conf_sys[0]` bit 2), not from 0x037.
+fn config_anon(c: Option<&mut configui::ConfigUi>, conf: &[u8; 12]) {
     if let Some(c) = c.filter(|c| !c.anon_dirty) {
-        c.anon = flags & 1 << 5 != 0;
+        c.anon = conf[0] & 4 != 0;
     }
 }
 
@@ -7726,8 +7736,6 @@ struct World {
     /// The party / alliance roster (client/party.rs) and whether its names were asked for (c2s 0x076).
     party: party::Roster,
     party_asked: bool,
-    /// Our 0x037 flags word (u32 @0x28): bit 4 seeking a party, bit 5 anonymous (the /anon / /invite toggles).
-    self_flags: u32,
     /// The gauges' eased values (FUN_101cad00, a 30 Hz step): per party row (member id, HP, MP), the target's (id,
     /// HP), and the unstepped time.
     party_gauges: Vec<(u32, u8, u8)>,
@@ -10953,7 +10961,6 @@ impl App {
                             target_event: None,
                             gauge_acc: 0.0,
                             gauge_last: None,
-                            self_flags: 0,
                             party_asked: false,
                             macros: None,
                             palette: (0, 0, 0, [0, 0]),
@@ -12052,6 +12059,7 @@ impl App {
                     monstrosity,
                     pol_return,
                     plate,
+                    conf,
                 } => {
                     world.gm.zoned();
                     // FUN_10094190: the new entity takes its flags from the 0x00A (net::zone_in_plate). The model
@@ -12059,6 +12067,10 @@ impl App {
                     // comes.
                     // The new entity's forced-follow index starts at 0 (0x1008a65c).
                     world.my_pull = 0;
+                    // 0x10094e12: the new entity's team byte (+0x1ff) starts at 0; 0x037 sets it.
+                    world.my_team = 0;
+                    world.conf_sys = zone_conf(conf);
+                    config_anon(world.config.as_mut(), &world.conf_sys);
                     // FUN_100fa000 (the map session's setup, run for every zone) zero-fills the whole character data
                     // block, the auction parcel store with it: the slots start empty in each zone and come back
                     // through the Sales Status LotChecks.
@@ -13105,7 +13117,6 @@ impl App {
                     hpp,
                     dead,
                     pet,
-                    flags,
                     icons,
                     team,
                     fellow,
@@ -13134,8 +13145,6 @@ impl App {
                     world.my_fellow = fellow;
                     world.my_pull = follow;
                     world.costume.set_id(costume);
-                    world.self_flags = flags;
-                    config_anon(world.config.as_mut(), flags);
                     // 0x1009d84a: our 0x037 clears entity +0x130 bit 18, the half-alpha draw.
                     if let Some(e) = world.entities.get_mut(&me) {
                         e.half_fade = false;
@@ -13234,7 +13243,10 @@ impl App {
                         _ => world.ko_offer = 0,
                     }
                 }
-                NetEvent::ConfSys(c) => cfgapply::from_server(world, c),
+                NetEvent::ConfSys(c) => {
+                    cfgapply::from_server(world, c);
+                    config_anon(world.config.as_mut(), &c);
+                }
                 NetEvent::MissionLog { port, data } => world.journal.record(port, data),
                 NetEvent::RoeUnity { sparks, deeds, plaudits, rot } => {
                     (world.roe.sparks, world.roe.deeds, world.roe.plaudits, world.roe.rot) =
@@ -22476,6 +22488,11 @@ pub(crate) fn egui_pass(ctx: &egui::Context, raw: egui::RawInput, ui: impl FnMut
 mod tests {
     /// The zone-in walk's sends as a retail capture has them after c2s 0x00F: 0x0DB kind 1, 0x112 kind 0, 0x05A; again
     /// at the next zone-in, within the conquest gate's 120 s and with no reply to either request.
+    #[test]
+    fn zone_in_config_block() {
+        assert_eq!(super::zone_conf([4, 0x18, 0, 1]), [4, 0x18, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
     #[test]
     fn zone_walk_sends_in_retail_order() {
         let mut conquest = super::region::Data::new(None);
