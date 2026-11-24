@@ -3597,7 +3597,7 @@ fn world_hud(
             };
             if takes && k != sel {
                 world.menu = Some(k);
-            } else if input.clicked && k == sel {
+            } else if input.released && k == sel {
                 pick = Some(k);
             }
         }
@@ -3773,7 +3773,7 @@ fn world_hud(
     if let (Some(c), Some(p), None, false) =
         (world.config.as_mut(), input.pointer, world.settings.as_ref(), modern_page)
     {
-        let out = c.pointer(gu, &mut world.game, p, input.clicked, sw, sh);
+        let out = c.pointer(gu, &mut world.game, p, input.released, sw, sh);
         config_out(world, out);
     }
     // Mouse on an open window's item list (the modern layer's list takes it there).
@@ -3782,7 +3782,7 @@ fn world_hud(
         && world.maze.screen.is_none()
         && let Some(p) = input.pointer
     {
-        items::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
+        items::pointer(world, gu, sw, sh, p, input.moved, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| {
         world.linkshell.is_some()
@@ -3791,75 +3791,75 @@ fn world_hud(
             && world.confirm.is_none()
             && world.seacom_edit.is_none()
     }) {
-        linkshell::pointer(world, gu, sw, sh, p, input.clicked);
+        linkshell::pointer(world, gu, sw, sh, p, input.released);
     }
     if let Some(p) = input.pointer.filter(|_| world.concierge_ui.is_some() && world.confirm.is_none()) {
-        concierge::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
+        concierge::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.arealist.is_some() && world.confirm.is_none())
         && !world.modern
     {
-        arealist::pointer(world, gu, sw, sh, p, input.clicked);
+        arealist::pointer(world, gu, sw, sh, p, input.released);
     }
     if let Some(p) = input.pointer.filter(|_| world.blklist.is_some() && world.confirm.is_none()) {
-        blklist::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
+        blklist::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.loot.is_some() && world.confirm.is_none()) {
-        treasure::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
+        treasure::pointer(world, gu, sw, sh, p, input.moved, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.layout.is_some() && world.confirm.is_none()) {
-        layout::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
+        layout::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.garden.is_some() && world.confirm.is_none()) {
-        garden::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
+        garden::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| post::active(world) && world.confirm.is_none()) {
-        post::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
+        post::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.moogle.is_some() && world.confirm.is_none()) {
-        moogle::pointer(world, gu, p, input.clicked, input.right_clicked);
+        moogle::pointer(world, gu, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.chatctrl.is_some() && world.confirm.is_none()) {
-        chatctrl::pointer(world, gu, p, input.clicked, input.right_clicked);
+        chatctrl::pointer(world, gu, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.primer.is_some() && world.confirm.is_none()) {
-        primer::pointer(world, gu, p, input.clicked, input.right_clicked, input.page);
+        primer::pointer(world, gu, p, input.released, input.right_clicked, input.page);
     }
     if let Some(p) = input.pointer.filter(|_| helpdesk::focused(world)) {
-        helpdesk::pointer(world, gu, p, input.clicked, input.right_clicked);
+        helpdesk::pointer(world, gu, p, input.released, input.right_clicked);
     }
     // The software keyboard is on top of the windows it types for.
     if let Some(p) = input.pointer.filter(|_| world.swkbd.is_some()) {
-        swkbd::pointer(world, gu, p, input.clicked);
+        swkbd::pointer(world, gu, p, input.released);
     }
     if let Some(p) = input.pointer.filter(|_| world.inspect.up() && world.confirm.is_none()) {
-        inspect::pointer(world, gu, p, input.clicked, input.right_clicked);
+        inspect::pointer(world, gu, p, input.released, input.right_clicked);
     }
     if let Some(p) =
         input.pointer.filter(|_| (world.region_menu.is_some() || world.cnq.is_some()) && world.confirm.is_none())
     {
-        region::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
+        region::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.auction.is_some() && world.confirm.is_none()) {
-        auction::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
+        auction::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| synth::active(world) && world.confirm.is_none()) {
-        synth::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
+        synth::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| shop::active(world) && world.confirm.is_none()) {
-        shop::pointer(world, gu, p, input.clicked, input.right_clicked);
+        shop::pointer(world, gu, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.macroedit.is_some() && world.confirm.is_none()) {
-        macroedit::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
+        macroedit::pointer(world, gu, sw, sh, p, input.moved, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.remodel.is_some() && world.confirm.is_none()) {
-        remodel::pointer(world, gu, sw, sh, p, input.clicked);
+        remodel::pointer(world, gu, sw, sh, p, input.released);
     }
     if let Some(p) = input.pointer.filter(|_| mannequin::active(world) && world.confirm.is_none()) {
-        mannequin::pointer(world, gu, sw, sh, p, input.moved, input.clicked, input.right_clicked);
+        mannequin::pointer(world, gu, sw, sh, p, input.moved, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| trade::active(world) && world.confirm.is_none()) {
-        trade::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
+        trade::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     if input.right_clicked && world.seacom_edit.is_some() && world.confirm.is_none() {
         seacom::right_click(world);
@@ -3871,45 +3871,45 @@ fn world_hud(
             && world.confirm.is_none()
     }) && !world.modern
     {
-        search::pointer(world, gu, p, input.clicked, input.right_clicked);
+        search::pointer(world, gu, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| polmail::focused(world) && !world.modern) {
-        polmail::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
+        polmail::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     } else if let Some(p) =
         input.pointer.filter(|_| friendlist::focused(world) && !polmail::composing(world) && !world.modern)
     {
-        friendlist::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
+        friendlist::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.charlnk.is_some() && world.confirm.is_none() && !world.modern) {
-        charlnk::pointer(world, gu, p, input.clicked, input.right_clicked);
+        charlnk::pointer(world, gu, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.linklist.is_some() && world.confirm.is_none()) {
-        linklist::pointer(world, gu, p, input.clicked, input.right_clicked);
+        linklist::pointer(world, gu, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| !world.modern && searchmenu::focused(world)) {
-        searchmenu::pointer(world, gu, sw, sh, p, input.clicked);
+        searchmenu::pointer(world, gu, sw, sh, p, input.released);
     }
     if let Some(p) = input.pointer.filter(|_| !world.modern && partymenu::focused(world)) {
-        partymenu::pointer(world, gu, sw, sh, p, input.clicked);
+        partymenu::pointer(world, gu, sw, sh, p, input.released);
     }
     if let Some(p) = input.pointer.filter(|_| viewhouse::focused(world))
         && !world.modern
     {
-        viewhouse::pointer(world, gu, sw, sh, p, input.clicked);
+        viewhouse::pointer(world, gu, sw, sh, p, input.released);
     }
     if let Some(p) = input.pointer.filter(|_| bazaar::focused(world))
         && !world.modern
     {
-        bazaar::pointer(world, gu, sw, sh, p, input.clicked);
+        bazaar::pointer(world, gu, sw, sh, p, input.released);
     }
     if let Some(p) = input.pointer.filter(|_| !world.modern && world.keyitems.is_some() && world.confirm.is_none()) {
-        keyitems::pointer(world, gu, sw, sh, p, input.clicked);
+        keyitems::pointer(world, gu, sw, sh, p, input.released);
     }
     if let Some(p) = input.pointer.filter(|_| !world.modern && world.quests.is_some() && world.confirm.is_none()) {
-        quests::pointer(world, gu, sw, sh, p, input.clicked, input.page);
+        quests::pointer(world, gu, sw, sh, p, input.released, input.page);
     }
     if let Some(p) = input.pointer.filter(|_| !world.modern && world.missions.is_some() && world.confirm.is_none()) {
-        missions::pointer(world, gu, sw, sh, p, input.clicked, input.page);
+        missions::pointer(world, gu, sw, sh, p, input.released, input.page);
     }
     // Taken before the sub-windows run: a right click closing one must not reach statcom2 the same frame.
     let status_pointer = input.pointer.filter(|_| {
@@ -3927,42 +3927,42 @@ fn world_hud(
         currencies::pointer(world, gu, sw, sh, p);
     }
     if let Some(p) = input.pointer.filter(|_| world.merits_ui.is_some() && world.confirm.is_none()) {
-        merits::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
+        merits::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.jp_ui.is_some() && world.confirm.is_none()) {
-        jobpoints::pointer(world, gu, p, input.clicked, input.right_clicked);
+        jobpoints::pointer(world, gu, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.ae_ui.is_some() && world.confirm.is_none()) {
-        aepoints::pointer(world, gu, p, input.clicked, input.right_clicked);
+        aepoints::pointer(world, gu, p, input.released, input.right_clicked);
     } else if let Some(p) = input.pointer.filter(|_| world.fe_main.is_some() && world.confirm.is_none()) {
-        celestite::pointer(world, gu, p, input.clicked, input.right_clicked);
+        celestite::pointer(world, gu, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.unity.is_some() && world.confirm.is_none()) {
-        unity::pointer(world, gu, p, input.clicked, input.right_clicked);
+        unity::pointer(world, gu, p, input.released, input.right_clicked);
     }
     if let Some(p) = status_pointer.filter(|_| world.status.is_some()) {
-        status::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
+        status::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.pupset.is_some() && world.confirm.is_none()) {
-        pupset::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
+        pupset::pointer(world, gu, sw, sh, p, input.moved, input.released);
     }
     if let Some(p) = input.pointer.filter(|_| world.maze.screen.is_some() && world.confirm.is_none()) {
-        maze::pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
+        maze::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     // Mouse on the magic / ability lists and their category windows, or the Set Spells screen over them.
     if let Some(p) = input.pointer.filter(|_| world.bluset.is_some() && world.confirm.is_none()) {
-        bluset::pointer(world, gu, sw, sh, p, input.moved, input.clicked);
+        bluset::pointer(world, gu, sw, sh, p, input.moved, input.released);
     } else if let Some(p) = input.pointer.filter(|_| world.moncustom.is_some() && world.confirm.is_none()) {
-        moncustom::pointer(world, gu, p, input.clicked, input.right_clicked);
+        moncustom::pointer(world, gu, p, input.released, input.right_clicked);
     } else if let Some(p) = input
         .pointer
         .filter(|_| !world.modern && (world.cats.is_some() || world.magic.is_some() || world.ability.is_some()))
     {
-        magic::pointer(world, gu, sw, sh, p, input.clicked);
+        magic::pointer(world, gu, sw, sh, p, input.released);
     }
     // The party cursor (<stpc>, a party menu pick): the mouse over the party windows' rows.
     if let Some(p) = input.pointer.filter(|_| world.party_cursor.is_some() && world.confirm.is_none()) {
-        target::party_cursor_pointer(world, gu, sw, sh, p, input.clicked, input.right_clicked);
+        target::party_cursor_pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     // The GM prompt's rows: hovering moves the cursor, a click picks.
     if let Some(p) = input.pointer.filter(|_| gmtell::open(world) && !world.modern && world.confirm.is_none())
@@ -3974,7 +3974,7 @@ fn world_hud(
     {
         let takes = winhits::takes(gu, gmtell::WINDOW, k as u16 + 1, winhits::inside(r, p));
         let k = k + world.gmtell.open.as_ref().map_or(0, |o| o.scroll);
-        gmtell::pointer(world, k, takes, input.clicked);
+        gmtell::pointer(world, k, takes, input.released);
     }
     // Mouse in an event: a click on a choice row picks it, anywhere else advances a prompt.
     if input.clicked && world.event.is_some() {
@@ -4009,7 +4009,7 @@ fn world_hud(
         if takes {
             m.sel = k;
         }
-        if input.clicked && at == k {
+        if input.released && at == k {
             mogdoor_pick(world);
         }
     }
@@ -5064,7 +5064,7 @@ fn world_hud(
                     let cur = if on_yes { 1 } else { 2 };
                     if winhits::takes(gu, layout, *id, winhits::inside(win.frame, p)) && *id != cur {
                         world.confirm = Some((kind, *id == 1));
-                    } else if input.clicked && *id == cur {
+                    } else if input.released && *id == cur {
                         answer = Some(*id == 1);
                     }
                 }
@@ -5227,7 +5227,7 @@ fn world_hud(
                 if winhits::takes(gu, "menu    mp_dead", *id, winhits::inside(win.frame, p)) && cur != *id {
                     world.mon_dead_sel = *id;
                     world.sounds.push(crate::audio::Ui::Cursor as u32);
-                } else if input.clicked && cur == *id {
+                } else if input.released && cur == *id {
                     pick = true;
                 }
             }
@@ -5285,7 +5285,7 @@ fn world_hud(
                 if winhits::takes(gu, "menu    resynus", id, winhits::inside(win.frame, p)) && !on {
                     world.raise_yes = id == 1;
                     world.sounds.push(crate::audio::Ui::Cursor as u32);
-                } else if input.clicked && on {
+                } else if input.released && on {
                     answer_raise(world, id == 1);
                     world.sounds.push(crate::audio::Ui::Select as u32);
                 }
@@ -15980,7 +15980,7 @@ impl App {
         }
         // The mouse routine's frame (FUN_101267f0) before any window takes the pointer.
         if let Some(gu) = &self.game_ui {
-            winhits::frame(gu, input.down);
+            winhits::frame(gu, input.down, self.mouse.visible);
         }
         let busy = self.busy || self.lobby_popup.is_some();
         let status = self.status.clone();
@@ -16622,7 +16622,7 @@ impl App {
                                     let at = *menu;
                                     if winhits::takes(lu, "lobby title", *m as u16 + 1, true) && at != *m {
                                         *menu = *m;
-                                    } else if input.clicked && at == *m {
+                                    } else if input.released && at == *m {
                                         chosen = Some(*m);
                                     }
                                 }
@@ -16771,7 +16771,7 @@ impl App {
                                         if input.clicked {
                                             lu.press_at(p);
                                         }
-                                        outs.push(c.pointer(lu, &mut self.lobby_values, p, input.clicked, sw, sh));
+                                        outs.push(c.pointer(lu, &mut self.lobby_values, p, input.released, sw, sh));
                                     }
                                     for out in outs {
                                         if let Some(a) = self.audio.as_mut() {
@@ -17295,7 +17295,7 @@ impl App {
                                 let on = ws.top + i == ws.cursor;
                                 if winhits::takes(gu, "creator worldsel", i as u16 + 1, true) && ws.hover(i) {
                                     world_se.push(crate::audio::Ui::Cursor);
-                                } else if input.clicked
+                                } else if input.released
                                     && on
                                     && let creator::WorldAct::Sound(s) = ws.pick()
                                 {
@@ -17309,7 +17309,7 @@ impl App {
                                 let at = sel;
                                 if winhits::takes(gu, "creator step", i as u16 + 1, true) && at != i {
                                     sel = i;
-                                } else if input.clicked && at == i {
+                                } else if input.released && at == i {
                                     next = true;
                                 }
                             }
@@ -17322,7 +17322,7 @@ impl App {
                             let on = (id == 1) == self.creator_yes;
                             if winhits::takes(gu, "creator yes no", id, true) && !on {
                                 self.creator_yes = id == 1;
-                            } else if input.clicked && on {
+                            } else if input.released && on {
                                 answer = Some(id == 1);
                             }
                         }

@@ -336,12 +336,14 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clic
         // FUN_10221cd0: over the page arrows the list is disabled (no hand, no list keys); a click on them is Left /
         // Right through the 0xa8 test, so with Ctrl / Alt held it pages the disabled list, i.e. does nothing.
         if matches!(c, 9 | 10) && l.state == 0 {
-            let takes = super::winhits::takes_no_hand(gu, LIST, c, frame);
+            // The arrow keeps the list off while the pointer is on it (message 9 there cleared +0x62; only a hover
+            // onto another child sets it again).
+            super::winhits::takes_no_hand(gu, LIST, c, frame);
             // The click's Left / Right switches the area before the hover disables the list.
             if clicked && !page {
                 w.list_arrow_hover = false;
                 key(w, if c == 9 { egui::Key::ArrowLeft } else { egui::Key::ArrowRight }, false);
-            } else if takes {
+            } else {
                 w.list_arrow_hover = true;
             }
             return;

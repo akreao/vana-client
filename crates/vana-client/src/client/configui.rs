@@ -725,7 +725,8 @@ impl ConfigUi {
             && p.1 < r[1] + r[3]
         {
             let at = w.cursor;
-            if super::winhits::takes(gu, &full, SETTINGS, in_frame) && at != SETTINGS {
+            // Our Settings button is a frame of its own (settings_rect), the pointer already in it.
+            if super::winhits::takes(gu, &full, SETTINGS, true) && at != SETTINGS {
                 out.sounds.push(Se::Cursor);
                 if let Some(w) = self.stack.last_mut() {
                     w.cursor = SETTINGS;

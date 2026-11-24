@@ -37,17 +37,23 @@ Ours:
   the child is not last frame's hit, or the left button is down with the pointer in the frame. It also sets the hand
   unless the child was drawn in state 5 (`GameUi::disabled_children` records them per frame, `disabled_part`).
   `winhits::frame` starts each frame's hit memory from the pointer input. Ours keys the hit by window as well as child,
-  since ours runs more than one window's mouse in a frame where retail runs only the active one's.
+  since ours runs more than one window's mouse in a frame where retail runs only the active one's, and keeps one last
+  hit per window. While the keys hide the pointer (+0x4e = 0) nothing is hit and the last hits are kept, as retail
+  skips the hover block and FUN_1011a140 answers -1.
 - Every window's mouse moves its cursor with `takes` (the generic handler, the lists, the menus, the prompts, the main
   menu, the action menu, the K.O. and raise prompts, the party cursor, the title menu, character select and the
-  creator's steps), and a click acts only on the cursor's child (the release). Before, the cursor moved on any pointer
+  creator's steps), and the release acts only on the cursor's child: the windows take the button's release edge, not
+  egui's click (which drops a release after a drag or a long hold); a press that began on a scroll bar keeps its
+  release (scrollbar::frame, retail's +0x86). Before, the cursor moved on any pointer
   move over another child or on a click, and a click on another child picked it at once.
-- itemctrl / moneyctr (`winhits::ctr`): the button held puts the window's cursor on - / + (ours keeps it as the held
-  child), the release on it steps once, and held there past 0x1e ticks it repeats every retail frame (2 ticks at 30
+- itemctrl / moneyctr (`winhits::ctr`): the hover or the button held puts the window's cursor on - / + (ours keeps it
+  as the held child), the release on it steps once; held frames off that child or outside the frame count nothing
+  (the count is kept, the time away is not counted), and held there past 0x1e ticks it repeats every retail frame (2 ticks at 30
   frames a second, 1 at Movement Rate 60). Ours stepped on the press and repeated after 400 ms every 60 ms.
 - conf11s: children 15 / 16 take the mouse, Enter on them switches the log window, Down / Up do nothing there, and
   Left / Right first put the cursor back on the row the last Down / Up left (`Extra::key_row`).
-- The list page arrows (miss00 / quest01 / guide01 9 / 10) disable their list on `takes` (no hand), not on any move.
+- The list page arrows (miss00 / quest01 / guide01 9 / 10) keep their list disabled while the pointer is on them (no
+  hand), as message 9 there cleared +0x62.
 - The raise prompt's own hover memory (`raise_hover`) is gone; it uses `takes`.
 
 Not built (new queue row 182): the release over no child (SE 0004, +0x87); itemctrl / moneyctr's cursor on - / +
@@ -58,5 +64,6 @@ mapscan; the window frames of character select's and the creator's windows (ours
 the pointer over another window (message 8, from the loop over FUN_101603f0 at the end of the hover) still follow
 ours' pointer moves.
 
-Tests: `client::winhits::tests::hover_takes_only_a_new_hit`, `held_count_repeats_past_thirty_ticks`. Not checked on
+Tests: `client::winhits::tests::hover_takes_only_a_new_hit`, `hover_per_window_and_hidden`,
+`held_count_repeats_past_thirty_ticks`, `held_count_pauses_off_the_child`. Not checked on
 screen or live.

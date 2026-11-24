@@ -65,32 +65,44 @@ pub fn parts<'a>(gu: &'a GameUi, name: &'a str) -> impl Fn(u16) -> Option<(f32, 
     }
 }
 
-/// The hover hit of last frame and of this one (mouse object +0x52): a window and its child under the pointer.
+/// The hover hits of last frame and of this one (mouse object +0x52): each window and its child under the pointer
+/// (ours runs more than one window's mouse in a frame, so one per window), and whether the pointer is hidden.
 #[derive(Default)]
 pub struct Hover {
-    prev: Option<(String, u16)>,
-    now: Option<(String, u16)>,
+    prev: Vec<(String, u16)>,
+    now: Vec<(String, u16)>,
     down: bool,
+    hidden: bool,
 }
 
 impl Hover {
-    fn frame(&mut self, down: bool) {
-        self.prev = self.now.take();
+    /// A frame of the mouse routine. With the pointer hidden (+0x4e = 0) the hover block does not run and +0x52 keeps
+    /// its value, and the hit test answers -1 (FUN_1011a140 tests +0x4e), so nothing takes the cursor.
+    fn frame(&mut self, down: bool, shown: bool) {
+        self.hidden = !shown;
+        if shown {
+            self.prev = std::mem::take(&mut self.now);
+        }
         self.down = down;
     }
 
     /// `takes` without the hand.
     fn take(&mut self, name: &str, child: u16, frame: bool) -> bool {
-        let fresh = self.prev.as_ref().is_none_or(|(n, c)| n != name || *c != child);
-        self.now = Some((name.to_string(), child));
+        if self.hidden {
+            return false;
+        }
+        let fresh = !self.prev.iter().any(|(n, c)| n == name && *c == child);
+        self.now.retain(|(n, _)| n != name);
+        self.now.push((name.to_string(), child));
         fresh || (self.down && frame)
     }
 }
 
-/// A new frame of the mouse routine (FUN_101267f0): this frame's hit starts as none (+0x52 = -1, also when the pointer
-/// is hidden or no window is active) and the last one is kept to compare with; `down` is the left button.
-pub fn frame(gu: &GameUi, down: bool) {
-    gu.ptr_hover.borrow_mut().frame(down);
+/// A new frame of the mouse routine (FUN_101267f0): this frame's hits start as none (+0x52 = -1 when no window is
+/// active or no child is hit) and the last ones are kept to compare with; `down` is the left button, `shown` the
+/// pointer (hidden by the keys).
+pub fn frame(gu: &GameUi, down: bool, shown: bool) {
+    gu.ptr_hover.borrow_mut().frame(down, shown);
 }
 
 /// The mouse on child `child` of window `name`, hit under the pointer this frame (`frame`: the pointer is inside the
@@ -106,7 +118,7 @@ pub fn frame(gu: &GameUi, down: bool) {
 /// Ours keys the hit by window as well as child: ours runs more than one window's mouse in a frame, retail only the
 /// active one's.
 pub fn takes(gu: &GameUi, name: &str, child: u16, frame: bool) -> bool {
-    if !gu.disabled_part(name, child) {
+    if !gu.ptr_hover.borrow().hidden && !gu.disabled_part(name, child) {
         gu.hover.set(true);
     }
     gu.ptr_hover.borrow_mut().take(name, child, frame)
@@ -216,6 +228,12 @@ impl Held {
     fn reset(&mut self) {
         (self.count, self.acc, self.last) = (0, 0.0, None);
     }
+
+    /// A held frame off the cursor's child or outside the frame: FUN_1015f360 counts nothing then, so the time does
+    /// not count either; the next frame on the child counts as one retail frame. The count itself is kept.
+    fn pause(&mut self) {
+        (self.acc, self.last) = (0.0, None);
+    }
 }
 
 /// The mouse on itemctrl / moneyctr (`name`, as drawn this frame), by the shared window steps: the button held inside
@@ -239,26 +257,27 @@ pub fn ctr(
         return;
     }
     let Some(id) = child else {
-        if !down {
-            w.ctr_hold.reset();
+        if down {
+            w.ctr_hold.pause()
+        } else {
+            w.ctr_hold.reset()
         }
         return;
     };
-    let takes = takes(gu, name, id, on);
+    // The hover or the held step puts the cursor on the child (no step of its own).
+    let cursor = w.ctr_hold.child;
+    if takes(gu, name, id, on) && cursor != Some(id) {
+        w.ctr_hold.child = Some(id);
+    }
     if !down {
-        if clicked && w.ctr_hold.child == Some(id) {
+        if clicked && cursor == Some(id) {
             ctr_key(id).inspect(|&k| key(w, gu, k));
         }
         w.ctr_hold.reset();
         return;
     }
-    if w.ctr_hold.child != Some(id) {
-        if takes {
-            w.ctr_hold.child = Some(id);
-        }
-        return;
-    }
-    if !on {
+    if cursor != Some(id) || !on {
+        w.ctr_hold.pause();
         return;
     }
     let n = w.ctr_hold.tick(std::time::Instant::now(), super::ground::frame_ticks());
@@ -304,7 +323,7 @@ mod tests {
     fn hover_takes_only_a_new_hit() {
         let mut h = Hover::default();
         let mut step = |down: bool, hit: Option<u16>, frame: bool| {
-            h.frame(down);
+            h.frame(down, true);
             hit.map(|c| h.take("menu    w", c, frame))
         };
         // The pointer comes onto child 2, rests there (the keys may move the cursor away meanwhile), moves within it.
@@ -320,8 +339,37 @@ mod tests {
         assert_eq!(step(true, Some(3), true), Some(true));
         assert_eq!(step(true, Some(3), false), Some(false));
         // Another window's child of the same number is another hit (ours keys by window too).
-        h.frame(false);
+        h.frame(false, true);
         assert!(h.take("menu    v", 3, false));
+    }
+
+    /// Two windows hit in the same frame keep their own last hits; the hidden pointer takes nothing and keeps them.
+    #[test]
+    fn hover_per_window_and_hidden() {
+        let mut h = Hover::default();
+        h.frame(false, true);
+        assert!(h.take("menu    a", 1, true) && h.take("menu    b", 4, true));
+        h.frame(false, true);
+        assert!(!h.take("menu    a", 1, true) && !h.take("menu    b", 4, true));
+        // Hidden by a key: no hit, even held, and the memory stays.
+        h.frame(true, false);
+        assert!(!h.take("menu    a", 2, true));
+        h.frame(false, true);
+        assert!(!h.take("menu    a", 1, true));
+        assert!(h.take("menu    b", 5, true));
+    }
+
+    /// Off the cursor's child the count stands still: the time away is not counted.
+    #[test]
+    fn held_count_pauses_off_the_child() {
+        let t0 = std::time::Instant::now();
+        let at = |n: u64| t0 + std::time::Duration::from_millis(n * 34);
+        let mut h = Held::default();
+        assert_eq!(h.tick(at(0), 2.0), 0);
+        h.pause();
+        // A long time away, then one frame back on: one retail frame counted.
+        assert_eq!(h.tick(at(100), 2.0), 0);
+        assert_eq!(h.count, 4);
     }
 
     /// FUN_1015f360: the count takes each retail frame's ticks (2 at 30 frames a second) up to past 0x1e, then
