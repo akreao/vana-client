@@ -354,6 +354,9 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Option<[f32; 4]> {
     }
     gu.clip(Some([cx - 16.0, cy, cw + 16.0, ch]));
     let focused = focused(w);
+    if focused {
+        focus_part(gu, WIN, &win);
+    }
     // The rows are code-drawn entries: each row's lines from its marker, inside the view.
     let rows = entries
         .iter()
@@ -402,5 +405,15 @@ pub fn keep_scroll(w: &mut World, gu: &GameUi, sw: f32, sh: f32) {
     }
     if let Some(h) = w.helpdesk.as_mut() {
         h.scroll = scroll;
+    }
+}
+
+/// faqsub and faqmain move their own cursor (an entry, +0x128): the window's cursor (+0x4c) stays on child 1, where
+/// the window load leaves it (FUN_101193d0 ends with FUN_1011a320(1); win_faqsub_v14 / FUN_10219330 clear +0x61, so
+/// the generic keys never move it, and nothing in either window sets it). That child, hidden, is the part the focus
+/// warp aims at (FUN_1011c080), not the hand on the entry.
+pub(super) fn focus_part(gu: &mut GameUi, name: &str, win: &super::game_ui::LobbyWin) {
+    if let Some(&(id, r)) = win.children.iter().find(|c| c.0 == 1) {
+        gu.focus_child(name, id, r);
     }
 }
