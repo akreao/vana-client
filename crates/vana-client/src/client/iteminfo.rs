@@ -103,31 +103,19 @@ fn time(s: u32) -> String {
     }
 }
 
-/// Greedy wrap at `max` px, breaking after any of `breaks` (FUN_101ca520); a piece with no break point is cut.
-fn wrap(s: &str, max: f32, breaks: &[char], width: &dyn Fn(&str) -> f32) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut rest = s.to_string();
-    while width(&rest) > max {
-        let mut cut = 0;
-        let mut last_break = None;
-        for (i, c) in rest.char_indices() {
-            let end = i + c.len_utf8();
-            if width(&rest[..end]) > max {
-                break;
-            }
-            cut = end;
-            if breaks.contains(&c) {
-                last_break = Some(end);
-            }
-        }
-        let at = last_break.unwrap_or(cut.max(rest.chars().next().map_or(1, char::len_utf8)));
-        out.push(rest[..at].trim_end().to_string());
-        rest = rest[at..].trim_start().to_string();
-    }
-    if !rest.is_empty() {
-        out.push(rest);
-    }
-    out
+/// FUN_1015c9e0: the description's lines, at most 20, cut by the game's line breaker (tail 0x14, a 0xff buffer): 316 px
+/// wide, but a Japanese client's third line on is 366 and a 、。！ where a line ends hangs on it (FUN_1011ee70). Each line
+/// is the text it took (no '-' at a soft hyphen), up to a line break.
+fn desc_lines(text: &str, width: &dyn Fn(&str) -> f32) -> Vec<String> {
+    use crate::dat::{items::Lang, lang, linebreak};
+    let ja = lang::client() == Lang::Ja;
+    let max = |k: usize| if ja && k > 1 { 366.0 } else { 316.0 };
+    let cut = linebreak::StrCut { width, max: &max, tail: 0x14, cap: 0xff, hang: ja };
+    linebreak::str_lines(text, &cut)
+        .into_iter()
+        .take(20)
+        .map(|l| text[l.start..l.end].chars().filter(|&c| c != linebreak::SOFT_HYPHEN as char).collect())
+        .collect()
 }
 
 /// FUN_100fe150: 6-bit MSB-first names (1..10 '0'..'9', 11..36 'A'..'Z', 37..62 'a'..'z', 0 ends).
@@ -240,8 +228,7 @@ pub fn build(
             info.line2.push(fmt(&f, &[&it.superior_level]));
         }
     }
-    // Description: the item's lines, pre-wrapped at 316 px (FUN_1015b410), at most 20.
-    info.desc = it.description.split('\n').flat_map(|l| wrap(l, 316.0, &[' '], width)).take(20).collect();
+    info.desc = desc_lines(&it.description, width);
     let extra = |k: u16| it.extra.iter().find(|e| e.0 == k).map_or(0, |e| e.1);
     let mut line = String::new();
     if gear {

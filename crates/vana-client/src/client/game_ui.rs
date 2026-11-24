@@ -12,6 +12,12 @@ use crate::render::ui::{UiBatch, UiRenderer};
 use anyhow::{Context, Result};
 use std::time::Instant;
 
+/// FUN_1025ccf0's tail for the log and event lines (FUN_1012b980) and for text boxes (FUN_10158200 / FUN_101582a0).
+const TAIL_LINES: usize = 0x18;
+const TAIL_BOX: usize = 0x14;
+/// Their buffers (0x200; the log's are 0x7ff / 0x1ff): the byte cap no line comes near.
+const LINE_BUFFER: usize = 0x200;
+
 /// Texture name the font atlas is uploaded under (cannot clash with a DAT name).
 const ATLAS: &str = "\0font atlas";
 /// Glyph colours, BGRA with 0x80 = 1.0.
@@ -351,7 +357,7 @@ pub struct GameUi {
     stale: Vec<String>,
     /// Wrapped lines by (text, widths, TrueType text): windows wrap the same text every frame, and a wrap measures its
     /// line again for every word (wrap_part).
-    wrapped: std::cell::RefCell<std::collections::HashMap<u64, (String, [u32; 2], bool, Vec<String>)>>,
+    wrapped: std::cell::RefCell<std::collections::HashMap<u64, (String, [u32; 3], bool, Vec<(usize, String)>)>>,
     /// Images made for a while (name plates' rasters): when each was last drawn; unseen for TEMP_KEEP, stale.
     temp_seen: std::collections::HashMap<String, std::time::Instant>,
     /// When temp_seen was last looked over.
@@ -2399,19 +2405,25 @@ impl GameUi {
         screens::window_rect(&self.data.lobby, name, w, h).map(|[x, y, rw, rh]| [x, y + dy, rw, rh])
     }
 
-    /// Splits a line into pieces no wider than `max`, at each '\n' and at spaces where possible.
+    /// A text box's lines (FUN_10158200 / FUN_101582a0, tail 0x14): the game's line breaker, each line no wider than
+    /// `max`; a colour carries over as `wrap_indent` carries it.
     pub fn wrap(&self, line: &str, max: f32) -> Vec<String> {
-        self.wrap_indent(line, max, false)
+        self.wrap_cut(line, max, false, TAIL_BOX)
     }
 
-    /// FUN_1012a4f0: each wrapped line starts with the last `1e xx` before it, so a colour carries over; with `indent`
-    /// (wrapper mode 1) a continuation line starts with a full-width space and is narrower by its width.
+    /// FUN_1012b980 (the log and event lines, tail 0x18): each wrapped line starts with the last `1e xx` before it, so a
+    /// colour carries over; with `indent` (wrapper mode 1) a continuation line starts with a full-width space and is
+    /// narrower by its width.
     pub fn wrap_indent(&self, line: &str, max: f32, indent: bool) -> Vec<String> {
+        self.wrap_cut(line, max, indent, TAIL_LINES)
+    }
+
+    fn wrap_cut(&self, line: &str, max: f32, indent: bool, tail: usize) -> Vec<String> {
         let code = |c: &char| (crate::dat::font::CODE_BASE..crate::dat::font::CODE_BASE + 0x100).contains(&(*c as u32));
         let line_colour = crate::dat::font::colour_code(1);
         let mut cur = line_colour;
         let mut out = Vec::new();
-        for (_, piece) in self.wrap_spans(line, max, indent) {
+        for (_, piece) in self.spans_cut(line, max, indent, tail) {
             let mut s = if out.is_empty() || !indent { String::new() } else { "\u{3000}".to_string() };
             if cur != line_colour {
                 s.push(cur);
@@ -2426,25 +2438,18 @@ impl GameUi {
     /// The wrapped lines of `line` as `wrap_indent` cuts them, without its prefixes, with the byte offset each starts
     /// at.
     pub fn wrap_spans(&self, line: &str, max: f32, indent: bool) -> Vec<(usize, String)> {
-        let rest = if indent { max - self.text_width("\u{3000}") } else { max };
-        let mut out = Vec::new();
-        let mut base = 0;
-        for (k, part) in line.split('\n').enumerate() {
-            let mut off = 0;
-            for piece in self.wrap_part(part, if k == 0 { max } else { rest }, rest) {
-                let at = part[off..].find(piece.as_str()).map_or(off, |i| off + i);
-                off = at + piece.len();
-                out.push((base + at, piece));
-            }
-            base += part.len() + 1;
-        }
-        out
+        self.spans_cut(line, max, indent, TAIL_LINES)
     }
 
-    /// Words to lines: the first at most `first` wide, the others `rest` (wrapped once for the same text and widths).
-    fn wrap_part(&self, line: &str, first: f32, rest: f32) -> Vec<String> {
+    fn spans_cut(&self, line: &str, max: f32, indent: bool, tail: usize) -> Vec<(usize, String)> {
+        let rest = if indent { max - self.text_width("\u{3000}") } else { max };
+        self.wrap_part(line, max, rest, tail)
+    }
+
+    /// The lines of `line`: the first at most `first` wide, the others `rest` (cut once for the same text and widths).
+    fn wrap_part(&self, line: &str, first: f32, rest: f32, tail: usize) -> Vec<(usize, String)> {
         use std::hash::{Hash, Hasher};
-        let (widths, ttf) = ([first.to_bits(), rest.to_bits()], self.batch.ttf_text());
+        let (widths, ttf) = ([first.to_bits(), rest.to_bits(), tail as u32], self.batch.ttf_text());
         let mut h = std::collections::hash_map::DefaultHasher::new();
         (line, widths, ttf).hash(&mut h);
         let key = h.finish();
@@ -2455,7 +2460,7 @@ impl GameUi {
         {
             return e.3.clone();
         }
-        let out = self.wrap_words(line, first, rest);
+        let out = self.break_lines(line, first, rest, tail);
         let mut c = self.wrapped.borrow_mut();
         if c.len() >= 512 {
             c.clear();
@@ -2464,33 +2469,16 @@ impl GameUi {
         out
     }
 
-    fn wrap_words(&self, line: &str, first: f32, rest: f32) -> Vec<String> {
-        let mut out = Vec::new();
-        let mut cur = String::new();
-        let max = |out: &Vec<String>| if out.is_empty() { first } else { rest };
-        for word in line.split_inclusive(' ') {
-            if !cur.is_empty() && self.text_width(&(cur.clone() + word.trim_end())) > max(&out) {
-                out.push(std::mem::take(&mut cur).trim_end().to_string());
-            }
-            cur.push_str(word);
-            // A single word wider than the line breaks anywhere.
-            while self.text_width(cur.trim_end()) > max(&out) && cur.chars().count() > 1 {
-                let mut head = String::new();
-                for ch in cur.chars() {
-                    if self.text_width(&format!("{head}{ch}")) > max(&out) {
-                        break;
-                    }
-                    head.push(ch);
-                }
-                if head.is_empty() {
-                    break;
-                }
-                cur = cur[head.len()..].to_string();
-                out.push(head);
-            }
-        }
-        if !cur.trim_end().is_empty() || out.is_empty() {
-            out.push(cur.trim_end().to_string());
+    /// The game's line breaker (FUN_1025ccf0, dat::linebreak) over `line` until the text ends: each line with the
+    /// byte offset in `line` it starts at.
+    fn break_lines(&self, line: &str, first: f32, rest: f32, tail: usize) -> Vec<(usize, String)> {
+        use crate::dat::linebreak;
+        let width = |s: &str| self.text_width(s);
+        let max = |k: usize| if k == 0 { first } else { rest };
+        let cut = linebreak::StrCut { width: &width, max: &max, tail, cap: LINE_BUFFER, hang: false };
+        let mut out: Vec<_> = linebreak::str_lines(line, &cut).into_iter().map(|l| (l.start, l.text(line))).collect();
+        if out.is_empty() {
+            out.push((0, String::new()));
         }
         out
     }
