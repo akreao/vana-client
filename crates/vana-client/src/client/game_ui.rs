@@ -68,18 +68,27 @@ pub struct GameUiData {
     /// The registry's group masks (u16 +0x2a, window +0x38): FUN_1015fa00 suspends a window whose bits a window
     /// above it holds.
     groups: std::collections::HashMap<String, u16>,
+    /// The registry's layer byte (+0x29, window +0x60): FUN_1015f0e0 puts a window of layer 4 or less under the
+    /// windows of layer 5 and up (the chat line 6, the auto-translate list 7, "menu    ok" 8 ...).
+    layers: std::collections::HashMap<String, u8>,
 }
 
 /// The menu registry in FFXiMain: {name[32], handler, u32 flags, ...} records 0x2c apart from "menu    menuwind" to
 /// an empty name. Found as the copy of that name followed by another "menu    " entry.
-fn menu_registry(ffximain: &[u8]) -> (std::collections::HashMap<String, u32>, std::collections::HashMap<String, u16>) {
-    let (mut out, mut groups) = (std::collections::HashMap::new(), std::collections::HashMap::new());
+type Registry = (
+    std::collections::HashMap<String, u32>,
+    std::collections::HashMap<String, u16>,
+    std::collections::HashMap<String, u8>,
+);
+
+fn menu_registry(ffximain: &[u8]) -> Registry {
+    let (mut out, mut groups, mut layers) = Registry::default();
     let first = b"menu    menuwind";
     let Some(at) = (0..ffximain.len().saturating_sub(0x60)).find(|&i| {
         ffximain[i..].starts_with(first) && ffximain[i + 16] == 0 && ffximain[i + 0x2c..].starts_with(b"menu    ")
     }) else {
         log::warn!("menu registry not found");
-        return (out, groups);
+        return (out, groups, layers);
     };
     for e in ffximain[at..].as_chunks::<0x2c>().0 {
         let name = &e[..32];
@@ -90,9 +99,10 @@ fn menu_registry(ffximain: &[u8]) -> (std::collections::HashMap<String, u32>, st
         // Keyed like the layout names (trimmed, lower case), so the padded short names match too.
         let key = crate::dat::ui::norm_name(&name[..len]);
         groups.insert(key.clone(), u16::from_le_bytes([e[0x2a], e[0x2b]]));
+        layers.insert(key.clone(), e[0x29]);
         out.insert(key, u32::from_le_bytes(e[0x24..0x28].try_into().unwrap()));
     }
-    (out, groups)
+    (out, groups, layers)
 }
 
 // From FFXiMain (dat::tables): the creator stat table (STR DEX VIT AGI INT MND CHR per race and job), the action
@@ -184,7 +194,7 @@ impl GameUiData {
         let styles = (0..8)
             .filter_map(|k| parse(WINDOW_STYLE_BASE + k).map_err(|e| log::warn!("window style {k}: {e:#}")).ok())
             .collect();
-        let (registry, groups) = menu_registry(ffximain);
+        let (registry, groups, layers) = menu_registry(ffximain);
         let status = [0x3a, 0x3b].map(|slot| {
             crate::dat::msg::current_slot_file(ffximain, 1, slot)
                 .and_then(|f| index.read(f).map_err(|e| log::warn!("status info {f}: {e:#}")).ok())
@@ -214,6 +224,7 @@ impl GameUiData {
             status,
             registry,
             groups,
+            layers,
         })
     }
 }
@@ -385,6 +396,8 @@ pub struct GameUi {
     /// A cursor move from window code that puts the pointer on the new cursor child (FUN_1011a240(child, 1), or a
     /// cursor set followed by FUN_10126000): the window and child, owed until that hand is drawn.
     cursor_warp: std::cell::RefCell<Option<(String, u16)>>,
+    /// A pointer move window code made to a part it knows (`GameUi::warp_to_part`), paid at the frame's end.
+    part_warp: std::cell::Cell<Option<(f32, f32)>>,
 }
 
 /// FUN_1015fa00's group walk (MODLOG "Window group walk"): the windows wanted this frame and last with their
@@ -509,6 +522,7 @@ impl GameUi {
             focus_warp: None,
             presses: Default::default(),
             cursor_warp: Default::default(),
+            part_warp: Default::default(),
         }
     }
 
@@ -628,9 +642,16 @@ impl GameUi {
         self.anims.retain(|_, a| a.seen == frame || a.close > 0.0);
         self.anim_frame += 1;
         self.run_walk();
-        let hand = self.batch.hand.take();
-        let moved = cursor_warp_due(&mut self.cursor_warp.borrow_mut(), hand.as_ref());
+        let hands = std::mem::take(&mut self.batch.hands);
+        // A window's hand is the last one it drew; with no focus window, the last one drawn.
+        let hand_of = |name: Option<&str>| {
+            hands.iter().rev().find(|h| name.is_none_or(|n| crate::dat::ui::norm_name(h.0.as_bytes()) == n)).cloned()
+        };
+        let owed = self.cursor_warp.borrow().as_ref().map(|o| o.0.clone());
+        let moved = cursor_warp_due(&mut self.cursor_warp.borrow_mut(), hand_of(owed.as_deref()).as_ref())
+            .or(self.part_warp.take());
         let top = self.walk_focus();
+        let hand = hand_of(top.as_ref().map(|t| t.0.as_str()));
         let (focus, warp) = self.focus_state.step(top, !self.walk.last.is_empty(), hand);
         self.focus = focus;
         // The frame pass's focus change (FUN_10160fd0 -> FUN_1015fe20) comes after the window code's cursor moves.
@@ -684,6 +705,14 @@ impl GameUi {
         *self.cursor_warp.borrow_mut() = Some((crate::dat::ui::norm_name(name.as_bytes()), child));
     }
 
+    /// Window code set `name`'s cursor on a part whose rect it gives and put the pointer there (FUN_1011a240(child, 1)
+    /// -> FUN_1011c080 -> FUN_10125b90 with the 18-tick glide), where the hand is drawn on another part by the time
+    /// the frame ends (the auto-translate list's open hook puts it on its first row, and the list's draw moves it back
+    /// to the selected row with no pointer move).
+    pub fn warp_to_part(&self, rect: [f32; 4]) {
+        self.part_warp.set(Some(centre(rect)));
+    }
+
     /// The pointer warp a focus change or a window's cursor move asked for at the last frame's end (UI pixels), once.
     pub fn take_focus_warp(&mut self) -> Option<(f32, f32)> {
         self.focus_warp.take()
@@ -726,7 +755,7 @@ impl GameUi {
                     let under = if key == "menu    targetwi" {
                         self.walk.last.iter().filter(|(n, _)| self.win_group(n) & g != 0).map(|(_, &s)| s - 1).min()
                     } else {
-                        None
+                        self.layer_stamp(&key)
                     };
                     under.unwrap_or_else(|| {
                         self.walk.top += 1000;
@@ -737,6 +766,20 @@ impl GameUi {
             self.walk.now.insert(key.clone(), stamp);
         }
         !self.walk.suspended.contains(&key)
+    }
+
+    /// FUN_1015f0e0 for a new window of layer 4 or less: from the top down past the windows of layer 5 and up, it goes
+    /// just above the first window of layer 4 or less; with none, just above the lowest window (the walk ends on a
+    /// high one: retail's quirk). None (on top) when the top window is low already or nothing is open.
+    fn layer_stamp(&self, key: &str) -> Option<i64> {
+        let open: Vec<(i64, u8)> =
+            self.walk.last.iter().chain(self.walk.now.iter()).map(|(n, &s)| (s, self.layer(n))).collect();
+        under_high_layers(open, self.layer(key))
+    }
+
+    /// A window's registry layer (window +0x60); unlisted windows are 0.
+    fn layer(&self, name: &str) -> u8 {
+        self.data.layers.get(crate::dat::ui::norm_name(name.as_bytes()).as_str()).copied().unwrap_or(0)
     }
 
     /// A window the last walk had open and did not suspend; unlike `want`, it does not open it.
@@ -3144,6 +3187,18 @@ fn cursor_warp_due(owed: &mut Option<(String, u16)>, hand: Option<&Hand>) -> Opt
     None
 }
 
+/// `GameUi::layer_stamp` on the open windows' (stamp, layer).
+fn under_high_layers(mut open: Vec<(i64, u8)>, layer: u8) -> Option<i64> {
+    if layer >= 5 {
+        return None;
+    }
+    open.sort_by_key(|o| std::cmp::Reverse(o.0));
+    open.dedup();
+    let top_high = open.first().is_some_and(|o| o.1 >= 5);
+    let at = open.iter().find(|o| o.1 < 5).or(open.last()).map(|o| o.0);
+    at.filter(|_| top_high).map(|s| s + 1)
+}
+
 /// FUN_1011c080: the cursor part's centre, x + w / 2 and y + h / 2 on its shorts (C division).
 fn centre(r: [f32; 4]) -> (f32, f32) {
     let [x, y, w, h] = r.map(|v| v as i32);
@@ -3157,7 +3212,7 @@ fn faq_hand_frame(frames: f32) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{Focus, cursor_warp_due, faq_hand_frame};
+    use super::{Focus, cursor_warp_due, faq_hand_frame, under_high_layers};
 
     /// Registry flag 0x200000 (FUN_1015f920 at 0x1015fa80 -> FUN_1011a580) puts a window's last child in state 0x10.
     /// In every layout that child is the caption: it has no cursor link, and no window with the flag ends in a row.
@@ -3170,7 +3225,7 @@ mod tests {
         let dir = crate::config::Config::load().ffxi_dir();
         let Ok(index) = crate::dat::DatIndex::open(&dir) else { return };
         let Ok(dll) = std::fs::read(crate::dat::ffximain(&dir)) else { return };
-        let (flags, _) = super::menu_registry(&dll);
+        let (flags, ..) = super::menu_registry(&dll);
         let Ok(file) = index.read(LOBBY_US) else { return };
         let mut ui = UiFile::parse(&file).unwrap();
         for &c in companions(LOBBY_US) {
@@ -3249,6 +3304,19 @@ mod tests {
 
     /// A cursor move with the pointer (FUN_1011a240(child, 1)) waits for the window to draw its hand on the new child,
     /// then puts the pointer on that child's centre once; another window's hand, or none, drops it.
+    /// FUN_1015f0e0: a new window of layer 4 or less goes under the high-layer windows on top, just above the first
+    /// low one; with only high ones open, above the lowest of them; on top otherwise.
+    #[test]
+    fn low_layer_windows_open_under_high_ones() {
+        assert_eq!(under_high_layers(vec![], 0), None);
+        assert_eq!(under_high_layers(vec![(1000, 0), (2000, 6)], 7), None);
+        assert_eq!(under_high_layers(vec![(1000, 0), (2000, 1)], 0), None);
+        // A menu under the chat line (6) and its list (7), over the window under them.
+        assert_eq!(under_high_layers(vec![(3000, 7), (1000, 0), (2000, 6), (2000, 6)], 0), Some(1001));
+        // Only the chat line and the list open: above the chat line, under the list.
+        assert_eq!(under_high_layers(vec![(3000, 7), (2000, 6)], 1), Some(2001));
+    }
+
     #[test]
     fn cursor_warp_waits_for_the_new_child() {
         let on = |c: u16| ("menu    trade".to_string(), c, [100.0, 40.0, 63.0, 15.0]);

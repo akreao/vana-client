@@ -99,8 +99,9 @@ pub struct UiBatch {
     pub ttf: bool,
     /// The opacity of the window being drawn (per-window opacity), multiplied into what is pushed; None = 1.
     opacity: Option<f32>,
-    /// The hand drawn last (the focused window's cursor): the window, its cursor child and that child's rect.
-    pub hand: Option<(String, u16, [f32; 4])>,
+    /// The hands drawn this frame in draw order (the last one of the focused window is its cursor): the window, its
+    /// cursor child and that child's rect.
+    pub hands: Vec<(String, u16, [f32; 4])>,
 }
 
 impl UiBatch {
@@ -604,9 +605,7 @@ impl UiBatch {
             r.first += base;
             self.runs.push(r);
         }
-        if other.hand.is_some() {
-            self.hand = other.hand;
-        }
+        self.hands.extend(other.hands);
     }
 
     /// The hand was drawn on element `e` of window `m` placed at (x, y).
@@ -617,7 +616,7 @@ impl UiBatch {
     /// The hand was drawn on child `child` of window `name`, whose rect is `rect` (UI pixels): the one place it is
     /// recorded.
     pub fn set_hand(&mut self, name: &str, child: u16, rect: [f32; 4]) {
-        self.hand = Some((name.to_string(), child, rect));
+        self.hands.push((name.to_string(), child, rect));
     }
 
     /// One cell at (x, y) scaled by (sx, sy); `tint` is ARGB with 0x80 = 1.0, as the client passes it.

@@ -279,13 +279,13 @@ fn rank_text(gu: &GameUi, r: u8) -> String {
     }
 }
 
-/// A quest00 row at window (39, y): the child's plate (quest 0, lit and shifted while selected), the hand.
-fn plate(gu: &mut GameUi, x: f32, y: f32, on: bool, focused: bool) {
+/// A quest00 row at window (39, y): the child's plate (quest 0, lit and shifted while selected), the hand. The row is
+/// list child `child` (the list base's first child 1, FUN_10222f30; cursor child 1 + cursor - top, FUN_102234e0), 320
+/// x 18 at (x, y) as the mode's setup moved it (FUN_10230eb0 / FUN_10231020 -> FUN_10119e10).
+fn plate(gu: &mut GameUi, child: u16, x: f32, y: f32, on: bool, focused: bool) {
     gu.sprite("menu    quest", 0, x - on as u8 as f32, y - on as u8 as f32, if on { 0x8080_5020 } else { WHITE });
     if on && focused {
-        // The plate (quest 0's first cell) is the cursor part.
-        let [x0, y0, x1, y1] = gu.cell_bounds("menu    quest", 0, 0).unwrap_or_default();
-        gu.cursor_on(CHOOSER, 0, x, y, [x + x0, y + y0, x1 - x0, y1 - y0]);
+        gu.cursor_on(CHOOSER, child, x, y, [x, y, 320.0, 18.0]);
     }
 }
 
@@ -321,7 +321,10 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
             text(gu, &bt.group9(0x62).unwrap_or_default(), x + 0x14 as f32, y + 0x19 as f32, WHITE);
         }
     };
-    let rows_y: [f32; 2] = if i.mode == 1 { [195.0, 218.0] } else { [52.0, 82.0] };
+    // Children 1 / 2 (children 3..5 hidden): mode 1 (FUN_10230eb0) puts their bottoms 0x23 and 0xc over the window's
+    // (248 tall: 195 / 218 from its top), mode 2 (FUN_10231020) at screen y 100 / 130 (the window's top is 48, so
+    // 52 / 82 from it).
+    let rows_y: [f32; 2] = if i.mode == 1 { [195.0, 218.0] } else { [100.0 - y, 130.0 - y] };
     // The two rows are drawn by code: their plates (quest 0, 320 x 18) are the hit rects.
     let plates = if i.ranks.is_none() {
         rows_y.iter().enumerate().map(|(k, ry)| (k as u16 + 1, [x + 39.0, y + ry, 320.0, 18.0])).collect()
@@ -360,7 +363,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         for (r, &ry) in rows_y.iter().enumerate() {
             let (cx, cy) = (x + 39.0, y + ry);
             let on = i.sel as usize == r + 1;
-            plate(gu, cx, cy, on, focused);
+            plate(gu, r as u16 + 1, cx, cy, on, focused);
             if (r == 0) == i.chat {
                 gu.sprite("menu    keytops3", 170, cx, cy + 1.0, WHITE);
             } else {
@@ -374,7 +377,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         for (r, &ry) in rows_y.iter().enumerate() {
             let (cx, cy) = (x + 39.0, y + ry);
             let on = i.sel as usize == r + 1;
-            plate(gu, cx, cy, on, focused);
+            plate(gu, r as u16 + 1, cx, cy, on, focused);
             gu.sprite("menu    framesus", 35, cx + 4.0, cy + 5.0, WHITE);
             text(gu, &gu.lobby_msg(0xc, 400 + r, ""), cx + 0x10 as f32, cy, if on { CURSOR } else { WHITE });
         }

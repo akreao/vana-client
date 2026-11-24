@@ -4684,6 +4684,14 @@ fn world_hud(
     if let Some(r) = swkbd::draw(gu, world, sw, sh) {
         blockers.push(r);
     }
+    // The chat line and its auto-translate list are windows that take the focus while up (FUN_101b5590 opens
+    // "menu    inline" with FUN_1015f920(.., 1, 0)); the modern layer draws them its own way.
+    if world.typing {
+        gu.want(fep::INLINE);
+        if world.modern && world.fep.is_some() {
+            gu.want(fep::WINDOW);
+        }
+    }
     // The chat line ("menu    inline") (16, H - 38), (textw + 14) x 22, windowps 37; FUN_101b7fd0.
     if world.typing && !world.modern {
         let (x, y, w) = (16.0, sh - 38.0, tw + 14.0);

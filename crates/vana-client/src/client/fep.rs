@@ -11,6 +11,12 @@ use crate::dat::font::{PHRASE_BASE, is_phrase};
 pub(super) const MAX: usize = 120;
 /// Rows a page (FUN_1018f550).
 pub(super) const ROWS: usize = 7;
+/// The list's window (registry flags 0x0081000a: bit 0 clear, so it takes the focus while up; layer 7, over every
+/// window of layer 4 or less). Its children: 1 the "n/m" line, 2..8 the page's rows, (3, 20 + 16 k) 68 x 16.
+pub(super) const WINDOW: &str = "menu    fep";
+/// The chat line's window (flags 0xa: it takes the focus too; layer 6). Its only part is the frame, so a focus that
+/// moves to it puts the pointer nowhere (FUN_1011c080 finds no cursor part).
+pub(super) const INLINE: &str = "menu    inline";
 
 #[derive(Clone, Debug)]
 pub struct Cand {
@@ -29,6 +35,9 @@ pub struct Fep {
     root: (String, usize),
     /// The chars of the word being completed at the end of the line.
     word_len: usize,
+    /// The window's open hook ran (win_fep_v04: FUN_1011a240(2, 1)) and moved its cursor to the first row: the
+    /// pointer goes there at the next draw.
+    pub warp: std::cell::Cell<bool>,
 }
 
 /// The line's unit boundaries (FUN_1018fb00 / FUN_1018fa80): a phrase block is one unit, any other char one.
@@ -161,7 +170,24 @@ pub(super) fn open(w: &mut World) {
         return;
     }
     w.sounds.push(Se::Select as u32);
-    w.fep = Some(Fep { cands, sel: 0, filter: None, root: (wd.clone(), 0), word_len: wd.chars().count() });
+    // A new window's cursor is child 1 (FUN_101193d0), so the hook's move to child 2 always moves the pointer.
+    w.fep = Some(Fep {
+        cands,
+        sel: 0,
+        filter: None,
+        root: (wd.clone(), 0),
+        word_len: wd.chars().count(),
+        warp: std::cell::Cell::new(true),
+    });
+}
+
+/// The list opened again on new candidates (FUN_1015f920 on the open window: its hook win_fep_v04 again): the cursor
+/// goes to child 2 and the pointer with it, unless the cursor was there already (the last draw left it on the row of
+/// `was`, the selection before). The draw then puts it back on the selection's row with no pointer move.
+fn reopened(was: usize, warp: &std::cell::Cell<bool>) {
+    if !was.is_multiple_of(ROWS) {
+        warp.set(true);
+    }
 }
 
 /// The line's raw (Shift-JIS, a phrase 6 bytes) and expanded lengths (FUN_101abc50 / FUN_101acc30).
@@ -215,8 +241,9 @@ pub(super) fn key(w: &mut World, key: egui::Key, shift: bool) -> bool {
             return true;
         }
         egui::Key::Escape | egui::Key::Backspace | egui::Key::Delete => {
-            // A category goes back to the root list, else the list closes.
+            // A category goes back to the root list (FUN_101b84b0 then FUN_1015f920), else the list closes.
             if f.filter.take().is_some() {
+                reopened(f.sel, &f.warp);
                 let (wd, sel) = f.root.clone();
                 f.cands = query(w, &wd, None);
                 f.sel = sel.min(f.cands.len().saturating_sub(1));
@@ -243,6 +270,8 @@ pub(super) fn key(w: &mut World, key: egui::Key, shift: bool) -> bool {
                     // A category (FUN_101ae200: the id's last byte is 0, which no item or key item block has): nothing
                     // goes in; the list reopens on its phrases.
                     put(w, line, 0);
+                    // menu_fep_fn_8: the category's list, then FUN_1015f920.
+                    reopened(f.sel, &f.warp);
                     if f.filter.is_none() {
                         f.root.1 = f.sel;
                     }
@@ -397,6 +426,8 @@ pub struct FieldFep {
     root: (String, usize),
     /// The word being completed (the chars after the last space before the caret).
     pub word: String,
+    /// As `Fep::warp`.
+    pub warp: std::cell::Cell<bool>,
 }
 
 /// What a key did to a field's list.
@@ -422,7 +453,7 @@ pub(super) fn field_open(w: &mut World, before: &str) -> Option<FieldFep> {
         return None;
     }
     w.sounds.push(Se::Select as u32);
-    Some(FieldFep { cands, sel: 0, filter: None, root: (wd.clone(), 0), word: wd })
+    Some(FieldFep { cands, sel: 0, filter: None, root: (wd.clone(), 0), word: wd, warp: std::cell::Cell::new(true) })
 }
 
 /// A phrase id as the four private-use chars a line holds (font::PHRASE_BASE).
@@ -443,6 +474,7 @@ pub(super) fn field_key(w: &mut World, f: &mut FieldFep, key: egui::Key, shift: 
         egui::Key::ArrowLeft | egui::Key::ArrowRight | egui::Key::Home | egui::Key::End => return FieldPick::Keep,
         egui::Key::Escape | egui::Key::Backspace | egui::Key::Delete => {
             if f.filter.take().is_some() {
+                reopened(f.sel, &f.warp);
                 let (wd, sel) = f.root.clone();
                 f.cands = query(w, &wd, None);
                 f.sel = sel.min(f.cands.len().saturating_sub(1));
@@ -457,6 +489,7 @@ pub(super) fn field_key(w: &mut World, f: &mut FieldFep, key: egui::Key, shift: 
                 None => FieldPick::Put(c.text),
                 // A category: its phrases replace the list (the word stays until a phrase is put).
                 Some(id) if id[3] == 0 => {
+                    reopened(f.sel, &f.warp);
                     if f.filter.is_none() {
                         f.root.1 = f.sel;
                     }
@@ -494,11 +527,19 @@ pub(super) fn field_put(
 /// row, 90..200 + 12; the header "%d/%d" at (+0x23, 0) after the ▲ at (+5, 0); seven rows 16 px apart; a row too wide
 /// cut with "...".
 pub(super) fn draw(gu: &mut GameUi, f: &Fep, x: f32, line_y: f32) -> [f32; 4] {
-    draw_list(gu, &f.cands, f.sel, x, line_y)
+    draw_list(gu, &f.cands, f.sel, &f.warp, x, line_y)
 }
 
-/// The list's draw for any field: above `line_y` from `x`.
-pub(super) fn draw_list(gu: &mut GameUi, cands: &[Cand], sel: usize, x: f32, line_y: f32) -> [f32; 4] {
+/// The list's draw for any field: above `line_y` from `x`. The hand is the window's cursor: child 2 + the row
+/// (win_fep_v10: FUN_1011a240(sel % 7 + 2, 0)), at that child's rect; `warp` the open hook's pointer move to child 2.
+pub(super) fn draw_list(
+    gu: &mut GameUi,
+    cands: &[Cand],
+    sel: usize,
+    warp: &std::cell::Cell<bool>,
+    x: f32,
+    line_y: f32,
+) -> [f32; 4] {
     let widest = cands.iter().map(|c| gu.text_width(&c.text)).fold(0.0, f32::max);
     let w = (widest.max(90.0) + 12.0).min(200.0);
     let h = 134.0;
@@ -507,7 +548,11 @@ pub(super) fn draw_list(gu: &mut GameUi, cands: &[Cand], sel: usize, x: f32, lin
     const C: [u8; 4] = [0x80; 4];
     gu.text("\u{25b2}", x + 5.0, y + 4.0, 0, C);
     gu.text(&format!("{}/{}", if cands.is_empty() { 0 } else { sel + 1 }, cands.len()), x + 35.0, y + 4.0, 0, C);
+    gu.want(WINDOW);
     let first = sel / ROWS * ROWS;
+    if warp.take() {
+        gu.warp_to_part(row_rect(x, y, 0));
+    }
     for (k, c) in cands.iter().enumerate().skip(first).take(ROWS) {
         let mut t = c.text.clone();
         // The text from x + 6 (inf: retail cuts at the width - 15 from its start).
@@ -520,10 +565,16 @@ pub(super) fn draw_list(gu: &mut GameUi, cands: &[Cand], sel: usize, x: f32, lin
         let ry = y + 20.0 + 16.0 * (k - first) as f32;
         gu.text(&t, x + 6.0, ry, 0, C);
         if k == sel {
-            gu.cursor(x + 3.0, ry);
+            gu.cursor_on(WINDOW, 2 + (k - first) as u16, x + 3.0, ry, row_rect(x, y, k - first));
         }
     }
     [x, y, w, h]
+}
+
+/// Row `r`'s child (2 + r) of the list at (x, y): (3, 20 + 16 r), 68 x 16 in the layout (the frame's width set by
+/// win_fep_v28 leaves the children as they are).
+fn row_rect(x: f32, y: f32, r: usize) -> [f32; 4] {
+    [x + 3.0, y + 20.0 + 16.0 * r as f32, 68.0, 16.0]
 }
 
 #[cfg(test)]
@@ -537,6 +588,18 @@ mod tests {
         assert_eq!(bounds(&line), vec![0, 1, 5, 6]);
         assert_eq!(spliced("abcdef", 3, "X"), "abcXdef");
         assert_eq!(spliced("ab", 2, "c"), "abc");
+    }
+
+    /// win_fep_v04's FUN_1011a240(2, 1) moves the pointer only when the cursor was off the first row; the rows are
+    /// children 2..8 at (3, 20 + 16 r), 68 x 16.
+    #[test]
+    fn reopen_warps_off_the_first_row() {
+        let warp = std::cell::Cell::new(false);
+        reopened(7, &warp);
+        assert!(!warp.get());
+        reopened(9, &warp);
+        assert!(warp.get());
+        assert_eq!(row_rect(100.0, 50.0, 2), [103.0, 102.0, 68.0, 16.0]);
     }
 
     #[test]
