@@ -123,6 +123,14 @@ pub(super) fn set_cursor(w: &mut World, k: usize) -> bool {
     true
 }
 
+/// The wheel and the bar (the list base, messages 0x16..0x1b; ours scrollbar.rs): a row moves the top with the hand
+/// on its screen row, so the selection moves with the rows; the track pages as Left / Right; the thumb sets the top.
+/// Only while the list has the focus (blkmain not up).
+pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
+    let Some(b) = w.blklist.as_mut().filter(|b| !b.main) else { return false };
+    super::scrollbar::rows_abs(m, &mut b.top, &mut b.cursor, b.rows.len(), ROWS)
+}
+
 /// The mouse (the list base, message 9 / 5 / 6): hovering a row (not past the count) moves the hand there, a click on
 /// the hand's row or on Delete is Enter, a right click on the window is Escape.
 pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
@@ -193,6 +201,9 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     }
     if let Some([fx, fy, fw, fh]) = gu.window_rect(LIST, sw, sh) {
         gu.scroll_bar(fx + fw - 8.0, fy, fh, n, ROWS, b.top);
+        if focused {
+            gu.bar_site(super::scrollbar::Owner::BlockList, fx + fw - 8.0, fy, fh, n, ROWS, b.top);
+        }
     }
     if b.main
         && let Some(win) = gu.lobby_window_off(MAIN, sw, sh, (0.0, 0.0), Some(1), w.confirm.is_none(), &[])

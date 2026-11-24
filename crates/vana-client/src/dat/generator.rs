@@ -372,10 +372,13 @@ impl D3m {
         if d.len() < 8 {
             bail!("d3m: {} bytes", d.len());
         }
-        let format = d[0] & 0xf;
+        let mut format = d[0] & 0xf;
         let (n, m, tris) = (d[4] as usize, d[5] as usize, u16::from_le_bytes([d[6], d[7]]) as usize);
         let counts: Vec<u16> =
             (0..n).map(|k| d.get(8 + 2 * k..10 + 2 * k).map_or(0, |b| u16::from_le_bytes([b[0], b[1]]))).collect();
+        if (format == 5 || format == 6) && Self::probe_fails(d, n, m, tris, &counts) {
+            format = 7;
+        }
         let table = if (5..=7).contains(&format) {
             if format == 7 && n == 0 {
                 8
@@ -412,6 +415,30 @@ impl D3m {
             .collect();
         let radius = (u16::from_le_bytes([d[0], d[1]]) >> 4) as f32;
         Ok(Self { format, textures, per_texture: counts, untextured_tail: m != 0, vertices, radius })
+    }
+
+    /// The layout probe FUN_1003fee0 (first use, format 5 / 6): with no textures, the first three vertices at the
+    /// format-5/6 offset must have |normal| in [0.1, 2.0] (D3DX length; a NaN length passes, as the x87 compares do)
+    /// and a finite position and uv (FUN_1006ca20: _fpclass of the float widened to double, so only NaN and infinity
+    /// fail); with textures, the runs' triangle counts must not sum past 3N. A failure makes it format 7, whose
+    /// vertices start right after the header when there are no textures (FUN_1003fcf0). A vertex past the end of the
+    /// data fails *(ours: retail reads whatever follows)*.
+    fn probe_fails(d: &[u8], n: usize, m: usize, tris: usize, counts: &[u16]) -> bool {
+        if n != 0 {
+            return counts.iter().map(|&c| c as usize).sum::<usize>() > 3 * tris;
+        }
+        let first = if m & 3 != 0 { 8 + (m & !3) * 2 + 6 } else { 8 + m * 2 };
+        let f = |o: usize| d.get(o..o + 4).map(|b| f32::from_le_bytes(b.try_into().unwrap()));
+        (0..3).any(|k| {
+            let o = first + 36 * k;
+            let (Some(x), Some(y), Some(z), Some(nx), Some(ny), Some(nz), Some(u), Some(v)) =
+                (f(o), f(o + 4), f(o + 8), f(o + 12), f(o + 16), f(o + 20), f(o + 28), f(o + 32))
+            else {
+                return true;
+            };
+            let len = (nx * nx + ny * ny + nz * nz).sqrt();
+            len > 2.0 || len < 0.1 || ![x, y, z, u, v].iter().all(|c| c.is_finite())
+        })
     }
 }
 
@@ -538,6 +565,47 @@ mod tests {
         }
     }
 
+    /// FUN_1003fee0 on the two meshes it changes (d3m_probe_census): DAT 148 `2cor` (vertex 1's normal is 13.55
+    /// long) and DAT 170 `ike2` (vertex 0's is 0.099996) are format 6 by their header and read as format 7, six bytes
+    /// early, as retail does; NaN normals (DAT 3559 `md`) pass (needs the game's files).
+    #[test]
+    fn d3m_format7_probe() {
+        let cases: [(u32, &str, u8); 3] = [(148, "2cor", 7), (170, "ike2", 7), (3559, "md  ", 6)];
+        for (id, name, want) in cases {
+            let Some(file) = read(id) else { return };
+            let tree = Tree::build(&file).unwrap();
+            let i = tree.of_kind(kind::D3M).find(|&i| tree.nodes[i].name == fourcc(name)).unwrap();
+            let d = &file[tree.nodes[i].data.clone()];
+            assert_eq!((d[0] & 0xf, D3m::parse(d).unwrap().format), (6, want), "DAT {id} {name}");
+        }
+    }
+
+    /// FUN_1003fee0 census over every DAT (by hand: `cargo test --release d3m_probe_census -- --ignored
+    /// --nocapture`): the format-5/6 meshes the probe turns into format 7. 2 of 74,033 in this install.
+    #[test]
+    #[ignore]
+    fn d3m_probe_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let (mut total, mut switched) = (0, 0);
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            for i in tree.of_kind(kind::D3M) {
+                let d = &file[tree.nodes[i].data.clone()];
+                if d.len() < 8 || !matches!(d[0] & 0xf, 5 | 6) {
+                    continue;
+                }
+                total += 1;
+                if D3m::parse(d).is_ok_and(|m| m.format == 7) {
+                    switched += 1;
+                    let name = String::from_utf8_lossy(&tree.nodes[i].name).to_string();
+                    println!("DAT {id} {name:?} A {} B {} N {}", d[4], d[5], u16::from_le_bytes([d[6], d[7]]));
+                }
+            }
+        }
+        println!("{switched} of {total} format-5/6 meshes switch to format 7");
+    }
+
     /// Ground projection census for gaps item 126 over every DAT (by hand: `cargo test --release ground_proj_census
     /// -- --ignored --nocapture`): the D3m + 0x200000 generators, their op 0x43 blends, the lit ones (flag 16), the
     /// MMB byte (@0x28 -> +0x179), where each mesh name resolves in its own file, and the meshes named 'hi17' / 'asi1'
@@ -661,6 +729,87 @@ mod tests {
         assert_eq!(k.keys.len(), 6);
         assert!((k.linear(0.5) - 1.172).abs() < 1e-3 && (k.linear(0.0) - 0.703).abs() < 1e-3);
         assert!((k.linear(0.275) - (0.703 + (1.172 - 0.703) * 0.5)).abs() < 1e-3);
+    }
+
+    /// Bone-frame generators (attach mode 9 / 0xa) with op 0x11 or the spin ops 0x0e..0x10 in their update stream,
+    /// and whether their file's schedulers make dolls (ops 0x15 / 0x16 / 0x22 / 0x23), the only way such a generator
+    /// can end up on a doll (by hand: `cargo test --release mode9_doll_census -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn mode9_doll_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let (mut gens, mut follow, mut spin, mut files) = (0, 0, 0, std::collections::BTreeSet::new());
+        let mut doll_files: Vec<String> = Vec::new();
+        let mut words: std::collections::BTreeMap<(u32, u32), usize> = Default::default();
+        let mut looping: std::collections::BTreeMap<bool, usize> = Default::default();
+        let mut loop_files = std::collections::BTreeSet::new();
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            let mut hits: Vec<String> = Vec::new();
+            for node in tree.of_kind(kind::GENERATOR).collect::<Vec<_>>() {
+                let Ok(g) = Generator::parse(&tree, node, &file) else { continue };
+                if !matches!(g.attach_mode(), 9 | 0xa) {
+                    continue;
+                }
+                gens += 1;
+                let ops = &g.streams[stream::GENERATOR];
+                let (f, s) = (ops.iter().any(|o| o.code == 0x11), ops.iter().any(|o| matches!(o.code, 0x0e..=0x10)));
+                follow += f as usize;
+                spin += s as usize;
+                for o in ops.iter().filter(|o| o.code == 0x11) {
+                    *words.entry((o.u32(1) & 3, (o.u32(1) >> 2) & 0xff)).or_default() += 1;
+                }
+                if g.flags & 0x1000 != 0 {
+                    *looping.entry(f).or_default() += 1;
+                    if !f {
+                        loop_files.insert(id);
+                    }
+                }
+                if f || s {
+                    files.insert(id);
+                    hits.push(format!(
+                        "{}{}{}",
+                        trim(g.name),
+                        if f { " 0x11" } else { "" },
+                        if s { " spin" } else { "" }
+                    ));
+                }
+            }
+            if hits.is_empty() {
+                continue;
+            }
+            let dolls: Vec<String> = tree
+                .of_kind(kind::SCHEDULER)
+                .filter_map(|n| {
+                    let ops = crate::dat::sched::ops(&file[tree.nodes[n].data.clone()]);
+                    let d: Vec<String> = ops
+                        .iter()
+                        .filter(|o| matches!(o.code, 0x15 | 0x16 | 0x22 | 0x23))
+                        .map(|o| format!("{:#x}", o.code))
+                        .collect();
+                    (!d.is_empty()).then(|| format!("{} {}", trim(tree.nodes[n].name), d.join(" ")))
+                })
+                .collect();
+            if !dolls.is_empty() {
+                doll_files.push(format!(
+                    "DAT {id}: gens [{}], doll schedulers [{}]",
+                    hits.join(", "),
+                    dolls.join(", ")
+                ));
+            }
+        }
+        println!(
+            "{gens} mode 9 / 0xa generators: {follow} with op 0x11, {spin} with a spin op, in {} files",
+            files.len()
+        );
+        println!("op 0x11 words (bits, k) -> generators: {words:?}");
+        println!("looping (0x1000) ones by op 0x11: {looping:?}; without it in DATs {loop_files:?}");
+        println!("{} of those files make dolls:", doll_files.len());
+        for d in &doll_files {
+            println!("  {d}");
+        }
     }
 
     /// Generators whose update stream has op 0x64 (the turn about a slot's centre): the emission and update ops with

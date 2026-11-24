@@ -795,6 +795,13 @@ impl LiveHost<'_> {
         if a == PLAYER { self.w.my_id } else { a }
     }
 
+    /// Entity +0x174, the one field retail's event status (ops 0xac 1, 0x7e) and door states (ops 0x4c..) share: every
+    /// writer sets both our maps, so the pose, ride and door readers and the event end (reserved_status) agree. A 0 is
+    /// kept in the door map so the event end does not bring back an older value.
+    fn set_status(&mut self, id: u32, v: u8) {
+        set_shared_status(&mut self.st.event_status, &mut self.w.doors.event, id, v);
+    }
+
     /// Op 0xb6 (FUN_100b1150) on the event actor's look (0x16: the player's): 0 face (a model NPC's model), 1 race (its
     /// race code), 2..0xa slot sub - 2
     /// (face head body hands legs feet main sub range), 0xb race and slots 0..7, 0xc the fixed model val@2 (type 7),
@@ -1375,10 +1382,10 @@ impl Host for LiveHost<'_> {
             // ride on its ChocoboIndex / mount id, ride.rs). Unlike the door ops, 0xab 3's lock does not stop it.
             Effect::Op { op: 0xac, sub: Some(1), actor, args } => {
                 let id = self.wid(actor);
+                // No +0x120 bit 2 test here (asm 0x100bb1ee..0x100bb215), unlike op 0x7e and the door ops.
                 if let Some(s) = Self::arg_int(&args, 0) {
-                    self.st.event_status.insert(id, s as u8);
-                    // One field (+0x174) holds door states too.
-                    self.w.doors.event.remove(&id);
+                    // One field (+0x174) holds door states too: the door code reads this value.
+                    self.set_status(id, s as u8);
                 }
             }
             // FUN_100bb180 subs 2 / 3: actor@2's entity +0x138 bit 31 (its schedulers mute while its model is hidden);
@@ -1609,7 +1616,7 @@ impl Host for LiveHost<'_> {
             // FUN_100b8b80 subs 0 / 5 / 8: actor@2's +0x174 = 0 (8 also its mount id).
             Effect::Op { op: 0x7e, sub: Some(s @ (0 | 5 | 8)), args, .. } => {
                 if let Some(id) = self.arg_actor(&args, 0).filter(|id| !self.st.status_lock.contains(id)) {
-                    self.st.event_status.remove(&id);
+                    self.set_status(id, 0);
                     if s == 8 {
                         self.st.event_rides.remove(&id);
                     }
@@ -1637,7 +1644,7 @@ impl Host for LiveHost<'_> {
                             (0x20..=0x24).contains(&look.race).then_some(super::ride::Model::Custom(look))
                         }
                     };
-                    self.st.event_status.insert(id, if s == 7 { 0x55 } else { 5 });
+                    self.set_status(id, if s == 7 { 0x55 } else { 5 });
                     match model {
                         Some(m) => self.st.event_rides.insert(id, m),
                         None => self.st.event_rides.remove(&id),
@@ -1752,11 +1759,11 @@ impl Host for LiveHost<'_> {
                     0x8e => Some(0x2d),
                     _ => Some(0x2e),
                 };
-                // FUN_100b6950..: no write while 0xab 3's lock (+0x120 bit 2) is on.
+                // FUN_100b6950..: no write while 0xab 3's lock (+0x120 bit 2) is on. +0x174 is one field: a bound
+                // character poses with it too.
                 let id = self.wid(actor);
                 if let Some(v) = v.filter(|_| !self.st.status_lock.contains(&id)) {
-                    self.w.doors.event.insert(id, v);
-                    self.st.event_status.remove(&id);
+                    self.set_status(id, v);
                 }
             }
             // FUN_10178900(val, 1): the sub-area loads (no 0x0F2); sub 2 tells the server (0x0F2 state 2).
@@ -2628,7 +2635,7 @@ fn actors_ready(w: &World, wt: &mut Waiting, ticks: f32, queued: &HashSet<u32>) 
 /// 0x1a).
 fn machine_busy(w: &World, id: u32) -> bool {
     let b = w.actors.get(&id).map(|a| &a.battle);
-    b.is_some_and(|b| !b.on.is_empty() || b.leaving)
+    b.is_some_and(|b| !b.on.is_empty() || b.wait || b.leaving)
         || w.rests.contains_key(&id)
         || w.rides.contains_key(&id)
         || super::chair::holding(w, id)
@@ -3037,6 +3044,15 @@ fn keep_pose(w: &mut World, p: Pose) {
 /// FUN_100ae3f0 (0x100ae435): the +0x174 a reserved entity keeps at the event's end. Op 0xac 1 and the door ops
 /// (0x4c / 0x4d / 0x4f / 0x8e / 0x8f) share that field; ours keeps the last write in one of the two maps (each write
 /// takes the id out of the other).
+fn set_shared_status(event: &mut HashMap<u32, u8>, doors: &mut HashMap<u32, u8>, id: u32, v: u8) {
+    if v == 0 {
+        event.remove(&id);
+    } else {
+        event.insert(id, v);
+    }
+    doors.insert(id, v);
+}
+
 fn reserved_status(event: &HashMap<u32, u8>, doors: &HashMap<u32, u8>, id: u32) -> Option<u8> {
     doors.get(&id).or_else(|| event.get(&id)).copied()
 }
@@ -4640,11 +4656,22 @@ mod tests {
         assert_eq!(reserved_status(&event, &doors, 7), None);
         event.insert(7, 5);
         assert_eq!(reserved_status(&event, &doors, 7), Some(5));
-        // Op 0x4c on the same entity: +0x174 = 8 (the door op moves the id out of the event map).
-        event.remove(&7);
+        // Op 0x4c on the same entity: +0x174 = 8 (the door op writes both maps, one field in retail).
+        event.insert(7, 8);
         doors.insert(7, 8);
         assert_eq!(reserved_status(&event, &doors, 7), Some(8));
         assert_eq!(reserved_status(&event, &doors, 9), None);
+    }
+
+    /// Op 0xac 1 sets a reserved actor riding (5), then op 0x7e 0 dismounts it: the event end sees 0, not the old 5.
+    #[test]
+    fn shared_status_reset_survives_event_end() {
+        let (mut event, mut doors) = (HashMap::new(), HashMap::new());
+        set_shared_status(&mut event, &mut doors, 7, 5);
+        assert_eq!(reserved_status(&event, &doors, 7), Some(5));
+        set_shared_status(&mut event, &mut doors, 7, 0);
+        assert_eq!(reserved_status(&event, &doors, 7), Some(0));
+        assert_eq!(event.get(&7), None);
     }
 
     /// FUN_1008e4d0 / FUN_10095900: the event filter takes non-participants (PCs by 0x02, others by 0x10) except doors,
