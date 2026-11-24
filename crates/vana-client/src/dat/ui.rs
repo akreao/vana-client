@@ -1,13 +1,27 @@
 //! Menu resources: IMG textures (0x20), sprite libraries (0x31) and menu layouts (0x30).
 //!
-//! PC US file ids: 39542 in-game menus, 39541 lobby/title (78/79 are the PS2-era US set).
+//! The in-game menus and the lobby / title menus are language slots 0 and 1 (FUN_1025cb90(0) in FUN_10010d20,
+//! FUN_1025cb90(1) in FUN_10011a00); 78 / 79 are the PS2-era US set.
 
 use super::{chunks, zone::parse_img};
 use anyhow::{Result, bail};
 use std::collections::HashMap;
 
-pub const MENU_US: u32 = 39542;
-pub const LOBBY_US: u32 = 39541;
+/// Language slot 0, ja / en / de / fr: the in-game menus.
+pub const MENU: [u32; 4] = [39532, 39542, 55746, 56166];
+/// Language slot 1: the lobby and title menus.
+pub const LOBBY: [u32; 4] = [39533, 39541, 55745, 56165];
+pub const LOBBY_US: u32 = LOBBY[1];
+
+/// The in-game menu file of the file language.
+pub fn menu_file() -> u32 {
+    super::lang::file(&MENU)
+}
+
+/// The lobby menu file of the file language.
+pub fn lobby_file() -> u32 {
+    super::lang::file(&LOBBY)
+}
 /// Window frame styles 1..8 (config "window type"): FFXiMain loads file 14 + style (FUN_10159a70).
 pub const WINDOW_STYLE_BASE: u32 = 14;
 /// Icon images ("menu    magiconw", lobycwin's "menu    ustats"), resident from startup (FUN_10010080 loads 0x9a7f).
@@ -22,10 +36,18 @@ pub const MAZE_UI: u32 = 92;
 
 /// Files whose images a UI file's sprites also draw from.
 pub fn companions(id: u32) -> &'static [u32] {
-    match id {
-        LOBBY_US => &[MENU_US, WINDOW_STYLE_BASE, ICONS, ICONS2],
-        MENU_US => &[WINDOW_STYLE_BASE],
-        _ => &[],
+    const LOBBY_WITH: [[u32; 4]; 4] = [
+        [MENU[0], WINDOW_STYLE_BASE, ICONS, ICONS2],
+        [MENU[1], WINDOW_STYLE_BASE, ICONS, ICONS2],
+        [MENU[2], WINDOW_STYLE_BASE, ICONS, ICONS2],
+        [MENU[3], WINDOW_STYLE_BASE, ICONS, ICONS2],
+    ];
+    if let Some(l) = LOBBY.iter().position(|&f| f == id) {
+        &LOBBY_WITH[l]
+    } else if MENU.contains(&id) {
+        &[WINDOW_STYLE_BASE]
+    } else {
+        &[]
     }
 }
 
@@ -36,14 +58,38 @@ fn i16_at(b: &[u8], o: usize) -> i16 {
     u16_at(b, o) as i16
 }
 
-/// US library a menu's sprite ref names (FUN_101185f0 via FUN_10250e90 rows 0, 1, 5; table 0x1037e1f0).
+/// The library a sprite reference names (FUN_1011c840 as layouts load): one starting "menu    frames" or "menu
+/// comwin" (_strncmp 0xe) or "menu    key1top" (0xf) is the file language's (FUN_1025cbd0 rows 0, 1, 5), so "menu
+/// framesus" in our code finds framesde in German as retail's FUN_1025cbd0(0) callers do; layouts name the PS2 library
+/// lobbyps2, renamed lobbywin.
 pub fn lang_lib(name: &str) -> Option<&'static str> {
-    match name {
-        "menu    frames" => Some("menu    framesus"),
-        "menu    key1top" => Some("menu    key1topu"),
-        // Layouts name the PS2 library; FUN_10118090 renames lobbyps2 to lobbywin on load.
-        "menu    lobbyps2" => Some("menu    lobbywin"),
-        _ => None,
+    use super::lang::lib;
+    if name.starts_with("menu    frames") {
+        Some(lib(0))
+    } else if name.starts_with("menu    comwin") {
+        Some(lib(1))
+    } else if name.starts_with("menu    key1top") {
+        Some(lib(5))
+    } else if name == "menu    lobbyps2" {
+        Some("menu    lobbywin")
+    } else {
+        None
+    }
+}
+
+/// The layout the windows retail opens by FUN_1025cbd0(row) use: the raise prompt (row 2, FUN_101d2790), the job
+/// list (row 6, FUN_10146a80 / FUN_10146dd0 / FUN_10146e90) and the party languages (row 7, FUN_10206fb0). Our code
+/// names the English one; this is the file language's.
+pub fn lang_menu(name: &str) -> Option<&'static str> {
+    use super::lang::lib;
+    if name.starts_with("menu    resyn") {
+        Some(lib(2))
+    } else if name.starts_with("menu    jobcsel") {
+        Some(lib(6))
+    } else if name.starts_with("menu    prty5") {
+        Some(lib(7))
+    } else {
+        None
     }
 }
 
@@ -318,6 +364,7 @@ impl UiFile {
     /// A layout by name; a name padded to 16 bytes ("menu    mogdoor ") finds the trimmed one as norm_name keeps it.
     pub fn menu(&self, name: &str) -> Option<&Menu> {
         let name = name.trim_end().to_ascii_lowercase();
+        let name = lang_menu(&name).unwrap_or(&name);
         self.menus.iter().find(|m| m.name == name)
     }
 

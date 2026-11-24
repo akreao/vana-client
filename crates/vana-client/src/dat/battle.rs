@@ -199,7 +199,8 @@ pub fn va_bytes(pe: &[u8], va: u32, len: usize) -> Option<&[u8]> {
 
 impl BattleText {
     pub fn load(index: &DatIndex, ffximain: &[u8]) -> Result<Self> {
-        let file = |slot| slot_file(ffximain, 1, slot).with_context(|| format!("language slot {slot:#x}"));
+        let lang = super::lang::files() as u8;
+        let file = |slot| slot_file(ffximain, lang, slot).with_context(|| format!("language slot {slot:#x}"));
         let dialog = |slot| -> Result<Dialog> { Dialog::parse(&index.read(file(slot)?)?) };
         let msgs = |id: u32| Messages::load(index, id).map_err(|e| log::warn!("names {id}: {e:#}")).ok();
         let basic = dialog(SLOT_BASIC).context("battle messages")?;
@@ -255,19 +256,19 @@ impl BattleText {
             abilities: file(SLOT_ABILITIES).ok().and_then(msgs),
             statuses: msgs(STATUS_FILE),
             system: dialog(SLOT_SYSTEM).map_err(|e| log::warn!("system messages: {e:#}")).ok(),
-            group7: super::msg::group_file(ffximain, 1, 7).and_then(msgs),
+            group7: super::msg::group_file(ffximain, lang, 7).and_then(msgs),
             emotes: dialog(SLOT_EMOTES).map_err(|e| log::warn!("emote messages: {e:#}")).ok(),
-            slot_names: super::msg::group_file(ffximain, 1, 0x17).and_then(msgs),
+            slot_names: super::msg::group_file(ffximain, lang, 0x17).and_then(msgs),
             // Group 0x18: FUN_10153b70 loads it from this fixed file in every language.
             slot_names_alt: msgs(0xd8af),
-            group9: super::msg::group_file(ffximain, 1, 9).and_then(msgs),
-            group10: super::msg::group_file(ffximain, 1, 10).and_then(msgs),
-            group12: super::msg::group_file(ffximain, 1, 0xc).and_then(msgs),
-            jobs: super::msg::group_file(ffximain, 1, 0x12).and_then(msgs),
-            days: super::msg::group_file(ffximain, 1, 0x10).and_then(msgs),
-            moons: super::msg::group_file(ffximain, 1, 0x11).and_then(msgs),
-            compass: super::msg::group_file(ffximain, 1, 0xf).and_then(msgs),
-            tables: [0x1c, 0x22, 0x1b].map(|slot| super::msg::current_slot_file(ffximain, 1, slot).and_then(msgs)),
+            group9: super::msg::group_file(ffximain, lang, 9).and_then(msgs),
+            group10: super::msg::group_file(ffximain, lang, 10).and_then(msgs),
+            group12: super::msg::group_file(ffximain, lang, 0xc).and_then(msgs),
+            jobs: super::msg::group_file(ffximain, lang, 0x12).and_then(msgs),
+            days: super::msg::group_file(ffximain, lang, 0x10).and_then(msgs),
+            moons: super::msg::group_file(ffximain, lang, 0x11).and_then(msgs),
+            compass: super::msg::group_file(ffximain, lang, 0xf).and_then(msgs),
+            tables: [0x1c, 0x22, 0x1b].map(|slot| super::msg::current_slot_file(ffximain, lang, slot).and_then(msgs)),
             phrases: super::autotrans::Dictionary::load(index, ffximain)
                 .map_err(|e| log::warn!("auto-translate: {e:#}"))
                 .ok(),
