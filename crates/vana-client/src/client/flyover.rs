@@ -299,7 +299,8 @@ impl Flyover {
         let zone_id = self.data.zone as u16;
         let lighting = env.map(|e| {
             let k = crate::dat::weather::clipping(e.draw_dist, self.clip_x, zone_id).1;
-            Lighting::from_env_k(&e, self.minute, k)
+            // No title or nation movie zone has an `@ini` (only Escha and Reisenjima do): no sky fix, no tilt.
+            Lighting::from_env_k(&e, self.minute, 0, k)
         });
         let zone = self.zone.get_or_insert_with(|| ZoneRenderer::new(gpu, &self.data.scene, format));
         zone.lighting = lighting;

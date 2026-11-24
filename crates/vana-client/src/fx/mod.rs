@@ -1060,6 +1060,9 @@ pub struct Effects {
     walk_owed: f32,
     walk_serial: u32,
     vana_seen: bool,
+    /// The zone object's fixed sky time and sun tilt (W+0x1c8 / +0x1cc): cleared at every scene load, set by
+    /// scheduler ops 0xc0 / 0xc3 (the zone's `@ini`).
+    sky: crate::dat::weather::Sky,
     /// Action contexts of looping tasks that restarted: retail drops them without the release, so their rest never
     /// prints.
     leaked: Vec<std::rc::Rc<std::cell::RefCell<sched::ActionCtx>>>,
@@ -1196,10 +1199,6 @@ pub struct Effects {
     pub model_spawns: Vec<(u32, u32, u32, u32)>,
     pub model_places: Vec<(u32, Vec3, Vec3, Vec3, u32)>,
     pub model_drops: Vec<u32>,
-    /// Scheduler ops 0xc0 / 0xc3 (an area's `@ini`): the zone's clock override (+0x1c8, FUN_10182c40: the lighting's
-    /// time while online) and its sun / moon yaw in degrees (+0x1cc, FUN_10180700); reset with each zone.
-    pub zone_clock: Option<u32>,
-    pub zone_yaw: i16,
     /// Scheduler op 0xb4: (actor, the plate's lift in y, ticks) for client/mod.rs.
     pub plate_lifts: Vec<(u32, f32, f32)>,
     /// Op 0xab: actor1's entity +0x130 bit 4 (its motion bases reset at each model creation).
@@ -1308,6 +1307,7 @@ impl Effects {
             load_rx,
             hidden_actors: HashSet::new(),
             vana_now: 0,
+            sky: Default::default(),
             vana_dt: 0.0,
             vana_acc: 0.0,
             walk_ticks: RETAIL_FRAME,
@@ -1388,8 +1388,6 @@ impl Effects {
             model_spawns: Vec::new(),
             model_places: Vec::new(),
             model_drops: Vec::new(),
-            zone_clock: None,
-            zone_yaw: 0,
             plate_lifts: Vec::new(),
             base_resets: Vec::new(),
             death_picks: Vec::new(),
@@ -1495,7 +1493,6 @@ impl Effects {
             self.wading.clear();
             self.foot_folder.clear();
             self.sub_lib = None;
-            (self.zone_clock, self.zone_yaw) = (None, 0);
             self.zone_lib = Some(l);
             self.reg.zone = Some(l);
             self.start_zone(l);
@@ -1530,7 +1527,6 @@ impl Effects {
         self.hidden_actors.clear();
         self.zone_lib = Some(l);
         self.reg.zone = Some(l);
-        (self.zone_clock, self.zone_yaw) = (None, 0);
         // FUN_100361d0: the zone reset forgets the stream.
         self.stream_fade = None;
         for s in self.sounds.iter_mut() {
@@ -1570,6 +1566,21 @@ impl Effects {
         // FUN_10073430's link pass: the zone's self-starting schedulers, `weat` ones too (the weather that follows
         // replaces those).
         self.start_auto(l, None);
+        // FUN_1018b500: FUN_1018b620 clears the sky fixes before the parse, and after it the zone object starts the
+        // file's `@ini` scheduler on no actors (vtable +0x18 FUN_1018b770: FUN_10072290 type 7 from the file's root,
+        // FUN_10056c70), stepped at once inside the load, so its ops stand before the first light frame. Five files
+        // have one: Escha - Zi'Tah, Escha - Ru'Aun and Reisenjima Sanctorium fix the time (op 0xc0), Reisenjima
+        // and Reisenjima Henge tilt the sun (op 0xc3).
+        self.sky = Default::default();
+        if let Some(n) = self.reg.libs[l].find_global(kind::SCHEDULER, u32::from_le_bytes(*b"@ini")) {
+            let t = self.spawn_task((l, n), sched::Who::None, sched::Who::None, None, 1.0, None);
+            _ = self.run_new(t, &NoActors);
+        }
+    }
+
+    /// The zone's fixed sky time and sun tilt (scheduler ops 0xc0 / 0xc3), for the light and the weather keys.
+    pub fn sky(&self) -> crate::dat::weather::Sky {
+        self.sky
     }
 
     /// A sub-area DAT (an interior) loaded beside the zone: the old one's generators go and its auto-start world
@@ -2172,10 +2183,10 @@ impl Effects {
         self.lives_done = true;
         self.step_models(f, actors);
         self.step_decals(actors);
-        let voyage = self.voyage;
+        let (voyage, sky) = (self.voyage, self.sky);
         for i in 0..self.insts.len() {
             let Some(inst) = self.insts[i].as_mut().filter(|x| !x.held) else { continue };
-            attach(inst, f, voyage);
+            attach(inst, f, voyage, sky);
             // Generator op 0x11: follow the actors every frame.
             if let Some(word) = inst.streams[0].iter().find(|o| o.code == 0x11).map(|o| o.u32(1))
                 && !matches!(inst.mode, 0 | 0xe | 0xf)
@@ -3510,27 +3521,27 @@ fn roofed(g: &crate::dat::generator::Generator) -> bool {
 }
 
 /// FUN_10052eb0 / FUN_1003afd0 for the modes the zone uses; actor modes come with the battle triggers.
-fn attach(inst: &mut Instance, f: &Frame, voyage: Mat4) {
+fn attach(inst: &mut Instance, f: &Frame, voyage: Mat4, sky: crate::dat::weather::Sky) {
     match inst.mode {
         // FUN_10052eb0 returns at once for mode 0: the matrix stays (an element sub-clone's, set at its spawn).
         0 => {}
-        // Sun / moon (FUN_10180700): a = day fraction x 2pi; moon dir (sin a, cos a, 0), the sun opposite;
-        // placed 1000 / 900 units from the eye against the direction *(inf: the rotation of DAT_105ec978 is
-        // left out)*; FUN_1003be10 0xe / 0xf turn that point by the voyage matrix's rotation, eye included.
-        0xe | 0xf => inst.matrix = Some(Mat4::from_translation(sky_point(inst.mode == 0xe, f.dayfrac, f.eye, voyage))),
+        // Sun / moon: the zone object's +0xb4 / +0xd4 (FUN_1003be10 0xe / 0xf through FUN_10186e90 /
+        // FUN_10186eb0), which FUN_10187720 sets each frame from the light's own directions: the fixed sky time
+        // when the zone has one, and the zone's tilt. FUN_1003be10 turns the point by the voyage matrix's
+        // rotation, eye included *(inf: the rotation of DAT_105ec978 is left out)*.
+        0xe | 0xf => {
+            let minute = sky.minute(f.dayfrac * 1440.0);
+            inst.matrix = Some(Mat4::from_translation(sky_point(inst.mode == 0xe, minute, sky.tilt, f.eye, voyage)));
+        }
         _ => {}
     }
 }
 
-/// The sun's (or the moon's) place: 1000 (900) units from the eye against its direction, turned by V's rotation.
-fn sky_point(sun: bool, dayfrac: f32, eye: Vec3, voyage: Mat4) -> Vec3 {
-    use std::f32::consts::PI;
-    let a = dayfrac * 2.0 * PI;
-    let (dir, d) = if sun {
-        (Vec3::new((a + PI).sin(), (a + PI).cos(), 0.0), 1000.0)
-    } else {
-        (Vec3::new(a.sin(), a.cos(), 0.0), 900.0)
-    };
+/// The sun's (or the moon's) place: 1000 (900) units from the eye against its direction (FUN_10187720, 0x10329cd8 /
+/// 0x1032a3d8), turned by V's rotation.
+fn sky_point(sun: bool, minute: f32, tilt: i16, eye: Vec3, voyage: Mat4) -> Vec3 {
+    let (s, m) = crate::dat::weather::sun_moon_tilted(minute, tilt);
+    let (dir, d) = if sun { (s, 1000.0) } else { (m, 900.0) };
     voyage.transform_vector3(eye - dir * d)
 }
 
