@@ -2732,6 +2732,23 @@ fn world_hud(
     };
     let taken = scrollbar::frame(gu, world, input);
     let input = taken.as_ref().unwrap_or(input);
+    // Enter on itemctrl / moneyctr is message 5 on the cursor child the mouse left there (winhits::ctr_enter).
+    let ctr_keys;
+    let input = if !world.typing
+        && !world.modern
+        && input.events.iter().any(|e| matches!(e, egui::Event::Key { key: egui::Key::Enter, pressed: true, .. }))
+    {
+        let mut events = input.events.clone();
+        for e in &mut events {
+            if let egui::Event::Key { key, pressed: true, .. } = e {
+                *key = winhits::ctr_enter(world, gu, *key);
+            }
+        }
+        ctr_keys = UiInput { events, ..*input };
+        &ctr_keys
+    } else {
+        input
+    };
     // A middle click is this frame's only: one made while the HUD is down (downloading, hidden) is dropped.
     let middle = std::mem::take(&mut world.middle_click);
     // FUN_1022eca0: keytops3 165 + (n >> 2) % 5 at (W - 234, H - 48 + 8 - min(2n, 8)), y scale min(n / 4, 1), n
@@ -3976,6 +3993,10 @@ fn world_hud(
         let k = k + world.gmtell.open.as_ref().map_or(0, |o| o.scroll);
         gmtell::pointer(world, k, takes, input.clicked);
     }
+    // The map's generic windows (map0, mapscan, mapv2); the modern layer takes map0's.
+    if let Some(p) = input.pointer.filter(|_| world.map.is_some() && !world.modern && world.confirm.is_none()) {
+        map::pointer(world, gu, p, input.clicked, input.right_clicked);
+    }
     // Mouse in an event: a click on a choice row picks it, anywhere else advances a prompt.
     if input.clicked && world.event.is_some() {
         // The modern layer's choice panel takes its clicks.
@@ -4607,6 +4628,12 @@ fn world_hud(
     let mut blockers: Vec<[f32; 4]> = [party.as_str()].iter().filter_map(|n| gu.window_rect(n, sw, sh)).collect();
     let mut sidebar_eases = None;
     winhits::clear(world);
+    // The map's windows were drawn above (MapWin::draw).
+    if let Some(m) = &world.map {
+        for (name, frame, kids) in m.drawn.borrow().iter() {
+            winhits::record_all(world, gu, name, *frame, kids);
+        }
+    }
     gu.clear_disabled_parts();
     for (k, n) in ["menu    raid1", "menu    raid2"].iter().enumerate() {
         if st.alliance[k].is_some() {
@@ -5447,9 +5474,26 @@ fn world_hud(
         _ => {}
     }
     // The Timers window under every other window: its clicks only where none is over it.
+    let ours_from = blockers.len();
     blockers.extend(timers::pointer(world, gu, input.pointer, input.clicked, &blockers));
     blockers.extend(regime::pointer(world, gu, input.pointer, input.clicked, &blockers));
     blockers.extend(skillchain::pointer(world, gu, input.pointer, input.clicked, &blockers));
+    // The left release over no child of the focused window (FUN_1015f420): SE 0004, unless rem4line / rem4li2 is
+    // open or the map's marker cursor is up (mouse +0x87). A release that ended a drag is the camera's; ours' own windows (a mod's, Timers and
+    // the like: the hand over them) are no miss.
+    let drag = std::mem::take(&mut world.release_drag);
+    let hold = event::message_ref(world).is_some() || world.map.as_ref().is_some_and(|m| m.placing());
+    if input.released
+        && !drag
+        && !hold
+        && !world.modern
+        && let Some(p) = input.pointer
+        && !gu.hover.get()
+        && !blockers[ours_from..].iter().any(|r| inside(r, p))
+        && winhits::release_off_child(world, gu, sw, sh, p)
+    {
+        world.sounds.push(crate::audio::Ui::Error as u32);
+    }
     // Cinema mode (FUN_101177d0 at 0x101177ee): no window draws but the event text box, mapframe and cnqframe; the
     // name plates are a 3D pass and stay. The windows' state still updates underneath (the log's included, which
     // retail freezes).
@@ -8419,6 +8463,9 @@ struct World {
     ptr_button: (bool, bool),
     /// The held button's count on the cursor's child (window +0xb0, FUN_1015f360; winhits::ctr).
     ctr_hold: winhits::Held,
+    /// The last left release ended a drag (65 UI px^2 from the press or 25 ticks held, as retail's mode-5 entry
+    /// FUN_10126600): no window's release.
+    release_drag: bool,
     /// The ops' shared extdata buffer (DAT_104886bc).
     event_ext: [u8; 24],
     event_mem: crate::event_vm::Memory,
@@ -11051,6 +11098,7 @@ impl App {
                             win_hits: Default::default(),
                             ptr_button: (false, false),
                             ctr_hold: Default::default(),
+                            release_drag: false,
                             event_ext: [0; 24],
                             event_mem: Default::default(),
                             event_end_at: None,
@@ -15746,6 +15794,9 @@ impl App {
                 } else if let Some((b, drag)) =
                     release(self.press_at.take().zip(self.press_time.take()), self.last_cursor, self.ui_k)
                 {
+                    if let Phase::World(w) = &mut self.phase {
+                        w.release_drag = drag;
+                    }
                     self.swallow_click |= world_click(&mut self.phase, b, true, drag);
                 }
                 self.left_down = pressed;

@@ -731,6 +731,18 @@ impl GameUi {
         !self.walk.suspended.contains(&key)
     }
 
+    /// The window that has the focus (+0x54, walk key), as the last frame's end left it.
+    pub fn focused(&self) -> Option<&str> {
+        self.focus_state.was.as_ref().map(|w| w.0.as_str())
+    }
+
+    /// The raise stamp of window `name` while it stays open (this frame's walk, else the last one's): a new number for
+    /// each open, None while it is shut.
+    pub fn open_stamp(&self, name: &str) -> Option<i64> {
+        let key = crate::dat::ui::norm_name(name.as_bytes());
+        self.walk.now.get(&key).or_else(|| self.walk.last.get(&key)).copied()
+    }
+
     /// A window the last walk had open and did not suspend; unlike `want`, it does not open it.
     pub fn was_up(&self, name: &str) -> bool {
         let key = crate::dat::ui::norm_name(name.as_bytes());

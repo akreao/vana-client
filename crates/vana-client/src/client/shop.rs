@@ -1319,7 +1319,7 @@ pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
     if let Some((_, child)) = s.confirm {
         focus(if matches!(s.view, Some(View::Buy | View::Wares)) { SHOPBUY } else { SHOPSELL }, child, bars);
     } else if s.money.is_some() {
-        focus(MONEYCTR, 1, bars);
+        focus(MONEYCTR, super::winhits::ctr_cursor(w, gu, MONEYCTR), bars);
     } else if s.view == Some(View::Bazaar) {
         // The source's title 0xd 0x0f "Set Bazaar" and help 0xe 0x31.
         bars.title[1] = gu.title_msg(0x0f).unwrap_or_default();
@@ -1462,7 +1462,15 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32, log_top: f32) -> Vec<[
         rects.extend(super::post::draw_money(gu, w, sw, sh));
     }
     if let Some((v, max)) = s.qty
-        && let Some(win) = gu.lobby_window_off(ITEMCTRL, sw, sh, (0.0, 0.0), Some(1), true, &[])
+        && let Some(win) = gu.lobby_window_off(
+            ITEMCTRL,
+            sw,
+            sh,
+            (0.0, 0.0),
+            Some(super::winhits::ctr_cursor(w, gu, ITEMCTRL)),
+            true,
+            &[],
+        )
     {
         super::winhits::record(w, ITEMCTRL, &win);
         let [x, y, ..] = win.frame;
@@ -1471,7 +1479,15 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32, log_top: f32) -> Vec<[
         rects.push(win.frame);
     }
     if let Some((step, max, v)) = s.money
-        && let Some(win) = gu.lobby_window_off(MONEYCTR, sw, sh, (0.0, 0.0), Some(1), true, &[])
+        && let Some(win) = gu.lobby_window_off(
+            MONEYCTR,
+            sw,
+            sh,
+            (0.0, 0.0),
+            Some(super::winhits::ctr_cursor(w, gu, MONEYCTR)),
+            true,
+            &[],
+        )
     {
         super::winhits::record(w, MONEYCTR, &win);
         super::post::draw_moneyctr(gu, win.frame, step, max, v);

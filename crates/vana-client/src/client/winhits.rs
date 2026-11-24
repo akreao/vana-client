@@ -14,6 +14,30 @@ pub fn record(w: &World, name: &str, win: &LobbyWin) {
     record_rects(w, name, win.frame, win.children.clone());
 }
 
+/// `record` with the children the draw left out (`hide`: the disabled ones a window draws itself) put back at their
+/// layout places, in layout order: retail's hit test (FUN_1011a140) takes a child in state 5 as any other.
+pub fn record_all(w: &World, gu: &GameUi, name: &str, frame: [f32; 4], drawn: &[(u16, [f32; 4])]) {
+    let layout: Vec<(u16, [f32; 4])> = gu.menu_def(name).map_or(Vec::new(), |m| {
+        m.elements.iter().skip(1).map(|e| (e.id, [e.x as f32, e.y as f32, e.w as f32, e.h as f32])).collect()
+    });
+    record_rects(w, name, frame, put_back(&layout, drawn));
+}
+
+/// The layout's children (`layout`, places relative to the window) at the window's place this frame, which the drawn
+/// ones give; a drawn child keeps its drawn rect. The drawn ones alone when none of them is in the layout.
+fn put_back(layout: &[(u16, [f32; 4])], drawn: &[(u16, [f32; 4])]) -> Vec<(u16, [f32; 4])> {
+    let shift =
+        drawn.iter().find_map(|(id, r)| layout.iter().find(|e| e.0 == *id).map(|e| (r[0] - e.1[0], r[1] - e.1[1])));
+    let Some((dx, dy)) = shift else { return drawn.to_vec() };
+    layout
+        .iter()
+        .map(|&(id, [x, y, w, h])| match drawn.iter().find(|c| c.0 == id) {
+            Some(&c) => c,
+            None => (id, [dx + x, dy + y, w, h]),
+        })
+        .collect()
+}
+
 pub fn record_rects(w: &World, name: &str, frame: [f32; 4], children: Vec<(u16, [f32; 4])>) {
     w.win_hits.borrow_mut().push((name.to_string(), frame, children));
 }
@@ -131,6 +155,27 @@ pub fn over(w: &World, name: &str, p: (f32, f32)) -> bool {
     child_under(w, name, p, 0..=0, |_| None).1
 }
 
+/// The left release (FUN_1015f420, state 5 of key function 0x8b) with no child of the focused window under the
+/// pointer: retail plays SE 0004 (FUN_10037c50, "0004"). Its test: mouse mode 2 (a window has the focus, the pointer
+/// shown), no press on a scroll bar (+0x86), FUN_1011a140 on the focused window (its children only, no frame test)
+/// below 1, and mouse +0x87 clear (the caller's `hold`: rem4line / rem4li2 open, FUN_10137e70, or the map's marker
+/// cursor, FUN_101fa130).
+/// Ours also takes any child a window's mouse took this frame (`takes`) as a hit, for windows drawn where ours keeps no
+/// record of them; and a window still opening (no place yet) as none.
+pub fn release_off_child(w: &World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32)) -> bool {
+    let Some(name) = gu.focused() else { return false };
+    if gu.ptr_hover.borrow().now.is_some() {
+        return false;
+    }
+    let hits = w.win_hits.borrow();
+    let child = match hits.iter().find(|h| crate::dat::ui::norm_name(h.0.as_bytes()) == name) {
+        Some((n, _, children)) => pick(children, p, 1..=u16::MAX, parts(gu, n)),
+        None if gu.window_xy(name, sw, sh).is_none() => return false,
+        None => gu.hit(name, sw, sh, p),
+    };
+    child.is_none()
+}
+
 /// The generic handler on the focused window: a child under the pointer takes the cursor by `takes` (SE 0001), a
 /// click (the release, FUN_1015f420) on the cursor's child is Enter and on another child nothing, a right click on the window Escape (ours only over it; retail's message 6 takes any right
 /// click, FUN_1015def0). `key` is the window's key handler.
@@ -176,11 +221,12 @@ pub fn ctr_key(child: u16) -> Option<egui::Key> {
     })
 }
 
-/// The held button's count (window +0xb0) and the child it moves to, for the windows ours gives no cursor to the mouse
-/// (itemctrl / moneyctr): the child stands in for the window's cursor.
+/// itemctrl / moneyctr's cursor (window +0x4c, which ours keeps nowhere else) and the held button's count (+0xb0).
 #[derive(Default)]
 pub struct Held {
-    child: Option<u16>,
+    /// The cursor child and the open window it belongs to (name, raise stamp): a window opened again starts on child
+    /// 1, as every window load does (FUN_101193d0 -> FUN_1011a320(1)).
+    cursor: Option<(String, i64, u16)>,
     count: i16,
     /// Real ticks not yet a whole retail frame, and when they were counted.
     acc: f32,
@@ -218,11 +264,34 @@ impl Held {
     }
 }
 
-/// The mouse on itemctrl / moneyctr (`name`, as drawn this frame), by the shared window steps: the button held inside
-/// the frame puts the cursor on the child under the pointer (FUN_1015f360), the release on the cursor's child is its
-/// message 5 (FUN_1015f420; ctr_key), and held there past 0x1e ticks it sends message 0x1d every retail frame, which
-/// re-sends - / + (FUN_1013a6c0 / FUN_10140bc0 case 0x1d: children 4 / 5 only). A right click on the window is
-/// Escape. `key` is the window's key handler.
+/// itemctrl / moneyctr's cursor child (1 until the mouse moves it), for the draw's hand and the keys' Enter.
+pub fn ctr_cursor(w: &World, gu: &GameUi, name: &str) -> u16 {
+    match (&w.ctr_hold.cursor, gu.open_stamp(name)) {
+        (Some((n, at, c)), Some(now)) if n == name && *at == now => *c,
+        _ => 1,
+    }
+}
+
+/// Enter on itemctrl / moneyctr while it has the focus is message 5 on its cursor child (FUN_1013bac0 /
+/// FUN_10141fc0 case 5): what that child re-sends (`ctr_key`). Other keys and windows pass unchanged.
+pub fn ctr_enter(w: &World, gu: &GameUi, key: egui::Key) -> egui::Key {
+    let Some(name) = gu.focused().filter(|n| *n == "menu    itemctrl" || *n == "menu    moneyctr") else { return key };
+    match key {
+        egui::Key::Enter => ctr_key(ctr_cursor(w, gu, name)).unwrap_or(key),
+        _ => key,
+    }
+}
+
+/// The mouse on itemctrl / moneyctr (`name`, as drawn this frame), by the shared window steps on the window's own
+/// cursor (+0x4c):
+/// - the release (FUN_1015f420, run before the hover in a frame) on the cursor's child is its message 5 (ctr_key);
+/// - a new hit (the hover) or the button held inside the frame (FUN_1015f360) moves the cursor onto the child under the
+///   pointer (FUN_1011a240, message 9: SE 0001, the windows keep +0x85 set), so the hand stands on - / + while they
+///   are held or pointed at;
+/// - held on the cursor's child past 0x1e ticks, message 0x1d every retail frame, which re-sends - / + (FUN_1013bac0
+///   / FUN_10141fc0 case 0x1d: children 4 / 5 only).
+///
+/// A right click on the window is Escape. `key` is the window's key handler.
 pub fn ctr(
     w: &mut World,
     gu: &GameUi,
@@ -238,6 +307,7 @@ pub fn ctr(
         key(w, gu, egui::Key::Escape);
         return;
     }
+    let cursor = ctr_cursor(w, gu, name);
     let Some(id) = child else {
         if !down {
             w.ctr_hold.reset();
@@ -246,19 +316,20 @@ pub fn ctr(
     };
     let takes = takes(gu, name, id, on);
     if !down {
-        if clicked && w.ctr_hold.child == Some(id) {
+        if clicked && id == cursor {
             ctr_key(id).inspect(|&k| key(w, gu, k));
         }
         w.ctr_hold.reset();
-        return;
     }
-    if w.ctr_hold.child != Some(id) {
-        if takes {
-            w.ctr_hold.child = Some(id);
+    let cursor = ctr_cursor(w, gu, name);
+    if id != cursor {
+        if takes && let Some(stamp) = gu.open_stamp(name) {
+            w.ctr_hold.cursor = Some((name.to_string(), stamp, id));
+            w.sounds.push(Ui::Cursor as u32);
         }
         return;
     }
-    if !on {
+    if !down || !on {
         return;
     }
     let n = w.ctr_hold.tick(std::time::Instant::now(), super::ground::frame_ticks());
@@ -339,6 +410,20 @@ mod tests {
         h.reset();
         assert_eq!(h.tick(at(30), 2.0), 0);
         assert_eq!(h.count, 2);
+    }
+
+    /// FUN_1011a140 hits a disabled child (state 5) as any other: the children a window's draw leaves out go back at
+    /// their layout places, in layout order.
+    #[test]
+    fn disabled_children_are_put_back() {
+        // iuse: Use (1) disabled and drawn by hand, Drop (2) drawn at (300, 120); the caption (3) drawn too.
+        let layout = [(1, [8.0, 6.0, 96.0, 16.0]), (2, [8.0, 22.0, 96.0, 16.0]), (3, [19.0, -3.0, 73.0, 9.0])];
+        let drawn = [(2, [300.0, 120.0, 96.0, 16.0]), (3, [311.0, 95.0, 73.0, 9.0])];
+        let all = put_back(&layout, &drawn);
+        assert_eq!(all, vec![(1, [300.0, 104.0, 96.0, 16.0]), drawn[0], drawn[1]]);
+        assert_eq!(pick(&all, (310.0, 110.0), 1..=2, |_| Some((0.0, 0.0))), Some(1));
+        // Nothing drawn that the layout knows: the drawn ones as they are.
+        assert_eq!(put_back(&layout, &[(9, [0.0; 4])]), vec![(9, [0.0; 4])]);
     }
 
     #[test]

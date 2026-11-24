@@ -1888,7 +1888,15 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         }
     }
     if let Some((step, max, v, _)) = a.money
-        && let Some(win) = gu.lobby_window_off(MONEYCTR, sw, sh, (0.0, 0.0), Some(1), true, &[])
+        && let Some(win) = gu.lobby_window_off(
+            MONEYCTR,
+            sw,
+            sh,
+            (0.0, 0.0),
+            Some(super::winhits::ctr_cursor(w, gu, MONEYCTR)),
+            true,
+            &[],
+        )
     {
         super::winhits::record(w, MONEYCTR, &win);
         super::post::draw_moneyctr(gu, win.frame, step, max, v);

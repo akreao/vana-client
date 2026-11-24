@@ -410,7 +410,7 @@ fn handover_bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
             bars.help[1] = gu.menu_msg(0x10c, "");
             bars.title[1] = gu.title_msg(0x3e).unwrap_or_default();
         }
-        Focus::Money => focus(MONEYCTR, 1, bars),
+        Focus::Money => focus(MONEYCTR, super::winhits::ctr_cursor(w, gu, MONEYCTR), bars),
     }
     if bars.title[1].is_empty() {
         bars.title[1] = gu.title_msg(10).unwrap_or_default();
@@ -441,7 +441,15 @@ fn handover_draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> 
         rects.push(win.frame);
     }
     if let Some((_, v, max)) = h.qty
-        && let Some(win) = gu.lobby_window_off(ITEMCTRL, sw, sh, (0.0, 0.0), Some(1), true, &[])
+        && let Some(win) = gu.lobby_window_off(
+            ITEMCTRL,
+            sw,
+            sh,
+            (0.0, 0.0),
+            Some(super::winhits::ctr_cursor(w, gu, ITEMCTRL)),
+            true,
+            &[],
+        )
     {
         super::winhits::record(w, ITEMCTRL, &win);
         let [x, y, ..] = win.frame;
@@ -450,7 +458,15 @@ fn handover_draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> 
         rects.push(win.frame);
     }
     if let Some((step, max, v)) = h.money
-        && let Some(win) = gu.lobby_window_off(MONEYCTR, sw, sh, (0.0, 0.0), Some(1), true, &[])
+        && let Some(win) = gu.lobby_window_off(
+            MONEYCTR,
+            sw,
+            sh,
+            (0.0, 0.0),
+            Some(super::winhits::ctr_cursor(w, gu, MONEYCTR)),
+            true,
+            &[],
+        )
     {
         super::winhits::record(w, MONEYCTR, &win);
         super::post::draw_moneyctr(gu, win.frame, step, max, v);
@@ -1238,7 +1254,7 @@ fn p2p_bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
             bars.help[1] = gu.menu_msg(0x10c, "");
             bars.title[1] = gu.title_msg(0x3e).unwrap_or_default();
         }
-        PFocus::Money => focus(MONEYCTR, 1, bars),
+        PFocus::Money => focus(MONEYCTR, super::winhits::ctr_cursor(w, gu, MONEYCTR), bars),
     }
     if bars.title[1].is_empty() {
         bars.title[1] = gu.title_msg(2).unwrap_or_default();
@@ -1294,7 +1310,15 @@ fn p2p_draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         rects.push(win.frame);
     }
     if let Some((_, v, max)) = u.qty
-        && let Some(win) = gu.lobby_window_off(ITEMCTRL, sw, sh, (0.0, 0.0), Some(1), true, &[])
+        && let Some(win) = gu.lobby_window_off(
+            ITEMCTRL,
+            sw,
+            sh,
+            (0.0, 0.0),
+            Some(super::winhits::ctr_cursor(w, gu, ITEMCTRL)),
+            true,
+            &[],
+        )
     {
         super::winhits::record(w, ITEMCTRL, &win);
         let [x, y, ..] = win.frame;
@@ -1303,7 +1327,15 @@ fn p2p_draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         rects.push(win.frame);
     }
     if let Some((step, max, v)) = u.money
-        && let Some(win) = gu.lobby_window_off(MONEYCTR, sw, sh, (0.0, 0.0), Some(1), true, &[])
+        && let Some(win) = gu.lobby_window_off(
+            MONEYCTR,
+            sw,
+            sh,
+            (0.0, 0.0),
+            Some(super::winhits::ctr_cursor(w, gu, MONEYCTR)),
+            true,
+            &[],
+        )
     {
         super::winhits::record(w, MONEYCTR, &win);
         super::post::draw_moneyctr(gu, win.frame, step, max, v);
