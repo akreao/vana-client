@@ -104,9 +104,20 @@ mod tests {
                 check("items", r.3);
             }
         }
-        for ids in crate::dat::journal::MISSION_FILES.iter().chain(&crate::dat::journal::QUEST_FILES) {
-            check("journal", *ids);
+        // The logs and the menus by their own slots, so a swapped row fails.
+        let at = |what: &str, s: usize, ids: [u32; 4]| {
+            assert_eq!((0..4u8).map(|l| slot(l, s)).collect::<Vec<_>>(), ids.map(Some).to_vec(), "{what} slot {s:#x}")
+        };
+        let missions = [0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x55, 0x56, 0x57, 0x52, 0x53, 0x54];
+        for (s, ids) in missions.into_iter().zip(crate::dat::journal::MISSION_FILES) {
+            at("mission log", s, ids);
         }
+        let quests = [0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x58, 0x59];
+        for (s, ids) in quests.into_iter().zip(crate::dat::journal::QUEST_FILES) {
+            at("quest log", s, ids);
+        }
+        at("menu", 0, crate::dat::ui::MENU);
+        at("lobby", 1, crate::dat::ui::LOBBY);
         // The dialogue ranges' first files: 0x6e has none in German and French (0).
         for (k, s) in [0x6b, 0x6e, 0x6c, 0x6d].into_iter().enumerate() {
             assert_eq!(

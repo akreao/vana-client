@@ -26,6 +26,12 @@
   "menu    framesus" names framesde in a German client as retail's FUN_1025cbd0(0) does; ui::lang_menu maps the three
   windows opened by rows 2 / 6 / 7. The event VM's language (op 0x9c, FUN_100ba100) reads dat::lang, so the European
   flag is lang's (clear) there too; it had German and French as English.
+- Status names (battle text grammar kind 0x13, the title bar): FUN_102287e0 loads slot 0x5c whole (English 55732, the
+  same bytes as the 55725 ours read by a fixed id); ours now reads the slot (test dat::battle::tests::status_names_slot).
+- German and French data in current installs look frozen: de slot 0x6b + 230 = 58207 is an hm_0 block, and the de / fr
+  item files for 0x0000..0x4000 hold no item text (0x2200's do). Retail with the European flag clear reads the same
+  files and fails the same way (FUN_100ae1e0 logs "EventMess file ga nee"), so ours does not fall back to English;
+  whether PlayOnline sets the flag is queue row 183's question.
 - Test dat::lang::tests::files_are_slots: every per-language id set ours keeps is one slot of the DLL's tables, the
   dialogue ranges match, and lang's library names are FUN_1025cbd0's table.
 - Left (queue row 183): the DLL's other reads of the language, which pick per-language rules rather than files.
