@@ -142,3 +142,6 @@ assert(core.tick(s, env({ now = 1.2, rules = { protect } })) ~= nil, "still on t
 -- Blocked by id, whatever the status names: sleep stops everything, silence spells.
 s = fresh()
 assert(core.tick(s, env({ now = 1, rules = { protect }, buffs = { [2] = true } })) == nil)
+s = fresh()
+assert(core.tick(s, env({ now = 1, me = me, rules = { ra }, target = mob, can_shoot = true, buffs = { [7] = true } })) == nil,
+  "petrified: no ranged attack either")

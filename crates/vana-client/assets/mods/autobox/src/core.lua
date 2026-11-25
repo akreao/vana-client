@@ -193,9 +193,8 @@ end
 
 local function resolve(rule, cand, env)
   local a = rule.action or {}
-  if (a.kind == "spell" and blocked(env, NO_SPELLS)) or ((a.kind == "ability" or a.kind == "ws") and blocked(env, NO_ABILITIES)) then
-    return nil
-  end
+  local only = a.kind == "spell" and NO_SPELLS or ((a.kind == "ability" or a.kind == "ws") and NO_ABILITIES or {})
+  if blocked(env, only) then return nil end
   if a.kind == "ranged" then
     if cand.kind ~= "mob" or not env.can_shoot then return nil end
     return { kind = "ranged", tag = cand.tag, text = "Ranged attack" }
