@@ -82,11 +82,21 @@ function M.action_text(a)
 end
 
 local ROMAN = { "", "II", "III", "IV", "V", "VI" }
+local NINJUTSU = { "Ichi", "Ni", "San" } -- ninjutsu tiers are named: "Utsusemi: Ichi"
 
--- A spell family's ids, highest tier first: "Cure" (or "Cure II") -> Cure VI .. Cure.
+-- A spell family's ids, highest tier first: "Cure" (or "Cure II") -> Cure VI .. Cure; "Utsusemi: Ni" -> San .. Ichi.
 local function family(spell_id, name)
+  local base = name:match("^(.-: )%a+$")
+  if base then
+    local out = {}
+    for t = #NINJUTSU, 1, -1 do
+      local id = spell_id(base .. NINJUTSU[t])
+      if id then out[#out + 1] = id end
+    end
+    if #out > 0 then return out end
+  end
   for t = #ROMAN, 2, -1 do
-    local base = name:match("^(.-) " .. ROMAN[t] .. "$")
+    base = name:match("^(.-) " .. ROMAN[t] .. "$")
     if base then name = base break end
   end
   local out = {}
@@ -95,6 +105,27 @@ local function family(spell_id, name)
     if id then out[#out + 1] = id end
   end
   return out
+end
+
+-- The game's spell range classes in yalms (res.spell's `range` indexes it; 255: no limit).
+local RANGES = { 0, 1, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20, 25, 30, 255 }
+
+-- Each ninjutsu's tool and the universal tool a NIN main may use instead (LSB's spell_list and HasNinjaTool):
+-- {first spell, last spell, tool, universal tool}.
+local NINJA_TOOLS = {
+  { 318, 318, 2553, 2972 }, { 319, 319, 2555, 2973 }, { 320, 322, 1161, 2971 }, { 323, 325, 1164, 2971 },
+  { 326, 328, 1167, 2971 }, { 329, 331, 1170, 2971 }, { 332, 334, 1173, 2971 }, { 335, 337, 1176, 2971 },
+  { 338, 340, 1179, 2972 }, { 341, 343, 1182, 2973 }, { 344, 346, 1185, 2973 }, { 347, 349, 1188, 2973 },
+  { 350, 352, 1191, 2973 }, { 353, 354, 1194, 2972 }, { 505, 505, 8803, 2972 }, { 506, 506, 8804, 2972 },
+  { 507, 507, 2642, 2972 }, { 508, 508, 2643, 2973 }, { 509, 509, 2644, 2972 }, { 510, 510, 2970, 2972 },
+}
+
+-- Whether the spell's tool is in the inventory (or the universal one with NIN, job 13, the main); true for others.
+function M.has_tool(spell, held, main)
+  for _, t in ipairs(NINJA_TOOLS) do
+    if spell >= t[1] and spell <= t[2] then return held(t[3]) or (main == 13 and held(t[4])) end
+  end
+  return true
 end
 
 local function moving(s, me, now)
@@ -137,7 +168,7 @@ local function candidates(rule, env)
   elseif rule.target == "pet" then
     local p = env.pet
     if not p or (p.hpp or 0) <= 0 then return {} end
-    return { { tag = "<pet>", hpp = p.hpp, mpp = p.mpp, kind = "pet", name = p.name } }
+    return { { tag = "<pet>", hpp = p.hpp, mpp = p.mpp, kind = "pet", name = p.name, distance = p.distance } }
   end
   return {}
 end
@@ -166,14 +197,23 @@ local function holds(c, cand, env)
   return false
 end
 
--- Whether a spell or ability can go on that candidate by its valid-target bits.
+-- Whether a spell or ability can go on that candidate by its valid-target bits, as the game's target prompt takes
+-- them (target.rs SUB_FLAGS, FUN_10159170): yourself by 1 self, 4 party or 0x10 PC; a party member by 4 or 0x10; a
+-- monster by 0x20; your pet (an NPC kind) by 0x40 only (0x80 leaves pets out).
 local function fits(targets, cand)
   targets = targets or 0
-  if cand.kind == "me" then return targets & 1 ~= 0 end
-  if cand.kind == "party" then return targets & 4 ~= 0 end
+  if cand.kind == "me" then return targets & 0x15 ~= 0 end
+  if cand.kind == "party" then return targets & 0x14 ~= 0 end
   if cand.kind == "mob" then return targets & 0x20 ~= 0 end
-  if cand.kind == "pet" then return targets & 0x7 ~= 0 end
+  if cand.kind == "pet" then return targets & 0x40 ~= 0 end
   return false
+end
+
+-- Whether the spell reaches the candidate (one without a known distance, you or a party member already within
+-- SPELL_RANGE, counts as reached).
+local function reaches(r, cand)
+  local reach = RANGES[((r.range or 15) & 0xf) + 1]
+  return not cand.distance or reach >= 255 or cand.distance <= reach
 end
 
 -- What the rule's action is on this candidate now: {kind, id, tag, text}, or nil.
@@ -205,7 +245,8 @@ local function resolve(rule, cand, env)
     local ids = a.best and family(env.spell_id, a.name or "") or { env.spell_id(a.name or "") }
     for _, id in ipairs(ids) do
       local r = env.spell(id)
-      if env.known[id] and r and fits(r.targets, cand) and env.usable("spell", id) then
+      if env.known[id] and r and fits(r.targets, cand) and reaches(r, cand) and env.usable("spell", id)
+        and (not env.has_tool or env.has_tool(id)) then
         return { kind = "spell", id = id, tag = cand.tag, text = r.name }
       end
     end
@@ -216,11 +257,13 @@ local function resolve(rule, cand, env)
       return { kind = "ability", id = id, tag = cand.tag, text = r.name }
     end
   elseif a.kind == "ws" then
-    if cand.kind ~= "mob" or (env.me.tp or 0) < 1000 then return nil end
+    if (env.me.tp or 0) < 1000 then return nil end
     local names = a.best and M.BEST_WS or { a.name or "" }
     for _, n in ipairs(names) do
       local id = env.ability_id(n)
-      if id and id < 512 and env.has_ability[id] and env.usable("ability", id) then
+      -- by the skill's own targets: most go on a monster, a few on yourself (Starlight, Moonlight)
+      local r = id and env.ability(id)
+      if id and id < 512 and env.has_ability[id] and fits(r and r.targets or 0x20, cand) and env.usable("ability", id) then
         return { kind = "ability", id = id, tag = cand.tag, text = n }
       end
     end

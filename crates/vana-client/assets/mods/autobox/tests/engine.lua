@@ -7,9 +7,12 @@ local presets = require("src.presets")
 local SPELLS = {
   [1] = { name = "Cure", targets = 0x1F }, [2] = { name = "Cure II", targets = 0x1F },
   [3] = { name = "Cure III", targets = 0x1F }, [43] = { name = "Protect", targets = 0x1 },
-  [109] = { name = "Refresh", targets = 0x1 }, [164] = { name = "Thunder", targets = 0x20 },
+  [109] = { name = "Refresh", targets = 0x1 }, [164] = { name = "Thunder", targets = 0x20, range = 12 },
+  [338] = { name = "Utsusemi: Ichi", targets = 0x1 }, [339] = { name = "Utsusemi: Ni", targets = 0x1 },
+  [100] = { name = "Pet Mend", targets = 0x40 },
 }
-local ABILITIES = { [32] = { name = "Fast Blade" }, [42] = { name = "Savage Blade" }, [520] = { name = "Berserk", targets = 1 } }
+local ABILITIES = { [32] = { name = "Fast Blade", targets = 0x20 }, [42] = { name = "Savage Blade", targets = 0x20 },
+  [520] = { name = "Berserk", targets = 1 }, [163] = { name = "Starlight", targets = 1 } }
 local STATUS = { protect = { 40 }, refresh = { 43 }, poison = { 3 }, berserk = { 56 }, silence = { 6 }, amnesia = { 16 } }
 
 local function env(o)
@@ -17,7 +20,7 @@ local function env(o)
     now = o.now or 10, on = true,
     me = o.me or { id = 1, pos = { x = 0, z = 0 }, hpp = 100, mpp = 100, tp = 0, status = 0 },
     buffs = o.buffs or {}, known = o.known or { [1] = true, [2] = true, [43] = true, [109] = true, [164] = true },
-    party = o.party or {}, ours = o.ours or { [1] = true }, target = o.target, pet = nil,
+    party = o.party or {}, ours = o.ours or { [1] = true }, target = o.target,
     has_ability = o.has_ability or { [32] = true, [42] = true, [520] = true }, can_shoot = o.can_shoot,
     entity = function(id) return (o.near or {})[id] end, rules = o.rules,
     casting = o.casting or false, event = false,
@@ -27,6 +30,7 @@ local function env(o)
     spell_id = function(n) for id, r in pairs(SPELLS) do if r.name:lower() == n:lower() then return id end end end,
     ability_id = function(n) for id, r in pairs(ABILITIES) do if r.name:lower() == n:lower() then return id end end end,
     status_ids = function(n) return STATUS[n:lower()] end,
+    has_tool = o.has_tool, pet = o.pet,
   }
   return e
 end
@@ -145,3 +149,41 @@ assert(core.tick(s, env({ now = 1, rules = { protect }, buffs = { [2] = true } }
 s = fresh()
 assert(core.tick(s, env({ now = 1, me = me, rules = { ra }, target = mob, can_shoot = true, buffs = { [7] = true } })) == nil,
   "petrified: no ranged attack either")
+
+-- A spell out of its range class's reach is passed over (Thunder: class 12, 20 yalms), so a later rule runs.
+local thunder = { target = "target", when = { kind = "always" }, action = { kind = "spell", name = "Thunder" } }
+local far = { kind = "mob", hpp = 80, claim = 1, name = "Goblin", distance = 35 }
+s = fresh()
+a = core.tick(s, env({ now = 1, me = me, rules = { thunder, protect }, target = far }))
+assert(a and a.text == "Protect", a and a.text)
+s = fresh()
+a = core.tick(s, env({ now = 1, me = me, rules = { thunder, protect }, target = { kind = "mob", hpp = 80, claim = 1, distance = 15 } }))
+assert(a and a.text == "Thunder")
+
+-- A weapon skill on yourself (Starlight) by its own targets; a monster skill not on yourself.
+local star = { target = "me", when = { kind = "always" }, action = { kind = "ws", name = "Starlight" } }
+s = fresh()
+a = core.tick(s, env({ now = 1, me = me, rules = { star }, has_ability = { [163] = true } }))
+assert(a and a.id == 163 and a.tag == "<me>")
+local blade_me = { target = "me", when = { kind = "always" }, action = { kind = "ws", name = "Fast Blade" } }
+s = fresh()
+assert(core.tick(s, env({ now = 1, me = me, rules = { blade_me } })) == nil)
+
+-- A pet takes only what may go on an NPC (0x40): no Cure on it.
+local pet = { hpp = 30, name = "Wyvern", distance = 3 }
+local pet_cure = { target = "pet", when = { kind = "hp_below", value = 50 }, action = { kind = "spell", name = "Cure" } }
+local pet_mend = { target = "pet", when = { kind = "hp_below", value = 50 }, action = { kind = "spell", name = "Pet Mend" } }
+s = fresh()
+a = core.tick(s, env({ now = 1, rules = { pet_cure, pet_mend }, pet = pet, known = { [1] = true, [100] = true } }))
+assert(a and a.text == "Pet Mend" and a.tag == "<pet>", a and a.text)
+
+-- Best Utsusemi: San .. Ichi by name; ninjutsu only with its tool.
+local utsu = { target = "me", when = { kind = "always" }, action = { kind = "spell", name = "Utsusemi: Ni", best = true } }
+local known = { [338] = true, [339] = true }
+s = fresh()
+a = core.tick(s, env({ now = 1, rules = { utsu }, known = known, refuse = { spell339 = true } }))
+assert(a and a.id == 338, "Ni refused: Ichi")
+s = fresh()
+assert(core.tick(s, env({ now = 1, rules = { utsu }, known = known, has_tool = function() return false end })) == nil)
+assert(core.has_tool(338, function(i) return i == 1179 end, 3) and not core.has_tool(338, function(i) return i == 2972 end, 3))
+assert(core.has_tool(338, function(i) return i == 2972 end, 13) and core.has_tool(1, function() return false end, 3))

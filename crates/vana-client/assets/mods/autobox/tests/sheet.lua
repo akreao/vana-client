@@ -31,6 +31,7 @@ game = {
   cast = function() return nil end,
   usable = function() return true end,
   equipment = function() return {} end,
+  items = function() return {} end,
 }
 local on_window, update = ui.on, ui.update
 H = {}

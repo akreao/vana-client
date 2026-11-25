@@ -215,20 +215,20 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "46a3c54fad564c3c8d034ae192b21a54380f3939603c56ec8cf95b812aead22f",
-          "size": 17657,
+          "sha256": "7955bf2c8cef2c0663ccd02fab98ad25c5a3d6f19f0e6e62622da2af63aa8913",
+          "size": 18120,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/autobox/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "e86cc0c4daf1e3f87c60f319096d33b027a814eee054b3bb44ebcdeb0fd4d2dc",
+          "sha256": "a6fc6cfdf6d9f5db74fe73f27c9aa02c3cac2b6902577cc0003301318b266a34",
           "size": 739,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/autobox/mod.toml"
         },
         {
           "path": "src/core.lua",
-          "sha256": "9db24e7bee90a6c385ec2ab9e987891a149bccf9878ced0e2ea58dc4ed2411f6",
-          "size": 12450,
+          "sha256": "cf8854142053766aec492aba9f26c3df776b62eeaf26e839807768162f0f40c5",
+          "size": 14800,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/autobox/src/core.lua"
         },
         {
@@ -241,7 +241,7 @@
       "id": "autobox",
       "kind": "lua",
       "name": "Autobox",
-      "version": "1.0.5"
+      "version": "1.0.6"
     },
     {
       "authors": [],
@@ -694,21 +694,21 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "bd5138374283c1aa05923379596016e35d4e3d9409c3fb7f784d887909b1c9c5",
-          "size": 7297,
+          "sha256": "6f924ca53e13ba4858af38d6ef9a637548ed736ed57e1b21e90b112a2204b64a",
+          "size": 7508,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/completion-log/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "a6b81f4495ff100e408382369cd8257f617b24e15774d252f848d6dd577b18b7",
-          "size": 733,
+          "sha256": "9632db172bc6be13281a31a1cfeea6ef2125891c76b27093cb536bf7a7596fb0",
+          "size": 734,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/completion-log/mod.toml"
         }
       ],
       "id": "completion-log",
       "kind": "lua",
       "name": "Completion Log",
-      "version": "1.0.9"
+      "version": "1.0.10"
     },
     {
       "authors": [],
