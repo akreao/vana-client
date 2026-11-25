@@ -3622,13 +3622,13 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "bc9b68be02fb32f0a229cf2cf8dd4d710c42582ecf7c00d768d694005422557b",
-          "size": 37692,
+          "sha256": "61e4d2dce0ebb46398eb1814d1f2e7aa56418345f8925937442d04f8c377a062",
+          "size": 38177,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-gambits/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "839e6d45888d593f457029c3d22f5be6cf68d9cde6734970f66099ad8a229807",
+          "sha256": "7e3566c09a9966da69bf7fa3e04cb128ea660597c494b552e2fef96922fba877",
           "size": 506,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-gambits/mod.toml"
         },
@@ -3648,7 +3648,7 @@
       "id": "xifo-gambits",
       "kind": "lua",
       "name": "XIFO Gambits",
-      "version": "1.2.1"
+      "version": "1.2.2"
     },
     {
       "authors": [

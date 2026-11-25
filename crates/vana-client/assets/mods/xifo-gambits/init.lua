@@ -551,8 +551,9 @@ local function new_rule()
 end
 
 local function save()
-  local d, m = st.draft, mate()
-  if not d or not m then return end
+  -- (a set carries its job: no mate is needed, so a set imported with an empty squad saves too)
+  local d = st.draft
+  if not d then return end
   for i, r in ipairs(d.rules) do
     local p = G.rule_problem(r, st.cat)
     if p then return status(("Rule %d %s."):format(i, p), true) end
@@ -727,10 +728,16 @@ ui.on(W, function(_, e)
       status(("The code of %s (%d rules) is on the clipboard."):format(d.name or "the set", #d.rules))
     else
       -- Read before anything is replaced: a code that does not read leaves the open set (and its unsaved mark) alone.
+      local no_clip = false -- the clipboard could not be read (no permission)
       local function import(text, decoded)
         local set, why = decoded, nil
         if not set then set, why = Share.decode(text) end
-        if not set then return status("Not imported: " .. why, true) end
+        if not set then
+          -- the box keeps 1024 characters: without the clipboard a longer code arrives cut
+          local hint = no_clip and #text >= 1024
+            and " A code this long is read from the clipboard: /lua grant xifo-gambits clipboard, then copy it again." or ""
+          return status("Not imported: " .. why .. hint, true)
+        end
         unless_dirty(function()
           for _, rule in ipairs(set.rules) do rule.id = nil end -- a new set's rules are numbered by the server
           -- edited with the choices of a mate of the set's job, when there is one
@@ -770,7 +777,10 @@ ui.on(W, function(_, e)
         if clip and Share.looks_like(clip) then return import(clip) end
         status("No share code to import: copy one, or paste it into the box.", true)
       end
-      if not pcall(client.paste, pick) then pick(nil) end
+      if not pcall(client.paste, pick) then
+        no_clip = true
+        pick(nil)
+      end
     end
   elseif e.kind == "change" and e.id == "name" and d then
     d.name = e.text

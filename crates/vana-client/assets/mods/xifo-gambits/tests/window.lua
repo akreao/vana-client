@@ -240,6 +240,7 @@ assert(w2.editing.text:find("not saved", 1, true) and w2.status.text:find("not s
 -- "Keep editing" leaves the mate dropdown on the mate being edited
 local cur = w2.mate.at
 local other = cur == 1 and 2 or 1
+w2.mate.at = other -- (the dropdown shows the pick before its event comes)
 H({ kind = "set", id = "mate", index = other })
 prompts[#prompts].f(2)
 assert(w2.mate.at == cur)
@@ -280,3 +281,24 @@ cmd.gambits()
 cmd.gambits()
 answer({ "mate|2|41|Salia|WAR|28|-|0|0|-", "end|1" })
 assert(last():match("^!gsq wsg %d+ 2$"), last())
+
+-- with no squad mates, an imported set still saves (under its own job)
+sent, windows, open = {}, {}, {}
+load(TEST.source("init.lua"), "@init.lua")()
+local w3 = windows.gambits
+cmd.gambits()
+answer({ "hello|9|32|120|64" })
+answer({ "end|0" })
+local S3 = require("src.share")
+w3.code.text = assert(S3.encode({ job = "WHM", name = "Starter", rules = { { on = true, target = "SELF",
+  cond = "ALWAYS", arg = "", kind = "r" } } }))
+client = { copy = function() end, paste = function(f) f("") end }
+H({ kind = "press", id = "share", index = 2 })
+assert(w3.status.text:find("Imported Starter", 1, true), w3.status.text)
+H({ kind = "press", id = "save", index = 1 })
+assert(last():match("^!gsq x %d+ 1 1 0,%-,WHM,1,Starter;"), last())
+-- a long code cut in the box, with no clipboard permission: the status says how to read it whole
+client = { copy = function() end, paste = function() error("needs the clipboard permission") end }
+w3.code.text = "GS1" .. string.rep("A", 1100)
+H({ kind = "press", id = "share", index = 2 })
+assert(w3.status.text:find("/lua grant xifo-gambits clipboard", 1, true), w3.status.text)
