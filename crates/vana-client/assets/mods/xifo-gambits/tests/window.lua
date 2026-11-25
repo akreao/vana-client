@@ -306,3 +306,22 @@ client = { copy = function() end, paste = function() error("needs the clipboard 
 w3.code.text = "GS1" .. string.rep("A", 1021) -- as the box cuts it: 1024 characters
 H({ kind = "press", id = "share", index = 2 })
 assert(w3.status.text:find("/lua grant xifo-gambits clipboard", 1, true), w3.status.text)
+
+-- a version 10 server: capability words, each mate's live Rule Set state, Apply this mate
+sent, windows, open = {}, {}, {}
+load(TEST.source("init.lua"), "@init.lua")()
+local w4 = windows.gambits
+cmd.gambits()
+answer({ "hello|10|32|120|64|live,reapply1" })
+answer({ "mate|1|40|Fayd|WHM|30|BLM|4|1|15|pending|edited|4|0|0", "mate|2|41|Salia|WAR|28|-|0|0|-|off|-|0|0|0",
+  "end|2" })
+assert(w4.mate.items[1] == "Fayd  WHM 30/BLM 15  (out, *)", w4.mate.items[1])
+assert(w4.use.items[4] == "Apply this mate", tostring(w4.use.items[4]))
+local list4 = sent[#sent - 1]
+ev.xifo_link_reply(list4.tag, { "set|4|WHM|2|o|3|w4|Fayd heals", "end|1" }, true)
+assert(w4.status.text:find("Runs Rule Set 4; its set was edited", 1, true), w4.status.text)
+handlers.gambits("gambits", { kind = "press", id = "use", index = 4 })
+assert(last() == "!squad reapply 1", last())
+-- an away mate: no Apply this mate
+handlers.gambits("gambits", { kind = "set", id = "mate", index = 2 })
+assert(w4.use.items[4] == nil)

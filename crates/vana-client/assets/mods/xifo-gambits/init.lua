@@ -92,7 +92,8 @@ ui.window(W, {
     { page = 1, type = "buttons", id = "setbtn", items = { "Open", "New", "Copy", "Delete" } },
     { page = 1, type = "buttons", id = "use", items = { "Use this set", "Use job rules", "Apply now" },
       tip = "Use this set: the mate follows the picked Rule Set from its next call. Use job rules: back to its built-in "
-        .. "rules. Apply now: dismiss and call the squad, so the change counts now." },
+        .. "rules. Apply now: dismiss and call the squad, so the change counts now. Apply this mate (newer servers): "
+        .. "only the picked mate leaves and comes back." },
     { page = 1, type = "separator" },
     { page = 1, type = "text", id = "editing", text = "No Rule Set open." },
     { page = 1, type = "input", id = "name", label = "Name", text = "", max = 24 },
@@ -334,16 +335,27 @@ load_sets = function(then_open)
       return n
     end)(), then_open) or st.set_row end
     show_sets()
-    status(("%s, %s %d%s. %s"):format(m.name, m.job, m.level, m.sub and ("/%s %d"):format(m.sub, m.sub_level) or "",
-      m.set > 0 and ("Uses Rule Set %d."):format(m.set) or "Uses its job rules."))
+    status(("%s, %s %d%s. %s%s"):format(m.name, m.job, m.level, m.sub and ("/%s %d"):format(m.sub, m.sub_level) or "",
+      m.set > 0 and ("Uses Rule Set %d."):format(m.set) or "Uses its job rules.",
+      G.live_text(m) and (" " .. G.live_text(m)) or ""))
   end)
 end
 
+-- The Use row: Apply this mate (only it leaves and comes back) when the server can (version 10, "reapply1") and the
+-- picked mate is out.
+local function show_use()
+  local m = mate()
+  local items = { "Use this set", "Use job rules", "Apply now" }
+  if st.caps and st.caps.reapply1 and m and m.out then items[4] = "Apply this mate" end
+  ui.update(W, "use", { items = items })
+end
+
 local function show_mates()
+  show_use()
   local items = {}
   for i, m in ipairs(st.mates) do
     items[i] = ("%s  %s %d%s%s"):format(m.name, m.job, m.level, m.sub and ("/%s %d"):format(m.sub, m.sub_level) or "",
-      m.out and "  (out)" or "")
+      m.out and ((m.live and m.live.state == "pending") and "  (out, *)" or "  (out)") or "")
   end
   if #items == 0 then items[1] = "No squad mates" end
   ui.update(W, "mate", { items = items, at = st.mate })
@@ -386,7 +398,7 @@ local function start()
         or "No answer: this needs an XI: Forever Offline server with the Gambits editor.", true)
     end
     if h.version < 4 then return status("This server's Gambits editor is too old (version 4 or later needed).", true) end
-    st.version, st.max_rules = h.version, h.max_rules
+    st.version, st.max_rules, st.caps = h.version, h.max_rules, h.caps
     load_mates()
   end, { "hello", "err" })
 end
@@ -632,6 +644,7 @@ ui.on(W, function(_, e)
       st.mate, st.draft, st.set_row = e.index, nil, 1
       st.ws, st.ws_edit = nil, nil
       ui.update(W, "mate", { at = st.mate })
+      show_use()
       show_rules()
       load_sets()
       load_catalog()
@@ -715,10 +728,13 @@ ui.on(W, function(_, e)
       say(("!squad ruleset %d %d"):format(m.slot, s.num))
     elseif e.index == 2 then
       say(("!squad ruleset %d off"):format(m.slot))
-    else
+    elseif e.index == 3 then
       say("!squad reapply")
+    else
+      -- (version 10, capability "reapply1") only this mate leaves and is called again
+      say(("!squad reapply %d"):format(m.slot))
     end
-    timer.after(2, function() load_mates(true) end)
+    timer.after(e.index == 4 and 6 or 2, function() load_mates(true) end)
   elseif e.kind == "press" and e.id == "share" then
     if e.index == 1 then
       if not d then return status("Open a Rule Set first.", true) end

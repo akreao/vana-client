@@ -90,3 +90,12 @@ assert(chk == nil and err.code == "noreply")
 chk = G.parse_check({ "chk|2|not learned", "end|1|30|BLM|15" })
 assert(#chk.problems == 1 and chk.level == 30)
 assert(G.parse_check({ "chk|2|not learned" }) == nil)
+
+-- version 10: hello's capability words, the mates' live fields (older lines have neither)
+local h10 = G.parse_hello({ "hello|10|32|120|64|live,reapply1" })
+assert(h10.version == 10 and h10.caps.live and h10.caps.reapply1)
+assert(next(G.parse_hello({ "hello|9|32|120|64" }).caps) == nil and next(G.parse_hello({ "hello|10|32|120|64|-" }).caps) == nil)
+local m10 = G.parse_mates({ "mate|1|40|Fayd|WHM|30|BLM|4|1|15|fallback|-|0|1|2", "end|1" })[1]
+assert(m10.live.state == "fallback" and m10.live.fallback == 1 and m10.live.dropped == 2 and m10.live.set == 0)
+assert(G.live_text(m10) == "Runs its job rules: the chosen set is gone. 2 rules left out.", G.live_text(m10))
+assert(mates[1].live == nil and G.live_text(mates[1]) == nil)
