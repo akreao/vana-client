@@ -39,44 +39,49 @@ pub struct Profile {
     status: Status,
     /// polcore's handle and character tables, from the lists (0/9, 1/3).
     tables: polpro::Tables,
+    /// The session value: the first 16 bytes of the last ChangeMyStatus reply (0x10103348, slot 0xfac).
+    value: [u8; 16],
 }
 
 impl Profile {
     fn transact(&mut self, category: u8, opcode: u8, payload: Option<&[u8]>, reply: ReplyBody) -> Result<Vec<u8>> {
-        polpro::transact(&mut self.cipher, &mut self.member, &mut self.server, category, opcode, payload, reply)
+        self.transact_bound(category, opcode, payload, reply, None)
     }
 
-    /// ChangeMyStatus (4/5) with polcore's arguments; the reply's first 16 bytes are the session value.
+    fn transact_bound(
+        &mut self,
+        category: u8,
+        opcode: u8,
+        payload: Option<&[u8]>,
+        reply: ReplyBody,
+        bound: Option<polpro::Bound>,
+    ) -> Result<Vec<u8>> {
+        polpro::transact(&mut self.cipher, &mut self.member, &mut self.server, category, opcode, payload, reply, bound)
+    }
+
+    /// ChangeMyStatus (4/5) with polcore's arguments; the session value after it. When no argument changes polcore's
+    /// status (after one change went through) nothing is sent and the value is the one kept
+    /// (`polpro::change_my_status`).
     fn change_status(&mut self, args: [i32; 6]) -> Result<[u8; 16]> {
         let slots = &self.tables.slots;
-        let (body, status) =
-            polpro::change_my_status(&self.status, args, |c| slots.get(c as usize).copied().unwrap_or_default());
-        let r = self.transact(4, 5, Some(&body), ReplyBody::Fixed(0x20))?;
+        let plan = polpro::change_my_status(&self.status, args, |c| slots.get(c as usize).copied().unwrap_or_default())
+            .map_err(polpro::Local)?;
+        let Some((body, status)) = plan else {
+            log::info!("PlayOnline: ChangeMyStatus {args:?} changes nothing, not sent");
+            return Ok(self.value);
+        };
+        let bound = polpro::Bound { body: 0x20, keeps_server: true };
+        let r = self.transact_bound(4, 5, Some(&body), ReplyBody::Fixed(0x20), Some(bound))?;
         self.status = status;
-        Ok(r[..16].try_into().unwrap())
+        self.value = r[..16].try_into().unwrap();
+        Ok(self.value)
     }
 
-    /// LoadMyStatus (4/6, 0x1001d490 state 6): the content and presence ([6] - 1, none: 4), the character from the
-    /// handle's slot [2] when [1], the flag, activity and p5.
+    /// LoadMyStatus (4/6, FUN_10019860; `Status::loaded`). Status 0x72 still has its 0x18-byte body read.
     fn load_status(&mut self) -> Result<()> {
-        let s = self.transact(4, 6, Some(&[0; 0x14]), ReplyBody::Fixed(0x80))?;
-        let st = &mut self.status;
-        if s[6] == 0 {
-            (st.content, st.presence) = (-1, 4);
-        } else {
-            if s[0] < 0x40 {
-                st.content = s[0] as i32;
-            }
-            st.presence = s[6] as i32 - 1;
-        }
-        if s[1] == 0 || st.content < 0 {
-            st.service = -1;
-        } else if s[2] < 8 {
-            st.service = (self.tables.slots[st.content as usize][s[2] as usize] >> 1 & 0x3f) as i32;
-        }
-        st.flag = (s[3] == 1) as i32;
-        st.activity = u16::from_le_bytes([s[4], s[5]]) as i32;
-        st.p5 = s[7] as i32;
+        let bound = polpro::Bound { body: 0x18, keeps_server: false };
+        let s = self.transact_bound(4, 6, Some(&[0; 0x14]), ReplyBody::Fixed(0x80), Some(bound))?;
+        self.status.loaded(&s, &self.tables.slots);
         Ok(())
     }
 
@@ -148,6 +153,10 @@ impl Profile {
             self.transact(1, 10, Some(&body), ReplyBody::None).context("storing PlayOnline's character list")?;
         }
         self.tables.stored();
+        // Subs 0x12 / 0x13 then run the handle list's store (0/8: slot 0x2d4, FUN_100191b0 / FUN_10019300). It sends
+        // only when a handle was made, deleted, edited or reordered (the dirty bits at 0x1045bf20, 0x10103344), which
+        // only the Viewer and FFXiMain's unreachable "oplev" menu do, or when its order pass (FUN_10019240(1))
+        // renumbers, which LoadHandleList's own pass (FUN_10019240(0)) has already done: in the game it sends nothing.
         Ok(())
     }
 }
@@ -238,10 +247,14 @@ pub fn sign_in_at(c: &Credentials, servers: &Servers) -> Result<(Session, Pol)> 
         fixed: servers.profile,
         residue: [0; 12],
     };
-    // polcore's starting status (0x1007541c..: no handle or character, presence 4, activity 1000).
-    let status = Status { content: -1, service: -1, flag: 0, presence: 4, p5: 0, activity: 1000, changed: false };
-    let mut p =
-        Profile { cipher: chat.cipher.clone(), member, server: None, status, tables: polpro::Tables::default() };
+    let mut p = Profile {
+        cipher: chat.cipher.clone(),
+        member,
+        server: None,
+        status: Status::start(),
+        tables: polpro::Tables::default(),
+        value: [0; 16],
+    };
     if !chat.skip_member_login {
         let secret = polpro::secret20(&c.se_password);
         let body = polpro::member_login(&c.se_id, &secret, c.otp.as_deref(), chat.now());
@@ -339,7 +352,7 @@ mod tests {
             residue: [0; 12],
         };
         let status = Status { content: 0, service: -1, flag: 0, presence: 2, p5: 0, activity: 1, changed: true };
-        Profile { cipher, member, server: None, status, tables: polpro::Tables::default() }
+        Profile { cipher, member, server: None, status, tables: polpro::Tables::default(), value: [0; 16] }
     }
 
     fn character(index: u8, linked: bool, content_id: u32) -> [u8; 0x68] {
@@ -409,6 +422,74 @@ mod tests {
         assert_eq!(seen[1].2[0x40 + 4 * 8..][..3], [0, 0, 0]);
         assert_eq!(seen[2].2[0x10..0x13], [1, 1, 0]);
         assert_eq!(p.tables.slots[1], [6 << 1 | 1, 0, 0, 4 << 1 | 1, 0, 0, 0, 0]);
+    }
+
+    /// A profile server for one transaction that refuses it with status 0x72 and then sends `body` bytes
+    /// (a good checksum unless `bad_sum`).
+    fn bound_server(
+        body: usize,
+        bad_sum: bool,
+        mut cipher: cipher::PolBlowfish,
+    ) -> (SocketAddr, std::thread::JoinHandle<()>) {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap();
+        let t = std::thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            let mut hs = [0u8; 0x28];
+            s.read_exact(&mut hs).unwrap();
+            s.write_all(&[0u8; 0x18]).unwrap();
+            let mut head = [0u8; 0x28];
+            s.read_exact(&mut head).unwrap();
+            cipher.apply(&mut head, true);
+            let mut rest = vec![0u8; u32::from_le_bytes(head[4..8].try_into().unwrap()) as usize];
+            s.read_exact(&mut rest).unwrap();
+            cipher.apply(&mut rest, false);
+            let mut rh = [0u8; 0x18];
+            rh[1] = 0x72;
+            cipher.apply(&mut rh, true);
+            s.write_all(&rh).unwrap();
+            let mut rb = polpro::body(&vec![0x5a; body - 4]);
+            if bad_sum {
+                rb[body - 1] ^= 1;
+            }
+            cipher.apply(&mut rb, false);
+            s.write_all(&rb).unwrap();
+        });
+        (addr, t)
+    }
+
+    /// polcore 1.18.12 sends no ChangeMyStatus that changes nothing after one went through: the session value stays
+    /// the one kept, and no connection is made.
+    #[test]
+    fn an_unchanged_status_is_not_sent() {
+        let cipher = cipher::PolBlowfish::new(&[1, 2, 3, 4, 5, 6, 7, 8], [8, 7, 6, 5, 4, 3, 2, 1]);
+        let mut p = profile("127.0.0.1:1".parse().unwrap(), cipher);
+        p.status = Status { content: 1, service: 4, flag: 0, presence: 0, p5: 0, activity: 1, changed: true };
+        p.value = [7; 16];
+        assert_eq!(p.change_status([1, 4, 0, -2, -1, 1]).unwrap(), [7; 16]);
+        assert_eq!(p.change_status([-2, -2, -2, -2, -1, -2]).unwrap(), [7; 16]);
+        // A change does connect (and fails here, nothing listening).
+        assert!(p.change_status([-2, -1, -2, -2, -1, -2]).is_err());
+    }
+
+    /// Status 0x72 (-0x14c2): ChangeMyStatus and LoadMyStatus still read the reply's body (0x20 / 0x18 bytes, its
+    /// checksum checked); only ChangeMyStatus keeps the cached server.
+    #[test]
+    fn bound_refusals_read_their_body() {
+        let cipher = cipher::PolBlowfish::new(&[1, 2, 3, 4, 5, 6, 7, 8], [8, 7, 6, 5, 4, 3, 2, 1]);
+        let code = |e: &anyhow::Error| polpro::local_code(e);
+        for (load, bad, want) in [(false, false, -0x14c2), (false, true, -0x140f), (true, false, -0x14c2)] {
+            let (addr, t) = bound_server(if load { 0x18 } else { 0x20 }, bad, cipher.clone());
+            let mut p = profile(addr, cipher.clone());
+            p.member.fixed = None;
+            p.server = Some(addr);
+            let r = if load { p.load_status() } else { p.change_status([2, -2, -2, -2, -1, -2]).map(|_| ()) };
+            t.join().unwrap();
+            let e = r.unwrap_err();
+            assert_eq!(code(&e), Some(want), "{e:#}");
+            assert_eq!(p.server.is_some(), !load && !bad);
+            assert_eq!(p.status.content, 0);
+        }
     }
 
     /// The Viewer check lets a log-in on only with the Viewer kept here current, as the Viewer goes on only then.

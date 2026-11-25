@@ -119,12 +119,15 @@ pub fn update(w: &mut World) -> Vec<Job> {
         .actors
         .keys()
         .copied()
-        .filter(|id| w.entities.get(id).is_none_or(|e| e.ship.is_none() || e.ship_rebuild))
+        .filter(|id| {
+            w.entities.get(id).is_none_or(|e| e.ship.is_none() || e.ship_rebuild) || super::event::is_parked(w, *id)
+        })
         .collect();
     for id in gone {
         drop_actor(w, id);
     }
-    w.ships.loading.retain(|id, _| w.entities.get(id).is_some_and(|e| e.ship.is_some()));
+    let parked = super::event::parked_set(w);
+    w.ships.loading.retain(|id, _| w.entities.get(id).is_some_and(|e| e.ship.is_some()) && !parked.contains(id));
     let mut jobs = Vec::new();
     // *(inf: seen on the retail client, the call not traced)* A position update moves a ship's model once no path
     // drive holds it; one that came mid-drive waits for the drive's end. Mhaura's ferry turns from -0.062 to the dock
@@ -144,8 +147,12 @@ pub fn update(w: &mut World) -> Vec<Job> {
             (a.pos, a.target, a.held) = (pos, Vec3::new(0.0, yaw, 0.0), false);
         }
     }
-    let ships: Vec<(u32, u32, u32)> =
-        w.entities.iter().filter_map(|(id, e)| e.ship.map(|(ship, start)| (*id, ship, start))).collect();
+    let ships: Vec<(u32, u32, u32)> = w
+        .entities
+        .iter()
+        .filter(|(id, _)| !super::event::is_parked(w, **id))
+        .filter_map(|(id, e)| e.ship.map(|(ship, start)| (*id, ship, start)))
+        .collect();
     for (id, ship, start) in ships {
         if let Some(e) = w.entities.get_mut(&id) {
             e.ship_rebuild = false;

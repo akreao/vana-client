@@ -74,14 +74,26 @@ impl Effects {
     pub(super) fn run_equip(&mut self, actors: &dyn Actors) {
         let mut waiting: Vec<u32> = Vec::new();
         for (id, call) in std::mem::take(&mut self.equip_calls) {
-            if waiting.contains(&id) || self.equip_call(id, call, actors).is_err() {
+            if waiting.contains(&id) || self.equip_call(id, call, false, actors).is_err() {
                 waiting.push(id);
                 self.equip_calls.push((id, call));
             }
         }
     }
 
-    fn equip_call(&mut self, id: u32, call: EquipCall, actors: &dyn Actors) -> Result<(), ()> {
+    /// FUN_100d5f10 / FUN_100d60e0's glow from a scheduler's op 0x75 / 0xa3 (or op 0x75's timed hide, FUN_10061960):
+    /// the scheduler starts inside the op and runs its first update at once (FUN_100cef00 -> FUN_10056c70 ->
+    /// FUN_100748c0), so a task that update makes leaves the walk's next before the op's scheduler. Calls still waiting
+    /// on the actor's files go first; a file still loading queues it as the client's calls are.
+    pub(super) fn glow_in_op(&mut self, id: u32, n: u8, on: bool, actors: &dyn Actors) {
+        let call = EquipCall::Glow { n, on };
+        if self.equip_waiting(id) || self.equip_call(id, call, true, actors).is_err() {
+            self.equip_calls.push((id, call));
+        }
+    }
+
+    /// One call; `now`: a start runs its first update at once (inside an op).
+    fn equip_call(&mut self, id: u32, call: EquipCall, now: bool, actors: &dyn Actors) -> Result<(), ()> {
         let s = self.equip_state(id);
         match call {
             EquipCall::Glow { n, on } => {
@@ -91,17 +103,19 @@ impl Effects {
                 let bit = 1u16 << n;
                 if on {
                     // Config 0xbe 1 (Misc. 3 weapon effect Off): the bit clears without the scheduler.
-                    if s.glow_off & bit != 0 && (self.weapon_effect_off || self.start_part(id, &[on_name], actors)?) {
+                    if s.glow_off & bit != 0
+                        && (self.weapon_effect_off || self.start_part(id, &[on_name], now, actors)?)
+                    {
                         self.equip.entry(id).or_default().glow_off &= !bit;
                     }
-                } else if s.glow_off & bit == 0 && self.start_part(id, &[off_name], actors)? {
+                } else if s.glow_off & bit == 0 && self.start_part(id, &[off_name], now, actors)? {
                     self.equip.entry(id).or_default().glow_off |= bit;
                 }
             }
-            EquipCall::In { hidden: true } => self.equip_call(id, EquipCall::Kill, actors)?,
+            EquipCall::In { hidden: true } => self.equip_call(id, EquipCall::Kill, now, actors)?,
             EquipCall::In { hidden: false } => {
                 if !s.in_on {
-                    self.start_part(id, &[cc(b"!in1"), cc(b"!in2"), cc(b"!in3")], actors)?;
+                    self.start_part(id, &[cc(b"!in1"), cc(b"!in2"), cc(b"!in3")], now, actors)?;
                     self.equip.entry(id).or_default().in_on = true;
                 }
             }
@@ -124,11 +138,15 @@ impl Effects {
     }
 
     /// FUN_100cef00: the first of `names` found starts; Ok(false) when none is there, Err while a file loads.
-    fn start_part(&mut self, id: u32, names: &[u32], actors: &dyn Actors) -> Result<bool, ()> {
+    /// `now`: its first update runs at once (a start inside an op).
+    fn start_part(&mut self, id: u32, names: &[u32], now: bool, actors: &dyn Actors) -> Result<bool, ()> {
         for &name in names {
             if let Some(r) = self.part_scheduler(id, name, actors)? {
                 log::debug!("effects: {} on {id:#x}", String::from_utf8_lossy(&name.to_le_bytes()));
-                self.spawn_task(r, Who::Actor(id), Who::Actor(id), None, 1.0, None);
+                let i = self.spawn_task(r, Who::Actor(id), Who::Actor(id), None, 1.0, None);
+                if now {
+                    self.run_new(i, actors);
+                }
                 return Ok(true);
             }
         }
@@ -160,7 +178,7 @@ impl Effects {
             if t.left >= 0.0 && live.contains(&t.owner) {
                 self.wep_timers.push(t);
             } else if t.show {
-                self.weapons.push(WeaponOp { actor: t.actor, n: t.n, byte: 0, hide: false });
+                self.weapons.push(WeaponOp { actor: t.actor, n: t.n, byte: 0, hide: false, glow: true });
             }
         }
     }

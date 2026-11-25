@@ -4,7 +4,7 @@
 use crate::config::Config;
 use crate::dat::DatIndex;
 use crate::dat::font::{Font, Quality};
-use crate::dat::ui::{MENU_US, UiFile, UiImage, WINDOW_STYLE_BASE, norm_name};
+use crate::dat::ui::{UiFile, UiImage, WINDOW_STYLE_BASE, norm_name};
 use crate::inventory::{Equipment, ItemInfo, ItemList, Persona, Slot, Stats, build_rows, gil_text};
 use crate::render::invwin::{icon_texture, push_equipment, push_inventory, push_money, push_persona};
 use crate::render::ui::{UiBatch, render_png};
@@ -124,9 +124,14 @@ fn item_source(index: &DatIndex) -> Box<dyn ItemInfo> {
 fn shared() -> Result<Shared> {
     let cfg = Config::load();
     let index = DatIndex::open(&cfg.ffxi_dir())?;
-    let menu = load_ui_full(&index, MENU_US)?;
+    let menu = load_ui_full(&index, crate::dat::ui::menu_file())?;
     let style = load_ui(&index, WINDOW_STYLE_BASE)?;
-    let font = Font::load(&index, &std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir()))?, 1, Quality::Compressed)?;
+    let font = Font::load(
+        &index,
+        &std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir()))?,
+        crate::dat::lang::files() as u8,
+        Quality::Compressed,
+    )?;
     let info = item_source(&index);
     Ok(Shared { menu, style, font, info })
 }

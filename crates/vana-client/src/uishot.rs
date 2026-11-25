@@ -130,10 +130,10 @@ fn hex(b: &[u8]) -> String {
 }
 
 pub fn title_shot(out: &Path, width: u32, height: u32) -> Result<()> {
-    use crate::dat::ui::{LOBBY_US, WINDOW_STYLE_BASE};
+    use crate::dat::ui::WINDOW_STYLE_BASE;
     use crate::render::screens::{LOBBY_CLEAR, TitleState, title_screen};
     let index = DatIndex::open(&Config::load().ffxi_dir())?;
-    let lobby = load_ui_full(&index, LOBBY_US)?;
+    let lobby = load_ui_full(&index, crate::dat::ui::lobby_file())?;
     let style_file = load_ui(&index, WINDOW_STYLE_BASE)?;
     let style = style_file.libs.first().ok_or_else(|| anyhow::anyhow!("window style file has no sprite library"))?;
     // FFXI_TITLE_PRESS=c: Select Character pressed with counter c (9 down to 0).
@@ -161,10 +161,10 @@ pub fn title_shot(out: &Path, width: u32, height: u32) -> Result<()> {
 }
 
 pub fn ui_shot(out: &Path, width: u32, height: u32) -> Result<()> {
-    use crate::dat::ui::{MENU_US, WINDOW_STYLE_BASE};
+    use crate::dat::ui::WINDOW_STYLE_BASE;
     use crate::render::screens::{HudState, hud_screen, push_party_hand};
     let index = DatIndex::open(&Config::load().ffxi_dir())?;
-    let menu = load_ui_full(&index, MENU_US)?;
+    let menu = load_ui_full(&index, crate::dat::ui::menu_file())?;
     let style_file = load_ui(&index, WINDOW_STYLE_BASE)?;
     let style = style_file.libs.first().ok_or_else(|| anyhow::anyhow!("window style file has no sprite library"))?;
     // FFXI_UISHOT_MEMBERS: party size (1..6, default 3).

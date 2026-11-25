@@ -133,7 +133,7 @@ pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
 
 /// The mouse (the list base, message 9 / 5 / 6): hovering a row (not past the count) moves the hand there, a click on
 /// the hand's row or on Delete is Enter, a right click on the window is Escape.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     // The modern layer draws it and takes its mouse.
     if w.modern {
         return;
@@ -166,12 +166,13 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     if row >= b.rows.len() {
         return;
     }
-    if row != b.cursor && (moved || clicked) {
+    let takes = super::winhits::takes(gu, win, e.id, super::winhits::in_frame(gu, win, sw, sh, p));
+    if row != b.cursor && takes {
         if let Some(b) = w.blklist.as_mut() {
             b.cursor = row;
         }
         w.sounds.push(Ui::Cursor as u32);
-    } else if clicked {
+    } else if clicked && row == b.cursor {
         key(w, egui::Key::Enter);
     }
 }

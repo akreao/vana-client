@@ -371,7 +371,7 @@ pub(super) fn set_page(w: &mut World, pg: usize) {
 
 /// The mouse on the focused list (the generic window's rows): hover moves the cursor, a click on it is Enter, a right
 /// click over the window Escape.
-pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool, right: bool) {
     // The modern layer draws them and takes their mouse.
     if w.modern {
         return;
@@ -390,7 +390,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
                 (cursor - top + 1) as u16,
                 1..=PAGE_ROWS as u16,
                 p,
-                moved,
                 clicked,
                 right,
                 |w, id| {
@@ -410,7 +409,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
                 (cursor - top + 1) as u16,
                 1..=JOB_ROWS as u16,
                 p,
-                moved,
                 clicked,
                 right,
                 |w, id| {

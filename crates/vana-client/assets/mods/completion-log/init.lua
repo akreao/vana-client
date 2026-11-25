@@ -9,6 +9,24 @@ local GOLD = { 232, 200, 120, 255 }
 
 local view = { tab = 1, job = nil, area = 1 }
 
+-- The areas the game's quest menu lists (the server's and the installed expansions decide), as {number, name}; all of
+-- them on a client from before game.quest_areas.
+local function areas()
+  local out = {}
+  if not game.quest_areas then
+    for i, name in ipairs(AREAS) do out[i] = { i - 1, name } end
+    return out
+  end
+  for _, a in ipairs(game.quest_areas()) do out[#out + 1] = { a, AREAS[a + 1] } end
+  return out
+end
+
+local function area_names(list)
+  local out = {}
+  for i, a in ipairs(list) do out[i] = a[2] end
+  return out
+end
+
 local function say(t) chat.add("Completion Log: " .. t) end
 
 local function job_names()
@@ -48,12 +66,31 @@ local function state(q)
   return ""
 end
 
+-- The quest files hold unused entries under their working names: "SDクエスト111", "ATクエスト00" (two capitals and
+-- クエスト, "quest"), "Windurst Quest #97", "(仮)" ("provisional"). Checked over all eleven areas of the Japanese,
+-- English, German and French files: 320 to 341 such entries in each, every one of these shapes; the few real titles
+-- left untranslated (パパンは子煩悩, +素材調達:...) are not. The game's own lists never show one we have not taken.
+local PLACEHOLDERS = { "^%u%uクエスト%d*$", "^Windurst Quest #%d+$", "^%(仮%)$" }
+
+local function placeholder(name)
+  for _, p in ipairs(PLACEHOLDERS) do
+    if name:find(p) then return true end
+  end
+  return false
+end
+
+local function listed(q)
+  return q.current or q.completed or not placeholder(q.name)
+end
+
 local function quest_rows(area)
-  local list = game.quests()[area - 1] or {}
+  local list = game.quests()[area] or {}
   local rows = {}
   for _, q in ipairs(list) do
-    local s = state(q)
-    rows[#rows + 1] = { q.name .. (q.repeatable and " (repeatable)" or ""), s, colour = s == "done" and DIM or (s == "under way" and GOLD or nil) }
+    if listed(q) then
+      local s = state(q)
+      rows[#rows + 1] = { q.name .. (q.repeatable and " (repeatable)" or ""), s, colour = s == "done" and DIM or (s == "under way" and GOLD or nil) }
+    end
   end
   return rows
 end
@@ -65,6 +102,9 @@ end
 
 local function open()
   view.job = view.job or main_job()
+  view.shown = areas()
+  if view.area > #view.shown then view.area = 1 end
+  local area = view.shown[view.area]
   ui.window(WIN, {
     title = "Completion Log", width = 460,
     elements = {
@@ -72,8 +112,8 @@ local function open()
       { type = "choice", id = "job", label = "Job", items = job_names(), at = view.job, page = 1 },
       { type = "list", id = "spells", rows = spell_rows(view.job), height = 12, page = 1,
         columns = { { title = "Spell", width = 330 }, { title = "Level", width = 80, align = "right" } } },
-      { type = "choice", id = "area", label = "Area", items = AREAS, at = view.area, page = 2 },
-      { type = "list", id = "quests", rows = quest_rows(view.area), height = 12, page = 2,
+      { type = "choice", id = "area", label = "Area", items = area_names(view.shown), at = view.area, page = 2 },
+      { type = "list", id = "quests", rows = area and quest_rows(area[1]) or {}, height = 12, page = 2,
         columns = { { title = "Quest", width = 320 }, { title = "", width = 90, align = "right" } } },
     },
   })
@@ -89,7 +129,8 @@ ui.on(WIN, function(_, e)
     ui.update(WIN, "spells", { rows = spell_rows(view.job), at = 1 })
   elseif e.id == "area" then
     view.area = e.index
-    ui.update(WIN, "quests", { rows = quest_rows(view.area), at = 1 })
+    local area = view.shown[view.area]
+    ui.update(WIN, "quests", { rows = area and quest_rows(area[1]) or {}, at = 1 })
   end
 end)
 
@@ -117,11 +158,14 @@ commands.register("left", function(what, arg)
       #now > 0 and (": " .. table.concat(now, ", ", 1, math.min(#now, 12)) .. (#now > 12 and ", ..." or "")) or "."))
   elseif what == "quests" then
     local all = game.quests()
-    for i, name in ipairs(AREAS) do
+    for _, a in ipairs(areas()) do
+      local name = a[2]
       local done, going, total = 0, 0, 0
-      for _, q in ipairs(all[i - 1] or {}) do
-        total = total + 1
-        if q.current then going = going + 1 elseif q.completed then done = done + 1 end
+          for _, q in ipairs(all[a[1]] or {}) do
+        if listed(q) then
+          total = total + 1
+          if q.current then going = going + 1 elseif q.completed then done = done + 1 end
+        end
       end
       if total > 0 then say(("%s: %d of %d done, %d under way."):format(name, done, total, going)) end
     end

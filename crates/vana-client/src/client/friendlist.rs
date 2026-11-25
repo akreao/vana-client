@@ -325,16 +325,16 @@ fn mes_pick(w: &mut World, c: u16) {
 
 /// The mouse: the generic windows (olstat, flmes, flistmai) and the list's rows (hover moves, a click on the cursor row
 /// is Enter, a right click Escape).
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     use super::winhits::generic;
     let Some(ui) = w.friendui.clone() else { return };
     let keys = |w: &mut World, _: &GameUi, k: egui::Key| key(w, k);
     if let Some(c) = ui.stat {
-        generic(w, gu, STAT, c, 1..=3, p, moved, clicked, right, |w, id| set(w, |u| u.stat = Some(id)), keys);
+        generic(w, gu, STAT, c, 1..=3, p, clicked, right, |w, id| set(w, |u| u.stat = Some(id)), keys);
         return;
     }
     if let Some(c) = ui.mes {
-        generic(w, gu, MES, c, 1..=3, p, moved, clicked, right, |w, id| set(w, |u| u.mes = Some(id)), keys);
+        generic(w, gu, MES, c, 1..=3, p, clicked, right, |w, id| set(w, |u| u.mes = Some(id)), keys);
         return;
     }
     if let Some((rows, top, cursor)) = ui.list {
@@ -360,20 +360,21 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         if row >= rows.len() {
             return;
         }
-        if row != cursor && (moved || clicked) {
+        let takes = super::winhits::takes(gu, LIST, e.id, super::winhits::in_frame(gu, LIST, sw, sh, p));
+        if row != cursor && takes {
             set(w, |u| {
                 if let Some(l) = u.list.as_mut() {
                     l.2 = row;
                 }
             });
             w.sounds.push(Ui::Cursor as u32);
-        } else if clicked {
+        } else if clicked && row == cursor {
             key(w, egui::Key::Enter);
         }
         return;
     }
     if let Some(c) = ui.main {
-        generic(w, gu, MAIN, c, 1..=3, p, moved, clicked, right, |w, id| set(w, |u| u.main = Some(id)), keys);
+        generic(w, gu, MAIN, c, 1..=3, p, clicked, right, |w, id| set(w, |u| u.main = Some(id)), keys);
     }
 }
 

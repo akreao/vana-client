@@ -578,6 +578,10 @@ function ui.native.place(panel, place) end
 ---@return {name: string, x: integer, y: integer, w: integer, h: integer, shown: boolean, room: {x: integer, y: integer, w: integer, h: integer}?}?
 function ui.native.rect(panel) end
 
+--- The member rows of the modern party and alliance windows as last drawn, in window pixels, top to bottom: {panel ("party", "alliance1", "alliance2"), slot (the member's party slot from 1: 1-6 the party, 7-12 and 13-18 the alliance parties), name, x, y, w, h}. Empty in the classic UI, and while those windows are hidden.
+---@return table[]
+function ui.native.party_rows() end
+
 --- Every modern panel a mod may name: {name, about, hideable, movable, shown, placed_by (the mod placing it)} with x, y, w, h once it was drawn.
 ---@return table[]
 function ui.native.panels() end
@@ -955,6 +959,10 @@ function game.items(bag) end
 ---@param bag integer 
 ---@return integer?
 function game.bag_size(bag) end
+
+--- The quest areas the game's quest menu lists (numbered as in game.quests), in order: 0 to 4 always, the others only when the server enables their expansion (Outlands: Zilart, Aht Urhgan: ToAU, Crystal War: WotG, Abyssea: an Abyssea add-on, Adoulin and Coalition: SoA).
+---@return integer[]
+function game.quest_areas() end
 
 --- The quests of each area (0 San d'Oria, 1 Bastok, 2 Windurst, 3 Jeuno, 4 Other Areas, 5 Outlands, 6 Aht Urhgan, 7 Crystal War, 8 Abyssea, 9 Adoulin, 10 Coalition) in the journal's order: {number, name, repeatable, current, completed} each, ours as the server sent them.
 ---@return table<integer, {number: integer, name: string, repeatable: boolean, current: boolean, completed: boolean}[]>
@@ -1596,6 +1604,10 @@ function mods.provide(name, func) end
 ---@param ... any 
 ---@return any
 function mods.call(mod, name, ...) end
+
+--- Inside a function offered with mods.provide, while a mods.call runs it: the calling mod's id (its own on a self-call); nil anywhere else. Lets a mod offer a function only to the mods it trusts (the id is the one a mod is loaded under, not proof of who wrote it).
+---@return string?
+function mods.caller() end
 
 --- Raises an event in every other mod: their events.on handlers get the values after the running handler (in this frame or the next). Prefix the name with your mod's id.
 ---@param event string 

@@ -191,9 +191,14 @@ fn plain_with(w: &World, line: &str, names: Option<&dyn crate::dat::names::NameS
 
 /// The line with its phrases between the auto-translate brackets (FUN_101b8850 with braces).
 pub(super) fn braced(w: &World, line: &str) -> String {
+    braced_cap(w, line, usize::MAX)
+}
+
+/// `braced` into a `cap`-byte buffer (FUN_101b8850's fourth argument; `Dictionary::expand_cap`).
+pub(super) fn braced_cap(w: &World, line: &str, cap: usize) -> String {
     let names = w.names.clone();
     match w.battle.as_ref().and_then(|b| b.phrases.as_ref()) {
-        Some(d) => d.expand(line, names.as_deref().map(|n| n as &dyn crate::dat::names::NameSource)),
+        Some(d) => d.expand_cap(line, names.as_deref().map(|n| n as &dyn crate::dat::names::NameSource), cap),
         None => line.chars().filter(|c| !is_phrase(*c)).collect(),
     }
 }

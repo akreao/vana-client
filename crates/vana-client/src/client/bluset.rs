@@ -438,8 +438,8 @@ fn hit(gu: &GameUi, sw: f32, sh: f32, p: (f32, f32)) -> Option<(Focus, usize)> {
     None
 }
 
-/// Mouse *(inf)*: over the other list the focus moves there (message 8) while nothing is picked; rows move the
-/// cursor, a click on the cursor row is Enter.
+/// Mouse *(inf)*: over the other list the focus moves there (message 8) while nothing is picked; a row takes the
+/// cursor by winhits::takes, a click on the cursor row is Enter.
 pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
     // The modern layer draws it and takes its mouse.
     if w.modern {
@@ -447,8 +447,8 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     }
     let Some(s) = w.bluset.clone().filter(|s| s.sibo.is_none()) else { return };
     let Some((f, k)) = hit(gu, sw, sh, p) else { return };
-    gu.hover.set(true);
     if f != s.focus {
+        gu.hover.set(true);
         if moved && s.spell_pick.is_none() && s.slot_pick.is_none() {
             num_plus(w);
         }
@@ -460,12 +460,14 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     if row >= n {
         return;
     }
-    if row != c.0 && (moved || clicked) {
+    let name = if f == Focus::Equip { EQUIP } else { INVEN };
+    let takes = super::winhits::takes(gu, name, k as u16 + 1, super::winhits::in_frame(gu, name, sw, sh, p));
+    if row != c.0 && takes {
         if let Some(b) = w.bluset.as_mut() {
             if f == Focus::Equip { b.equip.0 = row } else { b.inven.0 = row }
         }
         w.sounds.push(Ui::Cursor as u32);
-    } else if clicked {
+    } else if clicked && row == c.0 {
         key(w, egui::Key::Enter);
     }
 }

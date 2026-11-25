@@ -72,6 +72,23 @@ pub struct PartyCursor {
     pub moving: Option<(u32, usize)>,
     /// Row -1, the fellow row (batch 1 §4): only for `<stpt>` / `<stal>` (modes 2 / 3), never in a two-step pick.
     pub fellow: bool,
+    /// Target object +0xd0 / +0x78 while the cursor is up: the line's dry run (FUN_10076ab0 0x10076ef0 / 0x10076f43, FUN_10081440(1)
+    /// then FUN_102045f0(1)) registers the area callback too; FUN_10204510 clears it on close (client/area.rs).
+    pub area: Option<super::area::Of>,
+}
+
+/// FUN_10159280 with +0x59 set: the cursor's row (FUN_10204ad0(0, 0) +0x70), the fellow's actor on row -1 (FUN_101cdb20),
+/// none for an away member.
+pub fn cursor_pick(w: &World) -> Option<u32> {
+    let pc = w.party_cursor.as_ref()?;
+    if pc.fellow {
+        return super::petrow::fellow(w).map(|f| f.0);
+    }
+    if pc.index == 0 {
+        return Some(w.my_id);
+    }
+    let m = w.party.slots().here(pc.index, w.pos_zone)?.index;
+    w.entity_at(m).map(|(id, _)| id)
 }
 
 /// FUN_10202d80's low bound -1 (modes 2 / 3: the text-command picks, not the party menu's) and a fellow here.
@@ -87,7 +104,7 @@ pub fn in_own_six(w: &World, id: u32) -> bool {
 /// Ours (modern): the last target while it is still here and targetable, `<lt>`.
 pub fn last_target(w: &World) -> Option<(u32, u16)> {
     let id = w.last_target.filter(|&id| Some(id) != w.target)?;
-    let e = w.entities.get(&id).filter(|e| e.targetable())?;
+    let e = w.entities.get(&id).filter(|e| e.targetable() && !super::event::is_parked(w, id))?;
     Some((id, e.index))
 }
 
@@ -131,7 +148,8 @@ pub fn open_party_cursor(w: &mut World, count: usize, then: SubThen, range: Opti
         .filter(|&i| i < count);
     // FUN_10203540 failing: -1 when the target is the fellow.
     let fellow = row.is_none() && fellow_ok(w, &then) && super::petrow::fellow(w).map(|f| f.0) == w.target;
-    w.party_cursor = Some(PartyCursor { index: row.unwrap_or(0), count, then, range, moving: None, fellow });
+    w.party_cursor =
+        Some(PartyCursor { index: row.unwrap_or(0), count, then, range, moving: None, fellow, area: None });
 }
 
 /// FUN_10203570 / FUN_10203630 (FUN_102035c0 / FUN_10203680 in a stage-2 range): the next / previous used slot in
@@ -274,15 +292,14 @@ pub fn party_cursor_pick(w: &mut World, index: usize) -> bool {
     party_cursor_key(w, egui::Key::Enter)
 }
 
-/// The cursor with the mouse over the party windows' rows (the windows' generic events *(inf)*): hovering a used row
-/// moves it (SE 0001), a click on the cursor row is Enter, a right click on a party window Escape.
+/// The cursor with the mouse over the party windows' rows (the windows' generic events *(inf)*): a used row takes it
+/// by winhits::takes (SE 0001), a click on the cursor row is Enter, a right click on a party window Escape.
 pub fn party_cursor_pointer(
     w: &mut World,
     gu: &super::game_ui::GameUi,
     sw: f32,
     sh: f32,
     p: (f32, f32),
-    moved: bool,
     clicked: bool,
     right: bool,
 ) {
@@ -301,10 +318,11 @@ pub fn party_cursor_pointer(
         if !used.iter().skip(base).take(6).any(|&u| u) {
             continue;
         }
-        over |= gu.window_rect(&name, sw, sh).is_some_and(inside);
+        let on = gu.window_rect(&name, sw, sh).is_some_and(inside);
+        over |= on;
         for e in l.elements.iter().skip(1).filter(|e| (1..=6).contains(&e.id)) {
             if inside([x + e.x as f32, y + e.y as f32, e.w as f32, e.h as f32]) {
-                hit = Some(base + e.id as usize - 1);
+                hit = Some((base + e.id as usize - 1, name.clone(), e.id, on));
             }
         }
     }
@@ -314,14 +332,16 @@ pub fn party_cursor_pointer(
         }
         return;
     }
-    let Some(i) = hit.filter(|&i| used.get(i).copied().unwrap_or(false) && (lo..hi).contains(&i)) else { return };
-    gu.hover.set(true);
-    if (moved || clicked) && i != index {
+    let Some((i, name, child, on)) = hit.filter(|h| used.get(h.0).copied().unwrap_or(false) && (lo..hi).contains(&h.0))
+    else {
+        return;
+    };
+    if super::winhits::takes(gu, &name, child, on) && i != index {
         if let Some(pc) = w.party_cursor.as_mut() {
             (pc.index, pc.fellow) = (i, false);
         }
         w.sounds.push(crate::audio::Ui::Cursor as u32);
-    } else if clicked {
+    } else if clicked && i == index {
         party_cursor_key(w, egui::Key::Enter);
     }
 }
@@ -416,6 +436,8 @@ pub struct Sub {
     /// Field +0x58 (FUN_1022b850): the spell's record +0x44 bit 5 (the Geo- spells) lets LT / RT + the d-pad, or Ctrl /
     /// Alt + the arrows, move a ground-position cursor from the pick (key functions 0xb0..0xb3).
     pub ground: bool,
+    /// Target object +0xd0 / +0x78 (FUN_10158e30): the area display's callback and its argument (client/area.rs).
+    pub area: Option<super::area::Of>,
 }
 
 impl Sub {
@@ -472,7 +494,8 @@ fn sub_kind(w: &World, id: u32) -> u32 {
 /// nothing fits (the caller prints its line).
 pub fn open_sub(w: &mut World, flags: u32, then: SubThen, range: Option<f32>, title: String, help: u16) -> bool {
     let (inc, exc) = SUB_FLAGS.iter().filter(|f| flags & f.0 != 0).fold((0, 0), |(i, e), f| (i | f.1, e | f.2));
-    let sub = Sub { inc, exc, saved: w.target, saved_lock: w.locked, then, range, title, help, ground: false };
+    let sub =
+        Sub { inc, exc, saved: w.target, saved_lock: w.locked, then, range, title, help, ground: false, area: None };
     let current = w.target.filter(|&t| t == w.my_id || w.entities.contains_key(&t));
     let first = match current {
         Some(t) if sub.takes(sub_kind(w, t)) && !(inc & 0x200 != 0 && sub_kind(w, t) & 0x10 != 0) => Some(t),

@@ -243,7 +243,7 @@ fn commands() -> &'static Commands {
             map: rows.iter().map(|(n, id, f)| (n.clone(), (*id, *f))).collect(),
             rows,
             help: crate::dat::tables::text_help(&dll).map_err(|e| log::warn!("{e:#}")).unwrap_or_default(),
-            help_file: crate::dat::msg::current_slot_file(&dll, 1, 0x24),
+            help_file: crate::dat::msg::current_slot_file(&dll, crate::dat::lang::files() as u8, 0x24),
         }
     })
 }
@@ -349,13 +349,14 @@ fn current_target(w: &World) -> Option<(u32, u16)> {
     w.entities.get(&t).map(|e| (t, e.index))
 }
 
-/// FUN_10077d80: the first living actor claimed by a party member.
+/// FUN_10077d80: the first living actor claimed by a party member. It wants the actor's model (+0xa0), which
+/// FUN_10096640 frees on a despawned slot: a parked slot is never the battle target.
 fn battle_target(w: &World) -> Option<(u32, u16)> {
     let party: Vec<u32> = w.party.members().map(|m| m.id).filter(|&id| id != 0).chain([w.my_id]).collect();
     let mut found: Vec<(u32, u16)> = w
         .entities
         .iter()
-        .filter(|(_, e)| e.hpp > 0 && e.claim != 0 && party.contains(&e.claim))
+        .filter(|(id, e)| e.hpp > 0 && e.claim != 0 && party.contains(&e.claim) && !super::event::is_parked(w, **id))
         .map(|(id, e)| (*id, e.index))
         .collect();
     found.sort_by_key(|f| f.1);
@@ -508,7 +509,8 @@ pub(super) fn resolve(w: &World, text: Option<&str>, fallback: bool, wide: bool,
             let range =
                 (0x400..0x700).contains(&e.index) || (wide && (0x700..0x900).contains(&e.index) && ours(**id, e.index));
             let same = e.name == name || (wide && name_case(&e.name).is_some_and(|n| n == name));
-            range && e.targetable() && same
+            // FUN_1007a4c0 also passes over a slot with the despawn mark no event holds (0x1007a561).
+            range && e.targetable() && !super::event::is_parked(w, **id) && same
         });
         if let Some((id, e)) = hit {
             return Some((*id, e.index));
@@ -794,8 +796,17 @@ fn open_prompt(w: &mut World, stash: &str, mask: u32, target_cmd: bool, quoted: 
         return;
     }
     let args = tokens(&stash, mode != Mode::Typed);
-    let spell = match args.first().and_then(|a| table().get(a.as_str())).map(|e| e.0) {
+    let cid = args.first().and_then(|a| table().get(a.as_str())).map(|e| e.0);
+    let spell = match cid {
         Some(id::MAGIC | id::NINJUTSU | id::SONG) => args.get(1).and_then(|n| find_spell(w, n, 0).ok()),
+        _ => None,
+    };
+    // The area display's callback the command's dry run registers: /magic FUN_1007b710 -> FUN_1022ce60, /ja and /pet
+    // FUN_1007b900 -> FUN_102249f0, /weaponskill FUN_1007b820 -> FUN_10224d70.
+    let area = match cid {
+        Some(id::MAGIC | id::NINJUTSU | id::SONG) => spell.map(super::area::Of::Spell),
+        Some(id::JA | id::PET) => args.get(1).and_then(|n| ja_named(w, n)).map(super::area::Of::Ability),
+        Some(id::WS) => args.get(1).and_then(|n| ability_named(w, n, 0..0x200)).map(super::area::Of::WeaponSkill),
         _ => None,
     };
     let range = spell
@@ -804,12 +815,19 @@ fn open_prompt(w: &mut World, stash: &str, mask: u32, target_cmd: bool, quoted: 
     let then = target::SubThen::Line { stash, quoted, from_macro: mode == Mode::Macro };
     if matches!(mask, 5 | 0xd) {
         target::open_party_cursor(w, if mask == 5 { 6 } else { 18 }, then, range);
+        // 0x10076ef0 / 0x10076f43: the cursor's dry run registers the area callback as the prompt's does.
+        if let Some(of) = area {
+            super::area::register_cursor(w, of);
+        }
         return;
     }
     if target::open_sub(w, mask, then, range, String::new(), 0) {
         // 0x1007b7a8: /magic's prompt asks FUN_1022b850 too.
         if let Some(sp) = spell {
             target::ground_mode(w, sp);
+        }
+        if let Some(of) = area {
+            super::area::register(w, of);
         }
     } else {
         refuse(w, 0x46);
@@ -1886,12 +1904,13 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             if cid == id::INVITE && w.party.members().count() > 1 {
                 return Err(());
             }
-            let (which, bit) = if cid == id::ANON { (0, 5) } else { (2, 4) };
+            // No argument toggles the s2c 0x0B4 config block's bit (FUN_100e4590: +0x2cfd8 bit 2 / bit 0).
+            let (which, bit) = if cid == id::ANON { (0, 2) } else { (2, 0) };
             let set = match (args.len(), args.get(1).map(String::as_str)) {
                 (2, Some("on")) => true,
                 (2, Some("off")) => false,
                 (2, _) => return Ok(()),
-                _ => w.self_flags >> bit & 1 == 0,
+                _ => w.conf_sys[0] >> bit & 1 == 0,
             };
             config_flag(w, which, set);
             Ok(())
@@ -2014,7 +2033,7 @@ fn chat(w: &mut World, cid: u16, msg: &str) -> Done {
         send(w, NetCommand::Chat { kind, text: msg.to_string() });
         restore_temp_mode(w);
         // Ours (Modern; retail changes it only by /chatmode and the Chat window): the channel used last becomes the
-        // line's default, tells, shouts and emotes aside.
+        // line's default, tells, shouts and emotes aside; a mod's line (commands.run) leaves it.
         let stick = match cid {
             id::SAY => Some(2),
             id::PARTY => Some(5),
@@ -2023,7 +2042,7 @@ fn chat(w: &mut World, cid: u16, msg: &str) -> Done {
             id::UNITY => Some(0xb),
             _ => None,
         };
-        if let Some(m) = stick.filter(|&m| w.modern && w.chat_mode != m) {
+        if let Some(m) = stick.filter(|&m| w.modern && !w.mod_line && w.chat_mode != m) {
             set_chat_mode(w, m, None);
         }
     }
@@ -2066,7 +2085,8 @@ pub(super) fn set_chat_mode(w: &mut World, mode: u8, name: Option<&str>) {
 
 /// FUN_101adb80, after a channel send: a shout or message mode goes back to the previous mode.
 fn restore_temp_mode(w: &mut World) {
-    if matches!(w.chat_mode, 3 | 8) {
+    // Ours: a mod's line (commands.run) is not the player's send, so the player's one-off Shout / Message stays set.
+    if !w.mod_line && matches!(w.chat_mode, 3 | 8) {
         (w.chat_mode, w.chat_prefix) = w.chat_prev.clone();
     }
 }
@@ -2870,13 +2890,21 @@ fn recruitlist(w: &mut World, args: &[String]) -> Done {
 /// FUN_1007d9c0 (/partyrequestcmd, /prcmd): add [target] asks to join that player's party (c2s 0x11C kind 0, group 10
 /// 0x76), remove [target] takes it back (kind 1); someone not here is looked up by name. Refusals 7 0xc4 / 0xc5 (on
 /// our blacklist) / 0xc6 (blacklist not in yet; or we are /anon or /away: own actor +0x124 bit 23 / 22, from 0x037
-/// u32 @0x28 bits 5 / 7, asm 0x1007da8b..0x1007dab7; the name-lookup path does not test them).
+/// u32 @0x28 bits 5 / 7 or the zone-in's 0x00A, asm 0x1007da8b..0x1007dab7, before the target; the name-lookup
+/// callback does not test them).
 fn prcmd(w: &mut World, args: &[String], mode: Mode) -> Done {
     let kind = match args.get(1).map(String::as_str) {
         Some("add") => 0,
         Some("remove") => 1,
         _ => return Ok(()),
     };
+    // Anonymous or Away (our entity's +0x124 bits 23 / 22: the 0x00A's at the zone-in, then 0x037's): "You were
+    // unable to make a request to join." and nothing is sent. Add only, tested before the target is resolved or
+    // looked up (asm 0x1007da8b..0x1007dab7), so before the blacklist too.
+    if kind == 0 && (w.my_plate.marks.anon || w.my_plate.marks.away) {
+        refuse(w, 0xc6);
+        return Ok(());
+    }
     let arg = args.get(2).map(String::as_str);
     let Some((id, index)) = resolve(w, arg, true, false, mode) else {
         if let Some(name) = arg {
@@ -2886,11 +2914,7 @@ fn prcmd(w: &mut World, args: &[String], mode: Mode) -> Done {
     };
     let name =
         if id == w.my_id { w.name.clone() } else { w.entities.get(&id).map(|e| e.name.clone()).unwrap_or_default() };
-    // Anonymous (bit 5) or Away (bit 7): "You were unable to make a request to join." and nothing is sent. Checked
-    // here before the blacklist *(inf: the order between the two tests, and that remove skips it)*.
-    let anon_away = kind == 0 && w.self_flags & (1 << 5 | 1 << 7) != 0;
     match if kind == 0 { super::partyreq::blacklisted(w, &name) } else { 0 } {
-        _ if anon_away => refuse(w, 0xc6),
         1 => refuse(w, 0xc5),
         2 => refuse(w, 0xc6),
         _ if (kind == 0 && id == w.my_id) || id >> 24 == 1 => refuse(w, 0xc4),
@@ -3107,22 +3131,28 @@ fn weapon_skill(w: &mut World, args: &[String], mode: Mode) -> Done {
     Ok(())
 }
 
+/// FUN_1007b900's lookup: a job ability (not hidden, in s2c 0x0AC's bits) or a pet command by name, the later match
+/// winning.
+fn ja_named(w: &World, name: &str) -> Option<u16> {
+    let hidden = |i: u16| w.actions.as_ref().and_then(|a| a.abilities.get(i as usize)).is_some_and(|a| a.sub != 0);
+    let ja = ability_named(w, name, (0x200..0x400).filter(|&i| !hidden(i)));
+    let id = ability_named(w, name, 0x400..0x600).or(ja)?;
+    if (0x200..0x400).contains(&id) {
+        let bit = (id - 0x200) as usize;
+        if !w.commands_known.get(64 + bit / 8).is_some_and(|b| b & (1 << (bit % 8)) != 0) {
+            return None;
+        }
+    }
+    Some(id)
+}
+
 /// FUN_1007b900: /ja and /pet: records 0x200..0x3ff (not hidden), then 0x400..0x5ff, the later match winning;
 /// 0x01A category 9 with id - 0x200. A job ability must be in s2c 0x0AC's bits (pet commands: not checked, inf).
 fn ability(w: &mut World, _pet: bool, args: &[String], mode: Mode) -> Done {
     if !status_gate(w, 0x7f) {
         return Ok(());
     }
-    let name = args.get(1).ok_or(())?;
-    let hidden = |i: u16| w.actions.as_ref().and_then(|a| a.abilities.get(i as usize)).is_some_and(|a| a.sub != 0);
-    let ja = ability_named(w, name, (0x200..0x400).filter(|&i| !hidden(i)));
-    let id = ability_named(w, name, 0x400..0x600).or(ja).ok_or(())?;
-    if (0x200..0x400).contains(&id) {
-        let bit = (id - 0x200) as usize;
-        if !w.commands_known.get(64 + bit / 8).is_some_and(|b| b & (1 << (bit % 8)) != 0) {
-            return Err(());
-        }
-    }
+    let id = ja_named(w, args.get(1).ok_or(())?).ok_or(())?;
     let t = resolve(w, args.get(2).map(String::as_str), false, true, mode).ok_or(())?;
     act(w, t, cat::JA, (id - 0x200) as u32);
     Ok(())

@@ -330,9 +330,10 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, _page_mod: bool) {
     w.keyitems = Some(k);
 }
 
-/// Mouse *(inf: the paged lists' hover and click)*: hover moves the cursor to a row, a click on the cursor row is Enter;
+/// Mouse *(inf: the paged lists' hover and click)*: a row takes the cursor by winhits::takes, a click on the cursor row
+/// is Enter;
 /// on evitem01 the same over Yes / No.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool) {
     let Some(k) = w.keyitems.as_ref() else { return };
     let (state, cur) = (k.state, k.ask.map_or(k.cursor, |yes| if yes { 0 } else { 1 }));
     let inside = |r: [f32; 4]| p.0 >= r[0] && p.0 < r[0] + r[2] && p.1 >= r[1] && p.1 < r[1] + r[3];
@@ -380,8 +381,9 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         }
         return;
     };
-    gu.hover.set(true);
-    if row != cur && (moved || clicked) {
+    let (name, top) = if k.ask.is_some() { (ASK, 0) } else { (WINDOW, k.top) };
+    let child = (row - top) as u16 + 1;
+    if super::winhits::takes(gu, name, child, super::winhits::in_frame(gu, name, sw, sh, p)) && row != cur {
         if let Some(kk) = w.keyitems.as_mut() {
             match kk.ask.as_mut() {
                 Some(yes) => *yes = row == 0,
@@ -389,7 +391,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
             }
         }
         w.sounds.push(Ui::Cursor as u32);
-    } else if clicked {
+    } else if clicked && row == cur {
         key(w, gu, egui::Key::Enter, false);
     }
 }

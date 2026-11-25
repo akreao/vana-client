@@ -6,9 +6,10 @@ use super::actmotion::OPAQUE;
 use super::{World, event, ride};
 use crate::fx::EquipCall;
 
-/// The applied status (+0x170) is 1.
+/// The applied status (+0x170) is 1; a dismount holds it at the riding one (ride::applied).
 fn engaged(w: &World, id: u32) -> bool {
-    if id == w.my_id { w.my_motion.status == 1 } else { w.entities.get(&id).is_some_and(|e| e.motion.status == 1) }
+    let raw = if id == w.my_id { w.my_motion.status } else { w.entities.get(&id).map_or(0, |e| e.motion.status) };
+    ride::applied(w, id, raw) == 1
 }
 
 /// InvisFlag (+0x128 bit 6).
@@ -156,11 +157,15 @@ pub fn status_start(w: &mut World, id: u32, status: u8) {
     }
 }
 
-/// Fx's ops 0x75 / 0xa3 (and their timed shows) on our actors.
+/// Fx's ops 0x75 / 0xa3 (and their timed shows) on our actors; the ops' glows started inside the op already.
 pub fn apply_ops(w: &mut World) {
     for op in std::mem::take(&mut w.effects.weapons) {
         let (n, b) = (op.n as usize, op.byte as usize);
-        if op.hide {
+        if !op.glow {
+            if let Some(a) = w.actors.get_mut(&op.actor).filter(|_| n < 16) {
+                a.wep_hide[n][b] = op.hide;
+            }
+        } else if op.hide {
             hide(w, op.actor, n, b);
         } else {
             show(w, op.actor, n, b);

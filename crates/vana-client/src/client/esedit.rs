@@ -390,8 +390,8 @@ fn mogc_key(w: &mut World, gu: &GameUi, key: egui::Key, o: u16) {
     }
 }
 
-/// The mouse: mcrmogc's or the grid's children as the generic window; the list's rows as the item list (hover moves
-/// the cursor, a click on the cursor row is Enter); the pointer over the other of grid and list moves the focus
+/// The mouse: mcrmogc's or the grid's children as the generic window; the list's rows as the item list (a row takes
+/// the cursor by winhits::takes, a click on the cursor row is Enter); the pointer over the other of grid and list moves the focus
 /// (message 8), as the Equipment screen.
 pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     use super::macroedit::{child_under, generic};
@@ -400,7 +400,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     }
     let Some(e) = ed(w) else { return };
     if let Some(o) = e.mogc {
-        generic(w, gu, MOGC, o, 1..=16, p, moved, clicked, right, |w, id| {
+        generic(w, gu, MOGC, o, 1..=16, p, clicked, right, |w, id| {
             if let Some(e) = ed_mut(w) {
                 e.mogc = Some(id);
             }
@@ -419,7 +419,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     }
     if !on_list {
         let free = mode == 2 || ed(w).is_some_and(|e| e.mask == 0);
-        generic(w, gu, GRID, grid, 1..=16, p, moved, clicked, right, |w, id| {
+        generic(w, gu, GRID, grid, 1..=16, p, clicked, right, |w, id| {
             if let Some(e) = ed_mut(w)
                 && (free || e.mask & 1 << slot_of(id) != 0)
             {
@@ -433,12 +433,11 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         return;
     }
     let Some(r) = row.filter(|r| scroll + r < n) else { return };
-    gu.hover.set(true);
-    if r != cursor && (moved || clicked) {
+    if super::winhits::takes(gu, "menu    inventor", r as u16 + 1, true) && r != cursor {
         if let Some(e) = ed_mut(w) {
             e.cursor = r;
         }
-    } else if clicked {
+    } else if clicked && r == cursor {
         key(w, gu, egui::Key::Enter);
     }
 }
