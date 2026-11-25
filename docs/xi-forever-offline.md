@@ -58,6 +58,18 @@ code against the server's `!squad` chat commands; none of XIFO's Ashita add-on c
   or the clipboard) as a new unsaved set. The format is XIFO's own (their Gambits add-on reads ours and we read
   theirs; the test holds a code their add-on made), written anew here from its description.
 
+- **Auto Ranged** (`auto-ranged`, `//autora`): their autora as our own mod, and not tied to XIFO (it only uses `/ra`).
+  A small edge window picks Manual, Auto or Until hate. Auto keeps shooting while you are engaged with a living
+  monster targeted and a ranged weapon or ammo on; it waits for each shot (and spells, items), holds while you move,
+  waits `//autora delay <s>` after a shot (0.5 at first) and pauses 3 s when the game refuses a shot (out of range,
+  cannot see). Until hate also holds while the monster's last action (within 10 s) was on you.
+
+- **XIFO HC Icons** (`xifo-hc-icons`, `//hcicons`): the hardcore mode's shield (Iron, Steel, Silver, Random; our own
+  pictures) left of each hardcore member's row in the modern party and alliance windows; the game already draws
+  the shield beside names in the world. On arriving in an area it sends `!hcicons`; the server answers
+  `[HC-ICONS] !Name=1,Other=3` and later tells arrivals as `[HC-ICONS] Name=2`, which XIFO Link hides (its `listen`).
+  The rows come from `ui.native.party_rows()`. `//hcicons` turns it off or on, `list` names who is known.
+
 - **Autobox** (`autobox`, `//autobox`): rules for your own character (their autobox add-on, formerly their Gambits
   2.2, rewritten). One sheet per main job, each rule a target (me, party member, battle target, pet), one or two
   conditions (HP / MP below or above, my TP, lacks or has a status, engaged or not) and an action (a spell, with
