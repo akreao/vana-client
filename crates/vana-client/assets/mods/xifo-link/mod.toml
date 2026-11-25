@@ -1,5 +1,5 @@
 name = "XIFO Link"
-version = "1.2.1"
+version = "1.2.3"
 description = "Talks to an XI: Forever Offline server for the XIFO mods: says their commands one at a time and hides the server's replies."
 authors = ["vana-client"]
 permissions = ["automation"]

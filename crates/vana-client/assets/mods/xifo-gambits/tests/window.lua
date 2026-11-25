@@ -228,3 +228,81 @@ assert(w2.status.text:find("Imported Songs", 1, true), w2.status.text)
 w2.code.text = "GS1zz"
 H({ kind = "press", id = "share", index = 2 })
 assert(w2.status.text:find("Not imported", 1, true))
+
+-- a save's answer leaves the edits made while it was being sent unsaved
+H({ kind = "set", id = "tabs", index = 1 })
+H({ kind = "press", id = "save", index = 1 })
+local save_tag = sent[#sent].tag
+H({ kind = "change", id = "name", text = "Later" })
+ev.xifo_link_reply(save_tag, { "ok|4|5|w4" }, true)
+assert(w2.editing.text:find("not saved", 1, true) and w2.status.text:find("not saved yet", 1, true), w2.status.text)
+
+-- "Keep editing" leaves the mate dropdown on the mate being edited
+local cur = w2.mate.at
+local other = cur == 1 and 2 or 1
+w2.mate.at = other -- (the dropdown shows the pick before its event comes)
+H({ kind = "set", id = "mate", index = other })
+prompts[#prompts].f(2)
+assert(w2.mate.at == cur)
+
+-- after a mate switch, the last mate's weapon skill setting cannot be saved for the new one (Fayd is slot 1, Salia 2)
+H({ kind = "set", id = "mate", index = other })
+prompts[#prompts].f(1)
+assert(w2.mate.at == other)
+H({ kind = "set", id = "tabs", index = 2 })
+assert(last():match("^!gsq wsg %d+ " .. other .. "$"), last())
+H({ kind = "press", id = "ws_btn", index = 1 })
+assert(not last():match("^!gsq wss"), "saved the other mate's setting")
+
+-- an Open whose reply was cut short opens nothing
+H({ kind = "set", id = "tabs", index = 1 })
+H({ kind = "select", id = "sets", index = 1 })
+H({ kind = "press", id = "setbtn", index = 1 })
+answer({ "hdr|4|WHM|o|5|w4|Fayd heals", "rule|1|1/1|1,PARTY,HPP_LT,50,,,f,CURE," }, false)
+assert(w2.editing.text == "No Rule Set open.", w2.editing.text)
+
+-- opened with no squad mates, then reopened once there is one: its sets and choices load
+sent, windows, open = {}, {}, {}
+load(TEST.source("init.lua"), "@init.lua")()
+cmd.gambits()
+answer({ "hello|9|32|120|64" })
+answer({ "end|0" })
+cmd.gambits()
+cmd.gambits()
+assert(last():match("^!gsq mates %d+$"))
+answer({ "mate|1|40|Fayd|WHM|30|-|0|0|-", "end|1" })
+assert(sent[#sent - 1].text:match("^!gsq list %d+ WHM$") and last():match("^!gsq catm %d+ 1 jm$"), last())
+
+-- a roster refresh that loses the picked mate on the Weapon skills page asks for the new pick's setting
+H({ kind = "set", id = "tabs", index = 2 })
+answer({ "ws|1|WHM|d|0|3|1000|0|0|-|1|1|1|1", "end|1" })
+H({ kind = "press", id = "use", index = 3 }) -- Apply now; then the refresh, here by reopening
+cmd.gambits()
+cmd.gambits()
+answer({ "mate|2|41|Salia|WAR|28|-|0|0|-", "end|1" })
+assert(last():match("^!gsq wsg %d+ 2$"), last())
+
+-- with no squad mates, an imported set still saves (under its own job)
+sent, windows, open = {}, {}, {}
+load(TEST.source("init.lua"), "@init.lua")()
+local w3 = windows.gambits
+cmd.gambits()
+answer({ "hello|9|32|120|64" })
+answer({ "end|0" })
+local S3 = require("src.share")
+w3.code.text = assert(S3.encode({ job = "WHM", name = "Starter", rules = { { on = true, target = "SELF",
+  cond = "ALWAYS", arg = "", kind = "r" } } }))
+client = { copy = function() end, paste = function(f) f("") end }
+H({ kind = "press", id = "share", index = 2 })
+assert(w3.status.text:find("Imported Starter", 1, true), w3.status.text)
+H({ kind = "press", id = "save", index = 1 })
+assert(last():match("^!gsq x %d+ 1 1 0,%-,WHM,1,Starter;"), last())
+answer({ "ok|7|1|w7" })
+assert(w3.status.text:find("Saved as Rule Set 7", 1, true), w3.status.text)
+H({ kind = "press", id = "save", index = 2 }) -- Check, with no mate to check it on
+assert(w3.status.text:find("squad mate", 1, true), w3.status.text)
+-- a long code cut in the box, with no clipboard permission: the status says how to read it whole
+client = { copy = function() end, paste = function() error("needs the clipboard permission") end }
+w3.code.text = "GS1" .. string.rep("A", 1021) -- as the box cuts it: 1024 characters
+H({ kind = "press", id = "share", index = 2 })
+assert(w3.status.text:find("/lua grant xifo-gambits clipboard", 1, true), w3.status.text)

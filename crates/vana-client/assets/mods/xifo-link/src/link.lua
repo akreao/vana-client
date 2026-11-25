@@ -11,6 +11,10 @@ M.GAP = 1.25       -- seconds between two lines we say
 M.RETRIES = 3      -- a refused line is said again this many times
 M.ECHO = 3         -- seconds after a send in which its echo or its refusal may come
 M.WAIT = 8         -- seconds a reply's lines are hidden and gathered after its request
+-- the chat modes of the server's lines: 0xc8 for s2c 0x017 kinds 6 / 7 ("----== SystemMessage ==----" then the text;
+-- printToPlayer's default, the squad commands), 0x79 for kind 0x1d and the other text-only kinds (SYSTEM_3, "basic
+-- system messages": the Gambits editor and the hardcore lines). Players cannot send either.
+M.SERVER = { [0xc8] = true, [0x79] = true }
 
 function M.new(run)
   return {
@@ -24,6 +28,12 @@ function M.new(run)
     listening = {},  -- marks whose lines are always hidden and handed on, as the server sends them unasked
     heard = {},      -- { mark, text } since the last take
   }
+end
+
+-- Whether `text` is a server command this link says: "!" and a word, one line. Any mod may ask the link to send, so
+-- it says nothing else (no plain chat, no "/" commands) under the player's name.
+function M.command_ok(text)
+  return type(text) == "string" and text:match("^![%w_]") ~= nil and not text:find("%c")
 end
 
 -- Queues a server command ("!squad panel"). `opts.tag` names the reply it brings ("squadpanel"); its lines are those
@@ -75,8 +85,8 @@ local function ends_with(text, tail)
   return #text >= #tail and text:sub(-#tail) == tail
 end
 
--- A chat line on its way into the log: false hides it.
-function M.filter(s, text, now)
+-- A chat line on its way into the log, in chat mode `mode`: false hides it.
+function M.filter(s, text, now, mode)
   local q = s.sent
   if q and now - q.at <= M.ECHO then
     if text:sub(1, 3) == ">> " and ends_with(text, q.text) then
@@ -98,6 +108,9 @@ function M.filter(s, text, now)
   end
   -- A server line comes as two log lines: this header, then the text. While a reply is due the header is hidden too
   -- (a header whose text is not a reply line loses only the header).
+  -- Only the server's lines (their mode) can be a reply: a player's chat is in its channel's mode, its continuation
+  -- lines (a line break in the text) too. A reply line also starts with its mark.
+  if not M.SERVER[mode] then return end
   if next(s.waiting) and text:find("^%-%-%-%-== SystemMessage ==%-%-%-%-$") then return false end
   -- (only a line that starts with the mark: a player's chat line naming it starts with the player's name)
   for mark in pairs(s.listening) do
@@ -108,9 +121,8 @@ function M.filter(s, text, now)
     end
   end
   for tag, w in pairs(s.waiting) do
-    local at = text:find(w.mark, 1, true)
-    if at then
-      local payload = text:sub(at + #w.mark)
+    if text:sub(1, #w.mark) == w.mark then
+      local payload = text:sub(#w.mark + 1)
       local head = payload:match("^([^|]*)")
       local last = false
       for _, e in ipairs(w.ends) do

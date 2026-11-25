@@ -20,6 +20,12 @@ assert(set.num == 4 and set.job == "WHM" and set.rev == "3" and set.name == "Fay
 assert(set.rules[2].kind == "j" and set.rules[2].name == "CONVERT" and set.rules[3].raw == "?")
 assert(G.editable(set.flags) and not G.editable("m") and not G.editable("or"))
 local err
+-- a set short of a rule, of a segment, or of its end line does not open
+local hdr = "hdr|4|WHM|o|3|w4|Fayd heals"
+assert(G.parse_set({ hdr, "rule|1|1/1|1,PARTY,HPP_LT,50,,,f,CURE,", "end|2" }) == nil, "rule missing")
+assert(G.parse_set({ hdr, "rule|1|1/2|1,SELF,MPP_LT,30,", "end|1" }) == nil, "segment missing")
+assert(G.parse_set({ hdr, "rule|1|1/1|1,PARTY,HPP_LT,50,,,f,CURE," }) == nil, "end line missing")
+assert(#G.parse_set({ hdr, "end|0" }).rules == 0)
 set, err = G.parse_set({ "err|missing|no usable Rule Set with that number" })
 assert(set == nil and err.code == "missing" and err.text:find("no usable", 1, true))
 
@@ -76,3 +82,11 @@ local when, what = G.describe(G.decode_rule("1,PARTY,HPP_LT,50,NOT_STATUS,PROTEC
 assert(when == "HP below 50% and Missing effect Protect" and what == "Cure (best)", when .. " / " .. what)
 assert(select(2, G.describe(G.decode_rule("1,TARGET,ALWAYS,,,,n,,"))) == "Best nuke")
 assert(G.tidy("CURE_II") == "Cure II" and G.tidy("DIVINE_SEAL") == "Divine Seal" and G.tidy("VIVID") == "Vivid")
+
+-- a check without its end line (no answer, or cut short) gives no verdict
+local chk
+chk, err = G.parse_check({})
+assert(chk == nil and err.code == "noreply")
+chk = G.parse_check({ "chk|2|not learned", "end|1|30|BLM|15" })
+assert(#chk.problems == 1 and chk.level == 30)
+assert(G.parse_check({ "chk|2|not learned" }) == nil)

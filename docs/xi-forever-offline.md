@@ -55,7 +55,9 @@ code against the server's `!squad` chat commands; none of XIFO's Ashita add-on c
   skills; Put on now gives it to the called mate at once), and a Party roles page who the role targets mean
   (`prl`/`prs`: Auto by job or a set role, for you and each mate; other party members shown read-only).
   Share codes: Copy code puts the open set on the clipboard as a `GS1...` code, Import code opens one (from the box,
-  or the clipboard) as a new unsaved set. The format is XIFO's own (their Gambits add-on reads ours and we read
+  or the clipboard) as a new unsaved set. The box keeps 1024 characters, so a longer code is read from the clipboard,
+  which needs the mod's `clipboard` permission (granted on a catalogue install; else `/lua grant xifo-gambits
+  clipboard`). An imported set saves under its own job, also with no squad mates. The format is XIFO's own (their Gambits add-on reads ours and we read
   theirs; the test holds a code their add-on made), written anew here from its description.
 
 - **Auto Ranged** (`auto-ranged`, `//autora`): their autora as our own mod, and not tied to XIFO (it only uses `/ra`).

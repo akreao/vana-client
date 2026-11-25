@@ -2019,7 +2019,7 @@ fn chat(w: &mut World, cid: u16, msg: &str) -> Done {
         send(w, NetCommand::Chat { kind, text: msg.to_string() });
         restore_temp_mode(w);
         // Ours (Modern; retail changes it only by /chatmode and the Chat window): the channel used last becomes the
-        // line's default, tells, shouts and emotes aside.
+        // line's default, tells, shouts and emotes aside; a mod's line (commands.run) leaves it.
         let stick = match cid {
             id::SAY => Some(2),
             id::PARTY => Some(5),
@@ -2028,7 +2028,7 @@ fn chat(w: &mut World, cid: u16, msg: &str) -> Done {
             id::UNITY => Some(0xb),
             _ => None,
         };
-        if let Some(m) = stick.filter(|&m| w.modern && w.chat_mode != m) {
+        if let Some(m) = stick.filter(|&m| w.modern && !w.mod_line && w.chat_mode != m) {
             set_chat_mode(w, m, None);
         }
     }
@@ -2071,7 +2071,8 @@ pub(super) fn set_chat_mode(w: &mut World, mode: u8, name: Option<&str>) {
 
 /// FUN_101adb80, after a channel send: a shout or message mode goes back to the previous mode.
 fn restore_temp_mode(w: &mut World) {
-    if matches!(w.chat_mode, 3 | 8) {
+    // Ours: a mod's line (commands.run) is not the player's send, so the player's one-off Shout / Message stays set.
+    if !w.mod_line && matches!(w.chat_mode, 3 | 8) {
         (w.chat_mode, w.chat_prefix) = w.chat_prev.clone();
     }
 }

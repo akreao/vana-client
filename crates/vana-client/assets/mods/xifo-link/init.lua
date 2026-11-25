@@ -13,10 +13,16 @@ local link = require("src.link")
 
 local s = link.new(function(line) commands.run(line) end)
 
+-- The mods this link says commands for. It holds the automation permission for them; any other mod would get its
+-- server commands said without that permission, so it is refused.
+local USERS = { ["xifo-squad"] = true, ["xifo-gambits"] = true, ["xifo-hc-icons"] = true }
+
 -- send(text, opts): queues a server command (without "/say"); opts.tag names its reply lines, opts.delay holds it
 -- back. Returns false when the same command is already waiting.
 mods.provide("send", function(text, opts)
-  if type(text) ~= "string" or text == "" then error("send: a command, such as \"!squad panel\"") end
+  -- (a client older than mods.caller() cannot tell callers apart: it serves every mod, as XIFO Link 1.1.1 did)
+  if mods.caller and not USERS[mods.caller() or ""] then error("send: only for the XIFO mods") end
+  if not link.command_ok(text) then error("send: a server command, such as \"!squad panel\"") end
   return link.send(s, text, opts, clock())
 end)
 
@@ -30,8 +36,8 @@ end)
 -- How many commands are waiting to be said.
 mods.provide("pending", function() return #s.queue end)
 
-filters.chat(function(text)
-  return link.filter(s, text, clock())
+filters.chat(function(text, mode)
+  return link.filter(s, text, clock(), mode)
 end)
 
 events.on("frame", function()

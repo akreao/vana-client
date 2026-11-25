@@ -21,6 +21,7 @@ local st = {
   draft = nil,     -- the open set: { num, job, name, flags, rev, rules }
   rule = 1,        -- the picked rule
   dirty = false,
+  edits = 0,       -- counts the open set's edits, so a save's answer knows whether later edits are still unsaved
   -- the lists behind the dropdowns, by row: names as the server writes them
   targets = {}, conds = {}, actions = {},
 }
@@ -297,6 +298,7 @@ end
 
 local function changed()
   st.dirty = true
+  st.edits = st.edits + 1
   show_rules()
 end
 
@@ -347,23 +349,30 @@ local function show_mates()
   ui.update(W, "mate", { items = items, at = st.mate })
 end
 
+local load_page -- (below: the Weapon skills or Party roles page, when one is up)
+
 local function load_mates(keep)
   request(G.mates, function(lines)
     local mates, err = G.parse_mates(lines)
     if not mates then return failed(err, "The squad") end
     local slot = mate() and mate().slot
     st.mates = mates
-    st.mate = (keep and slot and index_of((function()
+    -- the picked mate is kept only when it is still there; otherwise (none before, or it left) the new pick's sets
+    -- and choices load
+    local kept = keep and slot and index_of((function()
       local n = {}
       for i, m in ipairs(mates) do n[i] = m.slot end
       return n
-    end)(), slot)) or 1
+    end)(), slot)
+    st.mate = kept or 1
+    if not kept then st.ws, st.ws_edit = nil, nil end
     show_mates()
     if #mates == 0 then return status("You have no squad mates yet (!squad new <name> <job>).") end
     show_sets()
-    if not keep then
+    if not kept then
       load_sets()
       load_catalog()
+      load_page()
     end
   end)
 end
@@ -438,7 +447,9 @@ local function load_ws()
     return ui.update(W, "ws_info", { text = "This server's Gambits editor has no weapon skill settings (version 5)." })
   end
   local slot = m.slot
-  st.ws_list = nil
+  -- the last mate's setting is not edited or saved for this one while its own is on its way
+  st.ws, st.ws_edit, st.ws_list = nil, nil, nil
+  ui.update(W, "ws_info", { text = "Asking the server..." })
   request(function(id) return G.wsg(id, slot) end, function(lines)
     if not mate() or mate().slot ~= slot then return end
     took_ws(lines)
@@ -491,7 +502,7 @@ local function load_roles()
   end)
 end
 
-local function load_page()
+load_page = function()
   if st.tab == 2 then load_ws() elseif st.tab == 3 then load_roles() end
 end
 
@@ -509,7 +520,9 @@ local function copy_rules(rules)
 end
 
 local function open_set(num)
-  request(function(id) return G.get(id, num) end, function(lines)
+  request(function(id) return G.get(id, num) end, function(lines, complete)
+    -- a reply cut short would open (and later save) the set without its missing rules
+    if not complete then return failed(nil, "Opening the Rule Set") end
     local set, err = G.parse_set(lines)
     if not set then return failed(err, "Opening the Rule Set") end
     st.draft, st.rule, st.dirty = set, 1, false
@@ -538,8 +551,9 @@ local function new_rule()
 end
 
 local function save()
-  local d, m = st.draft, mate()
-  if not d or not m then return end
+  -- (a set carries its job: no mate is needed, so a set imported with an empty squad saves too)
+  local d = st.draft
+  if not d then return end
   for i, r in ipairs(d.rules) do
     local p = G.rule_problem(r, st.cat)
     if p then return status(("Rule %d %s."):format(i, p), true) end
@@ -553,6 +567,7 @@ local function save()
   local lines, why = G.save_lines(set, token)
   if not lines then return status(why, true) end
   local tag = "save" .. token
+  local edits = st.edits
   pending[tag] = function(replies, complete)
     local saved, err = G.parse_saved(replies)
     if not saved then
@@ -560,8 +575,13 @@ local function save()
         or "Not saved: the server did not answer every part. Try Save again.", true)
     end
     d.num, d.rev, d.flags = saved.num, saved.rev, "o"
-    st.dirty = false
-    status(("Saved as Rule Set %d."):format(saved.num))
+    -- the server has the set as it was when Save was pressed; edits made since are still unsaved
+    if st.draft == d and st.edits == edits then
+      st.dirty = false
+      status(("Saved as Rule Set %d."):format(saved.num))
+    else
+      status(("Saved as Rule Set %d; the changes made while saving are not saved yet."):format(saved.num))
+    end
     show_rules()
     load_sets(saved.num)
   end
@@ -579,6 +599,7 @@ end
 local function check()
   local d, m = st.draft, mate()
   if not d or not d.num or d.num == 0 then return status("Save the Rule Set first: Check tries the saved one.", true) end
+  if not m then return status("Check needs a called squad mate of the set's job: you have none yet.", true) end
   if not m.out then return status("Call " .. m.name .. " first: Check uses the called mate's level.", true) end
   request(function(id) return G.chk(id, m.slot, d.num) end, function(lines)
     local res, err = G.parse_check(lines)
@@ -605,8 +626,12 @@ ui.on(W, function(_, e)
   if e.kind == "close" then return ui.close(R) end
   if e.kind == "set" and e.id == "mate" then
     if not st.mates[e.index] then return end
+    -- the dropdown shows the old mate again until the change goes ahead ("Keep editing" leaves it)
+    ui.update(W, "mate", { at = st.mate })
     unless_dirty(function()
       st.mate, st.draft, st.set_row = e.index, nil, 1
+      st.ws, st.ws_edit = nil, nil
+      ui.update(W, "mate", { at = st.mate })
       show_rules()
       load_sets()
       load_catalog()
@@ -626,11 +651,14 @@ ui.on(W, function(_, e)
     if e.index == 1 and st.ws_edit then
       local x = st.ws_edit
       request(function(id) return G.wss(id, slot, x) end, function(lines)
+        if not mate() or mate().slot ~= slot then return end
         took_ws(lines)
         if st.ws then status("Weapon skill setting saved for " .. m.name .. ".") end
       end)
     elseif e.index == 2 then
-      request(function(id) return G.wsa(id, slot) end, took_ws)
+      request(function(id) return G.wsa(id, slot) end, function(lines)
+        if mate() and mate().slot == slot then took_ws(lines) end
+      end)
     else
       load_ws()
     end
@@ -701,10 +729,16 @@ ui.on(W, function(_, e)
       status(("The code of %s (%d rules) is on the clipboard."):format(d.name or "the set", #d.rules))
     else
       -- Read before anything is replaced: a code that does not read leaves the open set (and its unsaved mark) alone.
+      local no_clip = false -- the clipboard could not be read (no permission)
       local function import(text, decoded)
         local set, why = decoded, nil
         if not set then set, why = Share.decode(text) end
-        if not set then return status("Not imported: " .. why, true) end
+        if not set then
+          -- the box keeps 1024 characters: without the clipboard a longer code arrives cut
+          local hint = no_clip and #text >= 1024
+            and " A code this long is read from the clipboard: /lua grant xifo-gambits clipboard, then copy it again." or ""
+          return status("Not imported: " .. why .. hint, true)
+        end
         unless_dirty(function()
           for _, rule in ipairs(set.rules) do rule.id = nil end -- a new set's rules are numbered by the server
           -- edited with the choices of a mate of the set's job, when there is one
@@ -744,7 +778,10 @@ ui.on(W, function(_, e)
         if clip and Share.looks_like(clip) then return import(clip) end
         status("No share code to import: copy one, or paste it into the box.", true)
       end
-      if not pcall(client.paste, pick) then pick(nil) end
+      if not pcall(client.paste, pick) then
+        no_clip = true
+        pick(nil)
+      end
     end
   elseif e.kind == "change" and e.id == "name" and d then
     d.name = e.text
