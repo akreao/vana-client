@@ -398,3 +398,11 @@ answer({ "ws|3|BLM|d|0|3|1000|0|0|-|0|1|1|1", "end|1" })
 assert(last():match("^!gsq mates %d+$"), last())
 answer({ "mate|1|41|Salia|WAR|28|-|0|0|-", "mate|3|42|Bea|BLM|20|-|0|0|-", "end|2" })
 assert(w4.mate.at == 2 and last():match("^!gsq wsg %d+ 3$"), "the mate that changed jobs stays picked: " .. last())
+-- the same mismatch again after the roster agreed in between: read again (the guard was cleared by the agreement)
+answer({ "ws|3|BLM|d|0|3|1000|0|0|-|0|1|1|1", "end|1" }) -- agrees with the roster
+cmd.gambits()
+cmd.gambits()
+answer({ "mate|1|41|Salia|RDM|28|-|0|0|-", "mate|3|42|Bea|SMN|20|-|0|0|-", "end|2" }) -- the roster says SMN now
+assert(last():match("^!gsq wsg %d+ 3$"), last())
+answer({ "ws|3|BLM|d|0|3|1000|0|0|-|0|1|1|1", "end|1" }) -- but the server's setting is BLM's again
+assert(last():match("^!gsq mates %d+$"), "the repeated mismatch is read again: " .. last())
