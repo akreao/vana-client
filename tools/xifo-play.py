@@ -112,16 +112,26 @@ class Kit:
 
 
 # ----- the game copy -----
+def same_folder(source, target):
+    return bool(source) and os.path.realpath(source) == os.path.realpath(target)
+
+
 def sync_game(source, target):
     """Copies what changed in their game folder since the last run into ours (reflinks where the disk can).
-    Files the game writes per player (USER) are left alone in both directions."""
+    Files the game writes per player (USER: macros and settings) are copied only into a copy that has none, and
+    after that left alone in both directions."""
     if not source or not os.path.isdir(os.path.join(source, "FINAL FANTASY XI")):
         fail(f"Their game folder was not found ({source or 'config.json has no ffxi_client_dir'}).")
-    if os.path.realpath(source) == os.path.realpath(target):
-        fail("vana-client's game folder is their game folder: give it its own copy (--game).")
     stamp = os.path.join(target, SYNC_STAMP)
     started = time.time()
-    if not os.path.isfile(stamp):
+    try:
+        with open(stamp, encoding="utf-8") as handle:
+            last_source = handle.read().strip()
+        since = os.stat(stamp).st_mtime if last_source == source else 0   # another kit: everything again
+    except OSError:
+        since = 0
+    has_user = any(os.path.isdir(os.path.join(target, rel)) for rel in SYNC_SKIP)
+    if since == 0 and not (os.path.isdir(target) and os.listdir(target)):      # a new, empty copy
         say(f"Copying their game folder to {target} (once; later runs copy only what changed)...")
         os.makedirs(target, exist_ok=True)
         if shutil.which("cp") and os.name != "nt":
@@ -129,11 +139,11 @@ def sync_game(source, target):
         else:
             shutil.copytree(source, target, dirs_exist_ok=True)
     else:
-        since = os.stat(stamp).st_mtime
         changed = []
         for root, dirs, files in os.walk(source):
             rel_root = os.path.relpath(root, source)
-            dirs[:] = [d for d in dirs if os.path.normpath(os.path.join(rel_root, d)).replace("\\", "/") not in SYNC_SKIP]
+            dirs[:] = [d for d in dirs if os.path.normpath(os.path.join(rel_root, d)).replace("\\", "/") not in SYNC_SKIP
+                       or not has_user]
             for name in files:
                 path = os.path.join(root, name)
                 try:
@@ -144,7 +154,8 @@ def sync_game(source, target):
                 if max(st.st_mtime, st.st_ctime) >= since:
                     changed.append(os.path.normpath(os.path.join(rel_root, name)))
         if changed:
-            say(f"Their game files changed since the last run: copying {len(changed)} file(s).")
+            say(f"Their game files changed since the last run: copying {len(changed)} file(s)."
+                if since else f"Bringing the game copy in line with {source}: {len(changed)} file(s).")
             copy_files(source, target, changed)
         else:
             say("The game copy is up to date.")
@@ -240,7 +251,7 @@ class World:
         except OSError:
             return ""
 
-    def start(self):
+    def start(self, stopping=lambda: False):
         os.makedirs(self.kit.logs, exist_ok=True)
         try:
             self.log_start = os.path.getsize(os.path.join(self.kit.logs, "world.log"))
@@ -249,10 +260,12 @@ class World:
         say("Starting their world (database, rules, game servers)...")
         began = time.time()
         self.proc = subprocess.Popen(self.kit.command("launcher_world.py", "run"), cwd=self.kit.path,
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                     **({} if os.name == "nt" else {"start_new_session": True}))
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **own_group())
         shown = ""
         while time.time() - began < READY_SECONDS:
+            if stopping():
+                self.stop()
+                fail("Stopped while their world was starting.")
             if self.proc.poll() is not None:
                 tail = "\n".join(self.world_log_since_start().strip().splitlines()[-12:])
                 fail(f"Their world stopped while starting (exit code {self.proc.returncode}). Is their launcher "
@@ -312,7 +325,7 @@ class World:
             return
         log = open(os.path.join(self.kit.logs, "ollama.log"), "ab")
         self.ollama = subprocess.Popen([exe, "serve"], stdout=log, stderr=subprocess.STDOUT,
-                                       **({} if os.name == "nt" else {"start_new_session": True}))
+                                       **own_group())
         for _ in range(20):
             if running():
                 break
@@ -326,7 +339,7 @@ class World:
         log = open(os.path.join(self.kit.logs, log_name), "wb")
         self.helpers[name] = subprocess.Popen(self.kit.command(os.path.join(where, script), *args), cwd=where,
                                               stdout=log, stderr=subprocess.STDOUT,
-                                              **({} if os.name == "nt" else {"start_new_session": True}))
+                                              **own_group())
         say(f"Started {name}.")
 
     def stop(self):
@@ -338,12 +351,21 @@ class World:
             return
         say("Stopping their world (it saves and stops the database)...")
         try:
-            self.proc.send_signal(signal.SIGINT if os.name == "nt" else signal.SIGTERM)
+            # (Windows: Ctrl+Break, which their world takes as a stop like SIGTERM; it reaches the process group
+            #  started with CREATE_NEW_PROCESS_GROUP, so the packaged launcher's child gets it too)
+            self.proc.send_signal(signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGTERM)
             self.proc.wait(timeout=STOP_SECONDS)
             say("Their world stopped.")
         except subprocess.TimeoutExpired:
             say("Their world did not stop in time; ending it.")
             end(self.proc, 5)
+
+
+def own_group():
+    """Popen arguments that start a program in its own process group, so it can be stopped with its children."""
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
 
 
 def end(proc, seconds):
@@ -389,6 +411,8 @@ def main(argv):
             fail("vana-client was not found: give --client (or set VANA_CLIENT).")
     profile = os.path.abspath(args.profile)
     config, game = prepare_profile(profile, args.game)
+    if same_folder(kit.game_dir(), game):
+        fail("vana-client's game folder is their game folder: give it its own copy (--game).")
     if not args.no_sync:
         sync_game(kit.game_dir(), game)
 
@@ -405,7 +429,7 @@ def main(argv):
     code = 0
     try:
         world.keep_updates_off(args.allow_world_updates)
-        world.start()
+        world.start(lambda: bool(stopping))
         if not args.no_ai:
             world.start_ai()
         if args.world_only:
@@ -416,7 +440,7 @@ def main(argv):
             env = dict(os.environ, FFXI_CONFIG=config)
             pin_server(client, env, profile, server_key(kit.server_dir()))
             say("Opening vana-client. Closing it stops the world.")
-            game_proc = subprocess.Popen([client] + args.client_args, env=env)
+            game_proc = subprocess.Popen([client] + args.client_args, env=env, **own_group())
             while game_proc.poll() is None:
                 if stopping:
                     end(game_proc, 20)
@@ -427,6 +451,9 @@ def main(argv):
                     code = 1
                     break
                 time.sleep(1)
+            if code == 0 and not stopping and game_proc.returncode:
+                say(f"vana-client ended with exit code {game_proc.returncode}.")
+                code = game_proc.returncode
         if not world.alive() and not stopping:
             code = 1
     finally:
