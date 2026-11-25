@@ -1049,6 +1049,14 @@ pub(super) fn install(
             Ok(out)
         })?,
     )?;
+    // The quest areas the game's quest menu lists, by the expansions the server enables (DAT_10386998).
+    game.set(
+        "quest_areas",
+        lua.create_function(|lua, ()| {
+            let w = world(lua)?;
+            lua.create_sequence_from((0..11).filter(|&a| super::super::quests::area_on(w.expansions, a)))
+        })?,
+    )?;
     // Every quest area's quests in the journal's order, with ours current or completed (s2c 0x056).
     game.set(
         "quests",
