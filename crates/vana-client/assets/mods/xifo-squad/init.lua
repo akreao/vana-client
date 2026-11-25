@@ -99,7 +99,11 @@ ui.window("squad", {
         { title = "Role", width = 66 }, { title = "Mode", width = 82 }, { title = "", width = 48 } } },
     { type = "separator" },
     { type = "text", id = "sel", text = "No squad mate picked." },
-    { type = "buttons", id = "mate", items = { "Call", "Dismiss", "Profile" } },
+    { type = "text", id = "rules", text = "", dim = true,
+      tip = "The rules the mate runs now (a Rule Set from Gambits, or its job rules) and, when they differ, what its "
+        .. "next call will run." },
+    { type = "buttons", id = "mate", items = { "Call", "Dismiss", "Profile" },
+      tip = "Apply (servers that can): only this mate leaves and comes back, so its new settings count now." },
     { type = "choice", id = "role", label = "Role", items = ROLE_LABELS, at = 1,
       tip = "What the mate does first: Auto follows its job." },
     { type = "choice", id = "mode", label = "Mode", items = MODE_LABELS, at = 1,
@@ -118,8 +122,17 @@ ui.window("squad", {
 })
 
 local open_sheet -- the profile window, below
+local mate_buttons
 
 local function mate() return st.panel and st.panel.mates[st.sel] end
+
+-- The picked mate's buttons: Apply (dismiss and call only this mate again) when the server can (v0.3.11 "cap|reapply1")
+-- and the mate is out.
+mate_buttons = function()
+  local m = mate()
+  if st.panel and st.panel.caps.reapply1 and m and m.out then return { "Call", "Dismiss", "Apply", "Profile" } end
+  return { "Call", "Dismiss", "Profile" }
+end
 
 local function jobs_text(m)
   local t = ("%s %d"):format(m.job, m.level)
@@ -140,10 +153,15 @@ local function show_mate()
   local m = mate()
   if not m then
     ui.update("squad", "sel", { text = "No squad mate picked." })
+    ui.update("squad", "rules", { text = "" })
     return
   end
   ui.update("squad", "sel", { text = ("#%d %s: %s, %s"):format(m.slot, m.name, jobs_text(m),
     m.out and "out now" or "away") })
+  -- the classic window cuts a long line short: the whole line is its tip too
+  local rules = P.rules_text(m.rules) or ""
+  ui.update("squad", "rules", { text = rules, tip = rules })
+  ui.update("squad", "mate", { items = mate_buttons() })
   ui.update("squad", "role", { at = index_of(P.ROLES, m.role) or 1 })
   ui.update("squad", "mode", { at = index_of(P.MODES, m.mode) or 1 })
   local sw = {}
@@ -187,8 +205,11 @@ local function show_panel()
   for _, m in ipairs(p.mates) do
     if m.out then out = out + 1 end
     local note = m.out and "Out" or (m.cooldown > 0 and (m.cooldown .. " s") or "")
+    -- A mate whose next call would run other rules than it does now.
+    if m.rules and m.rules.state == "pending" then note = note .. "*" end
+    -- the Rules line as the row's tip too: the classic window cuts a long line and shows a row's tip for the cursor
     rows[#rows + 1] = { tostring(m.slot), m.name, jobs_text(m), cap(m.role), cap(m.mode), note,
-      colour = not m.out and DIM or nil }
+      colour = not m.out and DIM or nil, tip = P.rules_text(m.rules) }
   end
   if st.sel > #rows then st.sel = math.max(1, #rows) end
   ui.update("squad", "mates", { rows = rows, at = st.sel })
@@ -228,13 +249,18 @@ ui.on("squad", function(_, e)
     st.sel = e.index
     show_mate()
   elseif e.kind == "press" and e.id == "mate" and m then
-    if e.index == 1 then
+    local word = mate_buttons()[e.index]
+    if word == "Call" then
       send("!squad call " .. m.slot)
       ask(4)
-    elseif e.index == 2 then
+    elseif word == "Dismiss" then
       send("!squad dismiss " .. m.slot)
       ask(1.5)
-    else
+    elseif word == "Apply" then
+      -- (v0.3.11, capability reapply1) only this mate leaves and is called again with its new settings.
+      send("!squad reapply " .. m.slot)
+      ask(6)
+    elseif word == "Profile" then
       open_sheet(m.slot)
     end
   elseif e.kind == "set" and e.id == "role" and m then
@@ -382,7 +408,10 @@ events.on("xifo_link_reply", function(tag, lines, complete)
       ui.update("squad_sheet", "hdr", { text = "No answer from the server." })
       return
     end
-    st.sheet = P.sheet(lines)
+    local sheet = P.sheet(lines)
+    -- An answer for another mate than the window shows now (picked again while it was on its way) is dropped.
+    if sheet.slot and sheet.slot ~= st.sheet_slot then return end
+    st.sheet = sheet
     show_sheet()
   end
 end)

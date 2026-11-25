@@ -84,3 +84,36 @@ assert(s.stats.rows[1][1]:find("Call this mate", 1, true))
 -- no server answer
 ev.xifo_link_reply("squadpanel", {}, false)
 assert(w.status.text:find("XI: Forever Offline", 1, true))
+
+-- Servers from v0.3.11: the picked mate's Rules line, a mark on a mate whose next call changes its rules, and a
+-- profile answer for another mate (picked again meanwhile) dropped.
+ev.xifo_link_reply("squadpanel", { "1|Fayd|WHM|30|BLM|15|healer|balanced|1|15", "rs|1|pending|choice|0|-|4|Heals|0|0|WHM",
+  "2|Salia|WAR|28|-|0|tank|aggressive|0|5", "rs|2|off|-|0|-|4|Heals|0|0|-" }, true)
+H("squad", { kind = "select", id = "mates", index = 1 })
+assert(w.mates.rows[1][6] == "Out*" and w.mates.rows[2][6] == "", w.mates.rows[1][6])
+assert(w.mates.rows[1].tip == w.rules.text and w.mates.rows[2].tip == "Rules: set 4 Heals at its next call")
+assert(w.rules.text == "Rules: its job rules now, set 4 Heals from its next call (another set was chosen; Apply)", w.rules.text)
+H("squad", { kind = "select", id = "mates", index = 2 })
+assert(w.rules.text == "Rules: set 4 Heals at its next call", w.rules.text)
+H("squad", { kind = "press", id = "mate", index = 3 })
+assert(last() == "!squad sheet 2")
+ev.xifo_link_reply("squadsheet", { "slot|1", "hdr|Fayd|WHM|30|BLM|15|healer|balanced|Elvaan|15" }, true)
+assert(s.hdr.text ~= "Fayd: WHM 30 / BLM 15", "another mate's answer is dropped")
+ev.xifo_link_reply("squadsheet", { "slot|2", "hdr|Salia|WAR|28|-|0|tank|aggressive|Mithra|5" }, true)
+assert(s.hdr.text == "Salia: WAR 28", s.hdr.text)
+
+-- A server that can re-call one mate (cap|reapply1): an out mate gets Apply, which sends !squad reapply <slot>; an
+-- away mate, or a server without the word, does not.
+ev.xifo_link_reply("squadpanel", { "1|Fayd|WHM|30|BLM|15|healer|balanced|1|15", "2|Salia|WAR|28|-|0|tank|aggressive|0|5",
+  "cap|reapply1" }, true)
+H("squad", { kind = "select", id = "mates", index = 1 })
+assert(table.concat(w.mate.items, ",") == "Call,Dismiss,Apply,Profile", table.concat(w.mate.items, ","))
+H("squad", { kind = "press", id = "mate", index = 3 })
+assert(sent[#sent - 1].text == "!squad reapply 1" and last() == "!squad panel" and sent[#sent].delay == 6)
+H("squad", { kind = "press", id = "mate", index = 4 })
+assert(last() == "!squad sheet 1")
+H("squad", { kind = "select", id = "mates", index = 2 })
+assert(table.concat(w.mate.items, ",") == "Call,Dismiss,Profile")
+ev.xifo_link_reply("squadpanel", { "1|Fayd|WHM|30|BLM|15|healer|balanced|1|15" }, true)
+H("squad", { kind = "select", id = "mates", index = 1 })
+assert(table.concat(w.mate.items, ",") == "Call,Dismiss,Profile", "no reapply1: no Apply")

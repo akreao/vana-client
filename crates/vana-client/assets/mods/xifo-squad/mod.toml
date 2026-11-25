@@ -1,5 +1,5 @@
 name = "XIFO Squad"
-version = "1.0.0"
+version = "1.2.2"
 description = "A window for your XI: Forever Offline squad mates: call, dismiss, role, mode, switches, jobs, camp, and each mate's profile."
 authors = ["vana-client"]
 
