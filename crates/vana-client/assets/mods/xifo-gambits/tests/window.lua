@@ -324,7 +324,23 @@ cmd.gambits()
 answer({ "mate|1|41|Salia|WAR|28|-|0|0|-", "mate|2|40|Fayd|WHM|30|-|0|0|-", "end|2" })
 assert(w4.mate.at == 2 and w4.editing.text:find("for WHM", 1, true) and not w4.editing.text:find("choices from", 1, true),
   w4.editing.text)
+-- the picked mate's catalog fills the open rule's dropdowns
+for i = #sent, 1, -1 do
+  if sent[i].text:match("^!gsq catm %d+ 2 jm$") then
+    ev.xifo_link_reply(sent[i].tag, cat, true)
+    break
+  end
+end
+H({ kind = "select", id = "rules", index = 1 })
+local rw4 = windows.gambits_rule
+assert(rw4.target.items[rw4.target.at] == "Self" and #rw4.target.items == 3, rw4.target.items[rw4.target.at])
 cmd.gambits()
 cmd.gambits()
 answer({ "mate|1|41|Salia|WAR|28|-|0|0|-", "end|1" })
 assert(w4.editing.text:find("choices from Salia, a WAR", 1, true), w4.editing.text)
+-- a mate of the set's job arriving later is picked over the one of another job, the unsaved set kept
+cmd.gambits()
+cmd.gambits()
+answer({ "mate|1|41|Salia|WAR|28|-|0|0|-", "mate|3|42|Bea|WHM|20|-|0|0|-", "end|2" })
+assert(w4.mate.at == 2 and w4.name.text == "Heals" and not w4.editing.text:find("choices from", 1, true),
+  w4.editing.text)
