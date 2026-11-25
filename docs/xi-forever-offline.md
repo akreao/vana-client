@@ -58,6 +58,17 @@ code against the server's `!squad` chat commands; none of XIFO's Ashita add-on c
   or the clipboard) as a new unsaved set. The format is XIFO's own (their Gambits add-on reads ours and we read
   theirs; the test holds a code their add-on made), written anew here from its description.
 
+- **Autobox** (`autobox`, `//autobox`): rules for your own character (their autobox add-on, formerly their Gambits
+  2.2, rewritten). One sheet per main job, each rule a target (me, party member, battle target, pet), one or two
+  conditions (HP / MP below or above, my TP, lacks or has a status, engaged or not) and an action (a spell, with
+  "best tier I can cast", a job ability, a weapon skill or the best one the game takes now, ranged attack, attack).
+  Every 0.2 s the first rule that holds and that the game's menus would take is done; it waits while you move, cast,
+  talk to an NPC or zone, 1.5 s after each action, and 4 s before the same rule fires again. Party rules pick the
+  lowest HP member in casting range; battle target rules only touch a monster you or your party claimed. The rules
+  start switched off (`//autobox on`); each job starts from a small preset (WHM, RDM, BLM, PLD, WAR, SAM, DRK; the
+  rest a weapon skill rule). Not ported: their Parser, EXP Watch and Enemy Info tabs (DPS and XP Tracker cover the
+  first two) and the Recruit / Sort / Optimize buttons.
+
 Server reply formats used (from their `modules/custom/lua/squad.lua`): `squadpanel:<slot>|<name>|<job>|<level>|<sub or
 ->|<sub level>|<role>|<mode>|<out 0/1>|<switch mask>`, `jl|<slot>|<JOB:level,...>`, `cd|<slot>|<seconds>`,
 `camp|<on>|<puller slot, 0 = you>|<paused>|<pulls>`, `campbots|<names or ->|<pulling bot or ->`, then

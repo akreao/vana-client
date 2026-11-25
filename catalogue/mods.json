@@ -150,6 +150,54 @@
       "version": "1.0.1"
     },
     {
+      "authors": [
+        "vana-client"
+      ],
+      "commands": {
+        "autobox": {
+          "args": "",
+          "forms": [
+            {
+              "args": "on | off",
+              "help": "Switches the rules on or off for this character."
+            }
+          ],
+          "help": "Opens or closes the Autobox rule sheet, or switches the rules on or off."
+        }
+      },
+      "description": "Rules for your own character, one sheet per main job: target, conditions and a spell, ability or weapon skill, tried from the top and done when the game would take it (XI: Forever Offline's autobox, rewritten).",
+      "files": [
+        {
+          "path": "init.lua",
+          "sha256": "20247c5c93c2a5eef479c89568a402dcb3bde5658c7fa610ef227a172be09727",
+          "size": 15860,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/autobox/init.lua"
+        },
+        {
+          "path": "mod.toml",
+          "sha256": "0d84e0c52055728a721d42691725b85c8e8309cae3b51e79ba88e39d34f5d442",
+          "size": 739,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/autobox/mod.toml"
+        },
+        {
+          "path": "src/core.lua",
+          "sha256": "aa6158b43066a9e9c26db89831279dcb63dc02d2cb2fafd8928f47bbdad446a8",
+          "size": 11378,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/autobox/src/core.lua"
+        },
+        {
+          "path": "src/presets.lua",
+          "sha256": "b4c47b0ff59e344889eb130bafad00095ccbe9fd7f5d757e7468c3e8a75f8b0e",
+          "size": 2760,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/autobox/src/presets.lua"
+        }
+      ],
+      "id": "autobox",
+      "kind": "lua",
+      "name": "Autobox",
+      "version": "1.0.0"
+    },
+    {
       "authors": [],
       "commands": {
         "automaton": {
