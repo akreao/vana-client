@@ -20,8 +20,8 @@ mods.provide("send", function(text, opts)
   return link.send(s, text, opts, clock())
 end)
 
--- listen(mark): lines holding `mark` are always hidden and handed on as the event "xifo_link_line"(mark, text after
--- the mark), for what the server sends unasked.
+-- listen(mark): lines that start with `mark` (after leading spaces) are always hidden and handed on as the event
+-- "xifo_link_line"(mark, text after the mark), for what the server sends unasked.
 mods.provide("listen", function(mark)
   if type(mark) ~= "string" or #mark < 3 then error("listen: a mark of 3 or more characters") end
   link.listen(s, mark)
