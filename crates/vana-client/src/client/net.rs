@@ -1682,6 +1682,18 @@ fn npc_name(p: &SubPacket) -> Option<Option<String>> {
     (index < 0x700).then_some(None)
 }
 
+/// An 0x00D / 0x00E for tests elsewhere: `fill` at byte offsets of a `len`-byte sub-packet `id`.
+#[cfg(test)]
+pub(super) fn test_entity(id: u16, len: usize, fill: &[(usize, &[u8])], kind: EntityKind) -> EntityUpdate {
+    let mut data = vec![0u8; len];
+    data[0] = id as u8;
+    data[1] = ((len / 4) as u8) << 1 | (id >> 8) as u8;
+    for (at, b) in fill {
+        data[*at..*at + b.len()].copy_from_slice(b);
+    }
+    entity(&SubPacket { id, sync: 0, data }, kind)
+}
+
 fn entity(p: &SubPacket, kind: EntityKind) -> EntityUpdate {
     let flags = p.u8(10);
     let name_at = if kind == EntityKind::Npc { 0x34 } else { 0x5A };

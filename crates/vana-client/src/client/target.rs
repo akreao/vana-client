@@ -104,7 +104,7 @@ pub fn in_own_six(w: &World, id: u32) -> bool {
 /// Ours (modern): the last target while it is still here and targetable, `<lt>`.
 pub fn last_target(w: &World) -> Option<(u32, u16)> {
     let id = w.last_target.filter(|&id| Some(id) != w.target)?;
-    let e = w.entities.get(&id).filter(|e| e.targetable())?;
+    let e = w.entities.get(&id).filter(|e| e.targetable() && !super::event::is_parked(w, id))?;
     Some((id, e.index))
 }
 
