@@ -91,6 +91,7 @@ ev.xifo_link_reply("squadpanel", { "1|Fayd|WHM|30|BLM|15|healer|balanced|1|15", 
   "2|Salia|WAR|28|-|0|tank|aggressive|0|5", "rs|2|off|-|0|-|4|Heals|0|0|-" }, true)
 H("squad", { kind = "select", id = "mates", index = 1 })
 assert(w.mates.rows[1][6] == "Out*" and w.mates.rows[2][6] == "", w.mates.rows[1][6])
+assert(w.mates.rows[1].tip == w.rules.text and w.mates.rows[2].tip == "Rules: set 4 Heals at its next call")
 assert(w.rules.text == "Rules: its job rules now, set 4 Heals from its next call (another set was chosen; Apply)", w.rules.text)
 H("squad", { kind = "select", id = "mates", index = 2 })
 assert(w.rules.text == "Rules: set 4 Heals at its next call", w.rules.text)
