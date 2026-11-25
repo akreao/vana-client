@@ -711,6 +711,13 @@ fn chrome() -> f32 {
     super::ROOM_MARGIN.sum().y + TAB_H + GAP
 }
 
+/// The most rows the window grows to: its room's height in rows (1 to 24), but no more than fit on a screen `screen_h`
+/// tall with the tabs and the frame around them, so its bottom edge and resize corner stay on the screen.
+fn max_rows(room_h: f32, screen_h: f32, row: f32) -> f32 {
+    let row = row.max(1.0);
+    (room_h.min(screen_h - chrome()) / row).floor().clamp(1.0, 24.0)
+}
+
 /// The lines' wrap width for a room: its inside, less a little air at the right.
 fn wrap_width(room: Vec2) -> f32 {
     room.x - super::ROOM_MARGIN.sum().x - 6.0
@@ -741,7 +748,7 @@ pub fn panel(p: &mut Panels, w: &mut World) {
     let wrap = wrap_width(room);
     let row = p.ctx.fonts_mut(|f| f.row_height(&font));
     let mut rule = w.log_rule;
-    rule.cfg.max = (room.y / row).floor().clamp(1.0, 24.0);
+    rule.cfg.max = max_rows(room.y, p.ctx.content_rect().height(), row);
     rule.cfg.min = rule.cfg.min.min(rule.cfg.max);
     rule.focused |= m.arranging.replace(false);
     // The settings popup holds the window as it is (it went with the window when that folded away), and so do the
@@ -1227,7 +1234,21 @@ pub fn draw(p: &mut Panels, v: &ChatView, s: Shown, lift: bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::{fitting, mentions, tab_shown};
+    use super::{chrome, fitting, max_rows, mentions, tab_shown};
+
+    /// The rows a room saved taller than the screen grows to leave the tabs, the frame and the resize corner on the
+    /// screen (the window grown to them was 756 points on a 720-point screen); a room that fits keeps its rows.
+    #[test]
+    fn rows_fit_the_screen_with_the_chrome() {
+        for (room_h, screen_h, row) in [(900.0, 720.0, 38.0), (720.0, 720.0, 16.0), (2000.0, 360.0, 20.0)] {
+            let rows = max_rows(room_h, screen_h, row);
+            assert!(chrome() + rows * row <= screen_h, "{rows} rows of {row} on {screen_h}");
+            assert!(chrome() + (rows + 1.0) * row > screen_h || rows == 24.0, "{rows} rows of {row} on {screen_h}");
+        }
+        assert_eq!(max_rows(174.0, 1080.0, 16.0), 10.0);
+        assert_eq!(max_rows(900.0, 1080.0, 16.0), 24.0);
+        assert_eq!(max_rows(900.0, 60.0, 16.0), 1.0);
+    }
 
     /// Tabs past the settings button are left out, but the open one stays (the ones before it give way).
     #[test]

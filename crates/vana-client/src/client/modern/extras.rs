@@ -1230,7 +1230,10 @@ fn minimap_panel(p: &mut Panels, w: &mut World) {
     // A size saved on a larger screen (or at a smaller Interface Size) is held to the most a resize gives here, so the
     // map does not run past the screen's edges; the saved size is kept for the larger screen.
     let mp = p.place("minimap");
-    let max_d = ctx.content_rect().height() * 0.7;
+    // As tall as 70% of the screen, and as wide as the edge window's frame (95% of the screen, edge_window_up) holds
+    // with its margins: drawn and resized from the same size.
+    let screen = ctx.content_rect();
+    let max_d = (screen.height() * 0.7).min(screen.width() * 0.95 - 32.0).max(1.0);
     let d = if mp.w > 0.0 {
         mp.w.min(max_d)
     } else {

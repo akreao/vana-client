@@ -1445,7 +1445,14 @@ impl<'a> Panels<'a> {
         }
         // A resize moves the bottom with the pointer: a bottom-placed panel keeps its top.
         if let Some(g) = shown.inner {
-            (place.w, place.h) = fit_room(room + g, screen.size()).into();
+            // Only the side dragged is saved: a room saved on a larger screen keeps its other side.
+            let fit = fit_room(room + g, screen.size());
+            if g.x != 0.0 || place.w <= 0.0 {
+                place.w = fit.x;
+            }
+            if g.y != 0.0 || place.h <= 0.0 {
+                place.h = fit.y;
+            }
             if bottom && place.dock.is_none() {
                 place.b = (r.min.y + if h > 0.0 { h } else { r.height() } + g.y) / sh;
             }
