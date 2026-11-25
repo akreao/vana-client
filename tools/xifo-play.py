@@ -225,7 +225,7 @@ def sync_game(source, target):
             copy_files(source, target, changed)
         else:
             say("The game copy is up to date.")
-    if last_source and last_source != source:
+    if last_source and last_source != source and not unread:
         drop_extra_files(last_source, source, target, keep_user=has_user)
     elif last_source == source and not unread:
         drop_removed_files(target, present)
@@ -233,6 +233,10 @@ def sync_game(source, target):
         # An incomplete look at their folder: nothing is removed, and the list and the stamp stay as they were, so
         # the next run looks again.
         say(f"Some of their game folder could not be read ({unread[0]}); nothing was removed from the copy.")
+        if not os.path.isfile(stamp):
+            # still marked as following their install (vana-client then offers no retail update over its era
+            # DATs), with no source, so the next sync looks at every file, as --no-sync marks it
+            write_stamp(target, "", time.time())
         return
     write_file_list(target, present)
     for name in VANA_UPDATE_FILES:                   # a retail update vana-client applied here before: no longer true
