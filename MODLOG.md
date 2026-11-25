@@ -25093,3 +25093,26 @@ Settings > Graphics > Upscaling (config `upscaler` 0 off / 1 FSR / 2 external, `
   2 s (the server's list for the new jobs lands after the change; game files give no job for an ability). Until then
   the pair's set is shown, not saved; the settled list rebuilds the bars and saves it. The old parts stay to start
   the pairs not played yet; delete_entry clears every set, uses() counts the pairs' slots once a job has any.
+
+## Retail macro import: game installs, files.outside, macro_import (2026-11-25)
+
+- Retail's install folder: HKLM\SOFTWARE\PlayOnline\InstallFolder, PlayOnlineUS\InstallFolder, PlayOnlineEU\InstallFolder
+  (key table at 0x1037ca08, by region DAT_10456a28 + 4), value "0001" (0x1034f498), read with RegOpenKeyExA /
+  RegQueryValueExA in FUN_101bccb0 (the gamepad tool's launcher; it runs "<value>\Tools\FFXiPadConfig.exe -game").
+  The game is 32-bit, so on a 64-bit Windows the key is under Wow6432Node. Wine keeps it in the prefix's system.reg
+  as `[Software\\Wow6432Node\\PlayOnlineUS\\InstallFolder]` with `"0001"="C:\\...\\FINAL FANTASY XI"`. Ours:
+  installs.rs (the registry on Windows; elsewhere padreg's prefixes, a drive letter through dosdevices, c: as
+  drive_c, plus the installer's default folders in each prefix).
+- Mods read folders outside their own with files.outside (read only): fs.pick_folder (the system dialog; the folder
+  picked is allowed), fs.open_folder (the client's question in window "__client_ask", which ui.window / update / on /
+  opacity refuse; the answer is recorded before the mod's handler hears it), fs.read_outside / exists_outside /
+  list_outside (full paths, resolved; under an allowed folder only; the client's mod data never), fs.game_installs.
+  Allowed folders last until the mod unloads.
+- actions.macro_import(folder, books): Macros::import_books saves the current set, copies the books' set files (read
+  as the game reads them: a damaged file becomes an empty set, a damaged record is cleared) and their titles, leaves
+  out /lua lines (macro_edit's rule), and first copies the files it replaces to USER/<id>/backup/<unix seconds>/. The
+  current set is read again when its book was imported. mcr.sys is not copied (the palette stays on its book).
+- Retail Macros mod (assets/mods/retail-macros): lists an install's USER/<content id> folders (the one named by
+  the player's id first), the 40 books with their macro counts, and copies the picked ones with macro_import or hands
+  their macros to Hotbars (mods.call "hotbar" "import_macros", per job; the book title's job, else the main job).
+  Not seen live: no retail install with macros on the test machine.

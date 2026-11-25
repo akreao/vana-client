@@ -1328,13 +1328,13 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "e561122ae629c364f963b678a9426cf5260a46ac8281c138afc8228712a2e976",
-          "size": 6186,
+          "sha256": "6e987fdc1fe2795a9f918387577a06bc4816a3bfc50f3bdc8211bea31e669032",
+          "size": 6625,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "04eb4d8aef08fa62bddfd9e576d1f3d7cac498228bc17964cd2f8c2efaa1f317",
+          "sha256": "c33c3db63d032f3afca8542b2cc502df532d338dd817bc0a218b55caf8eed6e0",
           "size": 4415,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/mod.toml"
         },
@@ -1364,8 +1364,8 @@
         },
         {
           "path": "src/data.lua",
-          "sha256": "a08a4aa1b282d8fe4fa959d1f86a5a131c7c092c700ebb832c5a9ca0e6d8281a",
-          "size": 28389,
+          "sha256": "b5952ef8c82f977383b0102aeb4b02f933a125c74209b65650db333a4a97cc88",
+          "size": 29881,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/data.lua"
         },
         {
@@ -1462,7 +1462,7 @@
       "id": "hotbar",
       "kind": "lua",
       "name": "Hotbars",
-      "version": "1.15.0"
+      "version": "1.16.0"
     },
     {
       "authors": [],
@@ -2629,6 +2629,40 @@
       "kind": "lua",
       "name": "Training Regime",
       "version": "1.0.1"
+    },
+    {
+      "authors": [],
+      "commands": {
+        "retailmacros": {
+          "args": "",
+          "help": "Opens the Retail Macros window."
+        }
+      },
+      "description": "Brings your macro books over from a game install on this computer (retail's, found by itself or picked): copies the books you choose into this client's macro palettes, or turns their macros into Hotbars macros for the jobs you choose. //retailmacros opens it. It reads only the folder you allow, and changes nothing there.",
+      "files": [
+        {
+          "path": "init.lua",
+          "sha256": "93c3778208314b32b9f73048bab159ab4f3975fecc48a2c8ea85374811137278",
+          "size": 12424,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/retail-macros/init.lua"
+        },
+        {
+          "path": "mod.toml",
+          "sha256": "3dceae39aa636afb681611a90e057102173609f9a80412896b9a169eaf4c214a",
+          "size": 499,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/retail-macros/mod.toml"
+        },
+        {
+          "path": "src/mcr.lua",
+          "sha256": "88fdc6386772e6e92dcff3bdf3f4de41af24cf464ee43bdf7106f81f98b81416",
+          "size": 2405,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/retail-macros/src/mcr.lua"
+        }
+      ],
+      "id": "retail-macros",
+      "kind": "lua",
+      "name": "Retail Macros",
+      "version": "1.0.0"
     },
     {
       "authors": [],

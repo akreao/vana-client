@@ -65,6 +65,7 @@ end)
 | [`actions.macro(row, n)`](#actionsmacro) | Runs a macro of the current set. |
 | [`actions.macro_set(book, set)`](#actionsmacro_set) | Switches the macro palette's book and set. |
 | [`actions.macro_edit(row, n, line, text)`](#actionsmacro_edit) | Changes a macro's line or title, and saves it. |
+| [`actions.macro_import(folder, books?)`](#actionsmacro_import) | Copies macro books from another character folder. |
 | [`actions.scan()`](#actionsscan) | Asks for the Wide Scan list. |
 | [`actions.track(index)`](#actionstrack) | Tracks an entity with Wide Scan. |
 | [`actions.untrack()`](#actionsuntrack) | Stops Wide Scan tracking. |
@@ -1697,6 +1698,45 @@ end)
 ```
 
 Text longer than the limit does nothing (no error). Nothing happens before the macros have loaded.
+
+## `actions.macro_import`
+
+```lua
+actions.macro_import(folder, books?) -> nil
+```
+
+Copies macro books from another character's folder (a game install's `USER/<content id>`, such as a retail install's)
+over this character's: each book's ten sets and its title. The sets are read as the game reads them (a damaged macro
+is cleared), and a line that runs `/lua` is left out: those are the player's to write. Before anything is replaced,
+the books' files are copied to `USER/<content id>/backup/<time>/`. The current set shows the new macros at once. The
+result, and where the backup went, is a line in the chat log.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `folder` | `string` | yes | The full path of the character folder, in a folder the player picked or allowed (`fs.pick_folder`, `fs.open_folder`). |
+| `books` | `integer[]` | no | The books to copy, 1..40. None: all 40. |
+
+**Returns** nothing.
+
+**Needs** the `files.outside` permission, and `actions` (while handling the player's input) or `automation`.
+
+**Errors** `"<folder>": not in a folder you picked or allowed`; `"<folder>": not a folder`; `a macro book is 1..40`.
+
+**Example**
+
+```lua
+-- Copies books 1 and 2 of a retail character, once the player allowed the install.
+local install = fs.game_installs()[1]
+if install then
+  fs.open_folder(install.path, "To copy your macro books.", function(ok)
+    if ok then actions.macro_import(install.path .. "/USER/1a2b3c", { 1, 2 }) end
+  end)
+end
+```
+
+Nothing happens before the macros have loaded (a chat line says so).
 
 ## `actions.scan`
 

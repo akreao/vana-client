@@ -386,6 +386,7 @@ and revoke them there.
 | `packets.write` | modify, block, inject | battlemod, DressUp, organizer, GearSwap |
 | `input.capture` | swallow keys and mouse, synthesise keys | Tab, Yush, autoenterkey |
 | `files.shared` | read and write outside the mod's folder, in a shared data area | Logger, findAll, organizer |
+| `files.outside` | read folders the player picks or allows (a game install), read only | Retail Macros |
 | `net` | HTTP(S), UDP and TCP, open URLs | Pricer, CurePlease, Guildwork-style tools |
 | `exec` | run programs | Rich Presence helpers, update |
 | `multibox` | the local bus between clients, window focus, moving and sizing the game window | send, switch_focus, FastFollow, WinControl |

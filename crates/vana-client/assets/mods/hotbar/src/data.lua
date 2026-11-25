@@ -502,6 +502,52 @@ function M.copy_entries(from, to, ids)
   return copied, skipped, not ok and tostring(err) or nil
 end
 
+-- Macros another mod hands over ({ name, lines, icon? } each) into `main`'s library, or the shared one: each unless the
+-- same is there already. Returns how many were added and skipped, and why the save failed (then none are kept).
+function M.import_entries(main, entries, shared)
+  local have = {}
+  for _, it in ipairs(M.library(main)) do
+    if (it.sticky == true) == (shared == true) then have[#have + 1] = clean_entry(it.entry) end
+  end
+  local new = {}
+  local skipped = 0
+  for _, e in ipairs(is_table(entries) and entries or {}) do
+    local c = is_table(e) and not is_table(e.group) and clean_entry(e) or nil
+    if c and #c.lines > 0 then
+      local dup = false
+      for _, h in ipairs(have) do dup = dup or same(h, c) end
+      if dup then
+        skipped = skipped + 1
+      else
+        have[#have + 1] = c
+        new[#new + 1] = c
+      end
+    end
+  end
+  if #new == 0 then return 0, skipped end
+  if shared then
+    local _, why = with_sticky(function()
+      for _, c in ipairs(new) do sticky.library[new_sticky_id()] = c end
+      return true
+    end)
+    if why then return 0, skipped, why end
+    return #new, skipped
+  end
+  local lib = job_part(main, "library", true)
+  local added = {}
+  for _, c in ipairs(new) do
+    local id = new_job_id(main)
+    lib[id] = c
+    added[#added + 1] = id
+  end
+  local ok, err = M.save()
+  if not ok then
+    for _, id in ipairs(added) do lib[id] = nil end
+    return 0, skipped, tostring(err)
+  end
+  return #new, skipped
+end
+
 local function uses_in(main, id)
   local n = 0
   local paired = next(job_part(main, "sets", false) or {}) ~= nil or next(job_part(main, "pads", false) or {}) ~= nil

@@ -93,6 +93,14 @@ local function refresh()
   changed()
 end
 
+-- Other mods hand macros over (the Retail Macros mod): import_macros(job, entries, shared) -> added, skipped, why.
+mods.provide("import_macros", function(job, entries, shared)
+  if type(job) ~= "string" or not job:match("^%u%u%u$") then return 0, 0, "a job is three letters, e.g. WAR" end
+  local added, skipped, why = data.import_entries(job, entries, shared == true)
+  if added > 0 then changed() end
+  return added, skipped, why
+end)
+
 local detect
 events.on("unload", function()
   pcall(function()

@@ -4868,6 +4868,10 @@ fn permission_text(p: &str) -> (&'static str, &'static str) {
         "packets.write" => ("Allow changing packets", "Changes, blocks and sends packets."),
         "input.capture" => ("Allow taking input", "Takes keys and the mouse from the game and presses keys."),
         "files.shared" => ("Allow shared files", "Reads and writes files outside its folder, in the shared mod data."),
+        "files.outside" => (
+            "Allow reading your folders",
+            "Reads folders on this computer that you pick or allow, such as a game install.",
+        ),
         "net" => ("Allow network", "Connects to the internet (web requests, sockets)."),
         "exec" => ("Allow running programs", "Starts programs on this computer."),
         "clipboard" => ("Allow reading the clipboard", "Reads the text you copied."),

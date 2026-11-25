@@ -213,6 +213,13 @@ impl Order {
     }
 }
 
+/// What import_books did: sets written, /lua lines left out, and where the replaced files went.
+pub struct Imported {
+    pub sets: usize,
+    pub lua_lines: usize,
+    pub backup: Option<PathBuf>,
+}
+
 pub struct Macros {
     dir: PathBuf,
     /// mix.dat (version 2) and aix.dat (version 4): the magic and ability list orders.
@@ -526,6 +533,68 @@ impl Macros {
         }
     }
 
+    /// Copies `books` (0-based) of another USER/<content id> folder over this character's: their ten sets and titles,
+    /// read as the game reads them (a bad record cleared), /lua lines left out. The files replaced go to
+    /// backup/<unix seconds>/ first.
+    pub fn import_books(&mut self, src: &Path, books: &[usize]) -> std::io::Result<Imported> {
+        self.save_set();
+        let mut titles: Vec<[u8; 16]> = (0..BOOKS).map(default_name).collect();
+        for (k, name) in ["mcr.ttl", "mcr_2.ttl"].iter().enumerate() {
+            if let Some(p) = read_file(&src.join(name), 1).filter(|p| p.len() == 0x140) {
+                for i in 0..20 {
+                    titles[k * 20 + i].copy_from_slice(&p[16 * i..16 * i + 16]);
+                }
+            }
+        }
+        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let backup = self.dir.join("backup").join(secs.to_string());
+        let names = |n: usize| if n == 0 { "mcr.dat".to_string() } else { format!("mcr{n}.dat") };
+        let mut out = Imported { sets: 0, lua_lines: 0, backup: None };
+        let books: Vec<usize> = books.iter().copied().filter(|&b| b < BOOKS).collect();
+        let replaced: Vec<String> = books
+            .iter()
+            .flat_map(|&b| (0..10).map(move |s| names(b * 10 + s)))
+            .chain(["mcr.ttl".into(), "mcr_2.ttl".into()])
+            .collect();
+        for name in &replaced {
+            let from = self.dir.join(name);
+            if from.is_file() {
+                std::fs::create_dir_all(&backup)?;
+                std::fs::copy(&from, backup.join(name))?;
+                out.backup = Some(backup.clone());
+            }
+        }
+        for &b in &books {
+            for s in 0..10 {
+                let name = names(b * 10 + s);
+                let mut recs: Vec<Macro> = match read_file(&src.join(&name), 1) {
+                    Some(p) if p.len() == SET_PAYLOAD => p.chunks(RECORD).map(Macro::parse).collect(),
+                    _ => vec![Macro::default(); 20],
+                };
+                for m in &mut recs {
+                    for k in 0..6 {
+                        if super::lua::lua_line(&crate::dat::font::decode_sjis(m.line(k))) {
+                            m.set_line(k, b"");
+                            out.lua_lines += 1;
+                        }
+                    }
+                }
+                let mut p = Vec::with_capacity(SET_PAYLOAD);
+                for m in &recs {
+                    m.write(&mut p);
+                }
+                write_file(&self.dir.join(&name), 1, &p);
+                out.sets += 1;
+            }
+            self.titles[b] = if titles[b][0] == 0 { default_name(b) } else { titles[b] };
+        }
+        self.save_titles();
+        if books.contains(&self.book) {
+            self.load_set();
+        }
+        Ok(out)
+    }
+
     /// The book's title, "Book%02d" when empty (group 10 0x6c).
     pub fn book_title(&self, book: usize) -> String {
         let t = crate::dat::font::decode_sjis(cstr(&self.titles[book]));
@@ -759,6 +828,44 @@ mod tests {
         assert!(held >= started + Duration::from_millis(5));
         m.hold_wait(false);
         assert_eq!(m.run.as_ref().unwrap().wait.unwrap().0, held);
+        let _ = std::fs::remove_dir_all(&game);
+    }
+
+    /// Retail's books over ours: the chosen ones only, titles too, /lua lines left out, the old files backed up.
+    #[test]
+    fn import_books_from_another_folder() {
+        let game = scratch("imp");
+        let src = game.join("retail/USER/1234");
+        let mut set = Vec::new();
+        let mut a = Macro::default();
+        a.title[..4].copy_from_slice(b"Cure");
+        a.set_line(0, b"/ma \"Cure\" <t>");
+        a.set_line(1, b"/lua r hotbar");
+        a.write(&mut set);
+        for _ in 1..20 {
+            Macro::default().write(&mut set);
+        }
+        write_file(&src.join("mcr10.dat"), 1, &set);
+        let mut t = vec![0u8; 0x140];
+        t[16..20].copy_from_slice(b"WHM!");
+        write_file(&src.join("mcr.ttl"), 1, &t);
+        let mut m = Macros::load(&game, 7, Box::new(|_| None));
+        m.set_title(0, b"Mine");
+        m.switch(2, 0);
+        m.save(false);
+        let r = m.import_books(&src, &[1]).unwrap();
+        assert_eq!((r.sets, r.lua_lines), (10, 1));
+        assert!(r.backup.as_ref().is_some_and(|b| b.join("mcr.ttl").is_file()));
+        assert_eq!(m.book_title(1), "WHM!");
+        assert_eq!(m.book_title(0), "Book01");
+        m.switch(1, 0);
+        assert_eq!(
+            (m.recs[0].title(), m.recs[0].line(0), m.recs[0].line(1)),
+            ("Cure".into(), &b"/ma \"Cure\" <t>"[..], &b""[..])
+        );
+        // Book 1 (ours, not imported) keeps its macros.
+        m.switch(0, 0);
+        assert_eq!(m.recs[0].title(), "Mine");
         let _ = std::fs::remove_dir_all(&game);
     }
 }
