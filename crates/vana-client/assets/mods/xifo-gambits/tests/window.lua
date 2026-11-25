@@ -338,6 +338,17 @@ cmd.gambits()
 cmd.gambits()
 answer({ "mate|1|41|Salia|WAR|28|-|0|0|-", "end|1" })
 assert(w4.editing.text:find("choices from Salia, a WAR", 1, true), w4.editing.text)
+-- not while the kept mate's weapon skill setting has unsaved changes
+H({ kind = "set", id = "tabs", index = 2 })
+answer({ "ws|1|WAR|d|0|3|1000|0|0|-|0|1|1|1", "end|1" })
+H({ kind = "set", id = "ws_tp", index = 4 })
+cmd.gambits()
+cmd.gambits()
+answer({ "mate|1|41|Salia|WAR|28|-|0|0|-", "mate|3|42|Bea|WHM|20|-|0|0|-", "end|2" })
+assert(w4.mate.at == 1, "the edited weapon skill setting's mate was switched away")
+H({ kind = "press", id = "ws_btn", index = 3 }) -- Refresh: the setting as the server has it
+answer({ "ws|1|WAR|d|0|3|1000|0|0|-|0|1|1|1", "end|1" })
+H({ kind = "set", id = "tabs", index = 1 })
 -- a mate of the set's job arriving later is picked over the one of another job, the unsaved set kept
 cmd.gambits()
 cmd.gambits()

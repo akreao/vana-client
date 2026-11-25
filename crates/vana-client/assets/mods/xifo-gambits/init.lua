@@ -376,7 +376,10 @@ local function load_mates(keep)
         break
       end
     end
-    if kept and pick and mates[kept].job ~= st.draft.job then kept = nil end
+    -- (not while the kept mate's weapon skill setting has unsaved changes: they would be lost)
+    local e, w = st.ws_edit, st.ws
+    local ws_dirty = e and w and (e.control ~= w.control or e.mode ~= w.mode or e.tp ~= w.tp or e.ws ~= w.ws)
+    if kept and pick and mates[kept].job ~= st.draft.job and not ws_dirty then kept = nil end
     st.mate = kept or pick or 1
     if not kept then st.ws, st.ws_edit = nil, nil end
     show_mates()
