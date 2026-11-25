@@ -1404,6 +1404,13 @@ mod tests {
         // NPC races keep their ids.
         let npc = super::Look { race: 29, body: 900, ..Default::default() };
         assert_eq!(super::effective_look(&npc), (npc, Vec::new()));
+        // Loaded, the motion infos are those of the look with 0 there (needs the game files).
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let zero = super::Look { race: 1, ..Default::default() };
+        let (Ok(a), Ok(b)) = (super::load_look(&index, &look), super::load_look(&index, &zero)) else { return };
+        assert!(a.pc.is_some());
+        assert_eq!(a.pc, b.pc);
+        assert_eq!(a.part_files, b.part_files);
     }
 
     /// Point 2 of the PC skeletons anchors the name plate: bone 0, (0, -h, 0) with h by race.
