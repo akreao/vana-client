@@ -3780,7 +3780,7 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "96caaf3fe3229f316841568838c07a319629892bed86231fc4d6e1a7bfb0e47e",
+          "sha256": "5cd9e53b1c3bc620754320ce8f256e09ef4e9cefc1a5d78998afb214009b7289",
           "size": 413,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-link/mod.toml"
         },
@@ -3794,7 +3794,7 @@
       "id": "xifo-link",
       "kind": "lua",
       "name": "XIFO Link",
-      "version": "1.2.2"
+      "version": "1.2.3"
     },
     {
       "authors": [
