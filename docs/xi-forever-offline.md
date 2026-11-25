@@ -6,15 +6,37 @@ Checked on the `forever` branch on 2026-11-24 against their v0.3.9 Linux install
 
 ## Setup
 
-1. Start the world from their launcher (or its server programs and MariaDB), then close their game client:
-   one account can only be signed in once.
-2. Give vana-client its own copy of their game folder, with their era DATs and DAT patches already applied
-   (`Game/SquareEnix`, holding `FINAL FANTASY XI` and `PlayOnlineViewer`). On btrfs a reflink copy is instant:
-   `cp -a --reflink=always "XI Forever Offline/Game/SquareEnix" <somewhere>/game`.
-   Never point vana-client at their install itself.
-3. In vana-client set the game folder to that copy, server `127.0.0.1`, and sign in with the account their
-   launcher made. The server's self-signed certificate is pinned on the first connection; after reinstalling
-   their server run `vana-client trust-server 127.0.0.1`.
+Their launcher's PLAY button starts the retail client, so with vana-client their launcher is only the settings
+and tools app (RULES, WORLD, SQUADS, the Hardcore characters, updates), used while the world is stopped.
+`tools/xifo-play.py` (Python 3) plays instead:
+
+```
+tools/xifo-play.py --kit "/path/XI Forever Offline" --client /path/vana-client
+```
+
+1. It gives vana-client its own copy of their game folder (`Game/SquareEnix`, with their era DATs and DAT patches)
+   in `~/.local/share/vana-client-xifo/game`: the whole folder on the first run (reflinks where the disk can),
+   then only the files their updates changed. `FINAL FANTASY XI/USER` (macros and settings) is copied once and
+   then left alone. vana-client never plays from their folder itself.
+2. It starts their world without its window (`launcher_world.py run`, run through their packaged launcher's
+   `--run`): the database, the RULES / WORLD settings, the game servers, the auction house simulator, the co-op
+   door. Their launcher must be closed; the world refuses to share the install with it. On a kit with no
+   `world.json` it writes one with `"auto_update": false`, because a world left running otherwise installs a new
+   release by itself and restarts in the middle of play (`--allow-world-updates` keeps theirs).
+3. It starts the local AI their PLAY starts and the world leaves out, when the RULES page has it on: Ollama, squad
+   chat (`squad-chat/squad_chat.py`) and the crowd and bot chat helper.
+4. It pins their server's TLS key for vana-client (with `openssl`), so a reinstall of their server does not stop
+   the sign-in, then opens vana-client with `FFXI_CONFIG` set to `~/.local/share/vana-client-xifo/config.json`
+   (server `127.0.0.1`): its settings, pins, log and mod settings stay apart from your usual setup. Sign in
+   with the account their launcher made.
+5. Closing vana-client stops the helpers and the world the normal way (the servers save, the database stops).
+
+`--profile DIR` puts the vana-client setup elsewhere, `--game DIR` the game copy, `--no-sync` skips the copy,
+`--no-ai` the AI helpers, and `--world-only` starts the world until Ctrl+C without the client. `XIFO_KIT`,
+`VANA_CLIENT` and `XIFO_PROFILE` can stand in for the first three options. Arguments after `--` go to vana-client.
+
+Not covered without their launcher: PLAY HARDCORE's one-session rules (hardcore characters themselves play
+normally), visiting a friend's world in co-op (hosting works), char sync, armory sync and the Ventures relay.
 
 ## What works
 
