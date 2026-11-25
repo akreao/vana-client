@@ -56,6 +56,7 @@ READY_SECONDS = 15 * 60          # the first start of a world can take a few min
 STOP_SECONDS = 4 * 60            # the world gives each game server 20 s to save, then stops the database
 SYNC_STAMP = ".xifo-sync"        # in the game copy: when it was last brought up to date
 SYNC_SKIP = ("FINAL FANTASY XI/USER",)   # the game writes each player's macros and settings here: keep ours
+VANA_UPDATE_FILES = ("vana-update.cfg", "vana-update.reinstalled")   # vana-client's record of a retail update (patch.rs)
 
 
 def say(text):
@@ -167,6 +168,7 @@ def sync_game(source, target):
         fail(f"Their game folder was not found ({source or 'config.json has no ffxi_client_dir'}).")
     stamp = os.path.join(target, SYNC_STAMP)
     started = time.time()
+    last_source = ""
     try:
         with open(stamp, encoding="utf-8") as handle:
             last_source = handle.read().strip()
@@ -213,9 +215,38 @@ def sync_game(source, target):
             copy_files(source, target, changed)
         else:
             say("The game copy is up to date.")
+    if last_source and last_source != source:
+        drop_extra_files(source, target, keep_user=has_user)
+    for name in VANA_UPDATE_FILES:                   # a retail update vana-client applied here before: no longer true
+        path = os.path.join(target, "FINAL FANTASY XI", name)
+        if os.path.isfile(path):
+            os.remove(path)
+    write_stamp(target, source, started)
+
+
+def write_stamp(target, source, when):
+    """The stamp also tells vana-client that this copy follows their install (it then offers no retail game update)."""
+    stamp = os.path.join(target, SYNC_STAMP)
     with open(stamp, "w", encoding="utf-8") as handle:
         handle.write(f"{source}\n")
-    os.utime(stamp, (started, started))
+    os.utime(stamp, (when, when))
+
+
+def drop_extra_files(source, target, keep_user):
+    """After switching to another install: files the copy has and that install does not (another kit's DATs) go."""
+    gone = 0
+    for root, dirs, files in os.walk(target):
+        rel_root = os.path.relpath(root, target)
+        if keep_user:
+            dirs[:] = [d for d in dirs if os.path.normpath(os.path.join(rel_root, d)).replace("\\", "/") not in SYNC_SKIP]
+        for name in files:
+            rel = os.path.normpath(os.path.join(rel_root, name))
+            if rel == SYNC_STAMP or name in VANA_UPDATE_FILES or os.path.exists(os.path.join(source, rel)):
+                continue
+            os.remove(os.path.join(root, name))
+            gone += 1
+    if gone:
+        say(f"Removed {gone} file(s) the other install had and this one does not.")
 
 
 def copy_files(source, target, rels):
@@ -242,6 +273,34 @@ def prepare_profile(profile, game):
         write_json(path, cfg)
         say(f"vana-client's XIFO settings: {path} (server 127.0.0.1, game {want['game_dir']}).")
     return path, want["game_dir"]
+
+
+def regular_data_dir():
+    """vana-client's own data folder (config.rs data_dir: the platform's data folder + vana-client)."""
+    if os.name == "nt":
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    elif sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Application Support")
+    else:
+        base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+    return os.path.join(base, "vana-client")
+
+
+def prepare_mods(profile):
+    """The profile's own mods folder (vana-client uses `mods` beside FFXI_CONFIG when there is one), started as a copy
+    of your regular one, so mod installs and updates for XIFO never change your usual setup."""
+    mods = os.path.join(profile, "mods")
+    if os.environ.get("VANA_MODS_DIR") or os.path.isdir(mods):
+        return
+    regular = os.path.join(regular_data_dir(), "mods")
+    if os.path.isdir(regular):
+        if shutil.which("cp") and os.name != "nt":
+            subprocess.run(["cp", "-a", "--reflink=auto", regular, mods], check=True)
+        else:
+            shutil.copytree(regular, mods)
+        say(f"The XIFO profile has its own mods folder now ({mods}), a copy of your regular one.")
+    else:
+        os.makedirs(mods)
 
 
 def server_key(server_dir):
@@ -473,6 +532,9 @@ def main(argv):
     if not args.no_sync:
         restore_their_game(kit)
         sync_game(kit.game_dir(), game)
+    elif os.path.isdir(game) and not os.path.isfile(os.path.join(game, SYNC_STAMP)):
+        write_stamp(game, "", time.time())          # (no source: the next sync looks at every file)
+    prepare_mods(profile)
 
     world = World(kit)
     stopping = []

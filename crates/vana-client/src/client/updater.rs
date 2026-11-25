@@ -124,16 +124,17 @@ fn externally_managed(root: &std::path::Path) -> bool {
 /// Starts the checks in the background; `playonline`: the PlayOnline Viewer's too.
 pub fn start(root: PathBuf, playonline: bool) -> Shared {
     let s: Shared = Arc::new(Mutex::new(Status { game: Game::Checking, viewer: None, client: Client::Checking }));
+    if playonline {
+        start_viewer(&s);
+    }
     // A game copy tools/xifo-play.py keeps (XI: Forever Offline) holds their era files: retail updates would undo
-    // them, and the script brings the copy up to date from their install. The client's own update still runs.
+    // them, and the script brings the copy up to date from their install. The client's own update (and the
+    // PlayOnline Viewer's, above) still runs.
     if externally_managed(&root) {
         log::info!("update check: the game files follow XI: Forever Offline's install (tools/xifo-play.py)");
         s.lock().unwrap().game = Game::Current;
         start_client_check(&s);
         return s;
-    }
-    if playonline {
-        start_viewer(&s);
     }
     let g = s.clone();
     std::thread::spawn(move || {
