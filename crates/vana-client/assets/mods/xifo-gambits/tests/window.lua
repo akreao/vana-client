@@ -11,6 +11,7 @@ events = { on = function(name, f) ev[name] = f end }
 timer = { after = function() end }
 commands = { register = function(n, f) cmd[n] = f end }
 ui = {
+  get = function(id, el) return { text = windows[id][el].text } end,
   window = function(id, spec)
     windows[id] = {}
     for _, e in ipairs(spec.elements) do if e.id then windows[id][e.id] = e end end
@@ -129,11 +130,16 @@ H({ kind = "select", id = "sets", index = 1 })
 H({ kind = "press", id = "setbtn", index = 1 })
 answer({ "hdr|4|WHM|o|4|w4|Fayd heals", "rule|1|1/1|1,MELEE-TANK,HPP_LT,50,,,f,CURE,", "end|1" })
 H({ kind = "select", id = "rules", index = 1 })
-assert(rw.rf1.items[rw.rf1.at] == "Exclude" and rw.rf2.items[1] == "This target" and rw.rf3.at == 1)
-HR({ kind = "set", id = "rf3", index = 2 })
+assert(rw.rf.items[1] == "Tank -" and rw.rf.items[2] == "Mage" and rw.rf.items[3] == "Ranged", rw.rf.items[1])
+HR({ kind = "press", id = "rf", index = 2 })
 assert(w2.rules.rows[1][3] == "Melee + Mage, not Tank", w2.rules.rows[1][3])
+HR({ kind = "press", id = "rf", index = 1 })
+assert(w2.rules.rows[1][3] == "Melee + Mage", "Tank: left out -> not set")
+HR({ kind = "press", id = "rf", index = 1 })
+HR({ kind = "press", id = "rf", index = 1 })
+assert(w2.rules.rows[1][3] == "Melee + Mage, not Tank", "not set -> counts too -> left out")
 HR({ kind = "set", id = "target", index = 2 }) -- (Melee is not in this catalog: listed first, marked)
-assert(#rw.rf1.items == 1 and rw.rf1.items[1] == "-" and w2.rules.rows[1][3] == "Self", tostring(rw.rf1.items[1]) .. " " .. tostring(w2.rules.rows[1][3]))
+assert(#rw.rf.items == 1 and w2.rules.rows[1][3] == "Self", tostring(w2.rules.rows[1][3]))
 
 -- weapon skills of the picked mate (Salia, slot 2, after the mate switch above)
 H({ kind = "set", id = "tabs", index = 2 })
@@ -164,6 +170,65 @@ local n2 = #sent
 H({ kind = "set", id = "pr_role", index = 3 })
 assert(#sent == n2, "another player's role is not ours to set")
 
+-- share codes: the open set out to the clipboard, a code in the box opened as a new set
+local copied
+client = { copy = function(t) copied = t end, paste = function(f) f("") end }
+H({ kind = "set", id = "tabs", index = 1 })
+H({ kind = "select", id = "sets", index = 1 })
+local asked = #prompts
+H({ kind = "press", id = "setbtn", index = 1 })
+assert(#prompts == asked + 1, "the edited set is not thrown away without asking")
+prompts[#prompts].f(1)
+answer({ "hdr|4|WHM|o|4|w4|Fayd heals", "rule|1|1/1|1,PARTY,HPP_LT,50,,,f,CURE,", "end|1" })
+H({ kind = "press", id = "share", index = 1 })
+assert(copied and copied:sub(1, 3) == "GS1" and w2.code.text == copied)
+local S = require("src.share")
+assert(S.decode(copied).rules[1].name == "CURE")
+w2.code.text = "  " .. copied .. "  "
+H({ kind = "press", id = "share", index = 2 })
+assert(w2.editing.text:find("New Rule Set", 1, true) and w2.name.text == "Fayd heals", w2.editing.text)
+assert(w2.status.text:find("Imported Fayd heals", 1, true), w2.status.text)
+-- a code that does not read changes nothing: no question, the unsaved import stays unsaved
+w2.code.text = "GS1nope"
+H({ kind = "press", id = "share", index = 2 })
+assert(#prompts == asked + 1 and w2.status.text:find("Not imported", 1, true))
+assert(w2.editing.text:find("not saved", 1, true))
+-- a good code over unsaved work asks first; the imported rules lose their old ids
+local S2 = require("src.share")
+local code = assert(S2.encode({ job = "WHM", name = "Ids", rules = { { on = true, target = "SELF", cond = "ALWAYS",
+  arg = "", kind = "r", id = "w9" } } }))
+w2.code.text = code
+H({ kind = "press", id = "share", index = 2 })
+assert(#prompts == asked + 2)
+prompts[#prompts].f(1)
+assert(w2.name.text == "Ids")
+H({ kind = "press", id = "share", index = 1 })
+assert(S2.decode(copied).rules[1].id == nil)
+-- the clipboard comes first (a long code is cut in the box)
+client.paste = function(f) f(code) end
+w2.code.text = "GS1cut"
+H({ kind = "press", id = "share", index = 2 })
+prompts[#prompts].f(1)
+assert(w2.status.text:find("Imported Ids", 1, true), w2.status.text)
+-- a job no mate has: kept, and said
+local brd = assert(S2.encode({ job = "BRD", name = "Songs", rules = { { on = true, target = "SELF", cond = "ALWAYS",
+  arg = "", kind = "r" } } }))
+client.paste = function(f) f(brd) end
+H({ kind = "press", id = "share", index = 2 })
+prompts[#prompts].f(1)
+assert(w2.status.text:find("No squad mate is a BRD", 1, true), w2.status.text)
+
+-- a cut code on the clipboard does not hide a good one in the box
+client.paste = function(f) f(code:sub(1, -4)) end
+w2.code.text = brd
+H({ kind = "press", id = "share", index = 2 })
+prompts[#prompts].f(1)
+assert(w2.status.text:find("Imported Songs", 1, true), w2.status.text)
+-- neither reads: the box's reason is given
+w2.code.text = "GS1zz"
+H({ kind = "press", id = "share", index = 2 })
+assert(w2.status.text:find("Not imported", 1, true))
+
 -- a save's answer leaves the edits made while it was being sent unsaved
 H({ kind = "set", id = "tabs", index = 1 })
 H({ kind = "press", id = "save", index = 1 })
@@ -173,16 +238,18 @@ ev.xifo_link_reply(save_tag, { "ok|4|5|w4" }, true)
 assert(w2.editing.text:find("not saved", 1, true) and w2.status.text:find("not saved yet", 1, true), w2.status.text)
 
 -- "Keep editing" leaves the mate dropdown on the mate being edited
-H({ kind = "set", id = "mate", index = 1 })
+local cur = w2.mate.at
+local other = cur == 1 and 2 or 1
+H({ kind = "set", id = "mate", index = other })
 prompts[#prompts].f(2)
-assert(w2.mate.at == 2)
+assert(w2.mate.at == cur)
 
--- after a mate switch, the last mate's weapon skill setting cannot be saved for the new one
-H({ kind = "set", id = "mate", index = 1 })
+-- after a mate switch, the last mate's weapon skill setting cannot be saved for the new one (Fayd is slot 1, Salia 2)
+H({ kind = "set", id = "mate", index = other })
 prompts[#prompts].f(1)
-assert(w2.mate.at == 1)
+assert(w2.mate.at == other)
 H({ kind = "set", id = "tabs", index = 2 })
-assert(last():match("^!gsq wsg %d+ 1$"))
+assert(last():match("^!gsq wsg %d+ " .. other .. "$"), last())
 H({ kind = "press", id = "ws_btn", index = 1 })
 assert(not last():match("^!gsq wss"), "saved the other mate's setting")
 
