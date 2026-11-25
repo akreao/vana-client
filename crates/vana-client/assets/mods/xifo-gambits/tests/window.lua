@@ -297,8 +297,12 @@ H({ kind = "press", id = "share", index = 2 })
 assert(w3.status.text:find("Imported Starter", 1, true), w3.status.text)
 H({ kind = "press", id = "save", index = 1 })
 assert(last():match("^!gsq x %d+ 1 1 0,%-,WHM,1,Starter;"), last())
+answer({ "ok|7|1|w7" })
+assert(w3.status.text:find("Saved as Rule Set 7", 1, true), w3.status.text)
+H({ kind = "press", id = "save", index = 2 }) -- Check, with no mate to check it on
+assert(w3.status.text:find("squad mate", 1, true), w3.status.text)
 -- a long code cut in the box, with no clipboard permission: the status says how to read it whole
 client = { copy = function() end, paste = function() error("needs the clipboard permission") end }
-w3.code.text = "GS1" .. string.rep("A", 1100)
+w3.code.text = "GS1" .. string.rep("A", 1021) -- as the box cuts it: 1024 characters
 H({ kind = "press", id = "share", index = 2 })
 assert(w3.status.text:find("/lua grant xifo-gambits clipboard", 1, true), w3.status.text)

@@ -599,6 +599,7 @@ end
 local function check()
   local d, m = st.draft, mate()
   if not d or not d.num or d.num == 0 then return status("Save the Rule Set first: Check tries the saved one.", true) end
+  if not m then return status("Check needs a called squad mate of the set's job: you have none yet.", true) end
   if not m.out then return status("Call " .. m.name .. " first: Check uses the called mate's level.", true) end
   request(function(id) return G.chk(id, m.slot, d.num) end, function(lines)
     local res, err = G.parse_check(lines)
