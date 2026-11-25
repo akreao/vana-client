@@ -196,8 +196,9 @@ local function show_panel()
     local note = m.out and "Out" or (m.cooldown > 0 and (m.cooldown .. " s") or "")
     -- A mate whose next call would run other rules than it does now.
     if m.rules and m.rules.state == "pending" then note = note .. "*" end
+    -- the Rules line as the row's tip too: the classic window cuts a long line and shows a row's tip for the cursor
     rows[#rows + 1] = { tostring(m.slot), m.name, jobs_text(m), cap(m.role), cap(m.mode), note,
-      colour = not m.out and DIM or nil }
+      colour = not m.out and DIM or nil, tip = P.rules_text(m.rules) }
   end
   if st.sel > #rows then st.sel = math.max(1, #rows) end
   ui.update("squad", "mates", { rows = rows, at = st.sel })
