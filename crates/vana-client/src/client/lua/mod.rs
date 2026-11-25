@@ -3300,7 +3300,9 @@ mod tests {
         let (a, b, c) = (new("a"), new("b"), new("c"));
         c.lua.load("mods.provide('who', function() return mods.caller() end)").exec().unwrap();
         b.lua
-            .load("mods.provide('relay', function() local inner = mods.call('c', 'who') return mods.caller(), inner end)")
+            .load(
+                "mods.provide('relay', function() local inner = mods.call('c', 'who') return mods.caller(), inner end)",
+            )
             .exec()
             .unwrap();
         assert_eq!(a.lua.load("return mods.call('c', 'who')").eval::<String>().unwrap(), "a");
