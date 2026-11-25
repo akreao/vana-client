@@ -34,11 +34,28 @@ end
 
 local function on() return saved().on == true end
 
--- Name lookups, built once the name tables have loaded.
+-- Status names by name, from the battle text: it loads apart from the other names (and may not load at all), so they
+-- are looked up again every 5 s until there are some; meanwhile status conditions do not hold, other rules run.
+local statuses, statuses_at = {}, -math.huge
+local function status_names()
+  if next(statuses) ~= nil or clock() - statuses_at < 5 then return statuses end
+  statuses_at = clock()
+  for id = 0, 1023 do
+    local n = res.status(id)
+    if n and n ~= "" then
+      local k = n:lower()
+      statuses[k] = statuses[k] or {}
+      table.insert(statuses[k], id)
+    end
+  end
+  return statuses
+end
+
+-- Spell and ability ids by name, built once the name tables have loaded.
 local names = nil
 local function lookups()
   if names then return names end
-  local spells, abilities, statuses = {}, {}, {}
+  local spells, abilities = {}, {}
   for id = 1, 1023 do
     local r = res.spell(id)
     if r and r.name and r.name ~= "" and not spells[r.name:lower()] then spells[r.name:lower()] = id end
@@ -49,17 +66,8 @@ local function lookups()
       abilities[r.name:lower()] = id
     end
   end
-  for id = 0, 1023 do
-    local n = res.status(id)
-    if n and n ~= "" then
-      local k = n:lower()
-      statuses[k] = statuses[k] or {}
-      table.insert(statuses[k], id)
-    end
-  end
-  -- Status names come with the battle text, which can load after the spell names: wait for both.
-  if next(spells) == nil or next(statuses) == nil then return nil end
-  names = { spells = spells, abilities = abilities, statuses = statuses }
+  if next(spells) == nil then return nil end
+  names = { spells = spells, abilities = abilities }
   return names
 end
 
@@ -76,6 +84,7 @@ end
 local function env()
   local n = lookups()
   if not n then return nil end
+  local st = status_names()
   local me = game.player()
   local buffs = {}
   for _, b in ipairs(game.buffs()) do buffs[b.id] = true end
@@ -97,7 +106,7 @@ local function env()
     spell = res.spell, ability = res.ability,
     spell_id = function(name) return n.spells[name:lower()] end,
     ability_id = function(name) return n.abilities[name:lower()] end,
-    status_ids = function(name) return n.statuses[name:lower()] end,
+    status_ids = function(name) return st[name:lower()] end,
   }
 end
 
@@ -397,6 +406,11 @@ timer.every(0.2, function()
   if not settings.get("on") then return end
   local p = game.player()
   if not p or not p.main_job then return end
+  -- Switched off: nothing is read.
+  if not on() then
+    s.holding, s.last_pos = "off", nil
+    return
+  end
   local e = env()
   if not e then return end
   local a = core.tick(s, e)

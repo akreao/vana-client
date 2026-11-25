@@ -1,5 +1,5 @@
 name = "Autobox"
-version = "1.0.2"
+version = "1.0.3"
 description = "Rules for your own character, one sheet per main job: target, conditions and a spell, ability or weapon skill, tried from the top and done when the game would take it (XI: Forever Offline's autobox, rewritten)."
 authors = ["vana-client"]
 permissions = ["automation"]

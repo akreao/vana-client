@@ -215,13 +215,13 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "50a8f974647ad8870ea894cc6bc664962e6e97530baf194c4a40702e8cfefce6",
-          "size": 17233,
+          "sha256": "46a3c54fad564c3c8d034ae192b21a54380f3939603c56ec8cf95b812aead22f",
+          "size": 17657,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/autobox/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "afd7fb7ec3ce074f0d3c9ca358e1056ae264060c3b8958f26eb32f5314d48a3c",
+          "sha256": "213655b25a5701da7ae1c50a1296db3bfcf7fba24f389a385cc5d1c101ab13e7",
           "size": 739,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/autobox/mod.toml"
         },
@@ -241,7 +241,7 @@
       "id": "autobox",
       "kind": "lua",
       "name": "Autobox",
-      "version": "1.0.2"
+      "version": "1.0.3"
     },
     {
       "authors": [],
