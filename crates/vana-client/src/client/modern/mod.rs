@@ -393,6 +393,7 @@ impl Modern {
             scan_kinds: &mut cfg.modern_scan_kinds,
             this: HashMap::new(),
             rooms: HashMap::new(),
+            party_rows: Vec::new(),
             retail: HashMap::new(),
             focus,
             hidden: modern_hidden(w),
@@ -474,6 +475,10 @@ impl Modern {
             ghosts.iter().map(|(k, r)| (k.clone(), px(r))).collect(),
         );
         w.lua.set_native_rooms(rooms.iter().map(|(k, r)| (k.clone(), px(r))).collect());
+        let party_rows = std::mem::take(&mut p.party_rows);
+        w.lua.set_party_rows(
+            party_rows.iter().map(|(panel, slot, name, r)| (panel.clone(), *slot, name.clone(), px(r))).collect(),
+        );
         *self.rects.borrow_mut() = this;
         if changed {
             cfg.modern_places.insert(w.name.clone(), layout.clone());
@@ -617,6 +622,8 @@ struct Panels<'a> {
     this: HashMap<String, Rect>,
     /// The whole room of the panels drawn folded or growing this frame (Show::full).
     rooms: HashMap<String, Rect>,
+    /// The party and alliance windows' member rows drawn this frame: (panel, party slot, name, row).
+    party_rows: Vec<(String, usize, String, Rect)>,
     /// Places retail works out this frame (the minimap left of the windows at the edge): the default until moved.
     retail: HashMap<String, Place>,
     /// The panel with the keys (focus_panel): drawn in the focused frame.
@@ -1904,6 +1911,7 @@ mod panel_tests {
                     scan_kinds: &mut 7,
                     this: Default::default(),
                     rooms: Default::default(),
+                    party_rows: Vec::new(),
                     retail: Default::default(),
                     focus: None,
                     hidden: Vec::new(),
@@ -2063,6 +2071,7 @@ mod panel_tests {
                     scan_kinds: &mut 7,
                     this: Default::default(),
                     rooms: Default::default(),
+                    party_rows: Vec::new(),
                     retail: Default::default(),
                     focus: None,
                     hidden: Vec::new(),

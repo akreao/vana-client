@@ -578,6 +578,10 @@ function ui.native.place(panel, place) end
 ---@return {name: string, x: integer, y: integer, w: integer, h: integer, shown: boolean, room: {x: integer, y: integer, w: integer, h: integer}?}?
 function ui.native.rect(panel) end
 
+--- The member rows of the modern party and alliance windows as last drawn, in window pixels, top to bottom: {panel ("party", "alliance1", "alliance2"), slot (the member's party slot from 1: 1-6 the party, 7-12 and 13-18 the alliance parties), name, x, y, w, h}. Empty in the classic UI, and while those windows are hidden.
+---@return table[]
+function ui.native.party_rows() end
+
 --- Every modern panel a mod may name: {name, about, hideable, movable, shown, placed_by (the mod placing it)} with x, y, w, h once it was drawn.
 ---@return table[]
 function ui.native.panels() end
@@ -1596,6 +1600,10 @@ function mods.provide(name, func) end
 ---@param ... any 
 ---@return any
 function mods.call(mod, name, ...) end
+
+--- Inside a function offered with mods.provide, while a mods.call runs it: the calling mod's id (its own on a self-call); nil anywhere else. Lets a mod offer a function only to the mods it trusts (the id is the one a mod is loaded under, not proof of who wrote it).
+---@return string?
+function mods.caller() end
 
 --- Raises an event in every other mod: their events.on handlers get the values after the running handler (in this frame or the next). Prefix the name with your mod's id.
 ---@param event string 

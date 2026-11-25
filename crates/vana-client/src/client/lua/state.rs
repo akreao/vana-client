@@ -26,6 +26,8 @@ pub(super) struct FrameInfo {
     pub native_rects: std::collections::BTreeMap<String, ([f32; 4], bool)>,
     /// The whole room of the modern panels that fold or grow (the chat window), as last drawn.
     pub native_rooms: std::collections::BTreeMap<String, [f32; 4]>,
+    /// The modern party and alliance windows' member rows as last drawn, in window pixels: (panel, slot, name, rect).
+    pub party_rows: Vec<(String, usize, String, [f32; 4])>,
     /// The modern UI's look mods changed (ui.skin).
     pub skin: super::skin::Skin,
     /// The modern UI's pixels per point while it is on (the HUD's UI unit there).
