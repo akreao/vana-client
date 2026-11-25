@@ -1396,9 +1396,10 @@ mod tests {
     /// wield), the same look as one sent with 0 there.
     #[test]
     fn weapons_past_the_table_are_id_0() {
-        let look = super::Look { race: 1, main: 1300, sub: 1300, range: 4000, ..Default::default() };
+        // Race 8: race 1's shared race files are race_files_shared's, which runs alongside.
+        let look = super::Look { race: 8, main: 1300, sub: 1300, range: 4000, ..Default::default() };
         let (eff, moved) = super::effective_look(&look);
-        assert_eq!(eff, super::Look { race: 1, ..Default::default() });
+        assert_eq!(eff, super::Look { race: 8, ..Default::default() });
         assert_eq!(moved, vec![("main", 1300), ("sub", 1300), ("range", 4000)]);
         assert!(!crate::dat::motionfile::dual_wield(eff.sub));
         // NPC races keep their ids.
@@ -1406,8 +1407,10 @@ mod tests {
         assert_eq!(super::effective_look(&npc), (npc, Vec::new()));
         // Loaded, the motion infos are those of the look with 0 there (needs the game files).
         let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
-        let zero = super::Look { race: 1, ..Default::default() };
-        let (Ok(a), Ok(b)) = (super::load_look(&index, &look), super::load_look(&index, &zero)) else { return };
+        let zero = super::Look { race: 8, ..Default::default() };
+        // Only a missing stock look skips; the look past the table must load whenever the stock one does.
+        let Ok(b) = super::load_look(&index, &zero) else { return };
+        let a = super::load_look(&index, &look).expect("the look past the table loads as the stock look");
         assert!(a.pc.is_some());
         assert_eq!(a.pc, b.pc);
         assert_eq!(a.part_files, b.part_files);
