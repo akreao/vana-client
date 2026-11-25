@@ -578,6 +578,10 @@ function ui.native.place(panel, place) end
 ---@return {name: string, x: integer, y: integer, w: integer, h: integer, shown: boolean, room: {x: integer, y: integer, w: integer, h: integer}?}?
 function ui.native.rect(panel) end
 
+--- The member rows of the modern party and alliance windows as last drawn, in window pixels, top to bottom: {panel ("party", "alliance1", "alliance2"), slot (the member's party slot from 1: 1-6 the party, 7-12 and 13-18 the alliance parties), name, x, y, w, h}. Empty in the classic UI, and while those windows are hidden.
+---@return table[]
+function ui.native.party_rows() end
+
 --- Every modern panel a mod may name: {name, about, hideable, movable, shown, placed_by (the mod placing it)} with x, y, w, h once it was drawn.
 ---@return table[]
 function ui.native.panels() end
