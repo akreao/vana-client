@@ -3276,6 +3276,39 @@ mod tests {
         assert!(e.to_string().contains("suspended"), "{e}");
     }
 
+    /// mods.caller(): the calling mod's id inside an offered function, nil outside, and back to the outer caller
+    /// after a nested call.
+    #[test]
+    fn mods_caller_names_the_calling_mod() {
+        let dir: runtime::Shared = Default::default();
+        let new = |id: &str| {
+            let m = manifest::Manifest { id: id.into(), ..Default::default() };
+            let vm = Vm::new(m, PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
+            vm.lua.set_app_data(dir.clone());
+            api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+            dir.borrow_mut().mods.push(runtime::Entry {
+                id: id.into(),
+                name: id.into(),
+                version: String::new(),
+                lua: vm.lua.weak(),
+                st: vm.st.clone(),
+            });
+            vm
+        };
+        let (a, b, c) = (new("a"), new("b"), new("c"));
+        c.lua.load("mods.provide('who', function() return mods.caller() end)").exec().unwrap();
+        b.lua
+            .load(
+                "mods.provide('relay', function() local inner = mods.call('c', 'who') return mods.caller(), inner end)",
+            )
+            .exec()
+            .unwrap();
+        assert_eq!(a.lua.load("return mods.call('c', 'who')").eval::<String>().unwrap(), "a");
+        let (outer, inner) = a.lua.load("return mods.call('b', 'relay')").eval::<(String, String)>().unwrap();
+        assert_eq!((outer.as_str(), inner.as_str()), ("a", "b"));
+        assert!(c.lua.load("return mods.caller()").eval::<Option<String>>().unwrap().is_none());
+    }
+
     /// A `__gc` finalizer would run with the budget hook off: setmetatable refuses one.
     #[test]
     fn setmetatable_refuses_gc() {

@@ -23,6 +23,7 @@ mods.provide("hits", function() return hits end)
 | [`mods.installed()`](#modsinstalled) | Every mod installed, loaded or not. |
 | [`mods.provide(name, func)`](#modsprovide) | Offers a function to other mods under a name. |
 | [`mods.call(mod, name, ...)`](#modscall) | Calls a function another mod offers, now, and returns its results. |
+| [`mods.caller()`](#modscaller) | Inside an offered function: the id of the mod calling it. |
 | [`mods.emit(event, ...)`](#modsemit) | Raises an event in every other mod. |
 
 ## `mods.list`
@@ -156,6 +157,27 @@ if ok then
 else
   print("tally is not available: " .. n)
 end
+```
+
+## `mods.caller`
+
+```lua
+mods.caller() -> string?
+```
+
+Inside a function this mod offers with `mods.provide`, while another mod's `mods.call` runs it: the id of that mod.
+Anywhere else, nil. A mod that does something on the player's behalf for other mods (one that holds a permission they
+may not have) can use it to serve only the mods it knows.
+
+**Returns** `string?`: the calling mod's id, or nil.
+
+**Example**
+
+```lua
+mods.provide("say", function(text)
+  if mods.caller() ~= "my-panel" then error("say: only for my-panel") end
+  commands.run("/say " .. text)
+end)
 ```
 
 ## `mods.emit`
