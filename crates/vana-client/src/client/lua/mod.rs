@@ -2550,6 +2550,35 @@ mod tests {
         assert!(p("{ name = \"a\", type = \"thing\" }").is_err());
     }
 
+    /// ui.open asks the modern UI to raise the window, a repeat open again; take_raise answers once per ask. A focus
+    /// change alone (a hover over a canvas, a click) asks nothing.
+    #[test]
+    fn ui_open_asks_for_raise() {
+        let vm = Vm::new(
+            manifest::Manifest { id: "m".into(), ..Default::default() },
+            PathBuf::from("."),
+            vm::Source::Dir(PathBuf::from(".")),
+        )
+        .unwrap();
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        vm.lua
+            .load(r#"ui.window("a", { title = "A", elements = {} }); ui.window("h", { title = "H", hud = true, elements = {} })"#)
+            .exec()
+            .unwrap();
+        let mut host = Host::default();
+        host.vms.push(vm);
+        assert!(!host.take_raise("m", "a"));
+        host.vms[0].lua.load(r#"ui.open("a"); ui.open("h")"#).exec().unwrap();
+        assert!(host.take_raise("m", "a") && !host.take_raise("m", "a"), "once per ask");
+        assert!(!host.take_raise("m", "h"), "a HUD window takes no keys and is not raised");
+        // the focus moving to it (a hover, a click) is no ask
+        host.vms[0].st.borrow_mut().windows[0].focus = true;
+        assert!(!host.take_raise("m", "a"));
+        // a repeat open of an open window asks again
+        host.vms[0].lua.load(r#"ui.open("a")"#).exec().unwrap();
+        assert!(host.take_raise("m", "a") && !host.take_raise("x", "a"));
+    }
+
     /// A wait_until test that never returns runs out of its budget instead of freezing the frame.
     #[test]
     fn wait_until_test_has_a_budget() {
@@ -4428,6 +4457,17 @@ impl Host {
     }
 
     /// The windows `keep` takes, open or not (a closed animated window still folds away).
+    /// Whether `ui.open` asked for this window since the last call, and clears the ask (the modern UI raises it).
+    pub(in crate::client) fn take_raise(&self, mod_id: &str, win_id: &str) -> bool {
+        for vm in self.vms.iter().filter(|v| v.manifest.id == mod_id) {
+            if let Some(w) = vm.st.borrow_mut().windows.iter_mut().find(|w| w.id == win_id && w.raise) {
+                w.raise = false;
+                return true;
+            }
+        }
+        false
+    }
+
     pub(super) fn windows_where(&self, keep: impl Fn(&window::Window) -> bool) -> Vec<(String, window::Window)> {
         let mut out = Vec::new();
         if self.all_hidden.get() {

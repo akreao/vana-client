@@ -454,6 +454,9 @@ pub struct Window {
     pub meta: Vec<Meta>,
     pub open: bool,
     pub focus: bool,
+    /// `ui.open` asked for it (again): the modern UI brings it to the front at its next draw. Not the focus itself: a
+    /// hover or a key moving the focus does not reorder the windows.
+    pub raise: bool,
     /// The cursor's element (an index into `elems`, a stop), its column, and an element being edited (a slider, a
     /// colour, a line being typed).
     pub at: usize,
@@ -833,6 +836,7 @@ impl Window {
             fit: false,
             dock: None,
             hovered: None,
+            raise: false,
             panel: None,
             fit_w: std::cell::Cell::new(0.0),
             follows: Default::default(),

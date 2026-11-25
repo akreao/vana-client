@@ -225,17 +225,10 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         if !win.open {
             continue;
         }
-        // In front when it takes the keys, as a click on it brings it there: a window opened by a command or by
-        // another window's button (ui.open) is not left under the one it came from.
-        if win.focus {
-            let key = egui::Id::unique("mod window in front");
-            if p.ctx.data(|d| d.get_temp::<String>(key)).as_deref() != Some(id.as_str()) {
-                p.ctx.data_mut(|d| d.insert_temp(key, id.clone()));
-                p.ctx.move_to_top(egui::LayerId::new(
-                    egui::Order::Middle,
-                    egui::Id::unique(("modern panel", id.as_str())),
-                ));
-            }
+        // In front when ui.open asks for it (a command, another window's button, a repeat //calc), as a click on it
+        // brings it there. Only on that ask: a hover or a key moving the focus leaves the windows' order alone.
+        if w.lua.take_raise(&mod_id, &win.id) {
+            p.ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(("modern panel", id.as_str()))));
         }
         // A click outside a popup closes it.
         if let Some(r) = shown

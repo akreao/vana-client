@@ -656,6 +656,8 @@ pub(super) fn install(
             w.open = true;
             w.settle();
             if !w.hud {
+                // to the front in the modern UI, also when it was open already (a repeat //calc)
+                w.raise = true;
                 s.focus_request = Some(id);
             }
             Ok(())
