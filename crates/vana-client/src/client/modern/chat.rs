@@ -1113,7 +1113,9 @@ pub fn draw(p: &mut Panels, v: &ChatView, s: Shown, lift: bool) {
     let row = p.ctx.fonts_mut(|f| f.row_height(&font));
     // The rows the rule holds open from before the screen shrank (the pointer over it keeps them) are cut to the
     // screen's as well, so the bottom edge and resize corner stay on it.
-    let cap = max_rows(p.room("chat", default_room(p.ctx)).y, p.ctx.content_rect().height(), row);
+    // Only the screen's limit: the room's is already in the rule's max (panel), and rows handed past it (a screenshot's
+    // sample) still show.
+    let cap = ((p.ctx.content_rect().height() - chrome()) / row.max(1.0)).floor().max(1.0);
     let s = Shown { rows: s.rows.min(cap), full: s.full.min(cap), ..s };
     let total = chrome() + s.rows * row;
     let full = chrome() + s.full * row;
