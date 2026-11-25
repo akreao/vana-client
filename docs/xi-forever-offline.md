@@ -104,7 +104,7 @@ Server reply formats used (from their `modules/custom/lua/squad.lua`): `squadpan
 
 - Squad mates sometimes have no model: their server sends a name over the look in some 0x00E updates.
   Retail shows wrong armor there instead. It needs a server fix.
-- Their other Ashita addons (server menu, journal, autobox, minigames) and the co-op launcher layer are not in
-  vana-client yet; the squad panel, Gambits, hardcore icons and autora are (XIFO Squad, XIFO Gambits, XIFO HC Icons,
-  Auto Ranged, above).
+- Their other Ashita addons (server menu, minigames) and the co-op launcher layer are not in vana-client yet; the
+  squad panel, Gambits, hardcore icons, autora, autobox and the era journal are (XIFO Squad, XIFO Gambits, XIFO HC
+  Icons, Auto Ranged, Autobox and the era journal, above).
 - Their server and a LandSandBoat server of your own use the same ports: stop one before starting the other.

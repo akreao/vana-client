@@ -9,6 +9,7 @@ local SPELLS = {
   [3] = { name = "Cure III", targets = 0x1F }, [43] = { name = "Protect", targets = 0x1 },
   [109] = { name = "Refresh", targets = 0x1 }, [164] = { name = "Thunder", targets = 0x20, range = 12 },
   [338] = { name = "Utsusemi: Ichi", targets = 0x1 }, [339] = { name = "空蝉の術:弐", targets = 0x1 },
+  [340] = { name = "Utsusemi: San", targets = 0x1 },
   [100] = { name = "Pet Mend", targets = 0x40 },
 }
 local ABILITIES = { [32] = { name = "Fast Blade", targets = 0x20 }, [42] = { name = "Savage Blade", targets = 0x20 },
@@ -189,10 +190,16 @@ assert(a and a.text == "Pet Mend" and a.tag == "<pet>", a and a.text)
 -- Best Utsusemi: San .. Ichi by name; ninjutsu only with its tool.
 -- (by id: the picker's names are in the client's language, here a Japanese Ni)
 local utsu = { target = "me", when = { kind = "always" }, action = { kind = "spell", name = "空蝉の術:弐", best = true } }
-local known = { [338] = true, [339] = true }
+local known = { [338] = true, [339] = true, [340] = true }
 s = fresh()
-a = core.tick(s, env({ now = 1, rules = { utsu }, known = known, refuse = { spell339 = true } }))
-assert(a and a.id == 338, "Ni refused: Ichi")
+a = core.tick(s, env({ now = 1, rules = { utsu }, known = known }))
+assert(a and a.id == 340, "San first")
+s = fresh()
+a = core.tick(s, env({ now = 1, rules = { utsu }, known = known, refuse = { spell340 = true } }))
+assert(a and a.id == 339, "then Ni")
+s = fresh()
+a = core.tick(s, env({ now = 1, rules = { utsu }, known = known, refuse = { spell339 = true, spell340 = true } }))
+assert(a and a.id == 338, "San and Ni refused: Ichi")
 s = fresh()
 assert(core.tick(s, env({ now = 1, rules = { utsu }, known = known, has_tool = function() return false end })) == nil)
 assert(core.has_tool(338, function(i) return i == 1179 end, 3) and not core.has_tool(338, function(i) return i == 2972 end, 3))

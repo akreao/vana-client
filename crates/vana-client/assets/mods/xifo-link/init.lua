@@ -33,6 +33,10 @@ mods.provide("listen", function(mark)
   link.listen(s, mark)
 end)
 
+-- Whether this session has had a whole reply, or a listened line, from the server: it is an XI: Forever Offline one.
+-- (Asked of the link itself: an event saying so could come from any mod.)
+mods.provide("server_seen", function() return s.server_seen == true end)
+
 -- How many commands are waiting to be said.
 mods.provide("pending", function() return #s.queue end)
 

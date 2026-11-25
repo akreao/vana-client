@@ -23,6 +23,9 @@ end
 
 local function confirmed()
   if xifo() then return end
+  -- (the events come from any mod: the link itself says whether the server answered)
+  local ok, seen = pcall(mods.call, LINK, "server_seen")
+  if not (ok and seen) then return end
   storage.character.xifo = true
   storage.save()
   ask()
