@@ -574,10 +574,15 @@ def pid_alive(pid):
     if os.name != "nt":
         try:
             os.kill(pid, 0)
-            return True
         except ProcessLookupError:
             return False
         except PermissionError:
+            return True
+        # (an exited process its parent has not reaped yet still answers: on Linux its state tells, Z)
+        try:
+            with open(f"/proc/{pid}/stat", encoding="ascii", errors="replace") as handle:
+                return handle.read().rsplit(")", 1)[-1].split()[0] != "Z"
+        except (OSError, IndexError):
             return True
     import ctypes
     k32 = ctypes.windll.kernel32
@@ -654,7 +659,8 @@ def end(proc, seconds):
             os.killpg(proc.pid, signal.SIGTERM)
         else:
             # Ctrl+Break reaches the whole process group (started with CREATE_NEW_PROCESS_GROUP), so a packaged
-            # launcher's child running the script gets it too, not just the launcher process
+            # launcher's child running the script gets it too, not just the launcher process. It needs the console
+            # this script runs in; without one (started windowless) it fails and the tree is ended below instead.
             proc.send_signal(signal.CTRL_BREAK_EVENT)
         proc.wait(timeout=seconds)
     except (OSError, ValueError, subprocess.TimeoutExpired):
