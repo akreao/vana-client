@@ -24,7 +24,9 @@ game = {
     }
   end,
 }
-res = { job = function(id) return ({ [4] = "BLM" })[id] or "JOB" .. id end, spell = function() return nil end }
+local cure = "Cure"
+res = { job = function(id) return ({ [4] = "BLM" })[id] or "JOB" .. id end,
+  spell = function(id) return id == 1 and { name = cure } or nil end }
 local on_window, window, update = ui.on, ui.window, ui.update
 ui.on = function(id, f) H = f; on_window(id, f) end
 -- What the mod drew: the window's elements by id, then each update's fields over them.
@@ -60,7 +62,8 @@ local text = table.concat(said, "\n")
 assert(text:find("San d'Oria: 1 of 4 done, 1 under way.", 1, true), text)
 assert(not text:find("Crystal War", 1, true), text)
 
--- A Japanese client's quest files: the names are Japanese, so nothing is taken for a placeholder.
+-- A Japanese client (Cure is ケアル): its real titles are Japanese, so nothing is taken for a placeholder.
+cure = "ケアル"
 game.quests = function()
   return { [0] = {
     { number = 1, name = "騎士の試練", current = false, completed = false },
