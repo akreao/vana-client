@@ -2,13 +2,16 @@
 -- editing a rule, saving it in parts, assigning it.
 
 local sent, windows, handlers, ev, cmd, open, prompts = {}, {}, {}, {}, {}, {}, {}
+local timers = {}
 mods = { call = function(id, name, text, opts)
-  assert(id == "xifo-link" and name == "send")
+  assert(id == "xifo-link")
+  if name == "pending" then return 0 end
+  assert(name == "send")
   sent[#sent + 1] = { text = text, tag = opts.tag, mark = opts.mark, ends = opts.ends }
   return true
 end }
 events = { on = function(name, f) ev[name] = f end }
-timer = { after = function() end }
+timer = { after = function(_, f) timers[#timers + 1] = f end }
 commands = { register = function(n, f) cmd[n] = f end }
 ui = {
   get = function(id, el) return { text = windows[id][el].text } end,
@@ -100,7 +103,8 @@ assert(#parts >= 1 and parts[1].text:match("^!gsq x %d+ 1 %d+ 4,3,WHM,2,Fayd_hea
 for _, p in ipairs(parts) do assert(p.tag == parts[1].tag) end
 ev.xifo_link_reply(parts[1].tag, { "ack|1|2", "ok|4|4|w4" }, true)
 assert(w.status.text == "Saved as Rule Set 4." and not w.editing.text:find("not saved", 1, true))
-assert(last():match("^!gsq list %d+ WHM$"))
+-- the set list again, and the roster (an edited set in use shows as waiting for the next call)
+assert(sent[#sent - 1].text:match("^!gsq list %d+ WHM$") and last():match("^!gsq mates %d+$"), last())
 
 -- assign another set to the picked mate
 H({ kind = "select", id = "sets", index = 2 })
@@ -319,9 +323,16 @@ assert(w4.mate.items[1] == "Fayd  WHM 30/BLM 15  (out, *)", w4.mate.items[1])
 assert(w4.use.items[4] == "Apply this mate", tostring(w4.use.items[4]))
 local list4 = sent[#sent - 1]
 ev.xifo_link_reply(list4.tag, { "set|4|WHM|2|o|3|w4|Fayd heals", "end|1" }, true)
-assert(w4.status.text:find("Runs Rule Set 4; its set was edited", 1, true), w4.status.text)
+assert(w4.live.text:find("Runs Rule Set 4; its set was edited", 1, true), w4.live.text)
+timers = {}
 handlers.gambits("gambits", { kind = "press", id = "use", index = 4 })
 assert(last() == "!squad reapply 1", last())
+-- the roster asked again after the wait: Fayd now runs the edited set, nothing pending
+timers[#timers]()
+timers[#timers]()
+assert(last():match("^!gsq mates %d+$"), last())
+answer({ "mate|1|40|Fayd|WHM|30|BLM|4|1|15|set|-|4|0|0", "mate|2|41|Salia|WAR|28|-|0|0|-|off|-|0|0|0", "end|2" })
+assert(w4.mate.items[1] == "Fayd  WHM 30/BLM 15  (out)" and w4.live.text == "Runs Rule Set 4.", w4.live.text)
 -- an away mate: no Apply this mate
 handlers.gambits("gambits", { kind = "set", id = "mate", index = 2 })
 assert(w4.use.items[4] == nil)

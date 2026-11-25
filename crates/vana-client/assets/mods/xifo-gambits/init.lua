@@ -85,6 +85,8 @@ ui.window(W, {
   elements = {
     { type = "dropdown", id = "mate", label = "Squad mate", items = { "Asking the server..." }, at = 1 },
     { type = "text", id = "status", text = "", dim = true },
+    { type = "text", id = "live", text = "", dim = true,
+      tip = "What the picked mate really runs now (servers from XIFO v0.3.11)." },
     { type = "tabs", id = "tabs", items = { "Rule Sets", "Weapon skills", "Party roles" }, at = 1 },
     { page = 1, type = "list", id = "sets", height = 5, rows = {},
       columns = { { title = "#", width = 30 }, { title = "Rule Set" }, { title = "Rules", width = 50, align = "right" },
@@ -335,9 +337,8 @@ load_sets = function(then_open)
       return n
     end)(), then_open) or st.set_row end
     show_sets()
-    status(("%s, %s %d%s. %s%s"):format(m.name, m.job, m.level, m.sub and ("/%s %d"):format(m.sub, m.sub_level) or "",
-      m.set > 0 and ("Uses Rule Set %d."):format(m.set) or "Uses its job rules.",
-      G.live_text(m) and (" " .. G.live_text(m)) or ""))
+    status(("%s, %s %d%s. %s"):format(m.name, m.job, m.level, m.sub and ("/%s %d"):format(m.sub, m.sub_level) or "",
+      m.set > 0 and ("Uses Rule Set %d."):format(m.set) or "Uses its job rules."))
   end)
 end
 
@@ -345,6 +346,9 @@ end
 -- picked mate is out.
 local function show_use()
   local m = mate()
+  -- (version 10) what the picked mate runs, redrawn with every new roster
+  local live = m and G.live_text(m) or ""
+  ui.update(W, "live", { text = live, tip = live ~= "" and live or nil })
   local items = { "Use this set", "Use job rules", "Apply now" }
   if st.caps and st.caps.reapply1 and m and m.out then items[4] = "Apply this mate" end
   ui.update(W, "use", { items = items })
@@ -596,6 +600,8 @@ local function save()
     end
     show_rules()
     load_sets(saved.num)
+    -- an edited set in use shows as waiting for the next call (version 10)
+    load_mates(true)
   end
   for _, line in ipairs(lines) do
     local ok = pcall(mods.call, LINK, "send", line,
@@ -734,7 +740,15 @@ ui.on(W, function(_, e)
       -- (version 10, capability "reapply1") only this mate leaves and is called again
       say(("!squad reapply %d"):format(m.slot))
     end
-    timer.after(e.index == 4 and 6 or 2, function() load_mates(true) end)
+    -- the roster is asked again once XIFO Link has said the command (it may wait behind others) and the server has had
+    -- time to send the mate off and call it (6 s for one mate)
+    local wait = e.index == 4 and 6 or 2
+    local function later()
+      local ok, n = pcall(mods.call, LINK, "pending")
+      if ok and (n or 0) > 0 then return timer.after(0.5, later) end
+      timer.after(wait, function() load_mates(true) end)
+    end
+    later()
   elseif e.kind == "press" and e.id == "share" then
     if e.index == 1 then
       if not d then return status("Open a Rule Set first.", true) end
