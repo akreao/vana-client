@@ -91,7 +91,7 @@ ev.xifo_link_reply("squadpanel", { "1|Fayd|WHM|30|BLM|15|healer|balanced|1|15", 
   "2|Salia|WAR|28|-|0|tank|aggressive|0|5", "rs|2|off|-|0|-|4|Heals|0|0|-" }, true)
 H("squad", { kind = "select", id = "mates", index = 1 })
 assert(w.mates.rows[1][6] == "Out*" and w.mates.rows[2][6] == "", w.mates.rows[1][6])
-assert(w.rules.text == "Rules: its job rules now; another set was chosen, so the next call changes them (Apply now)", w.rules.text)
+assert(w.rules.text == "Rules: its job rules now; another set was chosen, so the next call changes them (Apply)", w.rules.text)
 H("squad", { kind = "select", id = "mates", index = 2 })
 assert(w.rules.text == "Rules: set 4 Heals at its next call", w.rules.text)
 H("squad", { kind = "press", id = "mate", index = 3 })
@@ -100,3 +100,19 @@ ev.xifo_link_reply("squadsheet", { "slot|1", "hdr|Fayd|WHM|30|BLM|15|healer|bala
 assert(s.hdr.text ~= "Fayd: WHM 30 / BLM 15", "another mate's answer is dropped")
 ev.xifo_link_reply("squadsheet", { "slot|2", "hdr|Salia|WAR|28|-|0|tank|aggressive|Mithra|5" }, true)
 assert(s.hdr.text == "Salia: WAR 28", s.hdr.text)
+
+-- A server that can re-call one mate (cap|reapply1): an out mate gets Apply, which sends !squad reapply <slot>; an
+-- away mate, or a server without the word, does not.
+ev.xifo_link_reply("squadpanel", { "1|Fayd|WHM|30|BLM|15|healer|balanced|1|15", "2|Salia|WAR|28|-|0|tank|aggressive|0|5",
+  "cap|reapply1" }, true)
+H("squad", { kind = "select", id = "mates", index = 1 })
+assert(table.concat(w.mate.items, ",") == "Call,Dismiss,Apply,Profile", table.concat(w.mate.items, ","))
+H("squad", { kind = "press", id = "mate", index = 3 })
+assert(sent[#sent - 1].text == "!squad reapply 1" and last() == "!squad panel" and sent[#sent].delay == 6)
+H("squad", { kind = "press", id = "mate", index = 4 })
+assert(last() == "!squad sheet 1")
+H("squad", { kind = "select", id = "mates", index = 2 })
+assert(table.concat(w.mate.items, ",") == "Call,Dismiss,Profile")
+ev.xifo_link_reply("squadpanel", { "1|Fayd|WHM|30|BLM|15|healer|balanced|1|15" }, true)
+H("squad", { kind = "select", id = "mates", index = 1 })
+assert(table.concat(w.mate.items, ",") == "Call,Dismiss,Profile", "no reapply1: no Apply")

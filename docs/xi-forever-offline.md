@@ -42,6 +42,8 @@ code against the server's `!squad` chat commands; none of XIFO's Ashita add-on c
   With a v0.3.11 server (its `rs` and `cap` panel lines, `slot` sheet line) the picked mate also shows a Rules line:
   the Rule Set or job rules it runs now, why its next call would run other rules (marked `*` in the list), a fallback
   reason or rules left out; a profile answer for a mate no longer shown is dropped. Older servers just don't show it.
+  When the server says it can re-call one mate (`cap|reapply1`), an out mate also gets Apply (`!squad reapply <slot>`):
+  only that mate leaves and comes back with its new settings.
 
 - **XIFO Gambits** (`xifo-gambits`, `//gambits`): the squad mates' Rule Sets (the server's `!gsq` editor protocol,
   version 4 or later). Pick a mate; its job's sets are listed with the one it uses. Open, New, Copy, Delete; Use this

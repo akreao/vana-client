@@ -138,7 +138,7 @@ function M.rules_text(r)
   elseif r.state == "fallback" then
     t = "Rules: its job rules (" .. (FALLBACK[r.fallback] or "the chosen set could not be used") .. ")"
   elseif r.state == "pending" then
-    t = ("Rules: %s now; %s, so the next call changes them (Apply now)"):format(live, PENDING[r.why] or "settings changed")
+    t = ("Rules: %s now; %s, so the next call changes them (Apply)"):format(live, PENDING[r.why] or "settings changed")
   elseif r.state == "addon" then
     t = "Rules: an add-on runs this mate"
   elseif r.state == "unknown" then

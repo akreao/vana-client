@@ -68,7 +68,7 @@ assert(r.caps.reapply1 and r.caps.later)
 local f1 = r.mates[1].rules
 assert(f1.state == "pending" and f1.why == "edited" and f1.live == 4 and f1.live_name == "Heals" and f1.dropped == 1)
 assert(f1.live_job == "WHM" and r.mates[2].rules.live_job == nil)
-assert(P.rules_text(f1) == "Rules: set 4 Heals now; its set was edited, so the next call changes them (Apply now) (1 rule left out)",
+assert(P.rules_text(f1) == "Rules: set 4 Heals now; its set was edited, so the next call changes them (Apply) (1 rule left out)",
   P.rules_text(f1))
 assert(P.rules_text(r.mates[2].rules) == "Rules: its job rules at its next call", P.rules_text(r.mates[2].rules))
 assert(P.rules_text(r.mates[3].rules) == "Rules: its job rules (the chosen set is gone)", P.rules_text(r.mates[3].rules))
