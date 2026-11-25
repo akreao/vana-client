@@ -14,8 +14,9 @@ use std::sync::{Arc, Mutex};
 pub const RELEASE_REPO: &str = "akreao/vana-client";
 
 /// The branch the mod catalogue and the standard mods' files are read from: this fork's own (its mod fixes are tested
-/// there before they go upstream), not the upstream mirror on master.
-pub const CATALOGUE_BRANCH: &str = "custom";
+/// there before they go upstream), not the upstream mirror on master. The `forever` branch's build reads its own, which
+/// adds the XI: Forever Offline mods (xifo-link, xifo-squad).
+pub const CATALOGUE_BRANCH: &str = "forever";
 
 /// The release asset for this platform. A build for a platform no release carries (macOS, Linux on ARM so far) finds
 /// none and is never offered another platform's binary.

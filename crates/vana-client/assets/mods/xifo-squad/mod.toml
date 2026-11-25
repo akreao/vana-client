@@ -1,0 +1,18 @@
+name = "XIFO Squad"
+version = "1.0.0"
+description = "A window for your XI: Forever Offline squad mates: call, dismiss, role, mode, switches, jobs, camp, and each mate's profile."
+authors = ["vana-client"]
+
+[settings.on]
+type = "bool"
+default = true
+label = "XIFO Squad"
+help = "//squad opens the squad window on an XI: Forever Offline server. Needs XIFO Link."
+
+[commands.squad]
+help = "Opens or closes the squad window (XI: Forever Offline)."
+args = ""
+forms = [
+  { args = "refresh", help = "Opens the window and asks the server again." },
+  { args = "sheet [slot]", help = "Opens a squad mate's profile." },
+]
