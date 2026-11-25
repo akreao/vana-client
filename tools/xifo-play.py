@@ -128,6 +128,8 @@ def restore_their_game(kit):
     for line in (run.stdout or "").splitlines():
         if line.strip():
             say("  " + line.strip())
+    if run.returncode == 13:
+        fail("The game copy was left as it was, so no retail DATs reach it.")
     if run.returncode != 0:
         tail = "\n".join((run.stderr or "").strip().splitlines()[-8:])
         fail(f"Their era-DAT check did not finish (exit code {run.returncode}), so the game copy was left as it was:"
@@ -141,8 +143,13 @@ def restore_inside_their_launcher(kit_path):
     import launcher_setup
     cfg = read_json(os.path.join(kit_path, "config.json"), {}) or {}
     ffxi, server = cfg.get("ffxi_client_dir", ""), cfg.get("server_dir", "")
-    for line in launcher_setup.check_era_dats(kit_path, ffxi, log=print):
-        print(line)
+    try:
+        for line in launcher_setup.check_era_dats(kit_path, ffxi, log=print):
+            print(line)
+    except PermissionError as problem:                        # (Windows: a game folder under Program Files)
+        print(f"Era-DATs: the era game files could not be put back ({problem}). Open their launcher once as "
+              "administrator and press PLAY (it puts them back), or run this from an administrator prompt.")
+        return 13
     launcher_client.apply_all(kit_path, ffxi, server, log=print)
     launcher_setup.record_era_state(kit_path, ffxi)
     return 0
@@ -186,9 +193,20 @@ def sync_game(source, target):
                     st = os.stat(path)
                 except OSError:
                     continue
-                # ctime too: an update or a DAT restore can put back a file with an old modification time
+                rel = os.path.normpath(os.path.join(rel_root, name))
+                # ctime too: an update or a DAT restore can put back a file with an old modification time. On
+                # Windows ctime is the creation time, so a file whose time or size is not the copy's (copies keep
+                # the time) counts as changed as well.
                 if max(st.st_mtime, st.st_ctime) >= since:
-                    changed.append(os.path.normpath(os.path.join(rel_root, name)))
+                    changed.append(rel)
+                    continue
+                try:
+                    have = os.stat(os.path.join(target, rel))
+                except OSError:
+                    changed.append(rel)
+                    continue
+                if have.st_size != st.st_size or abs(have.st_mtime - st.st_mtime) > 2:
+                    changed.append(rel)
         if changed:
             say(f"Their game files changed since the last run: copying {len(changed)} file(s)."
                 if since else f"Bringing the game copy in line with {source}: {len(changed)} file(s).")
