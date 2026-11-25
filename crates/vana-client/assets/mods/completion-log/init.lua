@@ -61,12 +61,20 @@ local function state(q)
   return ""
 end
 
+-- The quest files hold unused entries with Japanese working names (SDクエスト111, ATクエスト00); no real quest name has
+-- a byte past ASCII, and the game's own lists never show one we have not taken.
+local function listed(q)
+  return q.current or q.completed or not q.name:find("[\128-\255]")
+end
+
 local function quest_rows(area)
   local list = game.quests()[area] or {}
   local rows = {}
   for _, q in ipairs(list) do
-    local s = state(q)
-    rows[#rows + 1] = { q.name .. (q.repeatable and " (repeatable)" or ""), s, colour = s == "done" and DIM or (s == "under way" and GOLD or nil) }
+    if listed(q) then
+      local s = state(q)
+      rows[#rows + 1] = { q.name .. (q.repeatable and " (repeatable)" or ""), s, colour = s == "done" and DIM or (s == "under way" and GOLD or nil) }
+    end
   end
   return rows
 end
@@ -138,8 +146,10 @@ commands.register("left", function(what, arg)
       local name = a[2]
       local done, going, total = 0, 0, 0
       for _, q in ipairs(all[a[1]] or {}) do
-        total = total + 1
-        if q.current then going = going + 1 elseif q.completed then done = done + 1 end
+        if listed(q) then
+          total = total + 1
+          if q.current then going = going + 1 elseif q.completed then done = done + 1 end
+        end
       end
       if total > 0 then say(("%s: %d of %d done, %d under way."):format(name, done, total, going)) end
     end
