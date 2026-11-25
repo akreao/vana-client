@@ -3722,13 +3722,13 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "5d27c98445b566e05d13893497d599224e5bae665cb45c33df17deabfd8490d1",
-          "size": 2065,
+          "sha256": "a515a03178bc01520260728a5deb2b60ad39e3f5a104f8de15cc71712c618205",
+          "size": 2096,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-link/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "12c2f6a2fae7b926b945c80da4b8d8d8a712067a42c20a59662471bd029848f7",
+          "sha256": "45af405e77b2812f1bd1395735f41ef9996392aaf33cbfd9206ce4be0fb4851a",
           "size": 413,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-link/mod.toml"
         },
@@ -3742,7 +3742,7 @@
       "id": "xifo-link",
       "kind": "lua",
       "name": "XIFO Link",
-      "version": "1.2.0"
+      "version": "1.2.1"
     },
     {
       "authors": [
