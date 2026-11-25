@@ -247,17 +247,20 @@ class World:
         except OSError:
             self.log_start = 0
         say("Starting their world (database, rules, game servers)...")
+        began = time.time()
         self.proc = subprocess.Popen(self.kit.command("launcher_world.py", "run"), cwd=self.kit.path,
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                      **({} if os.name == "nt" else {"start_new_session": True}))
-        began, shown = time.time(), ""
+        shown = ""
         while time.time() - began < READY_SECONDS:
             if self.proc.poll() is not None:
                 tail = "\n".join(self.world_log_since_start().strip().splitlines()[-12:])
                 fail(f"Their world stopped while starting (exit code {self.proc.returncode}). Is their launcher "
                      f"still open? Its log (logs/world.log):\n{tail}")
             st = self.status()
-            if st.get("pid") == self.proc.pid and st.get("state") == "running":
+            # (their packaged launcher is a one-file build: the world runs in a child of the process we started and
+            #  writes the child's pid, so the start time tells this start's status from an older one)
+            if st.get("state") == "running" and (st.get("since") or 0) >= int(began) - 1:
                 say(f"Their world is running ({int(time.time() - began)} seconds).")
                 return
             lines = self.world_log_since_start().strip().splitlines()
