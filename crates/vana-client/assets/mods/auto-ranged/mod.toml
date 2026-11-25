@@ -1,5 +1,5 @@
 name = "Auto Ranged"
-version = "1.0.0"
+version = "1.0.1"
 description = "Keeps shooting /ra while you are engaged: Manual, Auto, or Auto until the monster turns on you."
 authors = ["vana-client"]
 permissions = ["automation"]

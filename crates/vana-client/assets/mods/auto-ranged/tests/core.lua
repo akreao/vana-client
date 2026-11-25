@@ -66,6 +66,8 @@ assert(not tick(83, { casting = true }) and tick(83))
 local bow, arrow, boomerang, pebble, harp = { skill = 25 }, { skill = 25 }, { skill = 27 }, { skill = 27 }, { skill = 41 }
 assert(C.can_shoot(bow, arrow) and not C.can_shoot(bow, nil) and C.can_shoot(boomerang, nil))
 assert(C.can_shoot(nil, pebble) and not C.can_shoot(nil, arrow) and not C.can_shoot(harp, nil) and not C.can_shoot(harp, arrow))
+-- a utility item in the ammo slot, or ammo of another skill (a bolt with a bow), does not shoot
+assert(not C.can_shoot(bow, { id = 4596, skill = 0 }) and not C.can_shoot(bow, { id = 17336, skill = 26 }))
 
 -- Until hate: holds while the monster's last swing was on you, shoots when it turns to someone else
 C.reset(s)
