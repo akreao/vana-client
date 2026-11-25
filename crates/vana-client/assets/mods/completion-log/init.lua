@@ -66,17 +66,17 @@ local function state(q)
   return ""
 end
 
--- The quest files hold unused entries with Japanese working names (SDクエスト111, ATクエスト00, (仮)): on a client in
--- any language but Japanese, a name with kana, kanji or a full-width sign is one of them (in the English files up to
--- 44% of an area's entries); the game's own lists never show one we have not taken. The client's language shows in
--- Cure's name (spell 1: ケアル in Japanese).
-local function japanese(name)
-  return name:find("[\227-\233]") ~= nil or name:find("\239\188") ~= nil
-end
+-- The quest files hold unused entries under their working names: "SDクエスト111", "ATクエスト00" (two capitals and
+-- クエスト, "quest"), "Windurst Quest #97", "(仮)" ("provisional"); 293 of them in the English files' first seven
+-- areas. The names are the same in every language's files, and the game's own lists never show one we have not
+-- taken.
+local PLACEHOLDERS = { "^%u%uクエスト%d*$", "^Windurst Quest #%d+$", "^%(仮%)$" }
 
-local function placeholders()
-  local cure = res.spell(1)
-  return not (cure and cure.name and japanese(cure.name))
+local function placeholder(name)
+  for _, p in ipairs(PLACEHOLDERS) do
+    if name:find(p) then return true end
+  end
+  return false
 end
 
 -- XI: Forever Offline and other servers that stop at Treasures of Aht Urhgan (no Wings of the Goddess, so no Crystal
@@ -101,16 +101,16 @@ local function before_wotg()
   return true
 end
 
-local function listed(q, drop, era)
-  return q.current or q.completed or not ((drop and japanese(q.name)) or (era and late(q)))
+local function listed(q, era)
+  return q.current or q.completed or not (placeholder(q.name) or (era and late(q)))
 end
 
 local function quest_rows(area)
   local list = game.quests()[area] or {}
-  local drop, era = placeholders(), before_wotg()
+  local era = before_wotg()
   local rows = {}
   for _, q in ipairs(list) do
-    if listed(q, drop, era) then
+    if listed(q, era) then
       local s = state(q)
       rows[#rows + 1] = { q.name .. (q.repeatable and " (repeatable)" or ""), s, colour = s == "done" and DIM or (s == "under way" and GOLD or nil) }
     end
@@ -184,9 +184,8 @@ commands.register("left", function(what, arg)
     for _, a in ipairs(areas()) do
       local name = a[2]
       local done, going, total = 0, 0, 0
-      local drop = placeholders()
-      for _, q in ipairs(all[a[1]] or {}) do
-        if listed(q, drop, era) then
+          for _, q in ipairs(all[a[1]] or {}) do
+        if listed(q, era) then
           total = total + 1
           if q.current then going = going + 1 elseif q.completed then done = done + 1 end
         end
