@@ -454,6 +454,13 @@ pub const FUNCS: &[Func] = &[
     },
     Func {
         ns: "ui.native",
+        name: "party_rows",
+        doc: "The member rows of the modern party and alliance windows as last drawn, in window pixels, top to bottom: {panel (\"party\", \"alliance1\", \"alliance2\"), slot (the member's party slot from 1: 1-6 the party, 7-12 and 13-18 the alliance parties), name, x, y, w, h}. Empty in the classic UI, and while those windows are hidden.",
+        params: &[],
+        ret: "table[]",
+    },
+    Func {
+        ns: "ui.native",
         name: "panels",
         doc: "Every modern panel a mod may name: {name, about, hideable, movable, shown, placed_by (the mod placing it)} with x, y, w, h once it was drawn.",
         params: &[],

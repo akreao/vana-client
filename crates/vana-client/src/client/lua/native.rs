@@ -304,6 +304,26 @@ pub(super) fn install(lua: &Lua, ui: &Table, mod_id: &str) -> mlua::Result<()> {
         })?,
     )?;
     t.set(
+        "party_rows",
+        lua.create_function(move |lua, ()| {
+            let info = info(lua);
+            let f = info.borrow();
+            let out = lua.create_table()?;
+            for (panel, slot, name, r) in &f.party_rows {
+                let t = lua.create_table()?;
+                t.set("panel", panel.as_str())?;
+                t.set("slot", *slot as i64 + 1)?;
+                t.set("name", name.as_str())?;
+                t.set("x", r[0].round() as i64)?;
+                t.set("y", r[1].round() as i64)?;
+                t.set("w", r[2].round() as i64)?;
+                t.set("h", r[3].round() as i64)?;
+                out.push(t)?;
+            }
+            Ok(out)
+        })?,
+    )?;
+    t.set(
         "panels",
         lua.create_function(move |lua, ()| {
             let info = info(lua);

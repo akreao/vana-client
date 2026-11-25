@@ -551,6 +551,8 @@ pub fn party_panel(
     let pets_h = pets.len() as f32 * (PET_ROW + 4.0);
     let height = cap + super::MARGIN.sum().y + 37.0 + strip + n * row_h + (n - 1.0) * 4.0 + pets_h;
     let mut clicked = None;
+    // Where each member's row is, for mods (ui.native.party_rows).
+    let mut drawn_rows = Vec::new();
     let show = super::Show {
         title: Some(Title { icon: None, text: title, note: note.as_deref(), name: false }),
         size: vec2(340.0, 0.0),
@@ -568,6 +570,7 @@ pub fn party_panel(
                 ui.add_space(4.0);
             }
             let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
+            drawn_rows.push((id.to_string(), row.slot, row.name.clone(), r));
             let sprite = if row.marked {
                 "controls/list_row_selected"
             } else if resp.hovered() {
@@ -730,6 +733,9 @@ pub fn party_panel(
     });
     if let (Some(e), Some(r)) = (exp, shown) {
         exp_bar(p, id, r, e);
+    }
+    if shown.is_some() {
+        p.party_rows.extend(drawn_rows);
     }
     clicked
 }
