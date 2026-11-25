@@ -8156,6 +8156,9 @@ struct World {
     /// most, newest first; retail keeps them in acq.dat, ours for the session).
     chat_mode: u8,
     chat_prev: (u8, String),
+    /// A mod's line (commands.run, not on the player's input) is running: a channel it says something in does not become
+    /// the chat line's default, and a one-off Shout / Message mode stays set.
+    mod_line: bool,
     tell_name: Option<String>,
     tell_hist: Vec<String>,
     /// The chat mode window ("menu    chatctrl").
@@ -10874,6 +10877,7 @@ impl App {
                             chat_prefix: "/say ".into(),
                             chat_mode: 2,
                             chat_prev: (2, "/say ".into()),
+                            mod_line: false,
                             tell_name: None,
                             tell_hist: Vec::new(),
                             chatctrl: None,
@@ -17765,6 +17769,8 @@ impl App {
                     if let Some(gu) = self.game_ui.as_ref() {
                         gu.modern_order.borrow_mut().clear();
                     }
+                    // No party windows drawn this frame (the UI hidden, cinema): none for ui.native.party_rows either.
+                    world.lua.set_party_rows(Vec::new());
                 }
                 // What the Config windows and the settings screen hand to the app.
                 let keys = [world.cam_keys[1] as u32, world.cam_keys[0] as u32];

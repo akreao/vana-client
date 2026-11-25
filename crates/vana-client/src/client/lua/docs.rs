@@ -454,6 +454,13 @@ pub const FUNCS: &[Func] = &[
     },
     Func {
         ns: "ui.native",
+        name: "party_rows",
+        doc: "The member rows of the modern party and alliance windows as last drawn, in window pixels, top to bottom: {panel (\"party\", \"alliance1\", \"alliance2\"), slot (the member's party slot from 1: 1-6 the party, 7-12 and 13-18 the alliance parties), name, x, y, w, h}. Empty in the classic UI, and while those windows are hidden.",
+        params: &[],
+        ret: "table[]",
+    },
+    Func {
+        ns: "ui.native",
         name: "panels",
         doc: "Every modern panel a mod may name: {name, about, hideable, movable, shown, placed_by (the mod placing it)} with x, y, w, h once it was drawn.",
         params: &[],
@@ -1923,6 +1930,13 @@ pub const FUNCS: &[Func] = &[
         doc: "Calls another mod's provided function now, in its VM, and returns what it returned (copies). It cannot sleep. A suspended mod's functions raise an error.",
         params: &[("mod", "string", "its id"), ("name", "string", ""), ("...", "any", "")],
         ret: "any",
+    },
+    Func {
+        ns: "mods",
+        name: "caller",
+        doc: "Inside a function offered with mods.provide, while a mods.call runs it: the calling mod's id (its own on a self-call); nil anywhere else. Lets a mod offer a function only to the mods it trusts (the id is the one a mod is loaded under, not proof of who wrote it).",
+        params: &[],
+        ret: "string?",
     },
     Func {
         ns: "mods",
