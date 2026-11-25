@@ -67,9 +67,9 @@ local function state(q)
 end
 
 -- The quest files hold unused entries under their working names: "SDクエスト111", "ATクエスト00" (two capitals and
--- クエスト, "quest"), "Windurst Quest #97", "(仮)" ("provisional"); 293 of them in the English files' first seven
--- areas. The names are the same in every language's files, and the game's own lists never show one we have not
--- taken.
+-- クエスト, "quest"), "Windurst Quest #97", "(仮)" ("provisional"). Checked over all eleven areas of the Japanese,
+-- English, German and French files: 320 to 341 such entries in each, every one of these shapes; the few real titles
+-- left untranslated (パパンは子煩悩, +素材調達:...) are not. The game's own lists never show one we have not taken.
 local PLACEHOLDERS = { "^%u%uクエスト%d*$", "^Windurst Quest #%d+$", "^%(仮%)$" }
 
 local function placeholder(name)
