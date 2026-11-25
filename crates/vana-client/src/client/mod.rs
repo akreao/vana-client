@@ -8156,6 +8156,8 @@ struct World {
     /// most, newest first; retail keeps them in acq.dat, ours for the session).
     chat_mode: u8,
     chat_prev: (u8, String),
+    /// A mod's line (commands.run) is running: a channel it says something in does not become the chat line's default.
+    mod_line: bool,
     tell_name: Option<String>,
     tell_hist: Vec<String>,
     /// The chat mode window ("menu    chatctrl").
@@ -10874,6 +10876,7 @@ impl App {
                             chat_prefix: "/say ".into(),
                             chat_mode: 2,
                             chat_prev: (2, "/say ".into()),
+                            mod_line: false,
                             tell_name: None,
                             tell_hist: Vec::new(),
                             chatctrl: None,
