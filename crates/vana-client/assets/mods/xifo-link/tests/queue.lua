@@ -3,6 +3,7 @@
 
 local link = require("src.link")
 local SYS = 0xc8 -- the chat mode of a server line (chat kinds 6 / 7)
+local NS = 0x79  -- the chat mode of a "basic system message" line (chat kind 0x1d)
 local said = {}
 local s = link.new(function(line) said[#said + 1] = line end)
 
@@ -86,6 +87,14 @@ assert(link.filter(s, "GSQ|77|ok|5|3|w1", 113.2, SYS) == false)
 out = link.take(s)
 assert(#out == 1 and out[1].tag == "save" and #out[1].lines == 2 and out[1].lines[2] == "ok|5|3|w1", #out)
 
+-- listened marks: hidden whenever they come, handed on
+link.listen(s, "[HC-ICONS]")
+assert(link.filter(s, "[HC-ICONS] Fayd=2", 200, NS) == false)
+assert(link.filter(s, "Plain line", 200, NS) == nil)
+assert(link.filter(s, "Bob : [HC-ICONS] Bob=1", 200, 9) == nil, "a player's chat line naming the mark is not the server's")
+local _, heard = link.take(s)
+assert(#heard == 1 and heard[1].mark == "[HC-ICONS]" and heard[1].text == " Fayd=2")
+
 -- another player's chat line holding a reply's mark is not the reply (a reply line starts with its mark)
 s = link.new(function(line) said[#said + 1] = line end)
 link.send(s, "!squad panel", { tag = "squadpanel" }, 200)
@@ -102,3 +111,12 @@ assert(#out == 1 and out[1].complete and #out[1].lines == 0)
 assert(link.command_ok("!squad panel") and link.command_ok("!gsq x 7 1 1 a,b;c"))
 assert(not link.command_ok("hello") and not link.command_ok("/shout hi") and not link.command_ok("!"))
 assert(not link.command_ok("!squad panel\n/shout hi") and not link.command_ok(nil))
+
+-- the Gambits editor's and the hardcore lines come as "basic system messages" (SYSTEM_3, chat kind 0x1d, mode 0x79)
+s = link.new(function(line) said[#said + 1] = line end)
+link.send(s, "!gsq mates 5", { tag = "gsq5", mark = "GSQ|5|", ends = { "end", "err" } }, 300)
+link.pump(s, 300, false)
+assert(link.filter(s, "GSQ|5|mate|1|33|Fayd|WHM|30|-|0|1|-", 300.1, NS) == false)
+assert(link.filter(s, "GSQ|5|end|1", 300.2, NS) == false)
+out = link.take(s)
+assert(#out == 1 and out[1].complete and #out[1].lines == 2)

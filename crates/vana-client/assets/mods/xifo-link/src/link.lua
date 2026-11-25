@@ -11,7 +11,10 @@ M.GAP = 1.25       -- seconds between two lines we say
 M.RETRIES = 3      -- a refused line is said again this many times
 M.ECHO = 3         -- seconds after a send in which its echo or its refusal may come
 M.WAIT = 8         -- seconds a reply's lines are hidden and gathered after its request
-M.SYSTEM = 0xc8    -- the chat mode of the server's lines (s2c 0x017 kinds 6 / 7, "----== SystemMessage ==----")
+-- the chat modes of the server's lines: 0xc8 for s2c 0x017 kinds 6 / 7 ("----== SystemMessage ==----" then the text;
+-- printToPlayer's default, the squad commands), 0x79 for kind 0x1d and the other text-only kinds (SYSTEM_3, "basic
+-- system messages": the Gambits editor and the hardcore lines). Players cannot send either.
+M.SERVER = { [0xc8] = true, [0x79] = true }
 
 function M.new(run)
   return {
@@ -22,6 +25,8 @@ function M.new(run)
     err_until = 0,   -- a "command error" line before this time belongs to our refusal
     waiting = {},    -- tag -> { till, lines, mark, ends }
     out = {},        -- finished replies: { tag, lines, complete }
+    listening = {},  -- marks whose lines are always hidden and handed on, as the server sends them unasked
+    heard = {},      -- { mark, text } since the last take
   }
 end
 
@@ -105,8 +110,16 @@ function M.filter(s, text, now, mode)
   -- (a header whose text is not a reply line loses only the header).
   -- Only the server's lines (their mode) can be a reply: a player's chat is in its channel's mode, its continuation
   -- lines (a line break in the text) too. A reply line also starts with its mark.
-  if mode ~= M.SYSTEM then return end
+  if not M.SERVER[mode] then return end
   if next(s.waiting) and text:find("^%-%-%-%-== SystemMessage ==%-%-%-%-$") then return false end
+  -- (only a line that starts with the mark: a player's chat line naming it starts with the player's name)
+  for mark in pairs(s.listening) do
+    local body = text:gsub("^%s+", "")
+    if body:sub(1, #mark) == mark then
+      s.heard[#s.heard + 1] = { mark = mark, text = body:sub(#mark + 1) }
+      return false
+    end
+  end
   for tag, w in pairs(s.waiting) do
     if text:sub(1, #w.mark) == w.mark then
       local payload = text:sub(#w.mark + 1)
@@ -126,11 +139,16 @@ function M.filter(s, text, now, mode)
   end
 end
 
+-- Lines holding `mark` ("[HC-ICONS]") are hidden whenever they come, and handed on with the text after the mark.
+function M.listen(s, mark)
+  s.listening[mark] = true
+end
+
 -- The replies finished since the last call.
 function M.take(s)
-  local out = s.out
-  s.out = {}
-  return out
+  local out, heard = s.out, s.heard
+  s.out, s.heard = {}, {}
+  return out, heard
 end
 
 return M

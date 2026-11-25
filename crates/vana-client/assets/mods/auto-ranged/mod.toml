@@ -1,0 +1,19 @@
+name = "Auto Ranged"
+version = "1.0.0"
+description = "Keeps shooting /ra while you are engaged: Manual, Auto, or Auto until the monster turns on you."
+authors = ["vana-client"]
+permissions = ["automation"]
+
+[settings.on]
+type = "bool"
+default = true
+label = "Auto Ranged"
+help = "A small Auto RA window on the screen edge picks the mode; //autora shows or hides it. Manual (the start) shoots nothing by itself."
+
+[commands.autora]
+help = "Shows or hides the Auto RA window, or sets its mode."
+args = ""
+forms = [
+  { args = "manual | auto | hate", help = "Nothing automatic; keep shooting while engaged; the same, but hold while the monster attacks you." },
+  { args = "delay <seconds>", help = "The pause after each shot (0 to 5, 0.5 at first)." },
+]

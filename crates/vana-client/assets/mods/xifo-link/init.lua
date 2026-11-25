@@ -6,6 +6,8 @@
 -- From another mod:
 --   mods.call("xifo-link", "send", "!squad panel", { tag = "squadpanel" })
 --   events.on("xifo_link_reply", function(tag, lines, complete) ... end)
+--   mods.call("xifo-link", "listen", "[HC-ICONS]")      -- lines the server sends unasked
+--   events.on("xifo_link_line", function(mark, text) ... end)
 
 local link = require("src.link")
 
@@ -13,7 +15,7 @@ local s = link.new(function(line) commands.run(line) end)
 
 -- The mods this link says commands for. It holds the automation permission for them; any other mod would get its
 -- server commands said without that permission, so it is refused.
-local USERS = { ["xifo-squad"] = true, ["xifo-gambits"] = true }
+local USERS = { ["xifo-squad"] = true, ["xifo-gambits"] = true, ["xifo-hc-icons"] = true }
 
 -- send(text, opts): queues a server command (without "/say"); opts.tag names its reply lines, opts.delay holds it
 -- back. Returns false when the same command is already waiting.
@@ -22,6 +24,13 @@ mods.provide("send", function(text, opts)
   if mods.caller and not USERS[mods.caller() or ""] then error("send: only for the XIFO mods") end
   if not link.command_ok(text) then error("send: a server command, such as \"!squad panel\"") end
   return link.send(s, text, opts, clock())
+end)
+
+-- listen(mark): lines that start with `mark` (after leading spaces) are always hidden and handed on as the event
+-- "xifo_link_line"(mark, text after the mark), for what the server sends unasked.
+mods.provide("listen", function(mark)
+  if type(mark) ~= "string" or #mark < 3 then error("listen: a mark of 3 or more characters") end
+  link.listen(s, mark)
 end)
 
 -- How many commands are waiting to be said.
@@ -34,7 +43,11 @@ end)
 events.on("frame", function()
   local line = chat.line()
   link.pump(s, clock(), line.open)
-  for _, r in ipairs(link.take(s)) do
+  local out, heard = link.take(s)
+  for _, r in ipairs(out) do
     mods.emit("xifo_link_reply", r.tag, r.lines, r.complete)
+  end
+  for _, h in ipairs(heard) do
+    mods.emit("xifo_link_line", h.mark, h.text)
   end
 end)
