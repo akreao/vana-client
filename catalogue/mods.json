@@ -3648,31 +3648,101 @@
       "authors": [
         "vana-client"
       ],
+      "commands": {
+        "hcicons": {
+          "args": "",
+          "forms": [
+            {
+              "args": "list",
+              "help": "The hardcore characters known in this area."
+            },
+            {
+              "args": "refresh",
+              "help": "Asks the server again."
+            }
+          ],
+          "help": "Turns the party list's hardcore shields on or off."
+        }
+      },
+      "description": "The hardcore mode's shield (Iron, Steel, Silver, Random) beside party members in the modern party list, on an XI: Forever Offline server.",
+      "files": [
+        {
+          "path": "img/iron.png",
+          "sha256": "d5b785609b76a2fb04fe7041ca11c99d637ce003cf4a77cd9775479951f56dad",
+          "size": 1790,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-hc-icons/img/iron.png"
+        },
+        {
+          "path": "img/random.png",
+          "sha256": "f214c4ac18a9c0070901d6c7f3f2e573c4194d27a03e510b15705b0f3997e50a",
+          "size": 2268,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-hc-icons/img/random.png"
+        },
+        {
+          "path": "img/silver.png",
+          "sha256": "b18273835aa4ca20d8a145805b33b68bac71aab2a29ffe4cca6a057626fe2cb3",
+          "size": 2020,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-hc-icons/img/silver.png"
+        },
+        {
+          "path": "img/steel.png",
+          "sha256": "6a07a36c7f07808ede1404c0ee05400d80f843f36abd0ef6c856e35851267ddf",
+          "size": 1908,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-hc-icons/img/steel.png"
+        },
+        {
+          "path": "init.lua",
+          "sha256": "eb6eac88bf304ad19c03eb74a47c3057b1240341e96c0ffeefa7d86a2e99a78f",
+          "size": 2353,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-hc-icons/init.lua"
+        },
+        {
+          "path": "mod.toml",
+          "sha256": "360ac2c81992ab1cf3accb70b0501225498f245e623d105c7e2e1e1f47b6a897",
+          "size": 656,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-hc-icons/mod.toml"
+        },
+        {
+          "path": "src/modes.lua",
+          "sha256": "c644efe154d13431030df449eea18ce7867b9a9cae4401affabf45f279597775",
+          "size": 780,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-hc-icons/src/modes.lua"
+        }
+      ],
+      "id": "xifo-hc-icons",
+      "kind": "lua",
+      "name": "XIFO HC Icons",
+      "version": "1.0.0"
+    },
+    {
+      "authors": [
+        "vana-client"
+      ],
       "description": "Talks to an XI: Forever Offline server for the XIFO mods: says their commands one at a time and hides the server's replies.",
       "files": [
         {
           "path": "init.lua",
-          "sha256": "172b1939ed62cf042344884d338b947d28664c0bf1f543259bc63dce60435282",
-          "size": 1470,
+          "sha256": "5d27c98445b566e05d13893497d599224e5bae665cb45c33df17deabfd8490d1",
+          "size": 2065,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-link/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "de2b23b3e5f8faebf31ef2082fee10974961ebed5ad60c063e69ddb86e35496b",
+          "sha256": "12c2f6a2fae7b926b945c80da4b8d8d8a712067a42c20a59662471bd029848f7",
           "size": 413,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-link/mod.toml"
         },
         {
           "path": "src/link.lua",
-          "sha256": "5e9d32de5b44e8d758ee3c51a46a682f67e6c813ff6aa8b25a4f6c2513fa24dd",
-          "size": 4981,
+          "sha256": "a0e5d052f8ea30f4ca529082b11a54ba7ab43094be4a00493151c66c56300f5c",
+          "size": 5556,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-link/src/link.lua"
         }
       ],
       "id": "xifo-link",
       "kind": "lua",
       "name": "XIFO Link",
-      "version": "1.1.0"
+      "version": "1.2.0"
     },
     {
       "authors": [

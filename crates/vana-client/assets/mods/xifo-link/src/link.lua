@@ -21,6 +21,8 @@ function M.new(run)
     err_until = 0,   -- a "command error" line before this time belongs to our refusal
     waiting = {},    -- tag -> { till, lines, mark, ends }
     out = {},        -- finished replies: { tag, lines, complete }
+    listening = {},  -- marks whose lines are always hidden and handed on, as the server sends them unasked
+    heard = {},      -- { mark, text } since the last take
   }
 end
 
@@ -97,6 +99,13 @@ function M.filter(s, text, now)
   -- A server line comes as two log lines: this header, then the text. While a reply is due the header is hidden too
   -- (a header whose text is not a reply line loses only the header).
   if next(s.waiting) and text:find("^%-%-%-%-== SystemMessage ==%-%-%-%-$") then return false end
+  for mark in pairs(s.listening) do
+    local at = text:find(mark, 1, true)
+    if at then
+      s.heard[#s.heard + 1] = { mark = mark, text = text:sub(at + #mark) }
+      return false
+    end
+  end
   for tag, w in pairs(s.waiting) do
     local at = text:find(w.mark, 1, true)
     if at then
@@ -117,11 +126,16 @@ function M.filter(s, text, now)
   end
 end
 
+-- Lines holding `mark` ("[HC-ICONS]") are hidden whenever they come, and handed on with the text after the mark.
+function M.listen(s, mark)
+  s.listening[mark] = true
+end
+
 -- The replies finished since the last call.
 function M.take(s)
-  local out = s.out
-  s.out = {}
-  return out
+  local out, heard = s.out, s.heard
+  s.out, s.heard = {}, {}
+  return out, heard
 end
 
 return M

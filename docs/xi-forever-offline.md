@@ -56,6 +56,12 @@ code against the server's `!squad` chat commands; none of XIFO's Ashita add-on c
   (`prl`/`prs`: Auto by job or a set role, for you and each mate; other party members shown read-only).
   Not built yet: share codes.
 
+- **XIFO HC Icons** (`xifo-hc-icons`, `//hcicons`): the hardcore mode's shield (Iron, Steel, Silver, Random; our own
+  pictures) left of each hardcore member's row in the modern party and alliance windows; the game already draws
+  the shield beside names in the world. On arriving in an area it sends `!hcicons`; the server answers
+  `[HC-ICONS] !Name=1,Other=3` and later tells arrivals as `[HC-ICONS] Name=2`, which XIFO Link hides (its `listen`).
+  The rows come from `ui.native.party_rows()`. `//hcicons` turns it off or on, `list` names who is known.
+
 Server reply formats used (from their `modules/custom/lua/squad.lua`): `squadpanel:<slot>|<name>|<job>|<level>|<sub or
 ->|<sub level>|<role>|<mode>|<out 0/1>|<switch mask>`, `jl|<slot>|<JOB:level,...>`, `cd|<slot>|<seconds>`,
 `camp|<on>|<puller slot, 0 = you>|<paused>|<pulls>`, `campbots|<names or ->|<pulling bot or ->`, then
