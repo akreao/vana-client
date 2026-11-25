@@ -20,7 +20,8 @@ tools/xifo-play.py --kit "/path/XI Forever Offline" --client /path/vana-client
    Then it gives vana-client its own copy of their game folder (`Game/SquareEnix`, with their era DATs and DAT patches)
    in `~/.local/share/vana-client-xifo/game`: the whole folder on the first run (reflinks where the disk can),
    then only the files their updates changed (everything again after switching to another install).
-   `FINAL FANTASY XI/USER` (macros and settings) is copied only into a copy that has none, and then left alone. vana-client never plays from their folder itself.
+   `FINAL FANTASY XI/USER` (macros and settings) is copied only into a copy that has none, and then left alone. vana-client never plays from their folder itself, and it does not offer retail game-file updates for this copy
+   (its stamp file `.xifo-sync` tells it so); the client's own update still works.
 2. It starts their world without its window (`launcher_world.py run`, run through their packaged launcher's
    `--run`): the database, the RULES / WORLD settings, the game servers, the auction house simulator, the co-op
    door. Their launcher must be closed; the world refuses to share the install with it. On a kit with no

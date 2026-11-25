@@ -115,9 +115,23 @@ pub fn start_viewer(s: &Shared) {
     });
 }
 
+/// Whether `root` (the FINAL FANTASY XI folder) is in a game copy tools/xifo-play.py keeps: its stamp file is in the
+/// folder above.
+fn externally_managed(root: &std::path::Path) -> bool {
+    root.parent().is_some_and(|p| p.join(".xifo-sync").is_file())
+}
+
 /// Starts the checks in the background; `playonline`: the PlayOnline Viewer's too.
 pub fn start(root: PathBuf, playonline: bool) -> Shared {
     let s: Shared = Arc::new(Mutex::new(Status { game: Game::Checking, viewer: None, client: Client::Checking }));
+    // A game copy tools/xifo-play.py keeps (XI: Forever Offline) holds their era files: retail updates would undo
+    // them, and the script brings the copy up to date from their install. The client's own update still runs.
+    if externally_managed(&root) {
+        log::info!("update check: the game files follow XI: Forever Offline's install (tools/xifo-play.py)");
+        s.lock().unwrap().game = Game::Current;
+        start_client_check(&s);
+        return s;
+    }
     if playonline {
         start_viewer(&s);
     }
@@ -157,6 +171,12 @@ pub fn start(root: PathBuf, playonline: bool) -> Shared {
         );
         g.lock().unwrap().game = game;
     });
+    start_client_check(&s);
+    s
+}
+
+/// The client's own release check, in the background.
+fn start_client_check(s: &Shared) {
     let c = s.clone();
     std::thread::spawn(move || {
         let client = match latest_release() {
@@ -173,7 +193,6 @@ pub fn start(root: PathBuf, playonline: bool) -> Shared {
         }
         c.lock().unwrap().client = client;
     });
-    s
 }
 
 fn agent() -> ureq::Agent {
