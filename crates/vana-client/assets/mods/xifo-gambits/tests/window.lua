@@ -306,3 +306,25 @@ client = { copy = function() end, paste = function() error("needs the clipboard 
 w3.code.text = "GS1" .. string.rep("A", 1021) -- as the box cuts it: 1024 characters
 H({ kind = "press", id = "share", index = 2 })
 assert(w3.status.text:find("/lua grant xifo-gambits clipboard", 1, true), w3.status.text)
+
+-- an imported set stays open while the first mates arrive: a mate of its job is picked, or the editor says whose
+-- choices it shows
+sent, windows, open = {}, {}, {}
+load(TEST.source("init.lua"), "@init.lua")()
+local w4 = windows.gambits
+cmd.gambits()
+answer({ "hello|9|32|120|64" })
+answer({ "end|0" })
+w4.code.text = assert(require("src.share").encode({ job = "WHM", name = "Heals", rules = { { on = true,
+  target = "SELF", cond = "ALWAYS", arg = "", kind = "r" } } }))
+client = { copy = function() end, paste = function(f) f("") end }
+H({ kind = "press", id = "share", index = 2 })
+cmd.gambits()
+cmd.gambits()
+answer({ "mate|1|41|Salia|WAR|28|-|0|0|-", "mate|2|40|Fayd|WHM|30|-|0|0|-", "end|2" })
+assert(w4.mate.at == 2 and w4.editing.text:find("for WHM", 1, true) and not w4.editing.text:find("choices from", 1, true),
+  w4.editing.text)
+cmd.gambits()
+cmd.gambits()
+answer({ "mate|1|41|Salia|WAR|28|-|0|0|-", "end|1" })
+assert(w4.editing.text:find("choices from Salia, a WAR", 1, true), w4.editing.text)

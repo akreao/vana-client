@@ -282,7 +282,10 @@ local function show_rules()
   end
   local what = d.num and d.num > 0 and ("Rule Set %d"):format(d.num) or "New Rule Set"
   local note = G.editable(d.flags or "o") and "" or " (not yours: Save makes a copy)"
-  ui.update(W, "editing", { text = ("%s for %s%s%s"):format(what, d.job, note, st.dirty and ", not saved" or "") })
+  -- the dropdowns offer the picked mate's choices: say so when that mate is of another job than the set
+  local m = mate()
+  local other = m and m.job ~= d.job and (" (choices from %s, a %s)"):format(m.name, m.job) or ""
+  ui.update(W, "editing", { text = ("%s for %s%s%s%s"):format(what, d.job, note, other, st.dirty and ", not saved" or "") })
   ui.update(W, "name", { text = d.name or "" })
   local rows = {}
   for i, r in ipairs(d.rules) do
@@ -364,12 +367,21 @@ local function load_mates(keep)
       for i, m in ipairs(mates) do n[i] = m.slot end
       return n
     end)(), slot)
-    st.mate = kept or 1
+    -- a new pick: a mate of the open set's job when there is one (its choices fit the set)
+    local pick = 1
+    for i, m in ipairs(mates) do
+      if st.draft and m.job == st.draft.job then
+        pick = i
+        break
+      end
+    end
+    st.mate = kept or pick
     if not kept then st.ws, st.ws_edit = nil, nil end
     show_mates()
     if #mates == 0 then return status("You have no squad mates yet (!squad new <name> <job>).") end
     show_sets()
     if not kept then
+      show_rules() -- (whose choices the open set shows)
       load_sets()
       load_catalog()
       load_page()

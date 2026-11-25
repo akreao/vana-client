@@ -22548,6 +22548,19 @@ pub(crate) fn egui_pass(ctx: &egui::Context, raw: egui::RawInput, ui: impl FnMut
 
 #[cfg(test)]
 mod tests {
+    /// The server's text lines reach the chat filters (and the XIFO Link mod) in these modes: printToPlayer's default
+    /// (s2c 0x017 kind 6 / 7) as a SystemMessage header and the text, mode 0xc8; SYSTEM_3 (kind 0x1d) as the text alone,
+    /// mode 0x79. A player's say is mode 9 and starts with the name.
+    #[test]
+    fn server_text_line_modes() {
+        let line = |kind| super::chat_line(kind, 0, 0, "", "GSQ|5|end|1", "", false).unwrap();
+        assert_eq!(line(6), ("----== SystemMessage ==----\nGSQ|5|end|1".to_string(), 0xc8));
+        assert_eq!(line(7).1, 0xc8);
+        assert_eq!(line(0x1d), ("GSQ|5|end|1".to_string(), 0x79));
+        let say = super::chat_line(0, 0, 0, "Bob", "GSQ|5|end|1", "", false).unwrap();
+        assert_eq!(say, ("Bob : GSQ|5|end|1".to_string(), 9));
+    }
+
     /// The zone-in walk's sends as a retail capture has them after c2s 0x00F: 0x0DB kind 1, 0x112 kind 0, 0x05A; again
     /// at the next zone-in, within the conquest gate's 120 s and with no reply to either request.
     #[test]
