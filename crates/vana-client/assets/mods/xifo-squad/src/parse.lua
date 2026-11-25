@@ -36,7 +36,7 @@ function M.has_switch(mask, n) return (mask >> (n - 1)) & 1 == 1 end
 -- choice, gone, edited, role), addon, unknown. caps (line "cap"): what the server can do beyond the first menus.
 function M.panel(lines)
   local p = { mates = {}, camp = { on = false, puller = 0, paused = false, pulls = 0 }, bots = {}, caps = {} }
-  local by_slot = {}
+  local by_slot, rules = {}, {}
   for _, line in ipairs(lines) do
     local f = split(line)
     local slot = tonumber(f[1])
@@ -53,8 +53,9 @@ function M.panel(lines)
       end
     elseif f[1] == "cd" and by_slot[num(f[2])] then
       by_slot[num(f[2])].cooldown = num(f[3])
-    elseif f[1] == "rs" and by_slot[num(f[2])] and #f >= 11 then
-      by_slot[num(f[2])].rules = { state = f[3], why = f[4], live = num(f[5]), live_name = f[6], sel = num(f[7]),
+    elseif f[1] == "rs" and #f >= 11 then
+      -- kept by slot and matched to the mates at the end, whatever order the lines come in
+      rules[num(f[2])] = { state = f[3], why = f[4], live = num(f[5]), live_name = f[6], sel = num(f[7]),
         sel_name = f[8], fallback = num(f[9]), dropped = num(f[10]), live_job = f[11] ~= "-" and f[11] or nil }
     elseif f[1] == "cap" then
       for _, word in ipairs(list(f[2])) do p.caps[word] = true end
@@ -64,6 +65,9 @@ function M.panel(lines)
       p.bots = list(f[2])
       p.bot_puller = f[3] ~= "-" and f[3] or nil
     end
+  end
+  for slot, r in pairs(rules) do
+    if by_slot[slot] then by_slot[slot].rules = r end
   end
   table.sort(p.mates, function(a, b) return a.slot < b.slot end)
   return p
@@ -138,7 +142,9 @@ function M.rules_text(r)
   elseif r.state == "fallback" then
     t = "Rules: its job rules (" .. (FALLBACK[r.fallback] or "the chosen set could not be used") .. ")"
   elseif r.state == "pending" then
-    t = ("Rules: %s now; %s, so the next call changes them (Apply)"):format(live, PENDING[r.why] or "settings changed")
+    -- what the next call runs: the chosen set, or its job rules (also when the chosen set can no longer be used)
+    local nxt = (r.sel > 0 and r.sel_name ~= "?") and set_name(r.sel, r.sel_name) or "its job rules"
+    t = ("Rules: %s now, %s from its next call (%s; Apply)"):format(live, nxt, PENDING[r.why] or "settings changed")
   elseif r.state == "addon" then
     t = "Rules: an add-on runs this mate"
   elseif r.state == "unknown" then

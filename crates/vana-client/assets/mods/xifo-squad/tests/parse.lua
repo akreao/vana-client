@@ -68,9 +68,14 @@ assert(r.caps.reapply1 and r.caps.later)
 local f1 = r.mates[1].rules
 assert(f1.state == "pending" and f1.why == "edited" and f1.live == 4 and f1.live_name == "Heals" and f1.dropped == 1)
 assert(f1.live_job == "WHM" and r.mates[2].rules.live_job == nil)
-assert(P.rules_text(f1) == "Rules: set 4 Heals now; its set was edited, so the next call changes them (Apply) (1 rule left out)",
+assert(P.rules_text(f1) == "Rules: set 4 Heals now, set 4 Heals from its next call (its set was edited; Apply) (1 rule left out)",
   P.rules_text(f1))
 assert(P.rules_text(r.mates[2].rules) == "Rules: its job rules at its next call", P.rules_text(r.mates[2].rules))
 assert(P.rules_text(r.mates[3].rules) == "Rules: its job rules (the chosen set is gone)", P.rules_text(r.mates[3].rules))
 assert(P.rules_text(nil) == nil and next(p.caps) == nil and p.mates[1].rules == nil)
 assert(P.sheet({ "slot|3", "hdr|Bo|BLM|20|-|0|auto|balanced|Taru|15" }).slot == 3)
+
+-- an rs line before its mate's row still counts; a chosen set that can no longer be used is not promised
+local o = P.panel({ "rs|1|pending|choice|4|Heals|8|?|0|0|WHM", "1|Fayd|WHM|30|BLM|15|healer|balanced|1|15" })
+assert(o.mates[1].rules and P.rules_text(o.mates[1].rules) ==
+  "Rules: set 4 Heals now, its job rules from its next call (another set was chosen; Apply)", P.rules_text(o.mates[1].rules))

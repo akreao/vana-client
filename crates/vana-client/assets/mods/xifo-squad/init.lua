@@ -158,7 +158,9 @@ local function show_mate()
   end
   ui.update("squad", "sel", { text = ("#%d %s: %s, %s"):format(m.slot, m.name, jobs_text(m),
     m.out and "out now" or "away") })
-  ui.update("squad", "rules", { text = P.rules_text(m.rules) or "" })
+  -- the classic window cuts a long line short: the whole line is its tip too
+  local rules = P.rules_text(m.rules) or ""
+  ui.update("squad", "rules", { text = rules, tip = rules })
   ui.update("squad", "mate", { items = mate_buttons() })
   ui.update("squad", "role", { at = index_of(P.ROLES, m.role) or 1 })
   ui.update("squad", "mode", { at = index_of(P.MODES, m.mode) or 1 })
