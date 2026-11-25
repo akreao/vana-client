@@ -1919,6 +1919,13 @@ pub const FUNCS: &[Func] = &[
     },
     Func {
         ns: "mods",
+        name: "caller",
+        doc: "Inside a function offered with mods.provide, while another mod's mods.call runs it: that mod's id; nil anywhere else. Lets a mod offer a function only to the mods it trusts.",
+        params: &[],
+        ret: "string?",
+    },
+    Func {
+        ns: "mods",
         name: "emit",
         doc: "Raises an event in every other mod: their events.on handlers get the values after the running handler (in this frame or the next). Prefix the name with your mod's id.",
         params: &[("event", "string", ""), ("...", "any", "plain data")],
