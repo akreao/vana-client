@@ -16,6 +16,7 @@ is stopped) and vana-client is the game:
      crowd and bot chat helper) when the RULES page has it on.
   4. Pins their server's TLS key for vana-client (a reinstall makes a new one), then opens vana-client on 127.0.0.1.
   5. When vana-client closes, stops all of it the normal way, so the database is saved and the next start is clean.
+     (An update that restarts vana-client is followed: the world stays up for the restarted client.)
 
 Only their own programs are run, unchanged, through their packaged launcher's `--run` (or python for a source
 install). Nothing of theirs is copied into vana-client. Their launcher must be closed: the world refuses to start
@@ -56,6 +57,8 @@ LOGIN_PORT = 54231
 READY_SECONDS = 15 * 60          # the first start of a world can take a few minutes (their own limit is ten)
 STOP_SECONDS = 4 * 60            # the world gives each game server 20 s to save, then stops the database
 SYNC_STAMP = ".xifo-sync"        # in the game copy: when it was last brought up to date
+SYNC_FILES = ".xifo-files"       # in the game copy: the files the last sync took from their folder, one per line
+RESTART_FILE = "restart.pid"     # in the profile: vana-client writes the pid it restarted as (an update), see main
 SYNC_SKIP = ("FINAL FANTASY XI/USER",)   # the game writes each player's macros and settings here: keep ours
 VANA_UPDATE_FILES = ("vana-update.cfg", "vana-update.reinstalled")   # vana-client's record of a retail update (patch.rs)
 
@@ -177,6 +180,7 @@ def sync_game(source, target):
     except OSError:
         since = 0
     has_user = any(os.path.isdir(os.path.join(target, rel)) for rel in SYNC_SKIP)
+    present = set()                                  # every file their folder has now (those the copy follows)
     if since == 0 and not (os.path.isdir(target) and os.listdir(target)):      # a new, empty copy
         say(f"Copying their game folder to {target} (once; later runs copy only what changed)...")
         os.makedirs(target, exist_ok=True)
@@ -184,6 +188,7 @@ def sync_game(source, target):
             subprocess.run(["cp", "-a", "--reflink=auto", os.path.join(source, "."), target], check=True)
         else:
             shutil.copytree(source, target, dirs_exist_ok=True)
+        present = source_files(source, skip_user=False)
     else:
         changed = []
         for root, dirs, files in os.walk(source):
@@ -197,6 +202,7 @@ def sync_game(source, target):
                 except OSError:
                     continue
                 rel = os.path.normpath(os.path.join(rel_root, name))
+                present.add(rel)
                 # ctime too: an update or a DAT restore can put back a file with an old modification time. On
                 # Windows ctime is the creation time, so a file whose time or size is not the copy's (copies keep
                 # the time) counts as changed as well.
@@ -218,11 +224,52 @@ def sync_game(source, target):
             say("The game copy is up to date.")
     if last_source and last_source != source:
         drop_extra_files(last_source, source, target, keep_user=has_user)
+    elif last_source == source:
+        drop_removed_files(target, present)
+    write_file_list(target, present)
     for name in VANA_UPDATE_FILES:                   # a retail update vana-client applied here before: no longer true
         path = os.path.join(target, "FINAL FANTASY XI", name)
         if os.path.isfile(path):
             os.remove(path)
     write_stamp(target, source, started)
+
+
+def source_files(source, skip_user):
+    out = set()
+    for root, dirs, files in os.walk(source):
+        rel_root = os.path.relpath(root, source)
+        if skip_user:
+            dirs[:] = [d for d in dirs if os.path.normpath(os.path.join(rel_root, d)).replace("\\", "/") not in SYNC_SKIP]
+        for name in files:
+            out.add(os.path.normpath(os.path.join(rel_root, name)))
+    return out
+
+
+def drop_removed_files(target, present):
+    """Files the last sync took from their folder that it no longer has (an update removed them) go from the copy
+    too. Only those: anything the copy has of its own (screenshots, the player's USER folder) is not on that list."""
+    try:
+        with open(os.path.join(target, SYNC_FILES), encoding="utf-8") as handle:
+            before = {line.rstrip("\n") for line in handle if line.strip()}
+    except OSError:
+        return                                       # (no list yet: nothing says which files came from them)
+    gone = 0
+    for rel in sorted(before - present):
+        if any(rel.replace("\\", "/").startswith(skip + "/") for skip in SYNC_SKIP):
+            continue                                 # (the player's own files: left alone after the first copy)
+        path = os.path.join(target, rel)
+        if os.path.isfile(path):
+            os.remove(path)
+            gone += 1
+    if gone:
+        say(f"Removed {gone} file(s) their folder no longer has.")
+
+
+def write_file_list(target, present):
+    with open(os.path.join(target, SYNC_FILES) + ".part", "w", encoding="utf-8", newline="\n") as handle:
+        for rel in sorted(present):
+            handle.write(rel + "\n")
+    os.replace(os.path.join(target, SYNC_FILES) + ".part", os.path.join(target, SYNC_FILES))
 
 
 def write_stamp(target, source, when):
@@ -246,7 +293,7 @@ def drop_extra_files(old_source, source, target, keep_user):
             dirs[:] = [d for d in dirs if os.path.normpath(os.path.join(rel_root, d)).replace("\\", "/") not in SYNC_SKIP]
         for name in files:
             rel = os.path.normpath(os.path.join(rel_root, name))
-            if (rel == SYNC_STAMP or name in VANA_UPDATE_FILES or os.path.exists(os.path.join(source, rel))
+            if (rel in (SYNC_STAMP, SYNC_FILES) or name in VANA_UPDATE_FILES or os.path.exists(os.path.join(source, rel))
                     or not os.path.exists(os.path.join(old_source, rel))):
                 continue
             os.remove(os.path.join(root, name))
@@ -270,7 +317,13 @@ def copy_files(source, target, rels):
 def prepare_profile(profile, game):
     """The profile's config.json, pointed at 127.0.0.1 and the game copy; everything else in it is the client's."""
     path = os.path.join(profile, "config.json")
-    cfg = read_json(path, {}) or {}
+    cfg = read_json(path)
+    if cfg is None and os.path.exists(path):
+        # There but unreadable (a save cut short, say): kept as it was beside the new one, for its settings.
+        keep = f"{path}.unreadable-{time.strftime('%Y%m%d-%H%M%S')}"
+        shutil.copy2(path, keep)
+        say(f"{path} could not be read; it is kept as {keep} and a new one is started.")
+    cfg = cfg if isinstance(cfg, dict) else {}
     if not game:
         game = cfg.get("game_dir") or os.path.join(profile, "game")
     want = {"server": "127.0.0.1", "game_dir": os.path.abspath(game), "installed": True}
@@ -490,6 +543,81 @@ class World:
             end(self.proc, 5)
 
 
+def remove_quietly(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def pid_alive(pid):
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+    import ctypes
+    k32 = ctypes.windll.kernel32
+    handle = k32.OpenProcess(0x00100000, False, pid)          # SYNCHRONIZE
+    if not handle:
+        return False
+    try:
+        return k32.WaitForSingleObject(handle, 0) == 0x102      # WAIT_TIMEOUT: still running
+    finally:
+        k32.CloseHandle(handle)
+
+
+class Client:
+    """vana-client as started here, then (after an update's restart) the process it restarted as."""
+
+    def __init__(self, proc):
+        self.proc, self.pid = proc, None
+
+    def running(self):
+        return self.proc.poll() is None if self.pid is None else pid_alive(self.pid)
+
+    def returncode(self):
+        return self.proc.returncode if self.pid is None else 0
+
+    def follow(self, restart_file):
+        """After the client exited: the pid it restarted as (written to restart_file), followed from now on."""
+        try:
+            with open(restart_file, encoding="utf-8") as handle:
+                pid = int(handle.read().strip() or 0)
+        except (OSError, ValueError):
+            return False
+        remove_quietly(restart_file)
+        if not pid or not pid_alive(pid):
+            return False
+        self.pid = pid
+        return True
+
+    def end(self, seconds):
+        if self.pid is None:
+            return end(self.proc, seconds)
+        try:
+            if os.name != "nt":
+                os.kill(self.pid, signal.SIGTERM)
+            else:
+                subprocess.run(["taskkill", "/PID", str(self.pid)], capture_output=True, check=False)
+        except OSError:
+            return
+        for _ in range(seconds):
+            if not pid_alive(self.pid):
+                return
+            time.sleep(1)
+        try:
+            if os.name != "nt":
+                os.kill(self.pid, signal.SIGKILL)
+            else:
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(self.pid)], capture_output=True, check=False)
+        except OSError:
+            pass
+
+
 def own_group():
     """Popen arguments that start a program in its own process group, so it can be stopped with its children."""
     if os.name == "nt":
@@ -504,13 +632,16 @@ def end(proc, seconds):
         if os.name != "nt":
             os.killpg(proc.pid, signal.SIGTERM)
         else:
-            proc.terminate()
+            # Ctrl+Break reaches the whole process group (started with CREATE_NEW_PROCESS_GROUP), so a packaged
+            # launcher's child running the script gets it too, not just the launcher process
+            proc.send_signal(signal.CTRL_BREAK_EVENT)
         proc.wait(timeout=seconds)
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, ValueError, subprocess.TimeoutExpired):
         try:
             if os.name != "nt":
                 os.killpg(proc.pid, signal.SIGKILL)
-            else:
+            else:                                            # the process and every child of it
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, check=False)
                 proc.kill()
         except OSError:
             pass
@@ -544,10 +675,10 @@ def main(argv):
     config, game = prepare_profile(profile, args.game)
     if same_folder(kit.game_dir(), game):
         fail("vana-client's game folder is their game folder: give it its own copy (--game).")
-    if not args.no_sync:
+    if not args.no_sync and not args.world_only:            # (a world on its own needs no game copy)
         restore_their_game(kit)
         sync_game(kit.game_dir(), game)
-    elif os.path.isdir(game) and not os.path.isfile(os.path.join(game, SYNC_STAMP)):
+    elif not args.world_only and os.path.isdir(game) and not os.path.isfile(os.path.join(game, SYNC_STAMP)):
         write_stamp(game, "", time.time())          # (no source: the next sync looks at every file)
     if not args.world_only:
         prepare_mods(profile)
@@ -573,25 +704,33 @@ def main(argv):
             while not stopping and world.alive():
                 time.sleep(1)
         else:
-            env = dict(os.environ, FFXI_CONFIG=config)
+            # (an update restarts vana-client as a new process: it writes that one's pid here, and the world stays
+            #  up for it instead of stopping when the first one exits)
+            restart = os.path.join(profile, RESTART_FILE)
+            env = dict(os.environ, FFXI_CONFIG=config, VANA_RESTART_FILE=restart)
             pin_server(client, env, profile, server_key(kit.server_dir()))
             say("Opening vana-client. Closing it stops the world.")
-            game_proc = subprocess.Popen([client] + args.client_args, env=env, **own_group())
-            while game_proc.poll() is None:
-                if stopping:
-                    end(game_proc, 20)
+            remove_quietly(restart)
+            player = Client(subprocess.Popen([client] + args.client_args, env=env, **own_group()))
+            while True:
+                while player.running():
+                    if stopping:
+                        player.end(20)
+                        break
+                    if not world.alive():
+                        say("Their world stopped by itself (see logs/world.log); vana-client stays open.")
+                        while player.running() and not stopping:
+                            time.sleep(1)
+                        player.end(20)
+                        code = 1
+                        break
+                    time.sleep(1)
+                if stopping or code or not player.follow(restart):
                     break
-                if not world.alive():
-                    say("Their world stopped by itself (see logs/world.log); vana-client stays open.")
-                    while game_proc.poll() is None and not stopping:
-                        time.sleep(1)
-                    end(game_proc, 20)
-                    code = 1
-                    break
-                time.sleep(1)
-            if code == 0 and not stopping and game_proc.returncode:
-                say(f"vana-client ended with exit code {game_proc.returncode}.")
-                code = game_proc.returncode
+                say("vana-client restarted after an update; the world stays up for it.")
+            if code == 0 and not stopping and player.returncode():
+                say(f"vana-client ended with exit code {player.returncode()}.")
+                code = player.returncode()
         if not world.alive() and not stopping:
             code = 1
     finally:

@@ -16437,7 +16437,14 @@ impl App {
                                         .map(|c| (exe, c.id()))
                                 }) {
                                     Some(Ok((exe, pid))) => {
-                                        log::info!("update: restarted as {} (pid {pid})", exe.display())
+                                        log::info!("update: restarted as {} (pid {pid})", exe.display());
+                                        // A launcher that started us (tools/xifo-play.py) follows the new process
+                                        // instead of taking this exit as the end of play.
+                                        if let Some(f) = std::env::var_os("VANA_RESTART_FILE")
+                                            && let Err(e) = std::fs::write(&f, pid.to_string())
+                                        {
+                                            log::warn!("update: writing the restart pid: {e}");
+                                        }
                                     }
                                     Some(Err(e)) => log::warn!("update: restart failed: {e}"),
                                     None => log::warn!("update: restart failed: no executable path"),
