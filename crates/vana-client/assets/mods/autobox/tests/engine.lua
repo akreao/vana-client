@@ -8,7 +8,7 @@ local SPELLS = {
   [1] = { name = "Cure", targets = 0x1F }, [2] = { name = "Cure II", targets = 0x1F },
   [3] = { name = "Cure III", targets = 0x1F }, [43] = { name = "Protect", targets = 0x1 },
   [109] = { name = "Refresh", targets = 0x1 }, [164] = { name = "Thunder", targets = 0x20, range = 12 },
-  [338] = { name = "Utsusemi: Ichi", targets = 0x1 }, [339] = { name = "Utsusemi: Ni", targets = 0x1 },
+  [338] = { name = "Utsusemi: Ichi", targets = 0x1 }, [339] = { name = "空蝉の術:弐", targets = 0x1 },
   [100] = { name = "Pet Mend", targets = 0x40 },
 }
 local ABILITIES = { [32] = { name = "Fast Blade", targets = 0x20 }, [42] = { name = "Savage Blade", targets = 0x20 },
@@ -30,7 +30,7 @@ local function env(o)
     spell_id = function(n) for id, r in pairs(SPELLS) do if r.name:lower() == n:lower() then return id end end end,
     ability_id = function(n) for id, r in pairs(ABILITIES) do if r.name:lower() == n:lower() then return id end end end,
     status_ids = function(n) return STATUS[n:lower()] end,
-    has_tool = o.has_tool, pet = o.pet,
+    has_tool = o.has_tool, pet = o.pet, my_hitbox = 0.5,
   }
   return e
 end
@@ -152,13 +152,22 @@ assert(core.tick(s, env({ now = 1, me = me, rules = { ra }, target = mob, can_sh
 
 -- A spell out of its range class's reach is passed over (Thunder: class 12, 20 yalms), so a later rule runs.
 local thunder = { target = "target", when = { kind = "always" }, action = { kind = "spell", name = "Thunder" } }
-local far = { kind = "mob", hpp = 80, claim = 1, name = "Goblin", distance = 35 }
+local far = { kind = "mob", hpp = 80, claim = 1, name = "Goblin", distance = 35, pos = { x = 35, y = 0, z = 0 }, hitbox = 1 }
 s = fresh()
 a = core.tick(s, env({ now = 1, me = me, rules = { thunder, protect }, target = far }))
 assert(a and a.text == "Protect", a and a.text)
 s = fresh()
-a = core.tick(s, env({ now = 1, me = me, rules = { thunder, protect }, target = { kind = "mob", hpp = 80, claim = 1, distance = 15 } }))
+a = core.tick(s, env({ now = 1, me = me, rules = { thunder, protect }, target = { kind = "mob", hpp = 80, claim = 1, distance = 15,
+  pos = { x = 15, y = 0, z = 0 }, hitbox = 1 } }))
 assert(a and a.text == "Thunder")
+-- at the edge, as the target arrow measures it: flat distance less both radii, half a yalm past the range still in
+local function edge(x) return { kind = "mob", hpp = 80, claim = 1, distance = x, pos = { x = x, y = 3, z = 0 }, hitbox = 1 } end
+s = fresh()
+a = core.tick(s, env({ now = 1, me = me, rules = { thunder, protect }, target = edge(21.9) })) -- gap 20.4 (radii 1 + 0.5)
+assert(a and a.text == "Thunder", a and a.text)
+s = fresh()
+a = core.tick(s, env({ now = 1, me = me, rules = { thunder, protect }, target = edge(22.1) })) -- gap 20.6
+assert(a and a.text == "Protect", a and a.text)
 
 -- A weapon skill on yourself (Starlight) by its own targets; a monster skill not on yourself.
 local star = { target = "me", when = { kind = "always" }, action = { kind = "ws", name = "Starlight" } }
@@ -178,7 +187,8 @@ a = core.tick(s, env({ now = 1, rules = { pet_cure, pet_mend }, pet = pet, known
 assert(a and a.text == "Pet Mend" and a.tag == "<pet>", a and a.text)
 
 -- Best Utsusemi: San .. Ichi by name; ninjutsu only with its tool.
-local utsu = { target = "me", when = { kind = "always" }, action = { kind = "spell", name = "Utsusemi: Ni", best = true } }
+-- (by id: the picker's names are in the client's language, here a Japanese Ni)
+local utsu = { target = "me", when = { kind = "always" }, action = { kind = "spell", name = "空蝉の術:弐", best = true } }
 local known = { [338] = true, [339] = true }
 s = fresh()
 a = core.tick(s, env({ now = 1, rules = { utsu }, known = known, refuse = { spell339 = true } }))

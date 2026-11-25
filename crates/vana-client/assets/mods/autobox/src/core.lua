@@ -82,19 +82,14 @@ function M.action_text(a)
 end
 
 local ROMAN = { "", "II", "III", "IV", "V", "VI" }
-local NINJUTSU = { "Ichi", "Ni", "San" } -- ninjutsu tiers are named: "Utsusemi: Ichi"
+local ninjutsu_family
 
--- A spell family's ids, highest tier first: "Cure" (or "Cure II") -> Cure VI .. Cure; "Utsusemi: Ni" -> San .. Ichi.
+-- A spell family's ids, highest tier first: "Cure" (or "Cure II") -> Cure VI .. Cure; a ninjutsu (tiers Ichi, Ni,
+-- San, by id in any language) -> San .. Ichi.
 local function family(spell_id, name)
-  local base = name:match("^(.-: )%a+$")
-  if base then
-    local out = {}
-    for t = #NINJUTSU, 1, -1 do
-      local id = spell_id(base .. NINJUTSU[t])
-      if id then out[#out + 1] = id end
-    end
-    if #out > 0 then return out end
-  end
+  local nin = ninjutsu_family(spell_id(name))
+  if nin then return nin end
+  local base
   for t = #ROMAN, 2, -1 do
     base = name:match("^(.-) " .. ROMAN[t] .. "$")
     if base then name = base break end
@@ -120,6 +115,18 @@ local NINJA_TOOLS = {
   { 507, 507, 2642, 2972 }, { 508, 508, 2643, 2973 }, { 509, 509, 2644, 2972 }, { 510, 510, 2970, 2972 },
 }
 
+-- A ninjutsu's tiers by id, highest first (each tool's spells are one family's tiers, Ichi first), or nil.
+ninjutsu_family = function(id)
+  if not id then return nil end
+  for _, t in ipairs(NINJA_TOOLS) do
+    if id >= t[1] and id <= t[2] and t[2] > t[1] then
+      local out = {}
+      for i = t[2], t[1], -1 do out[#out + 1] = i end
+      return out
+    end
+  end
+end
+
 -- Whether the spell's tool is in the inventory (or the universal one with NIN, job 13, the main); true for others.
 function M.has_tool(spell, held, main)
   for _, t in ipairs(NINJA_TOOLS) do
@@ -137,6 +144,14 @@ local function moving(s, me, now)
   if not l then return true end
   if math.abs(l.x - p.x) > 0.05 or math.abs(l.z - p.z) > 0.05 then s.still_since = now end
   return now - s.still_since < M.STILL
+end
+
+-- The flat distance from you to an entity less both model radii (the arrow's measure).
+local function gap(env, e)
+  local me = env.me
+  if not (e and e.pos and me.pos) then return nil end
+  local dx, dz = e.pos.x - me.pos.x, e.pos.z - me.pos.z
+  return math.sqrt(dx * dx + dz * dz) - (e.hitbox or 0) - (env.my_hitbox or 0)
 end
 
 -- The candidates a rule's target names, as {tag, hpp, mpp, buffs (a set of status ids, or nil when unknown), kind}.
@@ -164,11 +179,12 @@ local function candidates(rule, env)
     if not t or t.kind ~= "mob" or (t.hpp or 0) <= 0 then return {} end
     if t.claim ~= 0 and not env.ours[t.claim] then return {} end
     if t.claim == 0 and not (me.status == 1) then return {} end
-    return { { tag = "<t>", hpp = t.hpp, kind = "mob", name = t.name, distance = t.distance } }
+    return { { tag = "<t>", hpp = t.hpp, kind = "mob", name = t.name, distance = t.distance, gap = gap(env, t) } }
   elseif rule.target == "pet" then
     local p = env.pet
     if not p or (p.hpp or 0) <= 0 then return {} end
-    return { { tag = "<pet>", hpp = p.hpp, mpp = p.mpp, kind = "pet", name = p.name, distance = p.distance } }
+    return { { tag = "<pet>", hpp = p.hpp, mpp = p.mpp, kind = "pet", name = p.name, distance = p.distance,
+      gap = gap(env, p) } }
   end
   return {}
 end
@@ -209,12 +225,15 @@ local function fits(targets, cand)
   return false
 end
 
--- Whether the spell reaches the candidate (one without a known distance, you or a party member already within
--- SPELL_RANGE, counts as reached).
+-- Whether the spell reaches the candidate, as the game's target arrow tells it (target.rs range_tint, FUN_10150610):
+-- out of reach past range + 0.5 yalms of flat distance less both model radii (`gap`), or at 25 yalms and more. One
+-- without a known gap (you, a party member already within SPELL_RANGE) counts as reached.
 local function reaches(r, cand)
   local reach = RANGES[((r.range or 15) & 0xf) + 1]
-  return not cand.distance or reach >= 255 or cand.distance <= reach
+  if reach >= 255 or not cand.gap then return true end
+  return cand.gap <= reach + 0.5 and (cand.distance or 0) < 25
 end
+
 
 -- What the rule's action is on this candidate now: {kind, id, tag, text}, or nil.
 -- Status effects that stop actions, by id as the client's menus check them: sleep, petrification, stun, charm, terror,
