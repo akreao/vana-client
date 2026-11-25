@@ -61,3 +61,26 @@ assert(link.filter(s, "squadsheet:hdr|Fayd|WHM|30|-|0|auto|balanced|Tarutaru F|1
 link.pump(s, 30.2 + link.WAIT + 3, false)
 out = link.take(s)
 assert(#out == 1 and out[1].tag == "squadsheet" and not out[1].complete and #out[1].lines == 1)
+
+-- a reply with its own mark and end words (the Gambits editor's "GSQ|<id>|..."), its last line kept
+s = link.new(function(line) said[#said + 1] = line end)
+link.send(s, "!gsq mates 12", { tag = "gsq12", mark = "GSQ|12|", ends = { "end", "err" } }, 100)
+link.pump(s, 100, false)
+assert(link.filter(s, "GSQ|12|mate|1|33|Fayd|WHM|30|-|0|1|-", 100.2) == false)
+assert(link.filter(s, "GSQ|120|mate|x", 100.2) == nil, "another request's line")
+assert(link.filter(s, "GSQ|12|end|1", 100.3) == false)
+out = link.take(s)
+assert(#out == 1 and out[1].complete and #out[1].lines == 2 and out[1].lines[2] == "end|1")
+
+-- a save in parts under one tag: every part's lines gather in one reply until ok / err
+link.send(s, "!gsq x 77 1 2 aaa", { tag = "save", mark = "GSQ|77|", ends = { "ok", "err" } }, 110)
+link.send(s, "!gsq x 77 2 2 bbb", { tag = "save", mark = "GSQ|77|", ends = { "ok", "err" } }, 110)
+link.pump(s, 110, false)
+assert(link.filter(s, ">> /say !gsq x 77 1 2 aaa", 110.1) == false, "refused")
+assert(link.filter(s, "...A command error occurred.", 110.1) == false)
+link.pump(s, 111.5, false)
+assert(link.filter(s, "GSQ|77|ack|1|2", 111.7) == false)
+link.pump(s, 113, false)
+assert(link.filter(s, "GSQ|77|ok|5|3|w1", 113.2) == false)
+out = link.take(s)
+assert(#out == 1 and out[1].tag == "save" and #out[1].lines == 2 and out[1].lines[2] == "ok|5|3|w1", #out)

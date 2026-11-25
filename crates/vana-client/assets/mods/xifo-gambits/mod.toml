@@ -1,0 +1,14 @@
+name = "XIFO Gambits"
+version = "1.0.0"
+description = "Edit your XI: Forever Offline squad mates' Rule Sets: ordered rules of target, conditions and action, saved and checked by the server."
+authors = ["vana-client"]
+
+[settings.on]
+type = "bool"
+default = true
+label = "XIFO Gambits"
+help = "//gambits opens the Rule Set editor on an XI: Forever Offline server. Needs XIFO Link."
+
+[commands.gambits]
+help = "Opens or closes the Rule Set editor (XI: Forever Offline)."
+args = ""

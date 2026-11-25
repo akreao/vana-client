@@ -1,0 +1,123 @@
+-- XIFO Gambits' window against a scripted server: hello, the squad, a mate's sets and choices, opening a set,
+-- editing a rule, saving it in parts, assigning it.
+
+local sent, windows, handlers, ev, cmd, open, prompts = {}, {}, {}, {}, {}, {}, {}
+mods = { call = function(id, name, text, opts)
+  assert(id == "xifo-link" and name == "send")
+  sent[#sent + 1] = { text = text, tag = opts.tag, mark = opts.mark, ends = opts.ends }
+  return true
+end }
+events = { on = function(name, f) ev[name] = f end }
+timer = { after = function() end }
+commands = { register = function(n, f) cmd[n] = f end }
+ui = {
+  window = function(id, spec)
+    windows[id] = {}
+    for _, e in ipairs(spec.elements) do if e.id then windows[id][e.id] = e end end
+  end,
+  update = function(id, el, fields)
+    for k, v in pairs(fields) do
+      if k == "items" then for i, x in ipairs(v) do assert(type(x) == "string", "item " .. i) end end
+      windows[id][el][k] = v
+    end
+  end,
+  on = function(id, f) handlers[id] = f end,
+  open = function(id) open[id] = true end,
+  close = function(id) open[id] = nil end,
+  is_open = function(id) return open[id] == true end,
+  prompt = function(text, buttons, f) prompts[#prompts + 1] = { text = text, f = f } end,
+}
+load(TEST.source("init.lua"), "@init.lua")()
+local w, rw = windows.gambits, windows.gambits_rule
+local H = function(e) handlers.gambits("gambits", e) end
+local HR = function(e) handlers.gambits_rule("gambits_rule", e) end
+
+-- the server answers the last request
+local function answer(lines, complete)
+  local s = sent[#sent]
+  ev.xifo_link_reply(s.tag, lines, complete ~= false)
+end
+local function last() return sent[#sent].text end
+
+cmd.gambits()
+assert(open.gambits and last():match("^!gsq hello %d+$"))
+assert(sent[#sent].mark == "GSQ|" .. last():match("(%d+)$") .. "|")
+answer({ "hello|9|32|120|64" })
+assert(last():match("^!gsq mates %d+$"))
+answer({ "mate|1|40|Fayd|WHM|30|BLM|4|1|15", "mate|2|41|Salia|WAR|28|-|0|0|-", "end|2" })
+assert(w.mate.items[1] == "Fayd  WHM 30/BLM 15  (out)", w.mate.items[1])
+
+-- the set list and the catalog were both asked for; answer each by its own tag
+local list_req, cat_req = sent[#sent - 1], sent[#sent]
+assert(list_req.text:match("^!gsq list %d+ WHM$") and cat_req.text:match("^!gsq catm %d+ 1 jm$"), cat_req.text)
+ev.xifo_link_reply(list_req.tag, { "set|4|WHM|2|o|3|w4|Fayd heals", "set|1|WHM|5|m|1|whm1|Default WHM", "end|2" }, true)
+assert(#w.sets.rows == 2 and w.sets.rows[1][4] == "In use" and w.sets.rows[2][4] == "Copy only")
+local G = require("src.gsq")
+local cat = { "cat|1|t|SELF,PARTY,TANK", "cat|2|c|ALWAYS:n,HPP_LT:r:0:100,NOT_STATUS:e", "cat|3|f|CURE,PROTECT",
+  "cat|4|j|DIVINE_SEAL:15", "cat|5|s|CURE:1,PROTECT:7", "cat|6|u|CURE_II:11" }
+local h = 7
+for _, line in ipairs(cat) do
+  local kind, list = line:match("^cat|%d+|(%a)|(.*)$")
+  for e in list:gmatch("[^,]+") do h = G.check(kind .. ":" .. e .. "\n", h) end
+end
+cat[#cat + 1] = "end|6|3.3.2.1.2.1|" .. h
+ev.xifo_link_reply(cat_req.tag, cat, true)
+
+-- open set 4
+H({ kind = "select", id = "sets", index = 1 })
+H({ kind = "press", id = "setbtn", index = 1 })
+assert(last():match("^!gsq get %d+ 4$"))
+answer({ "hdr|4|WHM|o|3|w4|Fayd heals", "rule|1|1/1|1,PARTY,HPP_LT,50,,,f,CURE,", "rule|2|1/1|1,SELF,ALWAYS,,,,r,,",
+  "end|2" })
+assert(#w.rules.rows == 2 and w.rules.rows[1][3] == "Party member" and w.rules.rows[1][4] == "HP below 50%")
+assert(rw.target.items[rw.target.at] == "Party member" and rw.cond.items[rw.cond.at] == "HP below %")
+assert(rw.action.items[rw.action.at] == "Cure")
+
+-- edit rule 1: Tank, and a second condition; a value out of range shows the rule in red and stops the save
+HR({ kind = "set", id = "target", index = 3 })
+HR({ kind = "set", id = "cond2", index = 4 })
+HR({ kind = "change", id = "arg2", text = "protect" })
+assert(w.rules.rows[1][3] == "Tank" and w.rules.rows[1][4] == "HP below 50% and Missing effect Protect")
+assert(w.editing.text:find("not saved", 1, true))
+HR({ kind = "change", id = "arg", text = "250" })
+local n = #sent
+H({ kind = "press", id = "save", index = 1 })
+assert(#sent == n and w.status.text:find("0%-100"), w.status.text)
+HR({ kind = "change", id = "arg", text = "45" })
+
+-- change rule 2 to a spell: the first offered is picked; the spells learned later are listed, marked
+H({ kind = "select", id = "rules", index = 2 })
+assert(open.gambits_rule and rw.which.text == "Rule 2 of Fayd heals")
+HR({ kind = "set", id = "kind", index = 2 })
+assert(rw.action.items[1] == "Cure (Lv 1)" and rw.action.items[3] == "Cure II (Lv 11, not learned yet)", rw.action.items[3])
+
+-- save: parts under one tag, the server's ok
+H({ kind = "press", id = "save", index = 1 })
+local parts = {}
+for i = n + 1, #sent do parts[#parts + 1] = sent[i] end
+assert(#parts >= 1 and parts[1].text:match("^!gsq x %d+ 1 %d+ 4,3,WHM,2,Fayd_heals;1,TANK,HPP_LT,45,NOT_STATUS,PROTECT"))
+for _, p in ipairs(parts) do assert(p.tag == parts[1].tag) end
+ev.xifo_link_reply(parts[1].tag, { "ack|1|2", "ok|4|4|w4" }, true)
+assert(w.status.text == "Saved as Rule Set 4." and not w.editing.text:find("not saved", 1, true))
+assert(last():match("^!gsq list %d+ WHM$"))
+
+-- assign another set to the picked mate
+H({ kind = "select", id = "sets", index = 2 })
+H({ kind = "press", id = "use", index = 1 })
+assert(last() == "!squad ruleset 1 1")
+H({ kind = "press", id = "use", index = 2 })
+assert(last() == "!squad ruleset 1 off")
+
+-- a set that is not yours saves as a new one
+H({ kind = "press", id = "setbtn", index = 1 })
+answer({ "hdr|1|WHM|m|1|whm1|Default WHM", "rule|1|1/1|1,PARTY,HPP_LT,50,,,f,CURE,", "end|1" })
+assert(w.editing.text:find("Save makes a copy", 1, true))
+H({ kind = "press", id = "save", index = 1 })
+assert(last():match("^!gsq x %d+ 1 1 0,%-,WHM,1,Default_WHM;"), last())
+
+-- switching mates with changes asks first
+H({ kind = "change", id = "name", text = "Mine" })
+H({ kind = "set", id = "mate", index = 2 })
+assert(#prompts == 1)
+prompts[1].f(1)
+assert(last():match("^!gsq catm %d+ 2 jm$"))

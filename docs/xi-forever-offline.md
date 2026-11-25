@@ -40,6 +40,18 @@ code against the server's `!squad` chat commands; none of XIFO's Ashita add-on c
   gear with item icons, jobs and the spells and abilities of a called mate. The panel is asked again every 15 s while
   open, a called mate's profile every 6 s.
 
+- **XIFO Gambits** (`xifo-gambits`, `//gambits`): the squad mates' Rule Sets (the server's `!gsq` editor protocol,
+  version 4 or later). Pick a mate; its job's sets are listed with the one it uses. Open, New, Copy, Delete; Use this
+  set / Use job rules (`!squad ruleset <slot> <num|off>`) and Apply now (`!squad reapply`). The open set's rules show
+  as target / when / do; Add, Edit, Copy, Delete, Up, Down, and a click opens the rule in its own window: on/off,
+  target, a condition and a second one with their values, the kind of action and what (best of a spell family, a
+  spell, a job ability, ranged attack, best nuke, magic burst), and a minimum level. The choices are the mate's own
+  catalog (`catm`, checked with the server's catalog check); a value it does not list is kept, marked. Save sends
+  the set in parts (`x`, at most 90 bytes each); a set that is not yours saves as a new one. Check (`chk`) lists the
+  rules the called mate would skip at its level. Rules the wire cannot carry show as "?" and block saving that set.
+  Not built yet: the weapon skill settings (`wsg`/`wss`), party roles (`prl`/`prs`), share codes, include/exclude roles
+  in the editor (kept as they are when a rule has them).
+
 Server reply formats used (from their `modules/custom/lua/squad.lua`): `squadpanel:<slot>|<name>|<job>|<level>|<sub or
 ->|<sub level>|<role>|<mode>|<out 0/1>|<switch mask>`, `jl|<slot>|<JOB:level,...>`, `cd|<slot>|<seconds>`,
 `camp|<on>|<puller slot, 0 = you>|<paused>|<pulls>`, `campbots|<names or ->|<pulling bot or ->`, then

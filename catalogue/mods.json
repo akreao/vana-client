@@ -3612,6 +3612,42 @@
       "authors": [
         "vana-client"
       ],
+      "commands": {
+        "gambits": {
+          "args": "",
+          "help": "Opens or closes the Rule Set editor (XI: Forever Offline)."
+        }
+      },
+      "description": "Edit your XI: Forever Offline squad mates' Rule Sets: ordered rules of target, conditions and action, saved and checked by the server.",
+      "files": [
+        {
+          "path": "init.lua",
+          "sha256": "68d1ac2ff805568fc3bec257605417f7d9de292c633c7491d9580a7a6d714717",
+          "size": 23184,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-gambits/init.lua"
+        },
+        {
+          "path": "mod.toml",
+          "sha256": "d064885878afb10ee810b44a8fb488ec97aba5d70bb6bedf12b027abc0e72804",
+          "size": 478,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-gambits/mod.toml"
+        },
+        {
+          "path": "src/gsq.lua",
+          "sha256": "01640feb63f871ef59702668bd1e19e616cc830e0679b454a7f17d25c748aaeb",
+          "size": 13387,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-gambits/src/gsq.lua"
+        }
+      ],
+      "id": "xifo-gambits",
+      "kind": "lua",
+      "name": "XIFO Gambits",
+      "version": "1.0.0"
+    },
+    {
+      "authors": [
+        "vana-client"
+      ],
       "description": "Talks to an XI: Forever Offline server for the XIFO mods: says their commands one at a time and hides the server's replies.",
       "files": [
         {
@@ -3622,21 +3658,21 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "52a03844cc2131c022daf46530cb4a55e150783dae7df49d0a1e4058b6bcc80a",
-          "size": 399,
+          "sha256": "de2b23b3e5f8faebf31ef2082fee10974961ebed5ad60c063e69ddb86e35496b",
+          "size": 413,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-link/mod.toml"
         },
         {
           "path": "src/link.lua",
-          "sha256": "a558fadef250f67de51e2bf4b0ae25fab90c0a5a723e6a9d85d76d0869e0a404",
-          "size": 4181,
+          "sha256": "5e9d32de5b44e8d758ee3c51a46a682f67e6c813ff6aa8b25a4f6c2513fa24dd",
+          "size": 4981,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-link/src/link.lua"
         }
       ],
       "id": "xifo-link",
       "kind": "lua",
       "name": "XIFO Link",
-      "version": "1.0.0"
+      "version": "1.1.0"
     },
     {
       "authors": [
