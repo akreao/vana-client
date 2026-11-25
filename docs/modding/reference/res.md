@@ -708,7 +708,9 @@ A `main` or `sub` of `0` is left out of `parts`. For races that are not player r
 
 **Errors** "res.model_files takes an NPC model id or a look {race, face, head, ...}" when `model` is neither an
 integer nor a table (a float such as `100.0` counts as neither); "race N has no model tables (0..8, 29..36)" for a
-race without models; "<slot> model id N is outside the race R table" for a part id the race does not have.
+race without models; "<slot> model id N is outside the race R table" for a part id inside the slot's count whose range
+has no files. A player race's model id at or past the slot's count is loaded as model id 0 of that slot, as the game
+does, so it comes back in `parts` as model `0` (or is left out for `main` and `sub`).
 
 **Example**
 
