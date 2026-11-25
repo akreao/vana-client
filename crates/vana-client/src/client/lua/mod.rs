@@ -1607,7 +1607,8 @@ pub(super) fn run_line(w: &mut World, line: &str, mode: super::textcmd::Mode, fr
     if line.starts_with('/') && w.lua.takes(line) {
         w.lua.typed.push((line.to_string(), from));
     } else {
-        let mod_line = std::mem::replace(&mut w.mod_line, matches!(from, From::Mod { .. }));
+        // A mod's own line, not one it runs on the player's input (a saved key bind, a click): see World.mod_line.
+        let mod_line = std::mem::replace(&mut w.mod_line, matches!(from, From::Mod { input: false, .. }));
         super::textcmd::run(w, line, mode);
         w.mod_line = mod_line;
     }

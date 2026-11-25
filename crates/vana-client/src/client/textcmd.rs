@@ -2083,7 +2083,7 @@ pub(super) fn set_chat_mode(w: &mut World, mode: u8, name: Option<&str>) {
 
 /// FUN_101adb80, after a channel send: a shout or message mode goes back to the previous mode.
 fn restore_temp_mode(w: &mut World) {
-    // Ours: a mod's line (commands.run) is not the player's send, so the player's one-off Shout / Tell stays set.
+    // Ours: a mod's line (commands.run) is not the player's send, so the player's one-off Shout / Message stays set.
     if !w.mod_line && matches!(w.chat_mode, 3 | 8) {
         (w.chat_mode, w.chat_prefix) = w.chat_prev.clone();
     }

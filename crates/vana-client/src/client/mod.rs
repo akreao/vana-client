@@ -8156,7 +8156,8 @@ struct World {
     /// most, newest first; retail keeps them in acq.dat, ours for the session).
     chat_mode: u8,
     chat_prev: (u8, String),
-    /// A mod's line (commands.run) is running: a channel it says something in does not become the chat line's default.
+    /// A mod's line (commands.run, not on the player's input) is running: a channel it says something in does not become
+    /// the chat line's default, and a one-off Shout / Message mode stays set.
     mod_line: bool,
     tell_name: Option<String>,
     tell_hist: Vec<String>,
