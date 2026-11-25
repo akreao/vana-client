@@ -85,6 +85,13 @@ code against the server's `!squad` chat commands; none of XIFO's Ashita add-on c
   rest a weapon skill rule). Not ported: their Parser, EXP Watch and Enemy Info tabs (DPS and XP Tracker cover the
   first two) and the Recruit / Sort / Optimize buttons.
 
+- **Era journal** (their `journal-era` edits for a third-party Journal add-on): the game's own Missions and Quests
+  menus already follow the server's expansions (base, Zilart, CoP and ToAU here), so nothing past ToAU shows there.
+  Completion Log (`//left`), which lists every quest, does the same now: only the areas the quest menu shows
+  (`game.quest_areas`), no unused placeholder entries, and on a server without Wings of the Goddess no Voidwatch,
+  Monstrosity, Trust, Records of Eminence or Unity quests in the old areas unless taken. The first two parts are
+  generic and also went to `develop`.
+
 Server reply formats used (from their `modules/custom/lua/squad.lua`): `squadpanel:<slot>|<name>|<job>|<level>|<sub or
 ->|<sub level>|<role>|<mode>|<out 0/1>|<switch mask>`, `jl|<slot>|<JOB:level,...>`, `cd|<slot>|<seconds>`,
 `camp|<on>|<puller slot, 0 = you>|<paused>|<pulls>`, `campbots|<names or ->|<pulling bot or ->`, then

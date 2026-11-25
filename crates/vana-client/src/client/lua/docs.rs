@@ -1022,6 +1022,13 @@ pub const FUNCS: &[Func] = &[
     },
     Func {
         ns: "game",
+        name: "quest_areas",
+        doc: "The quest areas the game's quest menu lists (numbered as in game.quests), in order: 0 to 4 always, the others only when the server enables their expansion (Outlands: Zilart, Aht Urhgan: ToAU, Crystal War: WotG, Abyssea: an Abyssea add-on, Adoulin and Coalition: SoA).",
+        params: &[],
+        ret: "integer[]",
+    },
+    Func {
+        ns: "game",
         name: "quests",
         doc: "The quests of each area (0 San d'Oria, 1 Bastok, 2 Windurst, 3 Jeuno, 4 Other Areas, 5 Outlands, 6 Aht Urhgan, 7 Crystal War, 8 Abyssea, 9 Adoulin, 10 Coalition) in the journal's order: {number, name, repeatable, current, completed} each, ours as the server sent them.",
         params: &[],
