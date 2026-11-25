@@ -7,8 +7,10 @@ database, applies the RULES / WORLD settings (rates.json), runs the game servers
 the co-op door. This script uses that, so their launcher stays your settings and tools app (open it while the world
 is stopped) and vana-client is the game:
 
-  1. Brings vana-client's own copy of their game folder up to date (their era DATs and DAT patches), copying only
-     what changed since the last run. vana-client never plays from their folder itself.
+  1. Does to their game folder what their PLAY does first: puts back the era DATs a game update wrote over and
+     redoes their DAT patches (their own code, run through their launcher). Then brings vana-client's own copy of
+     that folder up to date, copying only what changed since the last run. vana-client never plays from their
+     folder itself.
   2. Starts their world and waits until it says it is running.
   3. Starts what their PLAY starts beside the world but the world does not: the local AI (Ollama, squad chat, the
      crowd and bot chat helper) when the RULES page has it on.
@@ -112,6 +114,40 @@ class Kit:
 
 
 # ----- the game copy -----
+def restore_their_game(kit):
+    """What their PLAY does to their game folder before the game starts, so the copy below takes the right files: puts
+    back the era DATs a game update wrote over (launcher_setup.check_era_dats), redoes their DAT patches (Home Point
+    teleports, items, spells, mode marks: launcher_client.apply_all) and remembers the result (record_era_state).
+    Their own code does it, run through their launcher (this file's --restore-their-game mode)."""
+    ffxi = kit.cfg.get("ffxi_client_dir") or ""
+    if not ffxi or not kit.cfg.get("mariadb_dir"):           # (their PLAY does this on player installs only)
+        return
+    say("Checking their game folder as their PLAY does (era DATs, their DAT patches)...")
+    run = subprocess.run(kit.command(os.path.abspath(__file__), "--restore-their-game", kit.path), cwd=kit.path,
+                         capture_output=True, text=True, encoding="utf-8", errors="replace")
+    for line in (run.stdout or "").splitlines():
+        if line.strip():
+            say("  " + line.strip())
+    if run.returncode != 0:
+        tail = "\n".join((run.stderr or "").strip().splitlines()[-8:])
+        fail(f"Their era-DAT check did not finish (exit code {run.returncode}), so the game copy was left as it was:"
+             f"\n{tail}")
+
+
+def restore_inside_their_launcher(kit_path):
+    """Runs in their launcher's own Python (--run), next to their modules."""
+    sys.path.insert(0, kit_path)
+    import launcher_client
+    import launcher_setup
+    cfg = read_json(os.path.join(kit_path, "config.json"), {}) or {}
+    ffxi, server = cfg.get("ffxi_client_dir", ""), cfg.get("server_dir", "")
+    for line in launcher_setup.check_era_dats(kit_path, ffxi, log=print):
+        print(line)
+    launcher_client.apply_all(kit_path, ffxi, server, log=print)
+    launcher_setup.record_era_state(kit_path, ffxi)
+    return 0
+
+
 def same_folder(source, target):
     return bool(source) and os.path.realpath(source) == os.path.realpath(target)
 
@@ -389,6 +425,8 @@ def end(proc, seconds):
 
 
 def main(argv):
+    if argv[:1] == ["--restore-their-game"] and len(argv) == 2:
+        return restore_inside_their_launcher(argv[1])
     parser = argparse.ArgumentParser(description="Play XI: Forever Offline with vana-client (see the top of this file).")
     parser.add_argument("--kit", default=os.environ.get("XIFO_KIT"))
     parser.add_argument("--client", default=os.environ.get("VANA_CLIENT") or shutil.which("vana-client"))
@@ -415,6 +453,7 @@ def main(argv):
     if same_folder(kit.game_dir(), game):
         fail("vana-client's game folder is their game folder: give it its own copy (--game).")
     if not args.no_sync:
+        restore_their_game(kit)
         sync_game(kit.game_dir(), game)
 
     world = World(kit)

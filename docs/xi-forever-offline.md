@@ -14,7 +14,10 @@ and tools app (RULES, WORLD, SQUADS, the Hardcore characters, updates), used whi
 tools/xifo-play.py --kit "/path/XI Forever Offline" --client /path/vana-client
 ```
 
-1. It gives vana-client its own copy of their game folder (`Game/SquareEnix`, with their era DATs and DAT patches)
+1. It first does to their game folder what their PLAY does before the game starts: the era DATs a game update
+   wrote over go back and their DAT patches (Home Point teleports, items, spells, mode marks) are redone, by their
+   own code run through their launcher. The server emulates the era, so the client needs those files.
+   Then it gives vana-client its own copy of their game folder (`Game/SquareEnix`, with their era DATs and DAT patches)
    in `~/.local/share/vana-client-xifo/game`: the whole folder on the first run (reflinks where the disk can),
    then only the files their updates changed (everything again after switching to another install).
    `FINAL FANTASY XI/USER` (macros and settings) is copied only into a copy that has none, and then left alone. vana-client never plays from their folder itself.
