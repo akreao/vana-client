@@ -167,17 +167,37 @@ end
 function M.parse_set(lines)
   local r, err = rows(lines)
   if not r then return nil, err end
-  local set, parts = { rules = {} }, {}
+  local set, parts, segs, count = { rules = {} }, {}, {}, nil
   for _, f in ipairs(r) do
     if f[1] == "hdr" then
       set.num, set.job, set.flags, set.rev, set.id = tonumber(f[2]), f[3], f[4] or "", f[5], f[6]
       set.name = table.concat(f, "|", 7)
     elseif f[1] == "rule" then
       local i = tonumber(f[2])
+      local k, n = (f[3] or ""):match("^(%d+)/(%d+)$")
+      if not i or not k then return nil, { code = "badset", text = "a rule line is malformed" } end
+      local g = segs[i] or { n = tonumber(n), got = 0 }
+      if tonumber(k) ~= g.got + 1 or tonumber(n) ~= g.n then
+        return nil, { code = "badset", text = "a rule arrived out of order" }
+      end
+      g.got, segs[i] = g.got + 1, g
       parts[i] = (parts[i] or "") .. table.concat(f, "|", 4)
+    elseif f[1] == "end" then
+      count = tonumber(f[2])
     end
   end
   if not set.num then return nil, { code = "noreply", text = "no answer" } end
+  -- every rule the end line counts, each with all its segments: a set short of rules would save without them
+  local whole = count ~= nil
+  for i = 1, count or 0 do
+    if not segs[i] or segs[i].got ~= segs[i].n then whole = false end
+  end
+  for i in pairs(segs) do
+    if not count or i > count then whole = false end
+  end
+  if not whole then
+    return nil, { code = "badset", text = "the Rule Set arrived incomplete" }
+  end
   for i = 1, #parts do
     set.rules[i] = M.decode_rule(parts[i]) or { raw = parts[i] }
   end

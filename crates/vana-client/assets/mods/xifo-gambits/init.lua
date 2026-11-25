@@ -358,6 +358,7 @@ local function load_mates(keep)
       return n
     end)(), slot)
     st.mate = kept or 1
+    if not kept then st.ws, st.ws_edit = nil, nil end
     show_mates()
     if #mates == 0 then return status("You have no squad mates yet (!squad new <name> <job>).") end
     show_sets()

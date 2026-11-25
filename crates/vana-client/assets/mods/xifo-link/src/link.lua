@@ -11,6 +11,7 @@ M.GAP = 1.25       -- seconds between two lines we say
 M.RETRIES = 3      -- a refused line is said again this many times
 M.ECHO = 3         -- seconds after a send in which its echo or its refusal may come
 M.WAIT = 8         -- seconds a reply's lines are hidden and gathered after its request
+M.SYSTEM = 0xc8    -- the chat mode of the server's lines (s2c 0x017 kinds 6 / 7, "----== SystemMessage ==----")
 
 function M.new(run)
   return {
@@ -79,8 +80,8 @@ local function ends_with(text, tail)
   return #text >= #tail and text:sub(-#tail) == tail
 end
 
--- A chat line on its way into the log: false hides it.
-function M.filter(s, text, now)
+-- A chat line on its way into the log, in chat mode `mode`: false hides it.
+function M.filter(s, text, now, mode)
   local q = s.sent
   if q and now - q.at <= M.ECHO then
     if text:sub(1, 3) == ">> " and ends_with(text, q.text) then
@@ -102,9 +103,10 @@ function M.filter(s, text, now)
   end
   -- A server line comes as two log lines: this header, then the text. While a reply is due the header is hidden too
   -- (a header whose text is not a reply line loses only the header).
+  -- Only the server's lines (their mode) can be a reply: a player's chat is in its channel's mode, its continuation
+  -- lines (a line break in the text) too. A reply line also starts with its mark.
+  if mode ~= M.SYSTEM then return end
   if next(s.waiting) and text:find("^%-%-%-%-== SystemMessage ==%-%-%-%-$") then return false end
-  -- A reply line starts with its mark: a player's chat line always starts with the speaker's name, so another player
-  -- saying "squadpanel:..." is not taken as the server's.
   for tag, w in pairs(s.waiting) do
     if text:sub(1, #w.mark) == w.mark then
       local payload = text:sub(#w.mark + 1)

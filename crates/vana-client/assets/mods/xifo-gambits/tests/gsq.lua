@@ -20,6 +20,12 @@ assert(set.num == 4 and set.job == "WHM" and set.rev == "3" and set.name == "Fay
 assert(set.rules[2].kind == "j" and set.rules[2].name == "CONVERT" and set.rules[3].raw == "?")
 assert(G.editable(set.flags) and not G.editable("m") and not G.editable("or"))
 local err
+-- a set short of a rule, of a segment, or of its end line does not open
+local hdr = "hdr|4|WHM|o|3|w4|Fayd heals"
+assert(G.parse_set({ hdr, "rule|1|1/1|1,PARTY,HPP_LT,50,,,f,CURE,", "end|2" }) == nil, "rule missing")
+assert(G.parse_set({ hdr, "rule|1|1/2|1,SELF,MPP_LT,30,", "end|1" }) == nil, "segment missing")
+assert(G.parse_set({ hdr, "rule|1|1/1|1,PARTY,HPP_LT,50,,,f,CURE," }) == nil, "end line missing")
+assert(#G.parse_set({ hdr, "end|0" }).rules == 0)
 set, err = G.parse_set({ "err|missing|no usable Rule Set with that number" })
 assert(set == nil and err.code == "missing" and err.text:find("no usable", 1, true))
 
