@@ -63,15 +63,40 @@ end
 
 -- The quest files hold unused entries with Japanese working names (SDクエスト111, ATクエスト00); no real quest name has
 -- a byte past ASCII, and the game's own lists never show one we have not taken.
-local function listed(q)
-  return q.current or q.completed or not q.name:find("[\128-\255]")
+local function placeholder(q)
+  return q.name:find("[\128-\255]") ~= nil
+end
+
+-- XI: Forever Offline and other servers that stop at Treasures of Aht Urhgan (no Wings of the Goddess, so no Crystal
+-- War area): the old areas still hold quests from much later updates, Voidwatch (2010), Monstrosity (2012), Trusts
+-- (2013), Records of Eminence (2014) and Unity (2015). Those are left out unless taken.
+local LATE = { "^Trust: ", "^VW Op%. ", "Voidwatch", "^Monstrosity$", "^Survival of the Wisest$",
+  "^Records of Eminence$", "^Unity Concord$" }
+
+local function late(q)
+  for _, p in ipairs(LATE) do
+    if q.name:find(p) then return true end
+  end
+  return false
+end
+
+local function wotg()
+  for _, a in ipairs(game.quest_areas()) do
+    if a == 7 then return true end
+  end
+  return false
+end
+
+local function listed(q, era)
+  return q.current or q.completed or not (placeholder(q) or (era and late(q)))
 end
 
 local function quest_rows(area)
   local list = game.quests()[area] or {}
+  local era = not wotg()
   local rows = {}
   for _, q in ipairs(list) do
-    if listed(q) then
+    if listed(q, era) then
       local s = state(q)
       rows[#rows + 1] = { q.name .. (q.repeatable and " (repeatable)" or ""), s, colour = s == "done" and DIM or (s == "under way" and GOLD or nil) }
     end
@@ -141,12 +166,12 @@ commands.register("left", function(what, arg)
     say(("%s: %d spells not learned, %d of them at level %d or under%s"):format(res.job(job), #list, #now, have,
       #now > 0 and (": " .. table.concat(now, ", ", 1, math.min(#now, 12)) .. (#now > 12 and ", ..." or "")) or "."))
   elseif what == "quests" then
-    local all = game.quests()
+    local all, era = game.quests(), not wotg()
     for _, a in ipairs(areas()) do
       local name = a[2]
       local done, going, total = 0, 0, 0
       for _, q in ipairs(all[a[1]] or {}) do
-        if listed(q) then
+        if listed(q, era) then
           total = total + 1
           if q.current then going = going + 1 elseif q.completed then done = done + 1 end
         end

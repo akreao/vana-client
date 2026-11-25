@@ -1,5 +1,6 @@
 -- Completion Log: the Quests tab lists only the areas the game's quest menu shows (game.quest_areas), and leaves out
--- the quest files' unused entries with Japanese working names unless we have taken one.
+-- the quest files' unused entries with Japanese working names unless we have taken one; on a server without Wings of
+-- the Goddess, the later updates' quests in the old areas too.
 
 C, said = {}, {}
 settings = { get = function() return true end }
@@ -56,3 +57,32 @@ C.left("quests")
 local text = table.concat(said, "\n")
 assert(text:find("San d'Oria: 1 of 2 done, 1 under way.", 1, true), text)
 assert(not text:find("Crystal War", 1, true), text)
+
+-- A server that stops at ToAU (no Crystal War area): the later updates' quests in the old areas are left out unless
+-- taken; with Wings of the Goddess they are listed.
+local areas_on = { 0, 1, 2, 3, 4, 5, 6 }
+game.quest_areas = function() return areas_on end
+game.quests = function()
+  return {
+    [0] = {
+      { number = 1, name = "A Squire's Test", current = false, completed = true },
+      { number = 119, name = "Trust: San d'Oria", current = false, completed = false },
+    },
+    [4] = {
+      { number = 34, name = "Monstrosity", current = false, completed = false },
+      { number = 84, name = "VW Op. #026: Tavnazian Terrors", current = false, completed = false },
+      { number = 110, name = "Records of Eminence", current = false, completed = true },
+      { number = 111, name = "Unity Concord", current = false, completed = false },
+    },
+    [5] = { { number = 104, name = "Skyward Ho, Voidwatcher!", current = false, completed = false } },
+  }
+end
+H("completion", { kind = "set", id = "area", index = 1 })
+assert(names() == "A Squire's Test", names())
+H("completion", { kind = "set", id = "area", index = 5 })
+assert(names() == "Records of Eminence", names())
+H("completion", { kind = "set", id = "area", index = 6 })
+assert(names() == "", names())
+areas_on = { 0, 1, 2, 3, 4, 5, 6, 7 }
+H("completion", { kind = "set", id = "area", index = 1 })
+assert(names() == "A Squire's Test|Trust: San d'Oria", names())
