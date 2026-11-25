@@ -1995,6 +1995,7 @@ mod panel_tests {
                         hidden: Vec::new(),
                         placed: Default::default(),
                         opacity: Default::default(),
+                        party_rows: Vec::new(),
                     };
                     let show =
                         Show { size: vec2(900.0, 174.0), resizable: true, height: Some(200.0), ..Default::default() };

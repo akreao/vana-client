@@ -1833,6 +1833,7 @@ mod tests {
                         hidden: Vec::new(),
                         placed: Default::default(),
                         opacity: Default::default(),
+                        party_rows: Vec::new(),
                     };
                     for k in 0..saved.len() {
                         let key = format!("edge{k}");
