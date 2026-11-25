@@ -600,13 +600,13 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "a94f12d6928d3d354f1891b7a968206de50d78d5139f5a85bdbc1b46f2fee5db",
-          "size": 6494,
+          "sha256": "3052b4b496399eb28b7f232ac15614691ad8bcab181949596050929ae610fcfb",
+          "size": 7262,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/completion-log/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "2536f3e2932e3f1806127a76ec7d432680508f8b4e89e8f9781de66ca31efdda",
+          "sha256": "a8a339fcceca01f62562ffae70e318baddf7906dbd30873ee69e10ba40948e7c",
           "size": 733,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/completion-log/mod.toml"
         }
@@ -614,7 +614,7 @@
       "id": "completion-log",
       "kind": "lua",
       "name": "Completion Log",
-      "version": "1.0.5"
+      "version": "1.0.6"
     },
     {
       "authors": [],
