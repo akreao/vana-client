@@ -442,3 +442,31 @@ assert(w5.mate.items[1] == "Fayd  WHM 30/BLM 15  (out)" and w5.live.text == "Run
 -- an away mate: no Apply this mate
 handlers.gambits("gambits", { kind = "set", id = "mate", index = 2 })
 assert(w5.use.items[4] == nil)
+
+-- deleting the set a mate runs: the roster is read again and the live line says what the mate runs now
+handlers.gambits("gambits", { kind = "set", id = "mate", index = 1 })
+for i = #sent, 1, -1 do
+  if sent[i].text:match("^!gsq list %d+ WHM$") then
+    ev.xifo_link_reply(sent[i].tag, { "set|4|WHM|2|o|3|w5|Fayd heals", "end|1" }, true)
+    break
+  end
+end
+handlers.gambits("gambits", { kind = "select", id = "sets", index = 1 })
+handlers.gambits("gambits", { kind = "press", id = "setbtn", index = 4 })
+prompts[#prompts].f(1)
+assert(last():match("^!gsq del %d+ 4 3$"), last())
+answer({ "ok|4|3|w5" })
+assert(last():match("^!gsq mates %d+$"), "the roster after a delete: " .. last())
+answer({ "mate|1|40|Fayd|WHM|30|BLM|0|1|15|fallback|-|0|1|0", "mate|2|41|Salia|WAR|28|-|0|0|-|off|-|0|0|0", "end|2" })
+assert(w5.live.text == "Runs its job rules: the chosen set is gone.", w5.live.text)
+
+-- a role set on the Party roles page: once the server takes it, the roles and the roster are read again
+handlers.gambits("gambits", { kind = "set", id = "tabs", index = 3 })
+answer({ "pr|0|Nymh|RDM|5|0|C|1|0", "pr|1|Fayd|WHM|30|0|C|1|0", "end|2" })
+handlers.gambits("gambits", { kind = "select", id = "pr_list", index = 2 })
+handlers.gambits("gambits", { kind = "set", id = "pr_role", index = 2 })
+assert(last():match("^!gsq prs %d+ 1 1$"), last())
+answer({ "pr|1|Fayd|WHM|30|1|C|1|1", "end|1" })
+assert(last():match("^!gsq mates %d+$") and sent[#sent - 1].text:match("^!gsq prl %d+$"), last())
+answer({ "mate|1|40|Fayd|WHM|30|BLM|0|1|15|pending|role|0|0|0", "mate|2|41|Salia|WAR|28|-|0|0|-|off|-|0|0|0", "end|2" })
+assert(w5.live.text:find("its role changed", 1, true), w5.live.text)
