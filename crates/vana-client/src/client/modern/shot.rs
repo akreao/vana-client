@@ -512,6 +512,7 @@ fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
         scan_kinds: &mut 7,
         this: Default::default(),
         rooms: Default::default(),
+        party_rows: Vec::new(),
         retail: Default::default(),
         focus: Some("target"),
         hidden: Vec::new(),
