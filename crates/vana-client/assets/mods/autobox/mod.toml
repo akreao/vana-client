@@ -1,0 +1,18 @@
+name = "Autobox"
+version = "1.0.5"
+description = "Rules for your own character, one sheet per main job: target, conditions and a spell, ability or weapon skill, tried from the top and done when the game would take it (XI: Forever Offline's autobox, rewritten)."
+authors = ["vana-client"]
+permissions = ["automation"]
+
+[settings.on]
+type = "bool"
+default = true
+label = "Autobox"
+help = "//autobox opens the rule sheet; //autobox on | off switches the rules. They start switched off, and each job starts from a small preset sheet."
+
+[commands.autobox]
+help = "Opens or closes the Autobox rule sheet, or switches the rules on or off."
+args = ""
+forms = [
+  { args = "on | off", help = "Switches the rules on or off for this character." },
+]
