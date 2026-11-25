@@ -48,6 +48,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -301,14 +302,17 @@ def prepare_mods(profile):
         return
     regular = os.path.realpath(os.path.join(regular_data_dir(), "mods"))   # a linked library: copy what it points to
     if os.path.isdir(regular):
-        part = mods + ".copying"                     # renamed once complete, so a failed copy is redone next time
-        if os.path.lexists(part):
-            shutil.rmtree(part)
-        if shutil.which("cp") and os.name != "nt":
-            subprocess.run(["cp", "-a", "--reflink=auto", regular, part], check=True)
-        else:
-            shutil.copytree(regular, part)
-        os.rename(part, mods)
+        # Into a folder of this run's own first, renamed once complete, so a failed copy is redone next time.
+        work = tempfile.mkdtemp(prefix=".mods-copying-", dir=profile)
+        try:
+            part = os.path.join(work, "mods")
+            if shutil.which("cp") and os.name != "nt":
+                subprocess.run(["cp", "-a", "--reflink=auto", regular, part], check=True)
+            else:
+                shutil.copytree(regular, part)
+            os.rename(part, mods)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
         say(f"The XIFO profile has its own mods folder now ({mods}), a copy of your regular one.")
     else:
         os.makedirs(mods)
