@@ -11,6 +11,7 @@ events = { on = function(name, f) ev[name] = f end }
 timer = { after = function() end }
 commands = { register = function(n, f) cmd[n] = f end }
 ui = {
+  get = function(id, el) return { text = windows[id][el].text } end,
   window = function(id, spec)
     windows[id] = {}
     for _, e in ipairs(spec.elements) do if e.id then windows[id][e.id] = e end end
@@ -129,11 +130,16 @@ H({ kind = "select", id = "sets", index = 1 })
 H({ kind = "press", id = "setbtn", index = 1 })
 answer({ "hdr|4|WHM|o|4|w4|Fayd heals", "rule|1|1/1|1,MELEE-TANK,HPP_LT,50,,,f,CURE,", "end|1" })
 H({ kind = "select", id = "rules", index = 1 })
-assert(rw.rf1.items[rw.rf1.at] == "Exclude" and rw.rf2.items[1] == "This target" and rw.rf3.at == 1)
-HR({ kind = "set", id = "rf3", index = 2 })
+assert(rw.rf.items[1] == "Tank -" and rw.rf.items[2] == "Mage" and rw.rf.items[3] == "Ranged", rw.rf.items[1])
+HR({ kind = "press", id = "rf", index = 2 })
 assert(w2.rules.rows[1][3] == "Melee + Mage, not Tank", w2.rules.rows[1][3])
+HR({ kind = "press", id = "rf", index = 1 })
+assert(w2.rules.rows[1][3] == "Melee + Mage", "Tank: left out -> not set")
+HR({ kind = "press", id = "rf", index = 1 })
+HR({ kind = "press", id = "rf", index = 1 })
+assert(w2.rules.rows[1][3] == "Melee + Mage, not Tank", "not set -> counts too -> left out")
 HR({ kind = "set", id = "target", index = 2 }) -- (Melee is not in this catalog: listed first, marked)
-assert(#rw.rf1.items == 1 and rw.rf1.items[1] == "-" and w2.rules.rows[1][3] == "Self", tostring(rw.rf1.items[1]) .. " " .. tostring(w2.rules.rows[1][3]))
+assert(#rw.rf.items == 1 and w2.rules.rows[1][3] == "Self", tostring(w2.rules.rows[1][3]))
 
 -- weapon skills of the picked mate (Salia, slot 2, after the mate switch above)
 H({ kind = "set", id = "tabs", index = 2 })
@@ -163,3 +169,27 @@ H({ kind = "select", id = "pr_list", index = 4 })
 local n2 = #sent
 H({ kind = "set", id = "pr_role", index = 3 })
 assert(#sent == n2, "another player's role is not ours to set")
+
+-- share codes: the open set out to the clipboard, a code in the box opened as a new set
+local copied
+client = { copy = function(t) copied = t end, paste = function(f) f("") end }
+H({ kind = "set", id = "tabs", index = 1 })
+H({ kind = "select", id = "sets", index = 1 })
+local asked = #prompts
+H({ kind = "press", id = "setbtn", index = 1 })
+assert(#prompts == asked + 1, "the edited set is not thrown away without asking")
+prompts[#prompts].f(1)
+answer({ "hdr|4|WHM|o|4|w4|Fayd heals", "rule|1|1/1|1,PARTY,HPP_LT,50,,,f,CURE,", "end|1" })
+H({ kind = "press", id = "share", index = 1 })
+assert(copied and copied:sub(1, 3) == "GS1" and w2.code.text == copied)
+local S = require("src.share")
+assert(S.decode(copied).rules[1].name == "CURE")
+w2.code.text = "  " .. copied .. "  "
+H({ kind = "press", id = "share", index = 2 })
+assert(w2.editing.text:find("New Rule Set", 1, true) and w2.name.text == "Fayd heals", w2.editing.text)
+assert(w2.status.text:find("Imported Fayd heals", 1, true), w2.status.text)
+w2.code.text = "GS1nope"
+H({ kind = "press", id = "share", index = 2 })
+assert(#prompts == asked + 2, "the unsaved import is not thrown away without asking")
+prompts[#prompts].f(1)
+assert(w2.status.text:find("Not imported", 1, true))

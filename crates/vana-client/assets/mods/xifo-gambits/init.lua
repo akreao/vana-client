@@ -4,6 +4,7 @@
 -- assigns them with the server's "!gsq" and "!squad ruleset" commands, through the XIFO Link mod.
 
 local G = require("src.gsq")
+local Share = require("src.share")
 
 local LINK = "xifo-link"
 local DIM, BAD = { 160, 160, 160 }, { 235, 120, 110 }
@@ -101,6 +102,11 @@ ui.window(W, {
       tip = "Edit (or a click on a rule) opens the rule in its own window." },
     { page = 1, type = "buttons", id = "save", items = { "Save", "Check", "Undo changes" },
       tip = "Check: the server tries the saved set at the called mate's level and lists the rules it would skip." },
+    { page = 1, type = "buttons", id = "share", label = "Share codes (the same GS1 codes as XIFO's Gambits add-on)",
+      items = { "Copy code", "Import code" },
+      tip = "Copy code: the open Rule Set as a code on the clipboard. Import code: reads the box below, or the clipboard "
+        .. "when the box is empty, and opens the set as a new one; nothing is saved until you Save." },
+    { page = 1, type = "input", id = "code", label = "Share code", text = "", max = 1024 },
     { page = 2, type = "text", id = "ws_info", text = "Pick a squad mate." },
     { page = 2, type = "choice", id = "ws_ctl", label = "Weapon skills", items = { "Squad default", "Custom" }, at = 1,
       tip = "Squad default: the squad picks skillchain roles and weapon skills itself. Custom: the settings below." },
@@ -133,11 +139,9 @@ ui.window(R, {
     { type = "text", id = "which", text = "" },
     { type = "choice", id = "on", label = "Rule", items = { "On", "Off" }, at = 1 },
     { type = "dropdown", id = "target", label = "Target", items = { "-" }, at = 1 },
-    { type = "text", id = "rf_hint", text = "", dim = true },
-    { type = "choice", id = "rf1", label = "Tank", items = { "-" }, at = 1 },
-    { type = "choice", id = "rf2", label = "Melee", items = { "-" }, at = 1 },
-    { type = "choice", id = "rf3", label = "Mage", items = { "-" }, at = 1 },
-    { type = "choice", id = "rf4", label = "Ranged", items = { "-" }, at = 1 },
+    { type = "buttons", id = "rf", label = "Other roles", items = { "-" },
+      tip = "For the targets Tank, Melee, Mage and Ranged: a click turns a role between counting too (+), left out (-) and "
+        .. "not set." },
     { type = "dropdown", id = "cond", label = "When", items = { "-" }, at = 1 },
     { type = "input", id = "arg", label = "Value", text = "", max = 24,
       tip = "A number for HP, MP, TP and the like; a status effect's name (Haste, Protect...) for Has / Missing effect." },
@@ -230,18 +234,18 @@ local function show_rule()
   for _, t in ipairs(cat.t or {}) do tn[#tn + 1] = t; tl[#tl + 1] = G.target_label(t) end
   st.targets = fill_dropdown("target", tn, tl, r.target, G.target_label)
   local role_target = index_of(G.ROLE_TARGETS, r.target) and (st.version or 0) >= 9
-  ui.update(R, "rf_hint", { text = role_target and "Other roles: also include them, or leave them out."
-    or "Other roles can be included or left out only for the targets Tank, Melee, Mage and Ranged." })
-  for i, role in ipairs(G.ROLE_TARGETS) do
-    if not role_target then
-      ui.update(R, "rf" .. i, { items = { "-" }, at = 1 })
-    elseif role == r.target then
-      ui.update(R, "rf" .. i, { items = { "This target" }, at = 1 })
-    else
-      ui.update(R, "rf" .. i, { items = { "-", "Include", "Exclude" },
-        at = index_of(r.include or {}, role) and 2 or (index_of(r.exclude or {}, role) and 3) or 1 })
+  local rf = {}
+  if role_target then
+    for _, role in ipairs(G.ROLE_TARGETS) do
+      if role ~= r.target then
+        local mark = index_of(r.include or {}, role) and " +" or (index_of(r.exclude or {}, role) and " -" or "")
+        rf[#rf + 1] = G.target_label(role) .. mark
+      end
     end
+  else
+    rf[1] = "Only for the targets Tank, Melee, Mage and Ranged"
   end
+  ui.update(R, "rf", { items = rf })
   local cn, cl = {}, {}
   for _, c in ipairs(cat.c or {}) do cn[#cn + 1] = c.name; cl[#cl + 1] = G.cond_label(c.name) end
   st.conds = fill_dropdown("cond", cn, cl, r.cond, G.cond_label)
@@ -686,6 +690,34 @@ ui.on(W, function(_, e)
       say("!squad reapply")
     end
     timer.after(2, function() load_mates(true) end)
+  elseif e.kind == "press" and e.id == "share" then
+    if e.index == 1 then
+      if not d then return status("Open a Rule Set first.", true) end
+      local code, why = Share.encode(d)
+      if not code then return status("No code: " .. why, true) end
+      client.copy(code)
+      ui.update(W, "code", { text = #code <= 1024 and code or "" })
+      status(("The code of %s (%d rules) is on the clipboard."):format(d.name or "the set", #d.rules))
+    else
+      local function import(text)
+        local set, why = Share.decode(text)
+        if not set then return status("Not imported: " .. why, true) end
+        local mjob = m and m.job
+        st.draft = { num = 0, job = set.job, name = set.name, flags = "o", rules = set.rules }
+        st.rule, st.dirty = 1, true
+        show_rules()
+        status(("Imported %s (%s, %d rules) as a new Rule Set; Save keeps it.%s"):format(set.name, set.job, #set.rules,
+          mjob and mjob ~= set.job and (" It is for " .. set.job .. ", not " .. m.name .. "'s " .. mjob .. ".") or ""))
+      end
+      local typed = ui.get(W, "code")
+      typed = typed and typed.text or ""
+      if typed:match("%S") then
+        unless_dirty(function() import(typed) end)
+      else
+        local ok = pcall(client.paste, function(text) unless_dirty(function() import(text) end) end)
+        if not ok then status("Paste the code into the box, then Import code.", true) end
+      end
+    end
   elseif e.kind == "change" and e.id == "name" and d then
     d.name = e.text
     changed()
@@ -750,13 +782,21 @@ ui.on(R, function(_, e)
       return out
     end
     r.include, r.exclude = without(r.include), without(r.exclude)
-  elseif e.kind == "set" and e.id:match("^rf%d$") then
-    local role = G.ROLE_TARGETS[tonumber(e.id:sub(3))]
-    if not role or role == r.target or not index_of(G.ROLE_TARGETS, r.target) then return end
+  elseif e.kind == "press" and e.id == "rf" then
+    if not index_of(G.ROLE_TARGETS, r.target) or (st.version or 0) < 9 then return end
+    local others = {}
+    for _, v in ipairs(G.ROLE_TARGETS) do if v ~= r.target then others[#others + 1] = v end end
+    local role = others[e.index]
+    if not role then return end
     local inc, exc = {}, {}
     for _, v in ipairs(r.include or {}) do if v ~= role then inc[#inc + 1] = v end end
     for _, v in ipairs(r.exclude or {}) do if v ~= role then exc[#exc + 1] = v end end
-    if e.index == 2 then inc[#inc + 1] = role elseif e.index == 3 then exc[#exc + 1] = role end
+    -- not set -> counts too -> left out -> not set
+    if not index_of(r.include or {}, role) and not index_of(r.exclude or {}, role) then
+      inc[#inc + 1] = role
+    elseif index_of(r.include or {}, role) then
+      exc[#exc + 1] = role
+    end
     r.include, r.exclude = inc, exc
   elseif e.kind == "set" and e.id == "cond" and st.conds[e.index] then
     r.cond = st.conds[e.index]
