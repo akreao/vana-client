@@ -179,21 +179,21 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "f08eeb2f2c84e11ea0067843983a8dea89d2131572e2d13d40fa7a4fd6b5f1ff",
+          "sha256": "ab777ead51865a0793c1e52dbf4c39b231bb102b6268b5e741ce4718895ad776",
           "size": 752,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/auto-ranged/mod.toml"
         },
         {
           "path": "src/core.lua",
-          "sha256": "1f6a59f653677f83c7bb230227f27bbb497ae50648f552e492f8a5d9f84bf712",
-          "size": 4303,
+          "sha256": "f22e1bb788b7947878dd3a734187f5f4d4c48ccbf60f8ea13c66606a107094c9",
+          "size": 4444,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/auto-ranged/src/core.lua"
         }
       ],
       "id": "auto-ranged",
       "kind": "lua",
       "name": "Auto Ranged",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [
@@ -3716,13 +3716,13 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "4d57062fabc32a32977abbb6cdafc29a804936d46f6fd6017b21b018553b7440",
-          "size": 39864,
+          "sha256": "eee0d4717b7534f032c2c6582a0ce21d69ce46c96a9dd332d5cfdcc65615340e",
+          "size": 41307,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-gambits/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "f5e51636c9e210d3f3deaa6f8298ca1f2649d64638ccc138501fe35cc3990ec7",
+          "sha256": "6e614d81fd1829cbd2f5aeba2bee888e143e8081c610e9a505b793d7c5b04ae7",
           "size": 506,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-gambits/mod.toml"
         },
@@ -3742,7 +3742,7 @@
       "id": "xifo-gambits",
       "kind": "lua",
       "name": "XIFO Gambits",
-      "version": "1.3.1"
+      "version": "1.3.2"
     },
     {
       "authors": [
@@ -3792,13 +3792,13 @@
         },
         {
           "path": "init.lua",
-          "sha256": "aadadcab02e1f7bf1fb18164a473a50e6ae3f462e4251218ef264aa164d05080",
-          "size": 2468,
+          "sha256": "8dde6cc2fd81fed97b2a7cb4aa89fa8914908e0fd7df981c1f53511e1c18b11c",
+          "size": 3351,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-hc-icons/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "360ac2c81992ab1cf3accb70b0501225498f245e623d105c7e2e1e1f47b6a897",
+          "sha256": "36c02bafd08215b481372758d02a6358aa7f15814247d842fe45fb405604a666",
           "size": 656,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-hc-icons/mod.toml"
         },
@@ -3812,7 +3812,7 @@
       "id": "xifo-hc-icons",
       "kind": "lua",
       "name": "XIFO HC Icons",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [

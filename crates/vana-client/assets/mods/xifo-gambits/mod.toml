@@ -1,5 +1,5 @@
 name = "XIFO Gambits"
-version = "1.3.1"
+version = "1.3.2"
 description = "Edit your XI: Forever Offline squad mates' Rule Sets: ordered rules of target, conditions and action, saved and checked by the server."
 authors = ["vana-client"]
 permissions = ["clipboard"]

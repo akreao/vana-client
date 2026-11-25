@@ -311,19 +311,86 @@ w3.code.text = "GS1" .. string.rep("A", 1021) -- as the box cuts it: 1024 charac
 H({ kind = "press", id = "share", index = 2 })
 assert(w3.status.text:find("/lua grant xifo-gambits clipboard", 1, true), w3.status.text)
 
--- a version 10 server: capability words, each mate's live Rule Set state, Apply this mate
+-- an imported set stays open while the first mates arrive: a mate of its job is picked, or the editor says whose
+-- choices it shows
 sent, windows, open = {}, {}, {}
 load(TEST.source("init.lua"), "@init.lua")()
 local w4 = windows.gambits
 cmd.gambits()
+answer({ "hello|9|32|120|64" })
+answer({ "end|0" })
+w4.code.text = assert(require("src.share").encode({ job = "WHM", name = "Heals", rules = { { on = true,
+  target = "SELF", cond = "ALWAYS", arg = "", kind = "r" } } }))
+client = { copy = function() end, paste = function(f) f("") end }
+H({ kind = "press", id = "share", index = 2 })
+cmd.gambits()
+cmd.gambits()
+answer({ "mate|1|41|Salia|WAR|28|-|0|0|-", "mate|2|40|Fayd|WHM|30|-|0|0|-", "end|2" })
+assert(w4.mate.at == 2 and w4.editing.text:find("for WHM", 1, true) and not w4.editing.text:find("choices from", 1, true),
+  w4.editing.text)
+-- the picked mate's catalog fills the open rule's dropdowns
+for i = #sent, 1, -1 do
+  if sent[i].text:match("^!gsq catm %d+ 2 jm$") then
+    ev.xifo_link_reply(sent[i].tag, cat, true)
+    break
+  end
+end
+H({ kind = "select", id = "rules", index = 1 })
+local rw4 = windows.gambits_rule
+assert(rw4.target.items[rw4.target.at] == "Self" and #rw4.target.items == 3, rw4.target.items[rw4.target.at])
+cmd.gambits()
+cmd.gambits()
+answer({ "mate|1|41|Salia|WAR|28|-|0|0|-", "end|1" })
+assert(w4.editing.text:find("choices from Salia, a WAR", 1, true), w4.editing.text)
+-- not while the kept mate's weapon skill setting has unsaved changes
+H({ kind = "set", id = "tabs", index = 2 })
+answer({ "ws|1|WAR|d|0|3|1000|0|0|-|0|1|1|1", "end|1" })
+H({ kind = "set", id = "ws_tp", index = 4 })
+cmd.gambits()
+cmd.gambits()
+answer({ "mate|1|41|Salia|WAR|28|-|0|0|-", "mate|3|42|Bea|WHM|20|-|0|0|-", "end|2" })
+assert(w4.mate.at == 1, "the edited weapon skill setting's mate was switched away")
+H({ kind = "press", id = "ws_btn", index = 1 })
+assert(last():match("^!gsq wss %d+ 1 0 3 3000 0$"), last())
+answer({ "ws|1|WAR|c|0|3|3000|0|0|-|0|1|1|1", "end|1" })
+-- the same mate changed jobs (Squad) while an edit was unsaved: it counts as a new pick, its old job's setting gone
+H({ kind = "set", id = "ws_tp", index = 2 })
+cmd.gambits()
+cmd.gambits()
+answer({ "mate|1|41|Salia|RDM|28|-|0|0|-", "mate|3|42|Bea|WHM|20|-|0|0|-", "end|2" })
+assert(w4.mate.at == 2 and last():match("^!gsq wsg %d+ 3$"), last())
+H({ kind = "press", id = "ws_btn", index = 1 })
+assert(not last():match("^!gsq wss"), "the old job's setting was saved")
+H({ kind = "set", id = "tabs", index = 1 })
+-- a mate of the set's job arriving later is picked over the one of another job, the unsaved set kept
+cmd.gambits()
+cmd.gambits()
+answer({ "mate|1|41|Salia|WAR|28|-|0|0|-", "mate|3|42|Bea|WHM|20|-|0|0|-", "end|2" })
+assert(w4.mate.at == 2 and w4.name.text == "Heals" and not w4.editing.text:find("choices from", 1, true),
+  w4.editing.text)
+
+-- with no set open, a mate that changed jobs stays picked (its new job's setting loads)
+H({ kind = "press", id = "save", index = 3 }) -- Undo changes: a new set is dropped
+assert(w4.editing.text == "No Rule Set open.", w4.editing.text)
+H({ kind = "set", id = "tabs", index = 2 })
+cmd.gambits()
+cmd.gambits()
+answer({ "mate|1|41|Salia|RDM|28|-|0|0|-", "mate|3|42|Bea|BLM|20|-|0|0|-", "end|2" })
+assert(w4.mate.at == 2 and last():match("^!gsq wsg %d+ 3$"), last())
+
+-- a version 10 server: capability words, each mate's live Rule Set state, Apply this mate
+sent, windows, open = {}, {}, {}
+load(TEST.source("init.lua"), "@init.lua")()
+local w5 = windows.gambits
+cmd.gambits()
 answer({ "hello|10|32|120|64|live,reapply1" })
 answer({ "mate|1|40|Fayd|WHM|30|BLM|4|1|15|pending|edited|4|0|0", "mate|2|41|Salia|WAR|28|-|0|0|-|off|-|0|0|0",
   "end|2" })
-assert(w4.mate.items[1] == "Fayd  WHM 30/BLM 15  (out, *)", w4.mate.items[1])
-assert(w4.use.items[4] == "Apply this mate", tostring(w4.use.items[4]))
-local list4 = sent[#sent - 1]
-ev.xifo_link_reply(list4.tag, { "set|4|WHM|2|o|3|w4|Fayd heals", "end|1" }, true)
-assert(w4.live.text:find("Runs Rule Set 4; its set was edited", 1, true), w4.live.text)
+assert(w5.mate.items[1] == "Fayd  WHM 30/BLM 15  (out, *)", w5.mate.items[1])
+assert(w5.use.items[4] == "Apply this mate", tostring(w5.use.items[4]))
+local list5 = sent[#sent - 1]
+ev.xifo_link_reply(list5.tag, { "set|4|WHM|2|o|3|w5|Fayd heals", "end|1" }, true)
+assert(w5.live.text:find("Runs Rule Set 4; its set was edited", 1, true), w5.live.text)
 timers = {}
 handlers.gambits("gambits", { kind = "press", id = "use", index = 4 })
 assert(last() == "!squad reapply 1", last())
@@ -332,7 +399,7 @@ timers[#timers]()
 timers[#timers]()
 assert(last():match("^!gsq mates %d+$"), last())
 answer({ "mate|1|40|Fayd|WHM|30|BLM|4|1|15|set|-|4|0|0", "mate|2|41|Salia|WAR|28|-|0|0|-|off|-|0|0|0", "end|2" })
-assert(w4.mate.items[1] == "Fayd  WHM 30/BLM 15  (out)" and w4.live.text == "Runs Rule Set 4.", w4.live.text)
+assert(w5.mate.items[1] == "Fayd  WHM 30/BLM 15  (out)" and w5.live.text == "Runs Rule Set 4.", w5.live.text)
 -- an away mate: no Apply this mate
 handlers.gambits("gambits", { kind = "set", id = "mate", index = 2 })
-assert(w4.use.items[4] == nil)
+assert(w5.use.items[4] == nil)

@@ -26,7 +26,8 @@ local NEEDS_AMMO, THROWN = { [25] = true, [26] = true }, 27
 function M.can_shoot(range, ammo)
   if range then
     if range.skill == THROWN then return true end
-    return NEEDS_AMMO[range.skill] == true and ammo ~= nil
+    -- the ammo must be of the weapon's skill (arrows for a bow...): a utility item in the slot does not shoot
+    return NEEDS_AMMO[range.skill] == true and ammo ~= nil and ammo.skill == range.skill
   end
   return ammo ~= nil and ammo.skill == THROWN
 end

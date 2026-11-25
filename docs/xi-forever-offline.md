@@ -65,13 +65,14 @@ code against the server's `!squad` chat commands; none of XIFO's Ashita add-on c
 
 - **Auto Ranged** (`auto-ranged`, `//autora`): their autora as our own mod, and not tied to XIFO (it only uses `/ra`).
   A small edge window picks Manual, Auto or Until hate. Auto keeps shooting while you are engaged with a living
-  monster targeted and a ranged weapon or ammo on; it waits for each shot (and spells, items), holds while you move,
+  monster targeted and a ranged weapon with its own kind of ammo (or a thrown weapon) on; it waits for each shot (and spells, items), holds while you move,
   waits `//autora delay <s>` after a shot (0.5 at first) and pauses 3 s when the game refuses a shot (out of range,
   cannot see). Until hate also holds while the monster's last action (within 10 s) was on you.
 
 - **XIFO HC Icons** (`xifo-hc-icons`, `//hcicons`): the hardcore mode's shield (Iron, Steel, Silver, Random; our own
   pictures) left of each hardcore member's row in the modern party and alliance windows; the game already draws
-  the shield beside names in the world. On arriving in an area it sends `!hcicons`; the server answers
+  the shield beside names in the world. On arriving in an area it sends `!hcicons` (in /say, so only for a character
+  whose server has answered an XIFO mod before: the first time, open XIFO Squad or `//hcicons refresh`); the server answers
   `[HC-ICONS] !Name=1,Other=3` and later tells arrivals as `[HC-ICONS] Name=2`, which XIFO Link hides (its `listen`).
   The rows come from `ui.native.party_rows()`. `//hcicons` turns it off or on, `list` names who is known.
 
@@ -106,6 +107,7 @@ Server reply formats used (from their `modules/custom/lua/squad.lua`): `squadpan
 
 - Squad mates sometimes have no model: their server sends a name over the look in some 0x00E updates.
   Retail shows wrong armor there instead. It needs a server fix.
-- Their other Ashita addons (server menu, Gambits, hardcore icons, journal, autobox, minigames) and the co-op
-  launcher layer are not in vana-client yet; the squad panel is (XIFO Squad, above).
+- Their other Ashita addons (server menu, journal, autobox, minigames) and the co-op launcher layer are not in
+  vana-client yet; the squad panel, Gambits, hardcore icons and autora are (XIFO Squad, XIFO Gambits, XIFO HC Icons,
+  Auto Ranged, above).
 - Their server and a LandSandBoat server of your own use the same ports: stop one before starting the other.
