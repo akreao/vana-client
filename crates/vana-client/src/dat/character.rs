@@ -1006,6 +1006,12 @@ pub fn part_file(race: u8, slot: usize, id: u16) -> Option<u32> {
     None
 }
 
+/// The model ids a PC race's slot holds: its ranges' counts summed (u16::MAX for a race without the tables).
+fn slot_count(race: u8, slot: usize) -> u16 {
+    let Some(ranges) = pc_race(race).and_then(|r| SLOT_RANGES[r].get(slot)) else { return u16::MAX };
+    ranges.iter().map(|&(_, n)| n).sum::<u32>().min(u16::MAX as u32) as u16
+}
+
 /// File ids for a look: skeleton file first, then (slot, model id, file id) per part.
 pub fn file_ids(look: &Look) -> Result<(u32, Vec<(&'static str, u16, u32)>)> {
     let Some(skel) = skeleton_file(look.race) else { bail!("race {} has no model tables (0..8, 29..36)", look.race) };
@@ -1013,6 +1019,9 @@ pub fn file_ids(look: &Look) -> Result<(u32, Vec<(&'static str, u16, u32)>)> {
     let ids = [look.face, look.head, look.body, look.hands, look.legs, look.feet, look.main, look.sub, look.range];
     let mut parts = Vec::new();
     for (slot, &id) in ids.iter().enumerate() {
+        // FUN_100d2f60: a PC model id at or past the slot's total count (the six ranges summed) is logged and
+        // loaded as model id 0 of that slot.
+        let id = if npc || id < slot_count(look.race, slot) { id } else { 0 };
         // Weapon id 0 is an empty dummy mesh; skip it rather than draw it. The range slot always loads, id 0 too
         // (retail loads all nine; its class byte drives songs). NPC races stop after feet (FUN_100d0ef0), and
         // chocobos have no face slot.
@@ -1338,6 +1347,23 @@ fn load_look(index: &DatIndex, look: &Look) -> Result<Character> {
 
 #[cfg(test)]
 mod tests {
+    /// FUN_100d2f60: a model id past the slot's ranges loads model id 0 of that slot instead of failing the model
+    /// (a Tarutaru female body 1145, as a squad mate's name over its look in XI: Forever Offline's 0x00E sends).
+    #[test]
+    fn model_id_past_the_table_is_id_0() {
+        let look = super::Look { race: 6, face: 1, head: 326, body: 1145, ..Default::default() };
+        let (_, parts) = super::file_ids(&look).unwrap();
+        let body = parts.iter().find(|p| p.0 == "body").unwrap();
+        assert_eq!((body.1, body.2), (0, super::part_file(6, 2, 0).unwrap()));
+        let head = parts.iter().find(|p| p.0 == "head").unwrap();
+        assert_eq!((head.1, head.2), (326, super::part_file(6, 1, 326).unwrap()));
+        // The last id inside the table still loads its own file.
+        let last = super::slot_count(6, 2) - 1;
+        let look = super::Look { race: 6, body: last, ..look };
+        let (_, parts) = super::file_ids(&look).unwrap();
+        assert_eq!(parts.iter().find(|p| p.0 == "body").unwrap().1, last);
+    }
+
     /// Point 2 of the PC skeletons anchors the name plate: bone 0, (0, -h, 0) with h by race.
     #[test]
     fn plate_points() {
