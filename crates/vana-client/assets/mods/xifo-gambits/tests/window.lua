@@ -385,3 +385,16 @@ answer({ "ws|3|SMN|d|0|3|1000|0|0|-|0|1|1|1", "end|1" })
 H({ kind = "set", id = "ws_tp", index = 4 })
 H({ kind = "press", id = "ws_btn", index = 1 })
 assert(last():match("^!gsq wss %d+ 3 0 3 3000 0$"), last())
+
+-- back to the job it had, after the roster agreed once: read again too (the guard cleared), and the mate stays
+-- picked even with an open set another mate's job fits
+answer({ "ws|3|SMN|c|0|3|3000|0|0|-|0|1|1|1", "end|1" })
+w4.code.text = assert(require("src.share").encode({ job = "WAR", name = "Axe", rules = { { on = true,
+  target = "SELF", cond = "ALWAYS", arg = "", kind = "r" } } }))
+H({ kind = "press", id = "share", index = 2 })
+assert(w4.mate.at == 2 and w4.status.text:find("No squad mate is a WAR", 1, true), w4.status.text)
+H({ kind = "press", id = "ws_btn", index = 3 }) -- Refresh: the server now says BLM again
+answer({ "ws|3|BLM|d|0|3|1000|0|0|-|0|1|1|1", "end|1" })
+assert(last():match("^!gsq mates %d+$"), last())
+answer({ "mate|1|41|Salia|WAR|28|-|0|0|-", "mate|3|42|Bea|BLM|20|-|0|0|-", "end|2" })
+assert(w4.mate.at == 2 and last():match("^!gsq wsg %d+ 3$"), "the mate that changed jobs stays picked: " .. last())
