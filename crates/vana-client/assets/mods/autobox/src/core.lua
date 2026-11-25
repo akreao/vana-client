@@ -101,8 +101,10 @@ local function moving(s, me, now)
   local p = me.pos
   if not p then return false end
   local l = s.last_pos
-  if l and (math.abs(l.x - p.x) > 0.05 or math.abs(l.z - p.z) > 0.05) then s.still_since = now end
   s.last_pos = { x = p.x, z = p.z }
+  -- The first position seen (at the start, or after switching on) is only a baseline: one more tick tells.
+  if not l then return true end
+  if math.abs(l.x - p.x) > 0.05 or math.abs(l.z - p.z) > 0.05 then s.still_since = now end
   return now - s.still_since < M.STILL
 end
 
@@ -175,12 +177,14 @@ local function fits(targets, cand)
 end
 
 -- What the rule's action is on this candidate now: {kind, id, tag, text}, or nil.
--- Status effects that stop a kind of action, by name: spells, abilities and weapon skills.
-local NO_SPELLS, NO_ABILITIES = { "silence", "mute" }, { "amnesia" }
+-- Status effects that stop actions, by id as the client's menus check them: sleep, petrification, stun, charm, terror,
+-- lullaby... stop everything; silence and mute spells; amnesia abilities and weapon skills.
+local HALTED = { 2, 7, 10, 14, 17, 19, 28, 193 }
+local NO_SPELLS, NO_ABILITIES = { 6, 29 }, { 16 }
 
-local function blocked(env, names)
-  for _, n in ipairs(names) do
-    for _, id in ipairs(env.status_ids(n) or {}) do
+local function blocked(env, ids)
+  for _, list in ipairs({ HALTED, ids }) do
+    for _, id in ipairs(list) do
       if env.buffs[id] then return true end
     end
   end

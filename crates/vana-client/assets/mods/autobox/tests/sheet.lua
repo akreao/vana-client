@@ -2,6 +2,8 @@
 -- saved from the rule window, and the switch turns the engine on, which then casts.
 
 C, E, cast, said, tick = {}, {}, {}, {}, nil
+battle_text, now = false, 100
+clock = function() return now end
 settings = { get = function() return true end }
 commands = { register = function(n, f) C[n] = f end, usage = function() return {} end }
 events = { on = function(n, f) E[n] = f end }
@@ -13,7 +15,8 @@ res = {
   job = function(id) return ({ [3] = "WHM" })[id] end,
   spell = function(id) return spells[id] end,
   ability = function() return nil end,
-  status = function(id) return ({ [40] = "Protect" })[id] end,
+  -- No status names until the battle text has loaded.
+  status = function(id) return battle_text and ({ [40] = "Protect" })[id] or nil end,
   item = function() return nil end,
 }
 game = {
@@ -82,6 +85,14 @@ H.autobox_rule("autobox_rule", { kind = "press", id = "done", index = 2 })
 H.autobox("autobox", { kind = "set", id = "switch", index = 1 })
 assert(storage.character.on == true)
 tick() tick()
-assert(cast[1] == "43<me>", tostring(cast[1]))
+-- The status names are not there yet: "lacks Protect" cannot hold, and the always-Cure rule at the end runs instead.
+assert(cast[1] == "1<me>", tostring(cast[1]))
+-- Once the battle text is in, the names are looked up again (every 5 s) and the Protect rule comes first.
+battle_text = true
+now = now + 6
+tick()
+now = now + 6
+tick()
+assert(cast[2] == "43<me>", tostring(cast[2]))
 C.autobox("off")
 assert(storage.character.on == false and said[#said] == "Autobox: off.", said[#said])

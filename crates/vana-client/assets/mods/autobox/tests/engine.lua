@@ -31,11 +31,18 @@ local function env(o)
   return e
 end
 
+-- An engine that has already seen us standing at (0, 0).
+local function fresh()
+  local s = core.new()
+  s.last_pos = { x = 0, z = 0 }
+  return s
+end
+
 local cure = { target = "party", when = { kind = "hp_below", value = 60 }, action = { kind = "spell", name = "Cure", best = true } }
 local protect = { target = "me", when = { kind = "missing", value = "Protect" }, action = { kind = "spell", name = "Protect" } }
 
 -- Nobody hurt: the first rule passes over, Protect goes on us.
-local s = core.new()
+local s = fresh()
 local a = core.tick(s, env({ now = 1, rules = { cure, protect } }))
 assert(a and a.kind == "spell" and a.id == 43 and a.tag == "<me>" and a.rule == 2, "protect on me")
 
@@ -51,16 +58,16 @@ local party = {
   { slot = 3, party = 0, id = 4, name = "Far", hpp = 10, in_zone = true, buffs = {} },
 }
 local near = { [2] = { distance = 5 }, [3] = { distance = 12 }, [4] = { distance = 30 } }
-s = core.new()
+s = fresh()
 a = core.tick(s, env({ now = 1, rules = { cure }, party = party, near = near }))
 assert(a and a.id == 2 and a.tag == "<p2>" and a.who == "Bo", "Cure II on the lowest in range")
 -- Cure II refused (no MP): Cure.
-s = core.new()
+s = fresh()
 a = core.tick(s, env({ now = 1, rules = { cure }, party = party, near = near, refuse = { spell2 = true } }))
 assert(a and a.id == 1, "falls back a tier")
 
 -- Moving or casting holds.
-s = core.new()
+s = fresh()
 core.tick(s, env({ now = 0, buffs = { [40] = true }, rules = { protect } }))
 local moved = { id = 1, pos = { x = 3, z = 0 }, hpp = 100, mpp = 100, tp = 0, status = 0 }
 assert(core.tick(s, env({ now = 1, me = moved, rules = { protect } })) == nil and s.holding == "moving")
@@ -71,19 +78,19 @@ assert(core.tick(s, env({ now = 3, me = moved, rules = { protect } })) ~= nil, "
 local ws = presets.for_job("WAR")[1]
 local me = { id = 1, pos = { x = 0, z = 0 }, hpp = 100, mpp = 0, tp = 1200, status = 1 }
 local mob = { kind = "mob", hpp = 80, claim = 1, name = "Goblin" }
-s = core.new()
+s = fresh()
 a = core.tick(s, env({ now = 1, me = me, rules = { ws }, target = mob, refuse = { ability42 = true } }))
 assert(a and a.kind == "ability" and a.id == 32 and a.tag == "<t>", "best weapon skill the game takes")
-s = core.new()
+s = fresh()
 assert(core.tick(s, env({ now = 1, me = me, rules = { ws }, target = { kind = "mob", hpp = 80, claim = 99 } })) == nil,
   "someone else's monster")
 
 -- A status condition on a monster never holds; an off rule is skipped.
 local odd = { target = "target", when = { kind = "missing", value = "poison" }, action = { kind = "spell", name = "Thunder" } }
-s = core.new()
+s = fresh()
 assert(core.tick(s, env({ now = 1, me = me, rules = { odd }, target = mob })) == nil)
 local off = { on = false, target = "me", when = { kind = "always" }, action = { kind = "spell", name = "Refresh" } }
-s = core.new()
+s = fresh()
 assert(core.tick(s, env({ now = 1, rules = { off } })) == nil)
 
 -- Checking a rule for saving.
@@ -100,29 +107,38 @@ for _, j in ipairs({ "WHM", "RDM", "BLM", "PLD", "WAR", "SAM", "DRK", "THF" }) d
 end
 
 -- Best weapon skill only from the ability list (the weapon held): a move the game would not list is passed over.
-s = core.new()
+s = fresh()
 a = core.tick(s, env({ now = 1, me = me, rules = { ws }, target = mob, has_ability = { [32] = true } }))
 assert(a and a.id == 32, "only listed weapon skills")
 
 -- Best tier from a numbered spell: Cure II's family is Cure's.
 local cure2 = { target = "me", when = { kind = "always" }, action = { kind = "spell", name = "Cure II", best = true } }
-s = core.new()
+s = fresh()
 a = core.tick(s, env({ now = 1, rules = { cure2 } }))
 assert(a and a.id == 2, "Cure II best -> Cure II (Cure III unknown)")
-s = core.new()
+s = fresh()
 a = core.tick(s, env({ now = 1, rules = { cure2 }, refuse = { spell2 = true } }))
 assert(a and a.id == 1, "falls back to Cure")
 
 -- Silence stops spells, amnesia abilities and weapon skills.
-s = core.new()
+s = fresh()
 assert(core.tick(s, env({ now = 1, rules = { cure2 }, buffs = { [6] = true } })) == nil)
-s = core.new()
+s = fresh()
 assert(core.tick(s, env({ now = 1, me = me, rules = { ws }, target = mob, buffs = { [16] = true } })) == nil)
 
 -- Ranged attack only with something to shoot.
 local ra = { target = "target", when = { kind = "engaged" }, action = { kind = "ranged" } }
-s = core.new()
+s = fresh()
 assert(core.tick(s, env({ now = 1, me = me, rules = { ra }, target = mob, can_shoot = false })) == nil)
-s = core.new()
+s = fresh()
 a = core.tick(s, env({ now = 1, me = me, rules = { ra }, target = mob, can_shoot = true }))
 assert(a and a.kind == "ranged" and a.tag == "<t>")
+
+-- The first position seen is a baseline: nothing on that tick, the next one acts if we have not moved.
+s = core.new()
+assert(core.tick(s, env({ now = 1, rules = { protect } })) == nil and s.holding == "moving")
+assert(core.tick(s, env({ now = 1.2, rules = { protect } })) ~= nil, "still on the second look")
+
+-- Blocked by id, whatever the status names: sleep stops everything, silence spells.
+s = fresh()
+assert(core.tick(s, env({ now = 1, rules = { protect }, buffs = { [2] = true } })) == nil)
