@@ -454,7 +454,7 @@ pub struct Window {
     pub meta: Vec<Meta>,
     pub open: bool,
     pub focus: bool,
-    /// `ui.open` asked for it (again): the modern UI brings it to the front at its next draw. Not the focus itself: a
+    /// Its open (ui.open, a prompt) was granted the focus: the modern UI brings it to the front at its next draw. Not the focus itself: a
     /// hover or a key moving the focus does not reorder the windows.
     pub raise: bool,
     /// The cursor's element (an index into `elems`, a stop), its column, and an element being edited (a slider, a

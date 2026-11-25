@@ -656,8 +656,7 @@ pub(super) fn install(
             w.open = true;
             w.settle();
             if !w.hud {
-                // to the front in the modern UI, also when it was open already (a repeat //calc)
-                w.raise = true;
+                // (granted, it is also raised in the modern UI: Host::grant_focus; a repeat //calc too)
                 s.focus_request = Some(id);
             }
             Ok(())
