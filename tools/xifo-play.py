@@ -297,6 +297,7 @@ class World:
         cloud = "Bot chat through Google's Gemma started." in self.world_log_since_start()  # the world ran it already
         local_chat = (crowds_ai or bots_ai) and not cloud
         if not (squad or local_chat):
+            say("Local AI is off on their RULES page (squad chat, chat AI): nothing more to start.")
             return
         self.start_ollama()
         if squad:
