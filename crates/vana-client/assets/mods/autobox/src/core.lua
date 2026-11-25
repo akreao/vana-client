@@ -77,6 +77,7 @@ end
 function M.action_text(a)
   if not a then return "" end
   if a.kind == "ranged" or a.kind == "attack" then return M.ACTION_LABELS[a.kind] end
+  if a.kind == "ws" and a.best then return "Best weapon skill" end
   return (a.best and "Best " or "") .. tostring(a.name or "?")
 end
 

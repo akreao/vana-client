@@ -90,6 +90,7 @@ assert(core.check({ target = "me", when = { kind = "hp_below" }, action = { kind
 assert(core.check({ target = "me", when = { kind = "always" }, action = { kind = "ws", best = true } }))
 assert(core.check({ target = "me", when = { kind = "always" }, action = { kind = "ability", name = "" } }) == nil)
 assert(core.condition_text({ kind = "hp_below", value = 50 }) == "HP below 50%", core.condition_text({ kind = "hp_below", value = 50 }))
+assert(core.action_text({ kind = "ws", best = true }) == "Best weapon skill")
 assert(core.condition_text({ kind = "tp_at_least", value = 1000 }) == "My TP at least 1000")
 
 -- Every preset rule passes the save check.
