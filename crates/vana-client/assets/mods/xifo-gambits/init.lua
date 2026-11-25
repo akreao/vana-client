@@ -282,7 +282,10 @@ local function show_rules()
   end
   local what = d.num and d.num > 0 and ("Rule Set %d"):format(d.num) or "New Rule Set"
   local note = G.editable(d.flags or "o") and "" or " (not yours: Save makes a copy)"
-  ui.update(W, "editing", { text = ("%s for %s%s%s"):format(what, d.job, note, st.dirty and ", not saved" or "") })
+  -- the dropdowns offer the picked mate's choices: say so when that mate is of another job than the set
+  local m = mate()
+  local other = m and m.job ~= d.job and (" (choices from %s, a %s)"):format(m.name, m.job) or ""
+  ui.update(W, "editing", { text = ("%s for %s%s%s%s"):format(what, d.job, note, other, st.dirty and ", not saved" or "") })
   ui.update(W, "name", { text = d.name or "" })
   local rows = {}
   for i, r in ipairs(d.rules) do
@@ -355,21 +358,37 @@ local function load_mates(keep)
   request(G.mates, function(lines)
     local mates, err = G.parse_mates(lines)
     if not mates then return failed(err, "The squad") end
-    local slot = mate() and mate().slot
+    local slot, job = mate() and mate().slot, mate() and mate().job
     st.mates = mates
-    -- the picked mate is kept only when it is still there; otherwise (none before, or it left) the new pick's sets
-    -- and choices load
+    -- the picked mate is kept only when it is still there with the same main job (a mate's sets, choices and weapon
+    -- skill setting are per job); otherwise (none before, it left, or it changed jobs) the new pick's load
     local kept = keep and slot and index_of((function()
       local n = {}
       for i, m in ipairs(mates) do n[i] = m.slot end
       return n
     end)(), slot)
-    st.mate = kept or 1
+    local same = kept -- (the same mate, also after a job change: it stays picked unless the open set wants another)
+    if kept and mates[kept].job ~= job then kept = nil end
+    -- a new pick: a mate of the open set's job when there is one (its choices fit the set); a kept mate of another
+    -- job gives way to one that has arrived since (the open set and its unsaved edits stay)
+    local pick
+    for i, m in ipairs(mates) do
+      if st.draft and m.job == st.draft.job then
+        pick = i
+        break
+      end
+    end
+    -- (not while the kept mate's weapon skill setting has unsaved changes: they would be lost)
+    local e, w = st.ws_edit, st.ws
+    local ws_dirty = e and w and (e.control ~= w.control or e.mode ~= w.mode or e.tp ~= w.tp or e.ws ~= w.ws)
+    if kept and pick and mates[kept].job ~= st.draft.job and not ws_dirty then kept = nil end
+    st.mate = kept or pick or same or 1
     if not kept then st.ws, st.ws_edit = nil, nil end
     show_mates()
     if #mates == 0 then return status("You have no squad mates yet (!squad new <name> <job>).") end
     show_sets()
     if not kept then
+      show_rules() -- (whose choices the open set shows)
       load_sets()
       load_catalog()
       load_page()
@@ -649,6 +668,8 @@ ui.on(W, function(_, e)
   elseif e.kind == "press" and e.id == "ws_btn" and m then
     local slot = m.slot
     if e.index == 1 and st.ws_edit then
+      -- (the setting is per main job: one loaded for another job is not saved over this one's)
+      if st.ws and st.ws.job ~= m.job then return load_ws() end
       local x = st.ws_edit
       request(function(id) return G.wss(id, slot, x) end, function(lines)
         if not mate() or mate().slot ~= slot then return end

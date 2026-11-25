@@ -579,11 +579,19 @@ Empty in the classic UI and while those windows are hidden or not drawn.
 **Example**
 
 ```lua
--- A dot left of each party row.
+-- A dot left of each party row; the dots of rows that are gone (a member left, the windows hidden) are removed.
+local dots = {}
 timer.every(0.2, function()
-  for i, r in ipairs(ui.native.party_rows()) do
-    hud.rect("dot" .. i, { x = r.x - 12, y = r.y + r.h // 2 - 4, w = 8, h = 8, colour = { 120, 200, 255 } })
+  local now = {}
+  for _, r in ipairs(ui.native.party_rows()) do
+    local id = "dot" .. r.panel .. r.slot
+    hud.rect(id, { x = r.x - 12, y = r.y + r.h // 2 - 4, w = 8, h = 8, colour = { 120, 200, 255 } })
+    now[id] = true
   end
+  for id in pairs(dots) do
+    if not now[id] then hud.remove(id) end
+  end
+  dots = now
 end)
 ```
 
