@@ -701,8 +701,9 @@ ui.on(W, function(_, e)
       status(("The code of %s (%d rules) is on the clipboard."):format(d.name or "the set", #d.rules))
     else
       -- Read before anything is replaced: a code that does not read leaves the open set (and its unsaved mark) alone.
-      local function import(text)
-        local set, why = Share.decode(text)
+      local function import(text, decoded)
+        local set, why = decoded, nil
+        if not set then set, why = Share.decode(text) end
         if not set then return status("Not imported: " .. why, true) end
         unless_dirty(function()
           for _, rule in ipairs(set.rules) do rule.id = nil end -- a new set's rules are numbered by the server
@@ -736,7 +737,8 @@ ui.on(W, function(_, e)
       typed = typed and typed.text or ""
       local function pick(clip)
         for _, text in ipairs({ clip, typed }) do
-          if text and Share.decode(text) then return import(text) end
+          local set = text and Share.looks_like(text) and Share.decode(text)
+          if set then return import(text, set) end -- (read once: a long code takes a while)
         end
         if typed:match("%S") then return import(typed) end
         if clip and Share.looks_like(clip) then return import(clip) end
