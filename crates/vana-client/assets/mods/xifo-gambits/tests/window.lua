@@ -377,7 +377,11 @@ assert(w4.mate.at == 2 and last():match("^!gsq wsg %d+ 3$"), last())
 -- changed jobs while the window stayed open (in XIFO Squad): the setting's read names the new job, the mate follows
 -- it, and Save saves
 answer({ "ws|3|SMN|d|0|3|1000|0|0|-|0|1|1|1", "end|1" })
-assert(w4.mate.items[2]:find("SMN", 1, true), w4.mate.items[2])
+assert(last():match("^!gsq mates %d+$"), "the roster is read again: " .. last())
+answer({ "mate|1|41|Salia|RDM|28|-|0|0|-", "mate|3|42|Bea|SMN|22|WHM|0|0|11", "end|2" })
+assert(w4.mate.at == 2 and w4.mate.items[2]:find("SMN 22/WHM 11", 1, true), w4.mate.items[2])
+assert(last():match("^!gsq wsg %d+ 3$"), last())
+answer({ "ws|3|SMN|d|0|3|1000|0|0|-|0|1|1|1", "end|1" })
 H({ kind = "set", id = "ws_tp", index = 4 })
 H({ kind = "press", id = "ws_btn", index = 1 })
 assert(last():match("^!gsq wss %d+ 3 0 3 3000 0$"), last())

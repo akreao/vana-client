@@ -19,3 +19,9 @@ local ok, err = pcall(provided.send, "!squad dismiss all")
 assert(not ok and tostring(err):find("only for the XIFO mods", 1, true), tostring(err))
 caller = nil -- (called from outside a mods.call)
 assert(not pcall(provided.send, "!squad dismiss all"))
+
+-- listen too: a heard line counts as the server answering
+caller = "xifo-hc-icons"
+assert(pcall(provided.listen, "[HC-ICONS]"))
+caller = "some-other-mod"
+assert(not pcall(provided.listen, "[FAKE]"))

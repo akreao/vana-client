@@ -454,14 +454,16 @@ end
 local function took_ws(lines)
   local w, err = G.parse_ws(lines)
   if not w then return failed(err, "Weapon skills") end
-  -- The server names the mate's main job now: changed since the roster was read (in XIFO Squad, say), the mate's
-  -- job, sets and choices follow it, and the setting is editable for that job.
+  -- The server names the mate's main job now: changed since the roster was read (in XIFO Squad, say), the roster is
+  -- read again (level, support job, set and all), which reloads this page for the new job. Once per change: a
+  -- roster that still disagrees is not read again and again.
   local m = mate()
   if m and w.slot == m.slot and w.job and w.job ~= m.job then
-    m.job = w.job
-    show_mates()
-    load_sets()
-    load_catalog()
+    local key = m.slot .. ":" .. w.job
+    if st.job_reread ~= key then
+      st.job_reread = key
+      return load_mates(true)
+    end
   end
   st.ws = w
   st.ws_edit = { control = w.control, mode = w.mode, tp = w.tp, ws = w.ws }

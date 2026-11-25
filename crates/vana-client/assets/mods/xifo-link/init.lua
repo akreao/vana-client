@@ -29,6 +29,8 @@ end)
 -- listen(mark): lines that start with `mark` (after leading spaces) are always hidden and handed on as the event
 -- "xifo_link_line"(mark, text after the mark), for what the server sends unasked.
 mods.provide("listen", function(mark)
+  -- (only for the XIFO mods: a heard line counts as the server answering, see server_seen)
+  if mods.caller and not USERS[mods.caller() or ""] then error("listen: only for the XIFO mods") end
   if type(mark) ~= "string" or #mark < 3 then error("listen: a mark of 3 or more characters") end
   link.listen(s, mark)
 end)

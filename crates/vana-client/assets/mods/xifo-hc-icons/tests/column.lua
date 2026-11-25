@@ -56,3 +56,16 @@ load(TEST.source("init.lua"), "@init.lua")()
 assert(calls[2] == nil)
 cmds.hcicons("refresh")
 assert(calls[#calls] == "send:!hcicons")
+
+-- with an XIFO Link older than server_seen, nothing is trusted and the player is told once to update it
+local said = {}
+chat.add = function(t) said[#said + 1] = t end
+storage.character, calls = {}, {}
+mods.call = function(id, name, a)
+  if name == "server_seen" then error("mods.call: xifo-link provides no server_seen") end
+  calls[#calls + 1] = name .. ":" .. tostring(a)
+end
+load(TEST.source("init.lua"), "@init.lua")()
+ev.xifo_link_reply("gsq1", {}, true)
+ev.xifo_link_reply("gsq2", {}, true)
+assert(not storage.character.xifo and #said == 1 and said[1]:find("update XIFO Link", 1, true), tostring(said[1]))
