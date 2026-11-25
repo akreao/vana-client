@@ -640,8 +640,6 @@ pub struct State {
     pub raw_pc_y: bool,
     /// Snapped by 0x36 / 0x37 this frame (FUN_100917e0).
     snap: HashSet<u32>,
-    /// Despawned while bound (0x1009a04d keeps an event participant); removed at the end.
-    despawned: HashSet<u32>,
     /// Actors a slot reset took out of the event: no pose of the VM body is drawn for them any more.
     detached: HashSet<u32>,
     /// 0x46: true = normal camera (FUN_10082b20).
@@ -736,7 +734,6 @@ impl State {
             event_rides: HashMap::new(),
             status_lock: HashSet::new(),
             snap: HashSet::new(),
-            despawned: HashSet::new(),
             detached: HashSet::new(),
             camera_flag: false,
             released: false,
@@ -2555,21 +2552,27 @@ fn resolve(me: (u32, u16), actor: u32) -> Option<(u32, u16)> {
 }
 
 /// FUN_100ad460's walk in block order: the first bound actor that is missing (`true`) or still without its
-/// model (`false`); None once all are ready. Every actor passed takes part (`joined`, +0x120 bit 8).
+/// model (`false`); None once all are ready. Every actor whose slot exists (`slot`) takes part (`joined`, +0x120 bit
+/// 8), also one still despawned or waiting for its full update (not `present`: +0x124 bit 12 or +0x145 = 0), which
+/// is missing all the same (FUN_100aeea0, 0x100af0c6..0x100af0db).
 fn first_waiting(
     blocks: &[Block],
     event: u16,
     me: (u32, u16),
+    slot: &dyn Fn(u32) -> bool,
     present: &dyn Fn(u32) -> bool,
     model: &dyn Fn(u32) -> bool,
     joined: &mut HashSet<u32>,
 ) -> Option<(u32, u16, bool)> {
     for b in blocks.iter().filter(|b| bound_block(b, event)) {
         let Some((id, index)) = resolve(me, b.actor) else { continue };
-        if !present(id) {
+        if !slot(id) {
             return Some((id, index, true));
         }
         joined.insert(id);
+        if !present(id) {
+            return Some((id, index, true));
+        }
         if !model(id) {
             return Some((id, index, false));
         }
@@ -2598,10 +2601,11 @@ fn has_model(w: &World, id: u32, queued: &HashSet<u32>) -> bool {
 /// that actor, so the requests go one at a time.
 fn actors_ready(w: &World, wt: &mut Waiting, ticks: f32, queued: &HashSet<u32>) -> bool {
     let ev = wt.start.event;
-    let present = |id: u32| id == w.my_id || w.entities.contains_key(&id);
+    let slot = |id: u32| id == w.my_id || w.entities.contains_key(&id);
+    let present = |id: u32| id == w.my_id || w.entities.get(&id).is_some_and(|e| !e.despawned && !e.awaiting_full);
     let model = |id: u32| has_model(w, id, queued);
     let blocks = wt.blocks.as_deref().unwrap_or_default();
-    let waiting = first_waiting(blocks, ev, (w.my_id, w.my_index), &present, &model, &mut wt.joined);
+    let waiting = first_waiting(blocks, ev, (w.my_id, w.my_index), &slot, &present, &model, &mut wt.joined);
     // Not retail, which asks for the first missing actor and waits for it: every missing one is asked for at
     // once. With LSB answering only the client's 400 ms datagrams, the San d'Oria opening (29 actors across the
     // city) otherwise froze the player for 12 s before the event began.
@@ -3159,10 +3163,6 @@ fn finish(w: &mut World, live: Box<Live>) {
             a.blink_off = false;
         }
     }
-    for id in &live.st.despawned {
-        w.forget_entity(*id);
-        w.actors.remove(id);
-    }
     w.event_mem = live.rt.mem.clone();
     // FUN_100ae3f0 (0x100ae8a2), only when the zone's reset hasn't run yet (a zone-in cutscene): the ambient and
     // the world effects fade back to full over 30 ticks. After the zone reset an event's end restores nothing, so a
@@ -3246,7 +3246,8 @@ fn free_riders(w: &mut World, id: u32) {
     }
 }
 
-/// FUN_10095900 on FUN_1008e4d0's unload marks (+0x120 bit 23, `unloaded`), once a frame ahead of the model loader:
+/// FUN_10095900 on FUN_1008e4d0's unload marks (+0x120 bit 23, `unloaded`), and FUN_10096640 on the despawn marks
+/// (`parked`), once a frame ahead of the model loader:
 /// a marked actor's model is freed (FUN_10092900) and none is made while the mark stays; the frame the mark is gone
 /// FUN_1008f740 makes it again as a new model (colour 0x80808080, the load fade from 0, the status motion from its
 /// start). `World::unloaded` holds the look each marked actor comes back with; the loader leaves a newer one there.
@@ -3265,9 +3266,16 @@ pub fn unload_models(w: &mut World) -> Vec<(u32, super::Source)> {
     // Ours keeps its model, so its looks load as ever: only the others' models are held in `World::unloaded`.
     let others: HashSet<u32> = marked.iter().copied().filter(|&id| id != me).collect();
     // The models in play: the marked actors' (freed now) and those of actors whose mark is gone.
+    // A SubKind 5 / 6 / 7 despawn zeroed the look words: its model comes back only from a look an update brings.
+    let gone_looks: Vec<u32> =
+        others.iter().copied().filter(|id| w.entities.get(id).is_some_and(|e| e.look_gone)).collect();
+    for id in &gone_looks {
+        w.unloaded.insert(*id, None);
+    }
     let shown: HashMap<u32, Option<super::Source>> = others
         .iter()
         .chain(w.unloaded.keys())
+        .filter(|id| !gone_looks.contains(id))
         .filter_map(|id| w.actors.get(id).map(|a| (*id, reload_source(w, *id, a))))
         .collect();
     let back = unload_step(&mut w.unloaded, &others, &shown, &|id| w.entities.contains_key(&id));
@@ -3328,14 +3336,39 @@ fn reload_source(w: &World, id: u32, a: &super::Actor) -> Option<super::Source> 
     }
 }
 
-/// The actors FUN_1008e4d0 marks for unloading this frame and FUN_10095900 does not spare (`HideRule::gone`).
+/// The actors FUN_1008e4d0 marks for unloading this frame and FUN_10095900 does not spare (`HideRule::gone`), and the
+/// despawned ones FUN_10096640 frees (`parked`).
 pub fn unloaded(w: &World) -> HashSet<u32> {
     let rule = HideRule::of(w);
-    let mut out: HashSet<u32> = w.entities.iter().filter(|(id, e)| rule.gone(w, **id, e)).map(|(id, _)| *id).collect();
+    let mut out: HashSet<u32> = w
+        .entities
+        .iter()
+        .filter(|(id, e)| rule.gone(w, **id, e) || parked(e.despawned, rule.takes_part(**id), **id == w.my_id))
+        .map(|(id, _)| *id)
+        .collect();
     if rule.gone_me(w) {
         out.insert(w.my_id);
     }
     out
+}
+
+/// FUN_10096640 (0x100968b0..0x100968f9): every frame a slot with the despawn mark (+0x124 bit 12) that is not bound
+/// or taking part (+0x120 bits 7 / 8), not ours and not client-made (+0x130 bit 3; no entity is) has its model freed
+/// (FUN_1008ee30, a no-op without bit 7, then FUN_10092900). The per-actor pass FUN_1008e9a0 skips such a slot too
+/// (0x10096a4a), so nothing makes its model again while the mark stays; the slot itself stays until the zone
+/// changes (FUN_10093b70 frees the slots, 0x10093bad).
+pub fn parked(despawned: bool, takes_part: bool, me: bool) -> bool {
+    despawned && !takes_part && !me
+}
+
+/// Every `parked` entity of the world.
+pub fn parked_set(w: &World) -> HashSet<u32> {
+    w.entities.keys().copied().filter(|id| is_parked(w, *id)).collect()
+}
+
+/// `parked` for one entity of the world.
+pub fn is_parked(w: &World, id: u32) -> bool {
+    w.entities.get(&id).is_some_and(|e| parked(e.despawned, holds(w, id), id == w.my_id))
 }
 
 /// FUN_100ae3f0 (0x100ae452): an NPC goes back on the floor unless a no-snap bit holds it (GroundFlag / HackMove,
@@ -3481,32 +3514,22 @@ fn drops_action_in(flags: u32, bound: bool, own: bool, category: u8) -> bool {
         || (own && flags & mode::ALLOW_OWN_ACTION == 0 && crate::net::action::category::by_file(category))
 }
 
-/// An update came for `id`: the despawn mark (entity +0x124 bit 12) is off, so the event's end leaves the actor.
-pub fn respawned(w: &mut World, id: u32) {
-    if let Some(l) = &mut w.event {
-        l.st.despawned.remove(&id);
-    }
-}
-
 /// FUN_1008ee30 from a slot reset: the actor leaves the event (+0x120 bits 7 / 8 off).
 pub fn unbind(w: &mut World, id: u32) {
     if let Some(l) = &mut w.event {
         l.st.bound.remove(&id);
-        l.st.despawned.remove(&id);
         l.st.poses.remove(&id);
         l.st.detached.insert(id);
     }
+    if let Some(p) = &mut w.event_pending {
+        p.joined.remove(&id);
+    }
 }
 
-/// An event holds this actor (bound, or taking part while it waits): a despawn waits for the end.
-pub fn holds(w: &mut World, id: u32) -> bool {
-    if let Some(l) = &mut w.event
-        && l.st.bound.contains(&id)
-    {
-        l.st.despawned.insert(id);
-        return true;
-    }
-    false
+/// An event holds this actor (+0x120 bit 8: bound, or passed by the start's walk while it waits): a despawn leaves it
+/// shown, and the frame pass leaves its model, until the event lets go.
+pub fn holds(w: &World, id: u32) -> bool {
+    HideRule::of(w).takes_part(id)
 }
 
 /// Ops 0x77 / 0xa9: the clock the event holds still.
@@ -4781,13 +4804,13 @@ mod tests {
 
         // The file loaded and walked ahead of the marks (`ready` before `unload_models`).
         let mut joined = HashSet::new();
-        assert_eq!(first_waiting(&blocks, 993, me, &present, &model, &mut joined), None);
+        assert_eq!(first_waiting(&blocks, 993, me, &present, &present, &model, &mut joined), None);
         assert_eq!(joined, [vendor, me.0].into());
         assert_eq!(filter(&joined), [bystander, npc]);
 
         // A walk with the file still to load (`Waiting::blocks` None) passes nobody: both talkers are marked.
         let mut empty = HashSet::new();
-        assert_eq!(first_waiting(&[], 993, me, &present, &model, &mut empty), None);
+        assert_eq!(first_waiting(&[], 993, me, &present, &present, &model, &mut empty), None);
         assert_eq!(filter(&empty), [me.0, bystander, npc, vendor]);
     }
 
@@ -5122,6 +5145,30 @@ mod tests {
         assert!(!release_allowed(0x2100));
     }
 
+    /// FUN_10096640: only a despawned slot no event holds, and not ours, loses its model.
+    #[test]
+    fn parked_slots() {
+        assert!(parked(true, false, false));
+        assert!(!parked(true, true, false) && !parked(true, false, true) && !parked(false, false, false));
+    }
+
+    /// FUN_100aeea0: a despawned slot (or one waiting for its full update) takes part (bit 8) but is missing, so the
+    /// start asks for it; no slot at all is missing without taking part.
+    #[test]
+    fn despawned_participant_is_missing() {
+        let block = |actor| Block { actor, events: vec![(7, 0)], consts: Vec::new(), code: Vec::new() };
+        let blocks = [block(0x0100_0010), block(0x0100_0011)];
+        let me = (0x0001_0001, 0x401);
+        let mut joined = HashSet::new();
+        let w = first_waiting(&blocks, 7, me, &|_| true, &|id| id != 0x0100_0010, &|_| true, &mut joined);
+        assert_eq!(w, Some((0x0100_0010, 0x10, true)));
+        assert_eq!(joined, HashSet::from([0x0100_0010]));
+        let mut joined = HashSet::new();
+        let w = first_waiting(&blocks, 7, me, &|id| id != 0x0100_0010, &|_| true, &|_| true, &mut joined);
+        assert_eq!(w, Some((0x0100_0010, 0x10, true)));
+        assert!(joined.is_empty());
+    }
+
     /// LSB's "cutscene only" NPCs bound by 0x1f7 (npcs.yaml status 6), per the validation report.
     const CUTSCENE_ONLY: [u32; 23] = [
         0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xdb, 0xdc, 0x67, 0x4d,
@@ -5141,9 +5188,15 @@ mod tests {
         let mut have: HashSet<u32> = HashSet::from([me.0]);
         let mut asked = Vec::new();
         let mut joined = HashSet::new();
-        while let Some((id, idx, missing)) =
-            first_waiting(&blocks, 0x1f7, me, &|id| have.contains(&id), &|_| true, &mut joined)
-        {
+        while let Some((id, idx, missing)) = first_waiting(
+            &blocks,
+            0x1f7,
+            me,
+            &|id| have.contains(&id),
+            &|id| have.contains(&id),
+            &|_| true,
+            &mut joined,
+        ) {
             assert!(missing && !asked.contains(&idx), "{id:#x} asked twice");
             asked.push(idx);
             have.insert(id);
@@ -5154,7 +5207,7 @@ mod tests {
         }
         // With the model of Curilla still loading the walk stops at her.
         let mut j = HashSet::new();
-        let w = first_waiting(&blocks, 0x1f7, me, &|_| true, &|id| id != 0x010e_60d5, &mut j);
+        let w = first_waiting(&blocks, 0x1f7, me, &|_| true, &|_| true, &|id| id != 0x010e_60d5, &mut j);
         assert_eq!(w, Some((0x010e_60d5, 0xd5, false)));
 
         let mut host = Scripted::new(&[]);

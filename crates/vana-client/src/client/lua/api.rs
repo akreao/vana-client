@@ -935,7 +935,8 @@ pub(super) fn install(
             }
             let e =
                 w.entities.get(&key).map(|e| (key, e)).or_else(|| u16::try_from(key).ok().and_then(|i| w.entity_at(i)));
-            e.map(|(id, e)| entity(lua, w, id, e)).transpose()
+            // A despawned slot is out of range for mods, as in `entities`.
+            e.filter(|(id, _)| !super::super::event::is_parked(w, *id)).map(|(id, e)| entity(lua, w, id, e)).transpose()
         })?,
     )?;
     game.set(
@@ -964,7 +965,9 @@ pub(super) fn install(
             if kinds.as_ref().is_none_or(|k| k.iter().any(|k| k == "player")) {
                 out.push(self_entity(lua, w)?)?;
             }
-            let mut list: Vec<(&u32, &super::super::Entity)> = w.entities.iter().collect();
+            // A despawned slot (kept until the zone changes) is not in the zone for mods.
+            let mut list: Vec<(&u32, &super::super::Entity)> =
+                w.entities.iter().filter(|(id, _)| !super::super::event::is_parked(w, **id)).collect();
             list.sort_by_key(|(_, e)| e.index);
             let slots = w.party.slots();
             for (id, e) in list {

@@ -349,13 +349,14 @@ fn current_target(w: &World) -> Option<(u32, u16)> {
     w.entities.get(&t).map(|e| (t, e.index))
 }
 
-/// FUN_10077d80: the first living actor claimed by a party member.
+/// FUN_10077d80: the first living actor claimed by a party member. It wants the actor's model (+0xa0), which
+/// FUN_10096640 frees on a despawned slot: a parked slot is never the battle target.
 fn battle_target(w: &World) -> Option<(u32, u16)> {
     let party: Vec<u32> = w.party.members().map(|m| m.id).filter(|&id| id != 0).chain([w.my_id]).collect();
     let mut found: Vec<(u32, u16)> = w
         .entities
         .iter()
-        .filter(|(_, e)| e.hpp > 0 && e.claim != 0 && party.contains(&e.claim))
+        .filter(|(id, e)| e.hpp > 0 && e.claim != 0 && party.contains(&e.claim) && !super::event::is_parked(w, **id))
         .map(|(id, e)| (*id, e.index))
         .collect();
     found.sort_by_key(|f| f.1);
@@ -508,7 +509,8 @@ pub(super) fn resolve(w: &World, text: Option<&str>, fallback: bool, wide: bool,
             let range =
                 (0x400..0x700).contains(&e.index) || (wide && (0x700..0x900).contains(&e.index) && ours(**id, e.index));
             let same = e.name == name || (wide && name_case(&e.name).is_some_and(|n| n == name));
-            range && e.targetable() && same
+            // FUN_1007a4c0 also passes over a slot with the despawn mark no event holds (0x1007a561).
+            range && e.targetable() && !super::event::is_parked(w, **id) && same
         });
         if let Some((id, e)) = hit {
             return Some((*id, e.index));
