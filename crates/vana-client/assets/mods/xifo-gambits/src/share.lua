@@ -157,6 +157,20 @@ end
 
 local TOKENS = { "target", "cond", "arg", "cond2", "arg2", "name", "retry", "level", "id" }
 
+-- Whether a text holds a share code (spaces and ` around it allowed).
+function M.looks_like(text)
+  return type(text) == "string" and text:gsub("[%s`]", ""):match("^GS%d") ~= nil
+end
+
+-- A name in at most 24 bytes, cut between characters (a reader refuses a longer one).
+local function short_name(name)
+  name = tostring(name or "")
+  if #name <= 24 then return name end
+  local cut = 24
+  while cut > 0 and (name:byte(cut + 1) or 0) & 0xC0 == 0x80 do cut = cut - 1 end
+  return name:sub(1, cut)
+end
+
 -- set = { job, name, rules = { gsq rule tables } } -> the code, or nil + why
 function M.encode(set)
   local rules = set and set.rules or {}
@@ -175,7 +189,7 @@ function M.encode(set)
   end
   local w = bit_writer()
   w.put(5, JOB[set.job] - 1)
-  w.text(set.name or "")
+  w.text(short_name(set.name))
   w.put(6, #rules - 1)
   w.num(#pool)
   for _, s in ipairs(pool) do w.text(s) end

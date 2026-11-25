@@ -35,3 +35,9 @@ refused("GS2" .. THEIRS:sub(4), "newer format")
 refused("hello", "not a Gambits share code")
 assert(S.encode({ job = "WHM", name = "x", rules = { { raw = "?" } } }) == nil)
 assert(S.encode({ job = "XYZ", name = "x", rules = set.rules }) == nil)
+
+-- a name longer than 24 bytes in UTF-8 is cut between characters, so every reader takes the code
+local long = S.encode({ job = "WHM", name = ("é"):rep(13), rules = set.rules })
+local back = assert(S.decode(long))
+assert(#back.name == 24 and back.name == ("é"):rep(12) and utf8.len(back.name) == 12)
+assert(S.looks_like(" `GS1abc` ") and not S.looks_like("hello"))

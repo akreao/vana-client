@@ -699,23 +699,44 @@ ui.on(W, function(_, e)
       ui.update(W, "code", { text = #code <= 1024 and code or "" })
       status(("The code of %s (%d rules) is on the clipboard."):format(d.name or "the set", #d.rules))
     else
+      -- Read before anything is replaced: a code that does not read leaves the open set (and its unsaved mark) alone.
       local function import(text)
         local set, why = Share.decode(text)
         if not set then return status("Not imported: " .. why, true) end
-        local mjob = m and m.job
-        st.draft = { num = 0, job = set.job, name = set.name, flags = "o", rules = set.rules }
-        st.rule, st.dirty = 1, true
-        show_rules()
-        status(("Imported %s (%s, %d rules) as a new Rule Set; Save keeps it.%s"):format(set.name, set.job, #set.rules,
-          mjob and mjob ~= set.job and (" It is for " .. set.job .. ", not " .. m.name .. "'s " .. mjob .. ".") or ""))
+        unless_dirty(function()
+          for _, rule in ipairs(set.rules) do rule.id = nil end -- a new set's rules are numbered by the server
+          -- edited with the choices of a mate of the set's job, when there is one
+          local note = ""
+          if not m or m.job ~= set.job then
+            local found
+            for i, x in ipairs(st.mates) do
+              if x.job == set.job and not found then found = i end
+            end
+            if found then
+              st.mate, st.set_row = found, 1
+              show_mates()
+              load_sets()
+              load_catalog()
+              load_page()
+            else
+              note = (" No squad mate is a %s now: the choices shown are %s's."):format(set.job, m and m.name or "?")
+            end
+          end
+          st.draft = { num = 0, job = set.job, name = set.name, flags = "o", rules = set.rules }
+          st.rule, st.dirty = 1, true
+          show_rules()
+          status(("Imported %s (%s, %d rules) as a new Rule Set; Save keeps it.%s"):format(set.name, set.job,
+            #set.rules, note))
+        end)
       end
+      -- The clipboard first (the box holds at most 1024 characters, a long code is cut there), else the box.
       local typed = ui.get(W, "code")
       typed = typed and typed.text or ""
-      if typed:match("%S") then
-        unless_dirty(function() import(typed) end)
-      else
-        local ok = pcall(client.paste, function(text) unless_dirty(function() import(text) end) end)
-        if not ok then status("Paste the code into the box, then Import code.", true) end
+      local ok = pcall(client.paste, function(text)
+        import(Share.looks_like(text) and text or typed)
+      end)
+      if not ok then
+        if typed:match("%S") then import(typed) else status("Paste the code into the box, then Import code.", true) end
       end
     end
   elseif e.kind == "change" and e.id == "name" and d then

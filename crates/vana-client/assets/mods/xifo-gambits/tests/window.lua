@@ -188,8 +188,32 @@ w2.code.text = "  " .. copied .. "  "
 H({ kind = "press", id = "share", index = 2 })
 assert(w2.editing.text:find("New Rule Set", 1, true) and w2.name.text == "Fayd heals", w2.editing.text)
 assert(w2.status.text:find("Imported Fayd heals", 1, true), w2.status.text)
+-- a code that does not read changes nothing: no question, the unsaved import stays unsaved
 w2.code.text = "GS1nope"
 H({ kind = "press", id = "share", index = 2 })
-assert(#prompts == asked + 2, "the unsaved import is not thrown away without asking")
+assert(#prompts == asked + 1 and w2.status.text:find("Not imported", 1, true))
+assert(w2.editing.text:find("not saved", 1, true))
+-- a good code over unsaved work asks first; the imported rules lose their old ids
+local S2 = require("src.share")
+local code = assert(S2.encode({ job = "WHM", name = "Ids", rules = { { on = true, target = "SELF", cond = "ALWAYS",
+  arg = "", kind = "r", id = "w9" } } }))
+w2.code.text = code
+H({ kind = "press", id = "share", index = 2 })
+assert(#prompts == asked + 2)
 prompts[#prompts].f(1)
-assert(w2.status.text:find("Not imported", 1, true))
+assert(w2.name.text == "Ids")
+H({ kind = "press", id = "share", index = 1 })
+assert(S2.decode(copied).rules[1].id == nil)
+-- the clipboard comes first (a long code is cut in the box)
+client.paste = function(f) f(code) end
+w2.code.text = "GS1cut"
+H({ kind = "press", id = "share", index = 2 })
+prompts[#prompts].f(1)
+assert(w2.status.text:find("Imported Ids", 1, true), w2.status.text)
+-- a job no mate has: kept, and said
+local brd = assert(S2.encode({ job = "BRD", name = "Songs", rules = { { on = true, target = "SELF", cond = "ALWAYS",
+  arg = "", kind = "r" } } }))
+client.paste = function(f) f(brd) end
+H({ kind = "press", id = "share", index = 2 })
+prompts[#prompts].f(1)
+assert(w2.status.text:find("No squad mate is a BRD", 1, true), w2.status.text)
