@@ -24,7 +24,9 @@ game = {
     }
   end,
 }
-res = { job = function(id) return ({ [4] = "BLM" })[id] or "JOB" .. id end, spell = function() return nil end }
+local cure = "Cure"
+res = { job = function(id) return ({ [4] = "BLM" })[id] or "JOB" .. id end,
+  spell = function(id) return id == 1 and { name = cure } or nil end }
 local on_window, window, update = ui.on, ui.window, ui.update
 ui.on = function(id, f) H = f; on_window(id, f) end
 -- What the mod drew: the window's elements by id, then each update's fields over them.
@@ -89,7 +91,8 @@ areas_on = { 0, 1, 2, 3, 4, 5, 6, 7 }
 H("completion", { kind = "set", id = "area", index = 1 })
 assert(names() == "A Squire's Test|Trust: San d'Oria", names())
 
--- A Japanese client's quest files: the names are Japanese, so nothing is taken for a placeholder.
+-- A Japanese client (Cure is ケアル): its real titles are Japanese, so nothing is taken for a placeholder.
+cure = "ケアル"
 game.quests = function()
   return { [0] = {
     { number = 1, name = "騎士の試練", current = false, completed = false },
