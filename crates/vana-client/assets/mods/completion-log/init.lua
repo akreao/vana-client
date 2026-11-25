@@ -9,6 +9,19 @@ local GOLD = { 232, 200, 120, 255 }
 
 local view = { tab = 1, job = nil, area = 1 }
 
+-- The areas the game's quest menu lists (the server's expansions decide), as {number, name}.
+local function areas()
+  local out = {}
+  for _, a in ipairs(game.quest_areas()) do out[#out + 1] = { a, AREAS[a + 1] } end
+  return out
+end
+
+local function area_names(list)
+  local out = {}
+  for i, a in ipairs(list) do out[i] = a[2] end
+  return out
+end
+
 local function say(t) chat.add("Completion Log: " .. t) end
 
 local function job_names()
@@ -49,7 +62,7 @@ local function state(q)
 end
 
 local function quest_rows(area)
-  local list = game.quests()[area - 1] or {}
+  local list = game.quests()[area] or {}
   local rows = {}
   for _, q in ipairs(list) do
     local s = state(q)
@@ -65,6 +78,9 @@ end
 
 local function open()
   view.job = view.job or main_job()
+  view.shown = areas()
+  if view.area > #view.shown then view.area = 1 end
+  local area = view.shown[view.area]
   ui.window(WIN, {
     title = "Completion Log", width = 460,
     elements = {
@@ -72,8 +88,8 @@ local function open()
       { type = "choice", id = "job", label = "Job", items = job_names(), at = view.job, page = 1 },
       { type = "list", id = "spells", rows = spell_rows(view.job), height = 12, page = 1,
         columns = { { title = "Spell", width = 330 }, { title = "Level", width = 80, align = "right" } } },
-      { type = "choice", id = "area", label = "Area", items = AREAS, at = view.area, page = 2 },
-      { type = "list", id = "quests", rows = quest_rows(view.area), height = 12, page = 2,
+      { type = "choice", id = "area", label = "Area", items = area_names(view.shown), at = view.area, page = 2 },
+      { type = "list", id = "quests", rows = area and quest_rows(area[1]) or {}, height = 12, page = 2,
         columns = { { title = "Quest", width = 320 }, { title = "", width = 90, align = "right" } } },
     },
   })
@@ -89,7 +105,8 @@ ui.on(WIN, function(_, e)
     ui.update(WIN, "spells", { rows = spell_rows(view.job), at = 1 })
   elseif e.id == "area" then
     view.area = e.index
-    ui.update(WIN, "quests", { rows = quest_rows(view.area), at = 1 })
+    local area = view.shown[view.area]
+    ui.update(WIN, "quests", { rows = area and quest_rows(area[1]) or {}, at = 1 })
   end
 end)
 
@@ -117,9 +134,10 @@ commands.register("left", function(what, arg)
       #now > 0 and (": " .. table.concat(now, ", ", 1, math.min(#now, 12)) .. (#now > 12 and ", ..." or "")) or "."))
   elseif what == "quests" then
     local all = game.quests()
-    for i, name in ipairs(AREAS) do
+    for _, a in ipairs(areas()) do
+      local name = a[2]
       local done, going, total = 0, 0, 0
-      for _, q in ipairs(all[i - 1] or {}) do
+      for _, q in ipairs(all[a[1]] or {}) do
         total = total + 1
         if q.current then going = going + 1 elseif q.completed then done = done + 1 end
       end
