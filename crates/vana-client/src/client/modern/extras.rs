@@ -522,7 +522,9 @@ fn edge_window_up(
     let (m, ctx) = (p.m, p.ctx);
     let screen = ctx.content_rect();
     let place = p.place(key);
+    // No wider than the screen, whatever it was sized on (a mod's width, the map's size).
     let width = if resize && place.w > 0.0 { place.w.clamp(MIN_W, screen.width() * 0.95) } else { width };
+    let width = width.min(screen.width() * 0.95);
     let fixed = (resize && place.h > 0.0).then(|| place.h.clamp(MIN_H, (screen.height() - 8.0).max(MIN_H)));
     // Let go away from the edges it stands free (x / y its top left), its whole frame drawn.
     let float = place.float;
@@ -1225,13 +1227,15 @@ fn minimap_panel(p: &mut Panels, w: &mut World) {
     let tex = map_texture(m, ctx, &img);
     // Its size once resized (the place's w), else Small / Medium / Large as big on screen as the retail-drawn one:
     // its layout pixels through the UI's scale.
+    // A size saved on a larger screen (or at a smaller Interface Size) is held to the most a resize gives here, so the
+    // map does not run past the screen's edges; the saved size is kept for the larger screen.
     let mp = p.place("minimap");
+    let max_d = ctx.content_rect().height() * 0.7;
     let d = if mp.w > 0.0 {
-        mp.w
+        mp.w.min(max_d)
     } else {
         minimap::SIZES[w.minimap_size.min(2) as usize] * ctx.content_rect().width() / w.ui_wh.0.max(1.0)
     };
-    let max_d = ctx.content_rect().height() * 0.7;
     let mut resize: Option<f32> = None;
     let (pos, facing, span) = (f.pos, f.facing, f.span);
     let dots = f.dots.clone();
@@ -1352,7 +1356,7 @@ fn minimap_panel(p: &mut Panels, w: &mut World) {
             let dx = g.drag_delta().x * -sx;
             let dy = g.drag_delta().y * sy;
             let step = if dx.abs() > dy.abs() { dx } else { dy };
-            resize = Some((d + step).clamp(120.0, max_d));
+            resize = Some((d + step).clamp(120.0f32.min(max_d), max_d));
         }
         // N at the top.
         let n = pos2(area.center().x, area.min.y + 10.0);
@@ -1763,5 +1767,93 @@ fn kind_colour(bit: u8) -> Color32 {
         1 => Color32::from_rgb(110, 170, 255),
         2 => Color32::from_rgb(110, 210, 120),
         _ => Color32::from_rgb(235, 95, 95),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{Layout, Modern, Panels, Place};
+    use super::*;
+    use crate::client::egui_pass;
+
+    /// An edge window placed and sized on a large screen (the minimap low on the right edge, as wide as a mod made it)
+    /// stays whole on a smaller screen or at a larger Interface Size, and its saved place is kept for the large screen.
+    #[test]
+    fn edge_window_stays_on_a_smaller_screen() {
+        let ctx = egui::Context::default();
+        let side = Some(16384);
+        egui_pass(&ctx, egui::RawInput { max_texture_side: side, ..Default::default() }, |_| {});
+        let m = Modern::new(&ctx);
+        let mut layout = Layout::new();
+        let saved = [
+            Place { x: -0.001, y: 0.8, ..Default::default() },
+            Place { x: 0.9, y: 0.9, float: true, ..Default::default() },
+            Place { x: 0.7, edge: 2, ..Default::default() },
+        ];
+        for (k, place) in saved.iter().enumerate() {
+            layout.insert(format!("edge{k}"), place.clone());
+        }
+        // The screen in points: the large screen, a small resolution, twice the Interface Size, back.
+        let screens = [vec2(1920.0, 1080.0), vec2(1024.0, 600.0), vec2(640.0, 360.0), vec2(1920.0, 1080.0)];
+        let mut f = 0;
+        for size in screens {
+            let mut seen = Vec::new();
+            for _ in 0..3 {
+                let raw = egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                    time: Some(f as f64 * 0.1),
+                    max_texture_side: side,
+                    ..Default::default()
+                };
+                f += 1;
+                seen.clear();
+                egui_pass(&ctx, raw, |ui| {
+                    let ctx = ui.ctx();
+                    let (mut changed, mut chat_font) = (false, 14.0);
+                    let mut p = Panels {
+                        m: &m,
+                        ctx,
+                        gu: None,
+                        layout: &mut layout,
+                        vis: Default::default(),
+                        changed: &mut changed,
+                        chat_font: &mut chat_font,
+                        battle_in_all: &mut true,
+                        condense: &mut true,
+                        chat_hidden: &mut Vec::new(),
+                        folded: &mut Default::default(),
+                        scan_kinds: &mut 7,
+                        this: Default::default(),
+                        rooms: Default::default(),
+                        retail: Default::default(),
+                        focus: None,
+                        hidden: Vec::new(),
+                        placed: Default::default(),
+                        opacity: Default::default(),
+                    };
+                    for k in 0..saved.len() {
+                        let key = format!("edge{k}");
+                        // A map 900 points square, as a resize on the large screen leaves it.
+                        edge_window(&mut p, &key, 930.0, false, false, "Map", |ui, _, _| {
+                            let d = ui.available_width();
+                            ui.allocate_exact_size(
+                                vec2(d, d.min(ui.ctx().content_rect().height() * 0.7)),
+                                Sense::hover(),
+                            );
+                            false
+                        });
+                        seen.push(p.this[&key]);
+                    }
+                    *m.rects.borrow_mut() = std::mem::take(&mut p.this);
+                });
+            }
+            let screen = Rect::from_min_size(Pos2::ZERO, size);
+            for r in &seen {
+                assert!(screen.expand(0.5).contains_rect(*r), "{r:?} off {screen:?}");
+            }
+        }
+        for (k, place) in saved.iter().enumerate() {
+            assert_eq!(&layout[&format!("edge{k}")], place);
+        }
     }
 }
