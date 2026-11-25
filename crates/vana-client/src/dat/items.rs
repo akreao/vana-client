@@ -367,6 +367,24 @@ pub fn parse(r: &[u8], kind: Kind, lang: Lang, wide: bool) -> Item {
 }
 
 impl Item {
+    /// A field the parser set (`extra`), 0 when it has none.
+    fn extra_at(&self, at: u16) -> u32 {
+        self.extra.iter().find(|e| e.0 == at).map_or(0, |e| e.1)
+    }
+
+    /// Armour / weapon record +0x28 / +0x34 (2019 layout; object +0xd84, the item struct's +0x46 FUN_101318d0 caches
+    /// per equipment slot): the area display's gear kind. 1 Yagrush, 2 Epeolatry, 3 Luzaf's Ring, 4 the harps, 5 Yagyu
+    /// Darkblade.
+    pub fn area_kind(&self) -> u8 {
+        self.extra_at(0xd84) as u8
+    }
+
+    /// Armour / weapon record +0x29..+0x2b / +0x35..+0x37 (objects +0xd9c / +0xda0 / +0xda4, the item struct's +0x1b0
+    /// .. +0x1b2): a usable item's area radius index, area type and marked kind (FUN_101f4b70).
+    pub fn area(&self) -> [u8; 3] {
+        [self.extra_at(0xd9c) as u8, self.extra_at(0xda0) as u8, self.extra_at(0xda4) as u8]
+    }
+
     /// The 32x32 icon as RGBA: flag byte, 16-byte name, BITMAPINFOHEADER, 256 BGRA colours,
     /// 8-bit pixels bottom-up. Palette alpha is 0..0x80.
     pub fn icon_rgba(&self) -> Option<(u32, u32, Vec<u8>)> {

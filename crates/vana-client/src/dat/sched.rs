@@ -485,4 +485,62 @@ mod census {
             println!("op {code:02x}: {n} in {} files, e.g. {eg:?}", files.len());
         }
     }
+
+    /// The ops whose task retail makes and ours did not count (row 181): where 0x1a, 0x7f, 0x04 / 0x81, 0x82 / 0x83,
+    /// 0x75 / 0xa3 sit, with their file, folder path and bytes (by hand: `cargo test --release op_task_census --
+    /// --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn op_task_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let mut hist: std::collections::BTreeMap<u8, (usize, std::collections::BTreeSet<u32>)> = Default::default();
+        let mut shown: std::collections::BTreeMap<u8, usize> = Default::default();
+        let mut cam_tops: std::collections::BTreeMap<String, (usize, std::collections::BTreeSet<u32>)> =
+            Default::default();
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            for node in tree.of_kind(kind::SCHEDULER).collect::<Vec<_>>() {
+                let data = &file[tree.nodes[node].data.clone()];
+                for o in ops(data) {
+                    if !matches!(o.code, 0x1a | 0x7f | 0x04 | 0x81 | 0x82 | 0x83 | 0x75 | 0xa3) {
+                        continue;
+                    }
+                    let e = hist.entry(o.code).or_default();
+                    e.0 += 1;
+                    e.1.insert(id);
+                    if o.code == 0x04 {
+                        let top = tree.path(node).into_iter().map(trim).next().unwrap_or_default();
+                        let c = cam_tops.entry(top).or_default();
+                        c.0 += 1;
+                        c.1.insert(id);
+                    }
+                    let n = shown.entry(o.code).or_default();
+                    *n += 1;
+                    if *n <= 12 || matches!(o.code, 0x1a | 0x7f | 0x82 | 0x83) && *n <= 60 {
+                        let path: Vec<String> = tree.path(node).into_iter().map(trim).collect();
+                        let hex: Vec<String> = o.raw.iter().map(|b| format!("{b:02x}")).collect();
+                        println!(
+                            "{id} {}/{} op {:02x} w{}: {}",
+                            path.join("/"),
+                            trim(tree.nodes[node].name),
+                            o.code,
+                            o.wait,
+                            hex.join("")
+                        );
+                    }
+                }
+            }
+        }
+        for (top, (n, files)) in &cam_tops {
+            let eg: Vec<u32> = files.iter().take(6).copied().collect();
+            println!("op 04 under {top:?}: {n} in {} files, e.g. {eg:?}", files.len());
+        }
+        for (code, (n, files)) in &hist {
+            let lo = files.iter().next().copied().unwrap_or(0);
+            let hi = files.iter().next_back().copied().unwrap_or(0);
+            println!("op {code:02x}: {n} in {} files ({lo}..{hi})", files.len());
+        }
+    }
 }

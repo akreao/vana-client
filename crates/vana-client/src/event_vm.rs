@@ -329,13 +329,13 @@ pub trait Host {
     fn game_time(&self) -> u32 {
         0
     }
-    /// The client language (DAT_10456a28 + 8): 0 Japanese, 1 English, 2 / 3 the European ones.
+    /// The client language (DAT_10457bd8 +8 in 30261102_0): 0 Japanese, 1 English, 2 German, 3 French.
     fn language(&self) -> u32 {
-        1
+        crate::dat::lang::client() as u32
     }
-    /// DAT_10456a28 +0x18 bit 7: German and French play the English branches (current retail sets it).
+    /// DAT_10457bd8 +0x18 bit 7: German and French play the English branches (dat::lang).
     fn eu_as_en(&self) -> bool {
-        true
+        crate::dat::lang::european_as_english()
     }
     /// An actor's ActIndex (FUN_100afb00's second result); None when it is not in the zone.
     fn index(&self, actor: u32) -> Option<u16> {
@@ -3220,7 +3220,7 @@ pub fn run_cli(
     host.weather = Some(Box::new(move |zone, day| crate::dat::weather::forecast_day(&weather, zone, day)));
     let start = Start { zone, event, target, params, strings: Vec::new() };
     let mut rt = Runtime::start(blocks, dialog, start, Memory::default(), &mut host);
-    if let Ok(n) = crate::dat::names::Names::load(&index, crate::dat::items::Lang::En) {
+    if let Ok(n) = crate::dat::names::Names::load(&index, crate::dat::lang::files()) {
         rt.set_names(std::sync::Arc::new(n));
     }
     let frames = run_scripted(&mut rt, &mut host, 60 * 60 * 20);
@@ -3395,7 +3395,7 @@ mod tests {
                 &mut host,
             );
             rt.params([1, u32::MAX, u32::MAX, u32::MAX, u32::MAX, 100_000, 4095, 0]);
-            if let Ok(n) = crate::dat::names::Names::load(&index, crate::dat::items::Lang::En) {
+            if let Ok(n) = crate::dat::names::Names::load(&index, crate::dat::lang::files()) {
                 rt.set_names(std::sync::Arc::new(n));
             }
             run_scripted(&mut rt, &mut host, 60 * 60);

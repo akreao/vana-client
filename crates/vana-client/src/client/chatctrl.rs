@@ -206,7 +206,7 @@ pub(super) fn set_sel(w: &mut World, k: u16) -> bool {
 }
 
 /// The mouse: the generic window (winhits.rs).
-pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool, right: bool) {
     // The modern layer draws it and takes its mouse.
     if w.modern {
         return;
@@ -219,7 +219,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
         sel,
         1..=8,
         p,
-        moved,
         clicked,
         right,
         |w, id| {

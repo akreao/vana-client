@@ -310,7 +310,7 @@ fn decode_png(data: &[u8]) -> Result<Texture> {
 }
 
 impl Font {
-    /// `lang`: 0 Japanese, 1 English, 2 French, 3 German (selects the menu DAT, FUN_10250de0).
+    /// `lang`: 0 Japanese, 1 English, 2 German, 3 French (the language slot table FUN_1025cb20 picks: slot 0, the menu file).
     pub fn load(index: &DatIndex, ffximain: &[u8], lang: u8, quality: Quality) -> Result<Self> {
         let t = super::tables::of(ffximain)?;
         let widths = ffximain.get(t.widths_at..t.widths_at + WIDTHS_LEN).context("FFXiMain.dll too short")?;

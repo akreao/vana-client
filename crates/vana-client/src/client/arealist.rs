@@ -323,8 +323,9 @@ pub fn num_plus(w: &mut World, gu: &GameUi) {
     w.sounds.push(Ui::Close as u32);
 }
 
-/// Mouse *(inf: the generic child hit test)*: hover moves the cursor, a click on the cursor row is Enter.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
+/// Mouse *(inf: the generic child hit test)*: a row takes the cursor by winhits::takes, a click on the cursor row is
+/// Enter.
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool) {
     let Some(a) = w.arealist.clone() else { return };
     let (Some((x, y)), Some(lay)) = (gu.window_xy(WINDOW, sw, sh), gu.layout(WINDOW)) else { return };
     let Some(e) = lay.elements.iter().skip(1).find(|e| {
@@ -337,13 +338,13 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     if row >= a.rows.len() {
         return;
     }
-    gu.hover.set(true);
-    if row != a.cursor && (moved || clicked) {
+    let takes = super::winhits::takes(gu, WINDOW, e.id, super::winhits::in_frame(gu, WINDOW, sw, sh, p));
+    if row != a.cursor && takes {
         if let Some(a) = w.arealist.as_mut() {
             a.cursor = row;
         }
         w.sounds.push(Ui::Cursor as u32);
-    } else if clicked {
+    } else if clicked && row == a.cursor {
         key(w, gu, egui::Key::Enter);
     }
 }

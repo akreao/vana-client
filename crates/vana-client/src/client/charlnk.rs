@@ -79,10 +79,11 @@ fn mentor(w: &World) -> bool {
     w.conf_sys[3] & 2 != 0
 }
 
-/// acoption's Remove and charlnk's Mute (FUN_1020cc90, FUN_101389c0): a mentor, a GM of rank 3 or more (0x037 flags
-/// bits 29..31), or mastery rank 6 or more (s2c 0x01B @0x66).
+/// acoption's Remove and charlnk's Mute (win_acoption_v04 FUN_1020e2a0, FUN_10139dc0): a mentor, a GM of rank 3 or
+/// more (our entity's +0x128 bits 11..13: the 0x00A's at the zone-in, then 0x037's), or mastery rank 6 or more (s2c
+/// 0x01B @0x66).
 pub fn can_mute(w: &World) -> bool {
-    mentor(w) || w.self_flags >> 29 >= 3 || w.job_info.is_some_and(|j| j.mastery >= 6)
+    mentor(w) || w.my_plate.marks.gm >= 3 || w.job_info.is_some_and(|j| j.mastery >= 6)
 }
 
 /// FUN_101389c0's disabled rows.
@@ -236,7 +237,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Option<[f32; 4]> {
 }
 
 /// The mouse (winhits.rs): the generic window.
-pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool, right: bool) {
     let Some(c) = w.charlnk.as_ref() else { return };
     super::winhits::generic(
         w,
@@ -245,7 +246,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
         c.cursor,
         1..=9,
         p,
-        moved,
         clicked,
         right,
         |w, id| {

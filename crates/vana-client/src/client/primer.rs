@@ -265,7 +265,7 @@ pub(super) fn set_topic(w: &mut World, k: usize) -> bool {
 
 /// The mouse (winhits.rs): guide00 / guide01 rows as the generic window, guide01's arrows (children 9 / 10) as Left /
 /// Right; with a page up a click is its Enter (FUN_101fa900: every left release) and a right click its Escape.
-pub fn pointer(w: &mut World, gu: &GameUi, pt: (f32, f32), moved: bool, clicked: bool, right: bool, page: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, pt: (f32, f32), clicked: bool, right: bool, page: bool) {
     use super::winhits::{child_under, generic};
     let Some(p) = w.primer.as_ref() else { return };
     // The modern layer draws the lists and takes their mouse; a page stays the map window's.
@@ -292,7 +292,10 @@ pub fn pointer(w: &mut World, gu: &GameUi, pt: (f32, f32), moved: bool, clicked:
         Some(l) if !p.over => {
             // FUN_10221cd0: over the page arrows the list is disabled (no hand, no list keys); the click is Left /
             // Right through the 0xa8 test, so with Ctrl / Alt held it pages the disabled list, i.e. does nothing.
-            if let (Some(a), _) = child_under(w, PAGES, pt, 9..=10, super::winhits::parts(gu, PAGES)) {
+            if let (Some(a), frame) = child_under(w, PAGES, pt, 9..=10, super::winhits::parts(gu, PAGES)) {
+                // The hover taking the arrow (message 9 there) turns the list off (+0x62 = 0); it stays off while the
+                // pointer moves on the arrow, and after the click (the list rebuilt) only a new hover turns it off again.
+                let takes = super::winhits::takes_no_hand(gu, PAGES, a, frame) || w.list_arrow_keep;
                 // The click is Enter on child 9 / 10: the generic layer's SE 0002 first (guide01's open clears only
                 // the move sound, window +0x85), then FUN_10235980 re-sends it as Left / Right (SE 0001).
                 if clicked {
@@ -302,7 +305,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, pt: (f32, f32), moved: bool, clicked:
                 if clicked && !page {
                     w.list_arrow_hover = false;
                     key(w, if a == 9 { egui::Key::ArrowLeft } else { egui::Key::ArrowRight }, false);
-                } else if moved {
+                } else if takes {
                     w.list_arrow_hover = true;
                 }
                 return;
@@ -315,7 +318,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, pt: (f32, f32), moved: bool, clicked:
                 (l.cursor - top + 1) as u16,
                 1..=ROWS as u16,
                 pt,
-                moved,
                 clicked,
                 right,
                 |w, id| {
@@ -334,7 +336,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, pt: (f32, f32), moved: bool, clicked:
                 p.cursor as u16 + 1,
                 1..=ROWS as u16,
                 pt,
-                moved,
                 clicked,
                 right,
                 |w, id| {

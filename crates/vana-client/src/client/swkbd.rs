@@ -156,7 +156,8 @@ fn press(w: &mut World, c: u16) {
             let mut cfg = super::configui::ConfigUi::open("configwi");
             cfg.mon = super::monstrosity::active(w);
             cfg.cam_keys = w.cam_keys;
-            cfg.anon = w.self_flags & 1 << 5 != 0;
+            // conf3win's Show / Hide: the 0x0B4 config block's anonymous bit (FUN_100e4830(0)).
+            cfg.anon = w.conf_sys[0] & 4 != 0;
             cfg.recall(w.cursor_recall(super::configui::CONFIGWI_MENU));
             w.config = Some(cfg);
         }
@@ -371,7 +372,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Option<[f32; 4]> {
 
 /// The mouse on the keyboard (the generic window's): hovering a key moves the cursor, a click presses it; the right
 /// click does nothing here.
-pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool) -> bool {
+pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool) -> bool {
     let Some(cursor) = w.swkbd.as_ref().filter(|_| !w.modern).map(|k| k.cursor) else { return false };
     if !super::winhits::over(w, NAME, p) {
         return false;
@@ -383,7 +384,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
         cursor,
         6..=0x57,
         p,
-        moved,
         clicked,
         false,
         |w, id| {

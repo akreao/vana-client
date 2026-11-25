@@ -6,15 +6,26 @@ use super::DatIndex;
 use super::font::decode_sjis;
 use anyhow::{Context, Result, bail};
 
-/// English file id of a zone's dialogue (FUN_100ac7b0, language slots 0x68 / 0x6b / 0x69 / 0x6a).
+/// The first file of each zone range in the language slots FUN_100ae1e0 reads (30261102_0), ja / en / de / fr:
+/// 0x6b zones 0..255, 0x6e 256..999, 0x6c 1000..1999, 0x6d from 2000. German and French have no 0x6e (0), so
+/// retail reads file zone - 256 for those zones.
+pub const ZONE_FILES: [[u32; 4]; 4] =
+    [[6120, 6420, 57977, 58009], [85291, 85591, 0, 0], [57913, 57945, 68811, 69111], [68211, 68511, 85891, 86191]];
+
+/// The file id of a zone's dialogue in the file language (FUN_100ae1e0).
 pub fn file_id(zone: u16) -> u32 {
+    file_id_in(super::lang::files(), zone)
+}
+
+pub fn file_id_in(lang: super::items::Lang, zone: u16) -> u32 {
     let z = zone as u32;
-    match z {
-        0..256 => 6420 + z,
-        256..1000 => 85591 + z - 256,
-        1000..2000 => 57945 + z - 1000,
-        _ => 68511 + z - 2000,
-    }
+    let (range, first) = match z {
+        0..256 => (0, 0),
+        256..1000 => (1, 256),
+        1000..2000 => (2, 1000),
+        _ => (3, 2000),
+    };
+    ZONE_FILES[range][lang as usize] + z - first
 }
 
 #[derive(Default)]

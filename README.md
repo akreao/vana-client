@@ -96,6 +96,12 @@ Where PipeWire's headers are too old for cpal's PipeWire bindings (Ubuntu 22.04 
 On macOS the Xcode command line tools are enough (`xcode-select --install`). For a native Windows build with MSVC and
 VS Code, see [docs/building-windows.md](docs/building-windows.md).
 
+NVIDIA DLSS (Settings > Graphics > Upscaling, for NVIDIA RTX cards) is in builds with the `dlss` cargo feature only,
+off by default. Its build needs NVIDIA's DLSS SDK (`DLSS_SDK`), the Vulkan headers (`VULKAN_SDK`, `/usr` on Linux)
+and clang; `release/build-dlss.sh` fetches the part of the SDK it needs (under 1 MB on Linux, 8 MB on Windows) and builds
+(`release/build-dlss.sh --profile dist` for the dist profile). Plain `cargo build --features dlss` without
+`DLSS_SDK` fails in dlss_wgpu's build script. More in [docs/upscaler-engine.md](docs/upscaler-engine.md).
+
 The binary is `target/release/vana-client` (`vana-client.exe` on Windows). Release builds are incremental, without link-time optimisation; for a binary to hand out, `cargo build --profile dist` (fat LTO, one codegen unit) writes `target/dist/vana-client`.
 
 Published releases are built with `release/build-linux.sh` (in the Steam Runtime 3 "sniper" SDK container, so one binary runs on every current distro); `release/fetch-ci-builds.sh` runs the Release builds workflow on GitHub for Linux on ARM (the SDK's arm64 image), macOS (Apple Silicon and Intel) and Windows (MSVC, the C runtime linked in) and downloads those. Then `release/publish.sh VERSION` tags them, signs each with the release key (Ed25519, kept outside the repo; its public half is `release/signing-key.pub`, built into the client) and creates the GitHub release that the in-app Update offers. The client installs a release only when its signature checks.

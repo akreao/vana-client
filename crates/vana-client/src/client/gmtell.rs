@@ -141,13 +141,14 @@ fn move_to(p: &mut Prompt, k: usize) {
 }
 
 /// The mouse (ours, as the query's): hovering row `k` moves the cursor there, a click picks it.
-pub fn pointer(w: &mut World, k: usize, click: bool) {
+pub fn pointer(w: &mut World, k: usize, takes: bool, click: bool) {
     let Some(p) = w.gmtell.open.as_mut().filter(|p| k < p.options.len()) else { return };
     if p.cursor != k {
-        move_to(p, k);
-        w.sounds.push(crate::audio::Ui::Cursor as u32);
-    }
-    if click {
+        if takes {
+            move_to(p, k);
+            w.sounds.push(crate::audio::Ui::Cursor as u32);
+        }
+    } else if click {
         key(w, egui::Key::Enter);
     }
 }

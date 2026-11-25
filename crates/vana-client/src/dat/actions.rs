@@ -72,8 +72,16 @@ pub struct Spell {
     /// +0x44: 8 SCH main only, 0x20 GEO main only (bit 5 also the free 3D cursor); +0x45: range index.
     pub flags: u8,
     pub range: u8,
-    /// +0x47: nonzero for a spell that always hits an area (+0x46 its radius) *(inferred: matches LSB's AOE)*.
+    /// The area display (FUN_1022cef0): +0x46 the radius (an index into RANGES), +0x47 the area type (1 / 3: around
+    /// the pick, matching LSB's AOE; 0 / 2: none), +0x48 which actors it marks (FUN_1022eb20's kind).
+    pub aoe_radius: u8,
     pub area: u8,
+    pub aoe_kind: u8,
+    /// +0x4c, as FUN_1022cef0 tests it: bits 0..2 and 3..6 (blue magic), 7..22 (0x200: the -na family *(inf)*), 23
+    /// / 24 / 29 (Accession, Manifestation, Theurgic Focus).
+    pub aoe_bits: u32,
+    /// +0x53: a geomancy spell's radius, in the units of table 0x10365488's thresholds.
+    pub geo_radius: u8,
     /// +0x5c: per main job, the level is in job points (needs level 99).
     pub jp_mask: u32,
 }
@@ -102,11 +110,27 @@ pub struct Ability {
     /// +0xe: a row opening the sub-list of this type (skipped by /ja); +0xf level (Monstrosity).
     pub sub: u8,
     pub level: u8,
+    /// The area display (FUN_10224ac0): +0x11 the radius (an index into RANGES), +0x12 the area type, +0x13 the
+    /// marked actors' kind; +0x15 nonzero leaves the radius alone, else +0x16 / +0x18 / +0x1a are its scale (-0x100
+    /// .. 0x100) at 1000 / 2000 / 3000 TP (FUN_10224cf0).
+    pub aoe_radius: u8,
+    pub area: u8,
+    pub aoe_kind: u8,
+    pub tp_fixed: u8,
+    pub tp_scale: [i16; 3],
+    /// +0x1c / +0x1e / +0x22, as FUN_10224ac0 tests them (0x25 the Phantom Rolls; 0x2b, 6 and 0xbe5 / 0xbeb / 0xbec the
+    /// abilities whose area is around the current target) *(inf: what the words are)*.
+    pub w1c: u16,
+    pub w1e: u16,
+    pub w22: u16,
 }
 
 pub struct Actions {
     pub spells: Vec<Spell>,
     pub abilities: Vec<Ability>,
+    /// File 81's "levc" chunk (kind 4, DAT_10668c30): a u16 per level; FUN_1022cef0 reads it / 10 as a song's
+    /// String Instrument skill.
+    pub levc: Vec<u16>,
 }
 
 impl Actions {
@@ -128,7 +152,11 @@ impl Actions {
                 icon_hd: u16_at(r, 0x42),
                 flags: r[0x44],
                 range: r[0x45],
+                aoe_radius: r[0x46],
                 area: r[0x47],
+                aoe_kind: r[0x48],
+                aoe_bits: u32::from_le_bytes(r[0x4c..0x50].try_into().unwrap()),
+                geo_radius: r[0x53],
                 jp_mask: u32::from_le_bytes(r[0x5c..0x60].try_into().unwrap()),
             })
             .collect();
@@ -146,9 +174,23 @@ impl Actions {
                 tp16: u16_at(r, 0xc),
                 sub: r[0xe],
                 level: r[0xf],
+                aoe_radius: r[0x11],
+                area: r[0x12],
+                aoe_kind: r[0x13],
+                tp_fixed: r[0x15],
+                tp_scale: std::array::from_fn(|k| u16_at(r, 0x16 + 2 * k) as i16),
+                w1c: u16_at(r, 0x1c),
+                w1e: u16_at(r, 0x1e),
+                w22: u16_at(r, 0x22),
             })
             .collect();
-        Ok(Actions { spells, abilities })
+        let file = index.read(FILE)?;
+        let levc = super::chunks(&file)?
+            .into_iter()
+            .find(|c| c.kind == 4 && &c.name == b"levc")
+            .map(|c| c.data.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).collect())
+            .unwrap_or_default();
+        Ok(Actions { spells, abilities, levc })
     }
 
     pub fn spell(&self, id: u16) -> Option<&Spell> {
@@ -296,7 +338,7 @@ mod tests {
             levels[j] = l;
         }
         let spell = Spell { id: 1, kind, flags, levels, jp_mask, ..Default::default() };
-        Actions { spells: vec![Spell::default(), spell], abilities: vec![] }
+        Actions { spells: vec![Spell::default(), spell], abilities: vec![], levc: vec![] }
     }
 
     /// FUN_101021a0's job rule, branch by branch (SCH 20, GEO 21, RUN 23, WHM 3, RDM 5).

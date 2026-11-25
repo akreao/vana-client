@@ -18,8 +18,9 @@ pub(crate) const SLOT_SPELLS: usize = 0x5a; // FUN_10221f40
 pub(crate) const SLOT_ABILITIES: usize = 0x5c; // FUN_10219c20
 const SLOT_SYSTEM: usize = 0x65; // kind 6: s2c 0x053 (FUN_10094d20(6, n))
 const SLOT_EMOTES: usize = 0x62; // s2c 0x05A's lines (LAB_100a06e0)
-/// Status names (grammar kind 0x13, FUN_1021d5f0); file inferred from content, slot not traced.
-const STATUS_FILE: u32 = 55725;
+/// Status names (grammar kind 0x13, FUN_1021d5f0): base slot 0x59, 0x5c in 30261102_0's numbering (FUN_102287e0 loads it
+/// whole; English 55732, the same bytes as 55725).
+const SLOT_STATUSES: usize = 0x59;
 
 // Mode tables (1024 bytes each, by message id, FUN_1009cda0's order), mode -> colour id {u16 mode, u8 colour,
 // u8 group} (zero-terminated), colour id -> BGRA {u32 id, u32 colour}: located by dat::tables.
@@ -199,7 +200,8 @@ pub fn va_bytes(pe: &[u8], va: u32, len: usize) -> Option<&[u8]> {
 
 impl BattleText {
     pub fn load(index: &DatIndex, ffximain: &[u8]) -> Result<Self> {
-        let file = |slot| slot_file(ffximain, 1, slot).with_context(|| format!("language slot {slot:#x}"));
+        let lang = super::lang::files() as u8;
+        let file = |slot| slot_file(ffximain, lang, slot).with_context(|| format!("language slot {slot:#x}"));
         let dialog = |slot| -> Result<Dialog> { Dialog::parse(&index.read(file(slot)?)?) };
         let msgs = |id: u32| Messages::load(index, id).map_err(|e| log::warn!("names {id}: {e:#}")).ok();
         let basic = dialog(SLOT_BASIC).context("battle messages")?;
@@ -253,21 +255,21 @@ impl BattleText {
             mob_skills: dialog(SLOT_MOB_SKILLS).ok(),
             spells: file(SLOT_SPELLS).ok().and_then(msgs),
             abilities: file(SLOT_ABILITIES).ok().and_then(msgs),
-            statuses: msgs(STATUS_FILE),
+            statuses: file(SLOT_STATUSES).ok().and_then(msgs),
             system: dialog(SLOT_SYSTEM).map_err(|e| log::warn!("system messages: {e:#}")).ok(),
-            group7: super::msg::group_file(ffximain, 1, 7).and_then(msgs),
+            group7: super::msg::group_file(ffximain, lang, 7).and_then(msgs),
             emotes: dialog(SLOT_EMOTES).map_err(|e| log::warn!("emote messages: {e:#}")).ok(),
-            slot_names: super::msg::group_file(ffximain, 1, 0x17).and_then(msgs),
+            slot_names: super::msg::group_file(ffximain, lang, 0x17).and_then(msgs),
             // Group 0x18: FUN_10153b70 loads it from this fixed file in every language.
             slot_names_alt: msgs(0xd8af),
-            group9: super::msg::group_file(ffximain, 1, 9).and_then(msgs),
-            group10: super::msg::group_file(ffximain, 1, 10).and_then(msgs),
-            group12: super::msg::group_file(ffximain, 1, 0xc).and_then(msgs),
-            jobs: super::msg::group_file(ffximain, 1, 0x12).and_then(msgs),
-            days: super::msg::group_file(ffximain, 1, 0x10).and_then(msgs),
-            moons: super::msg::group_file(ffximain, 1, 0x11).and_then(msgs),
-            compass: super::msg::group_file(ffximain, 1, 0xf).and_then(msgs),
-            tables: [0x1c, 0x22, 0x1b].map(|slot| super::msg::current_slot_file(ffximain, 1, slot).and_then(msgs)),
+            group9: super::msg::group_file(ffximain, lang, 9).and_then(msgs),
+            group10: super::msg::group_file(ffximain, lang, 10).and_then(msgs),
+            group12: super::msg::group_file(ffximain, lang, 0xc).and_then(msgs),
+            jobs: super::msg::group_file(ffximain, lang, 0x12).and_then(msgs),
+            days: super::msg::group_file(ffximain, lang, 0x10).and_then(msgs),
+            moons: super::msg::group_file(ffximain, lang, 0x11).and_then(msgs),
+            compass: super::msg::group_file(ffximain, lang, 0xf).and_then(msgs),
+            tables: [0x1c, 0x22, 0x1b].map(|slot| super::msg::current_slot_file(ffximain, lang, slot).and_then(msgs)),
             phrases: super::autotrans::Dictionary::load(index, ffximain)
                 .map_err(|e| log::warn!("auto-translate: {e:#}"))
                 .ok(),
@@ -337,7 +339,7 @@ impl BattleText {
         w & 0x3fff_ffff & word != 0
     }
 
-    /// A status name for the title bar (FUN_10227450: file 55725 field 0 through FUN_102588c0(2); the capitals are
+    /// A status name for the title bar (FUN_10227450: slot 0x5c (base 0x59) field 0 through FUN_102588c0(2); the capitals are
     /// inferred: each word's first letter, as "Haste").
     pub fn status_title(&self, id: u16) -> String {
         let mut t = Self::msg_of(&self.statuses, id as i32);
@@ -881,6 +883,20 @@ fn alternative(s: &[u8], from: usize, k: usize) -> (Vec<u8>, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The status names' slot (FUN_102287e0, through the base-numbered slot map) holds the file the names were first found in (55725 = 55732).
+    #[test]
+    fn status_names_slot() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else { return };
+        let file = super::super::msg::slot_file(&dll, 1, SLOT_STATUSES).unwrap();
+        assert_eq!(file, 55732);
+        let (a, b) = (Messages::load(&index, file).unwrap(), Messages::load(&index, 55725).unwrap());
+        assert_eq!(a.len(), b.len());
+        // Nouns (field 0) and adjectives (field 1), as the formatter reads them.
+        assert!((0..a.len()).all(|i| (0..2).all(|k| a.raw_field(i, k) == b.raw_field(i, k))));
+    }
 
     fn load() -> Option<BattleText> {
         let cfg = crate::config::Config::load();

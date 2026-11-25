@@ -874,6 +874,8 @@ pub(super) fn enter(w: &mut World, kind: Kind) {
                 return;
             }
             target::ground_mode(w, id);
+            // FUN_1022ddb0 -> FUN_1022ce60: the spell's area display.
+            super::area::register(w, super::area::Of::Spell(id));
             if let Some(m) = w.magic.as_mut() {
                 m.hidden = true;
             }
@@ -904,6 +906,8 @@ pub(super) fn enter(w: &mut World, kind: Kind) {
                 refuse(w, 0x5d);
                 return;
             }
+            // FUN_102257b0 -> FUN_102249f0: the ability's area display.
+            super::area::register(w, super::area::Of::Ability(id));
             if let Some(m) = w.ability.as_mut() {
                 m.hidden = true;
             }
@@ -1354,10 +1358,10 @@ pub fn draw_event_timer(gu: &mut GameUi, w: &World, sw: f32, sh: f32) {
     );
 }
 
-/// Mouse (window messages 9 hover / 5 confirm): hovering a row or category moves the cursor there (SE 0001), a click
-/// on the highlighted one is Enter.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
-    if w.prompt.is_some() || !(moved || clicked) {
+/// Mouse (window messages 9 hover / 5 confirm): a row or category takes the cursor by winhits::takes (SE 0001), a
+/// click on the highlighted one is Enter.
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool) {
+    if w.prompt.is_some() {
         return;
     }
     let hit = |name: &str, child: u16| -> bool {
@@ -1369,10 +1373,11 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     };
     if let Some(c) = w.cats {
         let Some(k) = cat_rows(c.menu).iter().position(|r| hit(c.menu, r.0)) else { return };
-        gu.hover.set(true);
+        let takes =
+            super::winhits::takes(gu, c.menu, cat_rows(c.menu)[k].0, super::winhits::in_frame(gu, c.menu, sw, sh, p));
         if clicked && k == c.sel {
             key(w, egui::Key::Enter);
-        } else if k != c.sel {
+        } else if k != c.sel && takes {
             w.cats = Some(Cats { sel: k, ..c });
             w.sounds.push(Ui::Cursor as u32);
         }
@@ -1382,11 +1387,11 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     let menu = win.menu();
     let rows = win.rows.len().saturating_sub(win.scroll).min(VISIBLE);
     let Some(k) = (0..rows).find(|&k| hit(menu, k as u16 + 1)) else { return };
-    gu.hover.set(true);
+    let takes = super::winhits::takes(gu, menu, k as u16 + 1, super::winhits::in_frame(gu, menu, sw, sh, p));
     let same = k == win.cursor;
     if clicked && same {
         key(w, egui::Key::Enter);
-    } else if !same {
+    } else if !same && takes {
         let win = if w.ability.is_some() { w.ability.as_mut() } else { w.magic.as_mut() };
         if let Some(win) = win {
             win.cursor = k;

@@ -889,7 +889,7 @@ pub fn topbar_shot(
             gu.open_ticks = 0.0;
             if let Some(it) = crate::dat::DatIndex::open(&cfg.ffxi_dir())
                 .ok()
-                .and_then(|i| crate::dat::items::Items::load(&i, crate::dat::items::Lang::En).ok())
+                .and_then(|i| crate::dat::items::Items::load(&i, crate::dat::lang::files()).ok())
                 .and_then(|t| t.item(id))
             {
                 let aug = gu.aug_ctx();
