@@ -2086,6 +2086,11 @@ impl Host {
         self.info.borrow_mut().native_rooms.extend(rooms);
     }
 
+    /// The modern party and alliance windows' member rows drawn this frame (ui.native.party_rows).
+    pub(in crate::client) fn set_party_rows(&self, rows: Vec<(String, usize, String, [f32; 4])>) {
+        self.info.borrow_mut().party_rows = rows;
+    }
+
     /// The mods' look for the modern UI, when it changed since version `seen`.
     pub(in crate::client) fn skin_since(&self, seen: u64) -> Option<skin::Skin> {
         let f = self.info.borrow();
