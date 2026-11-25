@@ -17803,6 +17803,8 @@ impl App {
                     if let Some(gu) = self.game_ui.as_ref() {
                         gu.modern_order.borrow_mut().clear();
                     }
+                    // No party windows drawn this frame (the UI hidden, cinema): none for ui.native.party_rows either.
+                    world.lua.set_party_rows(Vec::new());
                 }
                 // What the Config windows and the settings screen hand to the app.
                 let keys = [world.cam_keys[1] as u32, world.cam_keys[0] as u32];
