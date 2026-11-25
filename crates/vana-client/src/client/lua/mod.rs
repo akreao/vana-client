@@ -3279,6 +3279,49 @@ mod tests {
         assert!(e.to_string().contains("suspended"), "{e}");
     }
 
+    /// mods.caller(): the calling mod's id inside an offered function, nil outside, and back to the outer caller
+    /// after a nested call into the same mod (also one that failed).
+    #[test]
+    fn mods_caller_names_the_calling_mod() {
+        let dir: runtime::Shared = Default::default();
+        let new = |id: &str| {
+            let m = manifest::Manifest { id: id.into(), ..Default::default() };
+            let vm = Vm::new(m, PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
+            vm.lua.set_app_data(dir.clone());
+            api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+            dir.borrow_mut().mods.push(runtime::Entry {
+                id: id.into(),
+                name: id.into(),
+                version: String::new(),
+                lua: vm.lua.weak(),
+                st: vm.st.clone(),
+            });
+            vm
+        };
+        let (a, b, c) = (new("a"), new("b"), new("c"));
+        c.lua.load("mods.provide('who', function() return mods.caller() end)").exec().unwrap();
+        // b's relay calls back into b (its own who, and a function that fails): b's caller is a again afterwards
+        b.lua
+            .load(
+                "mods.provide('who', function() return mods.caller() end)
+                 mods.provide('fail', function() error('no') end)
+                 mods.provide('relay', function()
+                   local inner = mods.call('b', 'who')
+                   local ok = pcall(mods.call, 'b', 'fail')
+                   assert(not ok)
+                   return mods.caller(), inner, mods.call('c', 'who')
+                 end)",
+            )
+            .exec()
+            .unwrap();
+        assert_eq!(a.lua.load("return mods.call('c', 'who')").eval::<String>().unwrap(), "a");
+        let (outer, inner, other) =
+            a.lua.load("return mods.call('b', 'relay')").eval::<(String, String, String)>().unwrap();
+        assert_eq!((outer.as_str(), inner.as_str(), other.as_str()), ("a", "b", "b"));
+        assert!(b.lua.load("return mods.caller()").eval::<Option<String>>().unwrap().is_none());
+        assert!(c.lua.load("return mods.caller()").eval::<Option<String>>().unwrap().is_none());
+    }
+
     /// A `__gc` finalizer would run with the budget hook off: setmetatable refuses one.
     #[test]
     fn setmetatable_refuses_gc() {

@@ -1597,6 +1597,10 @@ function mods.provide(name, func) end
 ---@return any
 function mods.call(mod, name, ...) end
 
+--- Inside a function offered with mods.provide, while a mods.call runs it: the calling mod's id (its own on a self-call); nil anywhere else. Lets a mod offer a function only to the mods it trusts (the id is the one a mod is loaded under, not proof of who wrote it).
+---@return string?
+function mods.caller() end
+
 --- Raises an event in every other mod: their events.on handlers get the values after the running handler (in this frame or the next). Prefix the name with your mod's id.
 ---@param event string 
 ---@param ... any plain data
