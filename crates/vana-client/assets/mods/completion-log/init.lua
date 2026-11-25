@@ -9,9 +9,14 @@ local GOLD = { 232, 200, 120, 255 }
 
 local view = { tab = 1, job = nil, area = 1 }
 
--- The areas the game's quest menu lists (the server's expansions decide), as {number, name}.
+-- The areas the game's quest menu lists (the server's and the installed expansions decide), as {number, name}; all of
+-- them on a client from before game.quest_areas.
 local function areas()
   local out = {}
+  if not game.quest_areas then
+    for i, name in ipairs(AREAS) do out[i] = { i - 1, name } end
+    return out
+  end
   for _, a in ipairs(game.quest_areas()) do out[#out + 1] = { a, AREAS[a + 1] } end
   return out
 end
@@ -61,17 +66,31 @@ local function state(q)
   return ""
 end
 
--- The quest files hold unused entries with Japanese working names (SDクエスト111, ATクエスト00); no real quest name has
--- a byte past ASCII, and the game's own lists never show one we have not taken.
-local function listed(q)
-  return q.current or q.completed or not q.name:find("[\128-\255]")
+-- The quest files hold unused entries with Japanese working names (SDクエスト111, ATクエスト00, (仮)). In a file whose
+-- names are mostly not Japanese (any client language but Japanese), a name with kana, kanji or a full-width sign is
+-- one of them; the game's own lists never show one we have not taken.
+local function japanese(name)
+  return name:find("[\227-\233]") ~= nil or name:find("\239\188") ~= nil
+end
+
+local function placeholders(list)
+  local jp = 0
+  for _, q in ipairs(list) do
+    if japanese(q.name) then jp = jp + 1 end
+  end
+  return jp * 2 < #list
+end
+
+local function listed(q, drop)
+  return q.current or q.completed or not (drop and japanese(q.name))
 end
 
 local function quest_rows(area)
   local list = game.quests()[area] or {}
+  local drop = placeholders(list)
   local rows = {}
   for _, q in ipairs(list) do
-    if listed(q) then
+    if listed(q, drop) then
       local s = state(q)
       rows[#rows + 1] = { q.name .. (q.repeatable and " (repeatable)" or ""), s, colour = s == "done" and DIM or (s == "under way" and GOLD or nil) }
     end
@@ -145,8 +164,9 @@ commands.register("left", function(what, arg)
     for _, a in ipairs(areas()) do
       local name = a[2]
       local done, going, total = 0, 0, 0
+      local drop = placeholders(all[a[1]] or {})
       for _, q in ipairs(all[a[1]] or {}) do
-        if listed(q) then
+        if listed(q, drop) then
           total = total + 1
           if q.current then going = going + 1 elseif q.completed then done = done + 1 end
         end
