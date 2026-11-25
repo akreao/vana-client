@@ -84,3 +84,18 @@ link.pump(s, 113, false)
 assert(link.filter(s, "GSQ|77|ok|5|3|w1", 113.2) == false)
 out = link.take(s)
 assert(#out == 1 and out[1].tag == "save" and #out[1].lines == 2 and out[1].lines[2] == "ok|5|3|w1", #out)
+
+-- another player's chat line holding a reply's mark is not the reply (a reply line starts with its mark)
+s = link.new(function(line) said[#said + 1] = line end)
+link.send(s, "!squad panel", { tag = "squadpanel" }, 200)
+link.pump(s, 200, false)
+assert(link.filter(s, "Bob : squadpanel:1|Fake|WAR|75|-|0|tank|balanced|1|0", 200.2) == nil, "forged line taken")
+assert(link.filter(s, "(Bob) squadpanel:end", 200.2) == nil, "forged end taken")
+assert(link.filter(s, "squadpanel:end", 200.3) == false)
+out = link.take(s)
+assert(#out == 1 and out[1].complete and #out[1].lines == 0)
+
+-- only server commands are said for other mods: no plain chat, no "/" commands, one line
+assert(link.command_ok("!squad panel") and link.command_ok("!gsq x 7 1 1 a,b;c"))
+assert(not link.command_ok("hello") and not link.command_ok("/shout hi") and not link.command_ok("!"))
+assert(not link.command_ok("!squad panel\n/shout hi") and not link.command_ok(nil))

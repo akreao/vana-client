@@ -1607,7 +1607,9 @@ pub(super) fn run_line(w: &mut World, line: &str, mode: super::textcmd::Mode, fr
     if line.starts_with('/') && w.lua.takes(line) {
         w.lua.typed.push((line.to_string(), from));
     } else {
+        let mod_line = std::mem::replace(&mut w.mod_line, matches!(from, From::Mod { .. }));
         super::textcmd::run(w, line, mode);
+        w.mod_line = mod_line;
     }
 }
 

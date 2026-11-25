@@ -76,3 +76,11 @@ local when, what = G.describe(G.decode_rule("1,PARTY,HPP_LT,50,NOT_STATUS,PROTEC
 assert(when == "HP below 50% and Missing effect Protect" and what == "Cure (best)", when .. " / " .. what)
 assert(select(2, G.describe(G.decode_rule("1,TARGET,ALWAYS,,,,n,,"))) == "Best nuke")
 assert(G.tidy("CURE_II") == "Cure II" and G.tidy("DIVINE_SEAL") == "Divine Seal" and G.tidy("VIVID") == "Vivid")
+
+-- a check without its end line (no answer, or cut short) gives no verdict
+local chk
+chk, err = G.parse_check({})
+assert(chk == nil and err.code == "noreply")
+chk = G.parse_check({ "chk|2|not learned", "end|1|30|BLM|15" })
+assert(#chk.problems == 1 and chk.level == 30)
+assert(G.parse_check({ "chk|2|not learned" }) == nil)

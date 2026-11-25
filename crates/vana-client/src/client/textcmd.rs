@@ -2019,7 +2019,7 @@ fn chat(w: &mut World, cid: u16, msg: &str) -> Done {
         send(w, NetCommand::Chat { kind, text: msg.to_string() });
         restore_temp_mode(w);
         // Ours (Modern; retail changes it only by /chatmode and the Chat window): the channel used last becomes the
-        // line's default, tells, shouts and emotes aside.
+        // line's default, tells, shouts and emotes aside; a mod's line (commands.run) leaves it.
         let stick = match cid {
             id::SAY => Some(2),
             id::PARTY => Some(5),
@@ -2028,7 +2028,7 @@ fn chat(w: &mut World, cid: u16, msg: &str) -> Done {
             id::UNITY => Some(0xb),
             _ => None,
         };
-        if let Some(m) = stick.filter(|&m| w.modern && w.chat_mode != m) {
+        if let Some(m) = stick.filter(|&m| w.modern && !w.mod_line && w.chat_mode != m) {
             set_chat_mode(w, m, None);
         }
     }

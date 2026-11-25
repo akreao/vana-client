@@ -163,3 +163,44 @@ H({ kind = "select", id = "pr_list", index = 4 })
 local n2 = #sent
 H({ kind = "set", id = "pr_role", index = 3 })
 assert(#sent == n2, "another player's role is not ours to set")
+
+-- a save's answer leaves the edits made while it was being sent unsaved
+H({ kind = "set", id = "tabs", index = 1 })
+H({ kind = "press", id = "save", index = 1 })
+local save_tag = sent[#sent].tag
+H({ kind = "change", id = "name", text = "Later" })
+ev.xifo_link_reply(save_tag, { "ok|4|5|w4" }, true)
+assert(w2.editing.text:find("not saved", 1, true) and w2.status.text:find("not saved yet", 1, true), w2.status.text)
+
+-- "Keep editing" leaves the mate dropdown on the mate being edited
+H({ kind = "set", id = "mate", index = 1 })
+prompts[#prompts].f(2)
+assert(w2.mate.at == 2)
+
+-- after a mate switch, the last mate's weapon skill setting cannot be saved for the new one
+H({ kind = "set", id = "mate", index = 1 })
+prompts[#prompts].f(1)
+assert(w2.mate.at == 1)
+H({ kind = "set", id = "tabs", index = 2 })
+assert(last():match("^!gsq wsg %d+ 1$"))
+H({ kind = "press", id = "ws_btn", index = 1 })
+assert(not last():match("^!gsq wss"), "saved the other mate's setting")
+
+-- an Open whose reply was cut short opens nothing
+H({ kind = "set", id = "tabs", index = 1 })
+H({ kind = "select", id = "sets", index = 1 })
+H({ kind = "press", id = "setbtn", index = 1 })
+answer({ "hdr|4|WHM|o|5|w4|Fayd heals", "rule|1|1/1|1,PARTY,HPP_LT,50,,,f,CURE," }, false)
+assert(w2.editing.text == "No Rule Set open.", w2.editing.text)
+
+-- opened with no squad mates, then reopened once there is one: its sets and choices load
+sent, windows, open = {}, {}, {}
+load(TEST.source("init.lua"), "@init.lua")()
+cmd.gambits()
+answer({ "hello|9|32|120|64" })
+answer({ "end|0" })
+cmd.gambits()
+cmd.gambits()
+assert(last():match("^!gsq mates %d+$"))
+answer({ "mate|1|40|Fayd|WHM|30|-|0|0|-", "end|1" })
+assert(sent[#sent - 1].text:match("^!gsq list %d+ WHM$") and last():match("^!gsq catm %d+ 1 jm$"), last())

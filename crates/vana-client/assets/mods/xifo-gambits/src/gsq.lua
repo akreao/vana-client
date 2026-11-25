@@ -225,14 +225,17 @@ end
 function M.parse_check(lines)
   local r, err = rows(lines)
   if not r then return nil, err end
-  local out = { problems = {} }
+  local out, ended = { problems = {} }, false
   for _, f in ipairs(r) do
     if f[1] == "chk" then
       out.problems[#out.problems + 1] = { rule = f[2], why = table.concat(f, "|", 3) }
     elseif f[1] == "end" then
+      ended = true
       out.level, out.sub, out.sub_level = tonumber(f[3]), f[4] ~= "-" and f[4] or nil, tonumber(f[5])
     end
   end
+  -- without its end line the list may be cut short (or empty): no verdict
+  if not ended then return nil, { code = "noreply", text = "the server did not answer" } end
   return out
 end
 

@@ -14,7 +14,7 @@ local s = link.new(function(line) commands.run(line) end)
 -- send(text, opts): queues a server command (without "/say"); opts.tag names its reply lines, opts.delay holds it
 -- back. Returns false when the same command is already waiting.
 mods.provide("send", function(text, opts)
-  if type(text) ~= "string" or text == "" then error("send: a command, such as \"!squad panel\"") end
+  if not link.command_ok(text) then error("send: a server command, such as \"!squad panel\"") end
   return link.send(s, text, opts, clock())
 end)
 

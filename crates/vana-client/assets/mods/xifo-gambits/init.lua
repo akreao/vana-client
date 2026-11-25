@@ -20,6 +20,7 @@ local st = {
   draft = nil,     -- the open set: { num, job, name, flags, rev, rules }
   rule = 1,        -- the picked rule
   dirty = false,
+  edits = 0,       -- counts the open set's edits, so a save's answer knows whether later edits are still unsaved
   -- the lists behind the dropdowns, by row: names as the server writes them
   targets = {}, conds = {}, actions = {},
 }
@@ -292,6 +293,7 @@ end
 
 local function changed()
   st.dirty = true
+  st.edits = st.edits + 1
   show_rules()
 end
 
@@ -348,15 +350,18 @@ local function load_mates(keep)
     if not mates then return failed(err, "The squad") end
     local slot = mate() and mate().slot
     st.mates = mates
-    st.mate = (keep and slot and index_of((function()
+    -- the picked mate is kept only when it is still there; otherwise (none before, or it left) the new pick's sets
+    -- and choices load
+    local kept = keep and slot and index_of((function()
       local n = {}
       for i, m in ipairs(mates) do n[i] = m.slot end
       return n
-    end)(), slot)) or 1
+    end)(), slot)
+    st.mate = kept or 1
     show_mates()
     if #mates == 0 then return status("You have no squad mates yet (!squad new <name> <job>).") end
     show_sets()
-    if not keep then
+    if not kept then
       load_sets()
       load_catalog()
     end
@@ -433,7 +438,9 @@ local function load_ws()
     return ui.update(W, "ws_info", { text = "This server's Gambits editor has no weapon skill settings (version 5)." })
   end
   local slot = m.slot
-  st.ws_list = nil
+  -- the last mate's setting is not edited or saved for this one while its own is on its way
+  st.ws, st.ws_edit, st.ws_list = nil, nil, nil
+  ui.update(W, "ws_info", { text = "Asking the server..." })
   request(function(id) return G.wsg(id, slot) end, function(lines)
     if not mate() or mate().slot ~= slot then return end
     took_ws(lines)
@@ -504,7 +511,9 @@ local function copy_rules(rules)
 end
 
 local function open_set(num)
-  request(function(id) return G.get(id, num) end, function(lines)
+  request(function(id) return G.get(id, num) end, function(lines, complete)
+    -- a reply cut short would open (and later save) the set without its missing rules
+    if not complete then return failed(nil, "Opening the Rule Set") end
     local set, err = G.parse_set(lines)
     if not set then return failed(err, "Opening the Rule Set") end
     st.draft, st.rule, st.dirty = set, 1, false
@@ -548,6 +557,7 @@ local function save()
   local lines, why = G.save_lines(set, token)
   if not lines then return status(why, true) end
   local tag = "save" .. token
+  local edits = st.edits
   pending[tag] = function(replies, complete)
     local saved, err = G.parse_saved(replies)
     if not saved then
@@ -555,8 +565,13 @@ local function save()
         or "Not saved: the server did not answer every part. Try Save again.", true)
     end
     d.num, d.rev, d.flags = saved.num, saved.rev, "o"
-    st.dirty = false
-    status(("Saved as Rule Set %d."):format(saved.num))
+    -- the server has the set as it was when Save was pressed; edits made since are still unsaved
+    if st.draft == d and st.edits == edits then
+      st.dirty = false
+      status(("Saved as Rule Set %d."):format(saved.num))
+    else
+      status(("Saved as Rule Set %d; the changes made while saving are not saved yet."):format(saved.num))
+    end
     show_rules()
     load_sets(saved.num)
   end
@@ -600,8 +615,12 @@ ui.on(W, function(_, e)
   if e.kind == "close" then return ui.close(R) end
   if e.kind == "set" and e.id == "mate" then
     if not st.mates[e.index] then return end
+    -- the dropdown shows the old mate again until the change goes ahead ("Keep editing" leaves it)
+    ui.update(W, "mate", { at = st.mate })
     unless_dirty(function()
       st.mate, st.draft, st.set_row = e.index, nil, 1
+      st.ws, st.ws_edit = nil, nil
+      ui.update(W, "mate", { at = st.mate })
       show_rules()
       load_sets()
       load_catalog()
@@ -621,11 +640,14 @@ ui.on(W, function(_, e)
     if e.index == 1 and st.ws_edit then
       local x = st.ws_edit
       request(function(id) return G.wss(id, slot, x) end, function(lines)
+        if not mate() or mate().slot ~= slot then return end
         took_ws(lines)
         if st.ws then status("Weapon skill setting saved for " .. m.name .. ".") end
       end)
     elseif e.index == 2 then
-      request(function(id) return G.wsa(id, slot) end, took_ws)
+      request(function(id) return G.wsa(id, slot) end, function(lines)
+        if mate() and mate().slot == slot then took_ws(lines) end
+      end)
     else
       load_ws()
     end

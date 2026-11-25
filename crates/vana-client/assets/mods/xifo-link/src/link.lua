@@ -24,6 +24,12 @@ function M.new(run)
   }
 end
 
+-- Whether `text` is a server command this link says: "!" and a word, one line. Any mod may ask the link to send, so
+-- it says nothing else (no plain chat, no "/" commands) under the player's name.
+function M.command_ok(text)
+  return type(text) == "string" and text:match("^![%w_]") ~= nil and not text:find("%c")
+end
+
 -- Queues a server command ("!squad panel"). `opts.tag` names the reply it brings ("squadpanel"); its lines are those
 -- holding `opts.mark` (default "<tag>:"), and the one whose text after the mark is, or starts with, one of `opts.ends`
 -- followed by "|" (default {"end"}) finishes it; that last line is kept unless it is a bare "end". `opts.wait`: seconds
@@ -97,10 +103,11 @@ function M.filter(s, text, now)
   -- A server line comes as two log lines: this header, then the text. While a reply is due the header is hidden too
   -- (a header whose text is not a reply line loses only the header).
   if next(s.waiting) and text:find("^%-%-%-%-== SystemMessage ==%-%-%-%-$") then return false end
+  -- A reply line starts with its mark: a player's chat line always starts with the speaker's name, so another player
+  -- saying "squadpanel:..." is not taken as the server's.
   for tag, w in pairs(s.waiting) do
-    local at = text:find(w.mark, 1, true)
-    if at then
-      local payload = text:sub(at + #w.mark)
+    if text:sub(1, #w.mark) == w.mark then
+      local payload = text:sub(#w.mark + 1)
       local head = payload:match("^([^|]*)")
       local last = false
       for _, e in ipairs(w.ends) do
