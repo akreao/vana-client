@@ -1111,6 +1111,10 @@ pub fn draw(p: &mut Panels, v: &ChatView, s: Shown, lift: bool) {
     let size = *p.chat_font;
     let font = FontId::proportional(size);
     let row = p.ctx.fonts_mut(|f| f.row_height(&font));
+    // The rows the rule holds open from before the screen shrank (the pointer over it keeps them) are cut to the
+    // screen's as well, so the bottom edge and resize corner stay on it.
+    let cap = max_rows(p.room("chat", default_room(p.ctx)).y, p.ctx.content_rect().height(), row);
+    let s = Shown { rows: s.rows.min(cap), full: s.full.min(cap), ..s };
     let total = chrome() + s.rows * row;
     let full = chrome() + s.full * row;
     if total < 0.5 {
