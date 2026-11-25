@@ -39,6 +39,9 @@ code against the server's `!squad` chat commands; none of XIFO's Ashita add-on c
   here, start, pause or resume, lift, the puller). Profile (`//squad sheet <slot>`) shows HP / MP / TP, EXP, stats,
   gear with item icons, jobs and the spells and abilities of a called mate. The panel is asked again every 15 s while
   open, a called mate's profile every 6 s.
+  With a v0.3.11 server (its `rs` and `cap` panel lines, `slot` sheet line) the picked mate also shows a Rules line:
+  the Rule Set or job rules it runs now, why its next call would run other rules (marked `*` in the list), a fallback
+  reason or rules left out; a profile answer for a mate no longer shown is dropped. Older servers just don't show it.
 
 - **XIFO Gambits** (`xifo-gambits`, `//gambits`): the squad mates' Rule Sets (the server's `!gsq` editor protocol,
   version 4 or later). Pick a mate; its job's sets are listed with the one it uses. Open, New, Copy, Delete; Use this

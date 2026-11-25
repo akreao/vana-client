@@ -99,6 +99,9 @@ ui.window("squad", {
         { title = "Role", width = 66 }, { title = "Mode", width = 82 }, { title = "", width = 48 } } },
     { type = "separator" },
     { type = "text", id = "sel", text = "No squad mate picked." },
+    { type = "text", id = "rules", text = "", dim = true,
+      tip = "The rules the mate runs now (a Rule Set from Gambits, or its job rules) and, when they differ, what its "
+        .. "next call will run." },
     { type = "buttons", id = "mate", items = { "Call", "Dismiss", "Profile" } },
     { type = "choice", id = "role", label = "Role", items = ROLE_LABELS, at = 1,
       tip = "What the mate does first: Auto follows its job." },
@@ -140,10 +143,14 @@ local function show_mate()
   local m = mate()
   if not m then
     ui.update("squad", "sel", { text = "No squad mate picked." })
+    ui.update("squad", "rules", { text = "" })
     return
   end
   ui.update("squad", "sel", { text = ("#%d %s: %s, %s"):format(m.slot, m.name, jobs_text(m),
     m.out and "out now" or "away") })
+  -- the classic window cuts a long line short: the whole line is its tip too
+  local rules = P.rules_text(m.rules) or ""
+  ui.update("squad", "rules", { text = rules, tip = rules })
   ui.update("squad", "role", { at = index_of(P.ROLES, m.role) or 1 })
   ui.update("squad", "mode", { at = index_of(P.MODES, m.mode) or 1 })
   local sw = {}
@@ -187,8 +194,11 @@ local function show_panel()
   for _, m in ipairs(p.mates) do
     if m.out then out = out + 1 end
     local note = m.out and "Out" or (m.cooldown > 0 and (m.cooldown .. " s") or "")
+    -- A mate whose next call would run other rules than it does now.
+    if m.rules and m.rules.state == "pending" then note = note .. "*" end
+    -- the Rules line as the row's tip too: the classic window cuts a long line and shows a row's tip for the cursor
     rows[#rows + 1] = { tostring(m.slot), m.name, jobs_text(m), cap(m.role), cap(m.mode), note,
-      colour = not m.out and DIM or nil }
+      colour = not m.out and DIM or nil, tip = P.rules_text(m.rules) }
   end
   if st.sel > #rows then st.sel = math.max(1, #rows) end
   ui.update("squad", "mates", { rows = rows, at = st.sel })
@@ -382,7 +392,10 @@ events.on("xifo_link_reply", function(tag, lines, complete)
       ui.update("squad_sheet", "hdr", { text = "No answer from the server." })
       return
     end
-    st.sheet = P.sheet(lines)
+    local sheet = P.sheet(lines)
+    -- An answer for another mate than the window shows now (picked again while it was on its way) is dropped.
+    if sheet.slot and sheet.slot ~= st.sheet_slot then return end
+    st.sheet = sheet
     show_sheet()
   end
 end)

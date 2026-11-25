@@ -3868,27 +3868,27 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "caa18ad537b311907f2aa654687c4f74b4ae1ad4fc0f8650a381071f1335e568",
-          "size": 16378,
+          "sha256": "49021d6569f673cd89209efb95d757b8d0869e00a0d552abbe91c1077f1370cb",
+          "size": 17312,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-squad/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "6c60ab5dfedc711047cb922830c00afbdbc9f3f6d486586b753dd44c7ef0c52c",
+          "sha256": "55a350b0527a249016fb9a73316459ec8ea5b32628e7f83086ee6440827af794",
           "size": 613,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-squad/mod.toml"
         },
         {
           "path": "src/parse.lua",
-          "sha256": "a2037a4c070aad78f566476024e958df8b40cb5a0b50de23214c68314ed0ce7f",
-          "size": 4541,
+          "sha256": "ef4d8f66f831757090d4ff3f7a11d25b07c283b6169593aed5db734bff968c1e",
+          "size": 7521,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-squad/src/parse.lua"
         }
       ],
       "id": "xifo-squad",
       "kind": "lua",
       "name": "XIFO Squad",
-      "version": "1.0.0"
+      "version": "1.1.2"
     },
     {
       "authors": [],
