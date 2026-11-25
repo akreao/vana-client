@@ -54,7 +54,9 @@ code against the server's `!squad` chat commands; none of XIFO's Ashita add-on c
   default or Custom, Open / Close / Open + Close / Independent, the TP, Best or one of the called mate's weapon
   skills; Put on now gives it to the called mate at once), and a Party roles page who the role targets mean
   (`prl`/`prs`: Auto by job or a set role, for you and each mate; other party members shown read-only).
-  Not built yet: share codes.
+  Share codes: Copy code puts the open set on the clipboard as a `GS1...` code, Import code opens one (from the box,
+  or the clipboard) as a new unsaved set. The format is XIFO's own (their Gambits add-on reads ours and we read
+  theirs; the test holds a code their add-on made), written anew here from its description.
 
 Server reply formats used (from their `modules/custom/lua/squad.lua`): `squadpanel:<slot>|<name>|<job>|<level>|<sub or
 ->|<sub level>|<role>|<mode>|<out 0/1>|<switch mask>`, `jl|<slot>|<JOB:level,...>`, `cd|<slot>|<seconds>`,

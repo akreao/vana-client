@@ -3622,14 +3622,14 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "01b5483b8da0f616a76ce69a642fe197185be9d87bd0f95458b60155bdaebee1",
-          "size": 33060,
+          "sha256": "82a505bb5fe66f71933943459209b6b5f1fb9025fb23238eca7dc710295d9908",
+          "size": 36222,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-gambits/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "0940d997124d321f1f1c96df76cc5451ef506711ccd512ff2c87064cc071e653",
-          "size": 478,
+          "sha256": "98282c761c5a85c4cd3c0c3ec9e170fc601218f25fdd02b50fb28843521cd3fa",
+          "size": 506,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-gambits/mod.toml"
         },
         {
@@ -3637,12 +3637,18 @@
           "sha256": "4a7d874f7cdcd06d38a5557a0c449bffc3c9635aa8108b869afb62fccc583caf",
           "size": 16687,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-gambits/src/gsq.lua"
+        },
+        {
+          "path": "src/share.lua",
+          "sha256": "f26e328c7040df93975fdd4f30b07af42676e9cfa55628ca43492a929bb326f0",
+          "size": 11843,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-gambits/src/share.lua"
         }
       ],
       "id": "xifo-gambits",
       "kind": "lua",
       "name": "XIFO Gambits",
-      "version": "1.1.0"
+      "version": "1.2.0"
     },
     {
       "authors": [
