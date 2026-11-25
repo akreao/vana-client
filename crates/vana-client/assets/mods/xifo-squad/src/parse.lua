@@ -144,7 +144,7 @@ function M.rules_text(r)
   elseif r.state == "pending" then
     -- what the next call runs: the chosen set, or its job rules (also when the chosen set can no longer be used)
     local nxt = (r.sel > 0 and r.sel_name ~= "?") and set_name(r.sel, r.sel_name) or "its job rules"
-    t = ("Rules: %s now, %s from its next call (%s; Apply now)"):format(live, nxt, PENDING[r.why] or "settings changed")
+    t = ("Rules: %s now, %s from its next call (%s; Apply)"):format(live, nxt, PENDING[r.why] or "settings changed")
   elseif r.state == "addon" then
     t = "Rules: an add-on runs this mate"
   elseif r.state == "unknown" then
