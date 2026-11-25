@@ -364,3 +364,12 @@ cmd.gambits()
 answer({ "mate|1|41|Salia|WAR|28|-|0|0|-", "mate|3|42|Bea|WHM|20|-|0|0|-", "end|2" })
 assert(w4.mate.at == 2 and w4.name.text == "Heals" and not w4.editing.text:find("choices from", 1, true),
   w4.editing.text)
+
+-- with no set open, a mate that changed jobs stays picked (its new job's setting loads)
+H({ kind = "press", id = "save", index = 3 }) -- Undo changes: a new set is dropped
+assert(w4.editing.text == "No Rule Set open.", w4.editing.text)
+H({ kind = "set", id = "tabs", index = 2 })
+cmd.gambits()
+cmd.gambits()
+answer({ "mate|1|41|Salia|RDM|28|-|0|0|-", "mate|3|42|Bea|BLM|20|-|0|0|-", "end|2" })
+assert(w4.mate.at == 2 and last():match("^!gsq wsg %d+ 3$"), last())

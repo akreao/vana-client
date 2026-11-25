@@ -367,6 +367,7 @@ local function load_mates(keep)
       for i, m in ipairs(mates) do n[i] = m.slot end
       return n
     end)(), slot)
+    local same = kept -- (the same mate, also after a job change: it stays picked unless the open set wants another)
     if kept and mates[kept].job ~= job then kept = nil end
     -- a new pick: a mate of the open set's job when there is one (its choices fit the set); a kept mate of another
     -- job gives way to one that has arrived since (the open set and its unsaved edits stay)
@@ -381,7 +382,7 @@ local function load_mates(keep)
     local e, w = st.ws_edit, st.ws
     local ws_dirty = e and w and (e.control ~= w.control or e.mode ~= w.mode or e.tp ~= w.tp or e.ws ~= w.ws)
     if kept and pick and mates[kept].job ~= st.draft.job and not ws_dirty then kept = nil end
-    st.mate = kept or pick or 1
+    st.mate = kept or pick or same or 1
     if not kept then st.ws, st.ws_edit = nil, nil end
     show_mates()
     if #mates == 0 then return status("You have no squad mates yet (!squad new <name> <job>).") end
