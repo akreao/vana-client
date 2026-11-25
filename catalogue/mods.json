@@ -3622,13 +3622,13 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "7e22da2e2b8eeedd0e089029be05a58dc8b58d6e1099e3fba7eb53905ec15d7f",
-          "size": 34433,
+          "sha256": "e1be2e09ce2f48e314eae299080a54999804fdbeec1aea3b22eb4472fb014be5",
+          "size": 34530,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-gambits/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "64090b8b84ffe95e4f3e9752b16829e8a76524519fdf21e913fe8842541273bd",
+          "sha256": "c5b5aa2d73af86a652a992c7d2df0b91f491159fa85995b628a6c69c5089b186",
           "size": 478,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-gambits/mod.toml"
         },
@@ -3642,7 +3642,7 @@
       "id": "xifo-gambits",
       "kind": "lua",
       "name": "XIFO Gambits",
-      "version": "1.1.2"
+      "version": "1.1.3"
     },
     {
       "authors": [
@@ -3652,13 +3652,13 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "8c775abfce7ccefa3c8ba954f945fd27b61af9ac3f069aedaea7da815ebd6b5a",
-          "size": 1808,
+          "sha256": "2373f20fb63fd97901893c86599c50ba1e7b1f4851f327a618b6a16cc4ac6fa6",
+          "size": 1936,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-link/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "aa3739dc027feac54c7407ff11cab2193e530c37df077090c9a7f949b294460d",
+          "sha256": "5a8034b8d8b6c3d1e4cc0e972e8dd8dba9d228b52be1d008b4ce0316997f71c2",
           "size": 413,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-link/mod.toml"
         },
@@ -3672,7 +3672,7 @@
       "id": "xifo-link",
       "kind": "lua",
       "name": "XIFO Link",
-      "version": "1.1.2"
+      "version": "1.1.3"
     },
     {
       "authors": [

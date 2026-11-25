@@ -204,3 +204,12 @@ cmd.gambits()
 assert(last():match("^!gsq mates %d+$"))
 answer({ "mate|1|40|Fayd|WHM|30|-|0|0|-", "end|1" })
 assert(sent[#sent - 1].text:match("^!gsq list %d+ WHM$") and last():match("^!gsq catm %d+ 1 jm$"), last())
+
+-- a roster refresh that loses the picked mate on the Weapon skills page asks for the new pick's setting
+H({ kind = "set", id = "tabs", index = 2 })
+answer({ "ws|1|WHM|d|0|3|1000|0|0|-|1|1|1|1", "end|1" })
+H({ kind = "press", id = "use", index = 3 }) -- Apply now; then the refresh, here by reopening
+cmd.gambits()
+cmd.gambits()
+answer({ "mate|2|41|Salia|WAR|28|-|0|0|-", "end|1" })
+assert(last():match("^!gsq wsg %d+ 2$"), last())

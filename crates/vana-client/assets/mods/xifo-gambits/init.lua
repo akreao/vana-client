@@ -344,6 +344,8 @@ local function show_mates()
   ui.update(W, "mate", { items = items, at = st.mate })
 end
 
+local load_page -- (below: the Weapon skills or Party roles page, when one is up)
+
 local function load_mates(keep)
   request(G.mates, function(lines)
     local mates, err = G.parse_mates(lines)
@@ -365,6 +367,7 @@ local function load_mates(keep)
     if not kept then
       load_sets()
       load_catalog()
+      load_page()
     end
   end)
 end
@@ -494,7 +497,7 @@ local function load_roles()
   end)
 end
 
-local function load_page()
+load_page = function()
   if st.tab == 2 then load_ws() elseif st.tab == 3 then load_roles() end
 end
 

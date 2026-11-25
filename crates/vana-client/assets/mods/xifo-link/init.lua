@@ -18,7 +18,8 @@ local USERS = { ["xifo-squad"] = true, ["xifo-gambits"] = true }
 -- send(text, opts): queues a server command (without "/say"); opts.tag names its reply lines, opts.delay holds it
 -- back. Returns false when the same command is already waiting.
 mods.provide("send", function(text, opts)
-  if not USERS[mods.caller() or ""] then error("send: only for the XIFO mods") end
+  -- (a client older than mods.caller() cannot tell callers apart: it serves every mod, as XIFO Link 1.1.1 did)
+  if mods.caller and not USERS[mods.caller() or ""] then error("send: only for the XIFO mods") end
   if not link.command_ok(text) then error("send: a server command, such as \"!squad panel\"") end
   return link.send(s, text, opts, clock())
 end)
