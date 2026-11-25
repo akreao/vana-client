@@ -24,9 +24,7 @@ game = {
     }
   end,
 }
-local cure = "Cure"
-res = { job = function(id) return ({ [4] = "BLM" })[id] or "JOB" .. id end,
-  spell = function(id) return id == 1 and { name = cure } or nil end }
+res = { job = function(id) return ({ [4] = "BLM" })[id] or "JOB" .. id end, spell = function() return nil end }
 local on_window, window, update = ui.on, ui.window, ui.update
 ui.on = function(id, f) H = f; on_window(id, f) end
 -- What the mod drew: the window's elements by id, then each update's fields over them.
@@ -62,8 +60,7 @@ local text = table.concat(said, "\n")
 assert(text:find("San d'Oria: 1 of 4 done, 1 under way.", 1, true), text)
 assert(not text:find("Crystal War", 1, true), text)
 
--- A Japanese client (Cure is ケアル): its real titles are Japanese, so nothing is taken for a placeholder.
-cure = "ケアル"
+-- Japanese titles are not placeholders; the working names are, in any language.
 game.quests = function()
   return { [0] = {
     { number = 1, name = "騎士の試練", current = false, completed = false },
@@ -72,7 +69,24 @@ game.quests = function()
   } }
 end
 H("completion", { kind = "set", id = "area", index = 1 })
-assert(names() == "騎士の試練|母の形見|SDクエスト111", names())
+assert(names() == "騎士の試練|母の形見", names())
+
+-- An area that is mostly working names (Aht Urhgan's English file is 44% of them): only the real one is listed, and
+-- only it counts in //left quests.
+game.quests = function()
+  return { [6] = {
+    { number = 1, name = "Making Amends", current = false, completed = true },
+    { number = 100, name = "ATクエスト00", current = false, completed = false },
+    { number = 104, name = "ATクエスト00", current = false, completed = false },
+    { number = 97, name = "Windurst Quest #97", current = false, completed = false },
+    { number = 165, name = "(仮)", current = false, completed = false },
+  } }
+end
+H("completion", { kind = "set", id = "area", index = 6 })
+assert(names() == "Making Amends", names())
+said = {}
+C.left("quests")
+assert(table.concat(said, "\n"):find("Aht Urhgan: 1 of 1 done, 0 under way.", 1, true), table.concat(said, "\n"))
 
 -- A client from before game.quest_areas: every area, as before.
 game.quest_areas = nil
@@ -82,4 +96,4 @@ C.left()
 assert(#drawn.area.items == 11, #drawn.area.items)
 said = {}
 C.left("quests")
-assert(said[1] and said[1]:find("San d'Oria", 1, true), tostring(said[1]))
+assert(said[1] and said[1]:find("Aht Urhgan", 1, true), tostring(said[1]))
