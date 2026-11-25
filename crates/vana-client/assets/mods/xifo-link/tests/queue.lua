@@ -2,6 +2,8 @@
 -- hidden, tagged replies gathered until their end line and hidden only while asked for.
 
 local link = require("src.link")
+local SYS = 0xc8 -- the chat mode of a server line (chat kinds 6 / 7)
+local NS = 0x79  -- the chat mode of a "basic system message" line (chat kind 0x1d)
 local said = {}
 local s = link.new(function(line) said[#said + 1] = line end)
 
@@ -15,18 +17,18 @@ assert(#said == 1 and said[1] == "/say !squad panel", said[1])
 assert(link.filter(s, "Nymh : !squad panel", 0.1) == false, "say echo kept")
 
 -- the reply: hidden and gathered up to its end line, the system message header before each line too
-assert(link.filter(s, "----== SystemMessage ==----", 0.6) == false)
-assert(link.filter(s, "squadpanel:1|Fayd|WHM|30|BLM|15|healer|balanced|1|15", 0.6) == false)
-assert(link.filter(s, "squadpanel:camp|0|0|0|0", 0.6) == false)
+assert(link.filter(s, "----== SystemMessage ==----", 0.6, SYS) == false)
+assert(link.filter(s, "squadpanel:1|Fayd|WHM|30|BLM|15|healer|balanced|1|15", 0.6, SYS) == false)
+assert(link.filter(s, "squadpanel:camp|0|0|0|0", 0.6, SYS) == false)
 assert(link.filter(s, "Some other line", 0.6) == nil)
-assert(link.filter(s, "squadpanel:end", 0.7) == false)
+assert(link.filter(s, "squadpanel:end", 0.7, SYS) == false)
 local out = link.take(s)
 assert(#out == 1 and out[1].tag == "squadpanel" and out[1].complete and #out[1].lines == 2, #out)
 assert(out[1].lines[2] == "camp|0|0|0|0")
 
 -- after the reply, a typed "!squad panel"'s lines show
-assert(link.filter(s, "----== SystemMessage ==----", 0.8) == nil)
-assert(link.filter(s, "squadpanel:end", 0.8) == nil)
+assert(link.filter(s, "----== SystemMessage ==----", 0.8, SYS) == nil)
+assert(link.filter(s, "squadpanel:end", 0.8, SYS) == nil)
 
 -- not before the gap; not while the player types
 link.pump(s, 1.0, false)
@@ -57,7 +59,7 @@ assert(#s.queue == 0 and #said == 2 + link.RETRIES, #said) -- said 1 + RETRIES t
 -- a reply without its end line is handed on unfinished after WAIT
 link.send(s, "!squad sheet 2", { tag = "squadsheet" }, 30)
 link.pump(s, 30, false)
-assert(link.filter(s, "squadsheet:hdr|Fayd|WHM|30|-|0|auto|balanced|Tarutaru F|15", 30.2) == false)
+assert(link.filter(s, "squadsheet:hdr|Fayd|WHM|30|-|0|auto|balanced|Tarutaru F|15", 30.2, SYS) == false)
 link.pump(s, 30.2 + link.WAIT + 3, false)
 out = link.take(s)
 assert(#out == 1 and out[1].tag == "squadsheet" and not out[1].complete and #out[1].lines == 1)
@@ -66,9 +68,9 @@ assert(#out == 1 and out[1].tag == "squadsheet" and not out[1].complete and #out
 s = link.new(function(line) said[#said + 1] = line end)
 link.send(s, "!gsq mates 12", { tag = "gsq12", mark = "GSQ|12|", ends = { "end", "err" } }, 100)
 link.pump(s, 100, false)
-assert(link.filter(s, "GSQ|12|mate|1|33|Fayd|WHM|30|-|0|1|-", 100.2) == false)
-assert(link.filter(s, "GSQ|120|mate|x", 100.2) == nil, "another request's line")
-assert(link.filter(s, "GSQ|12|end|1", 100.3) == false)
+assert(link.filter(s, "GSQ|12|mate|1|33|Fayd|WHM|30|-|0|1|-", 100.2, SYS) == false)
+assert(link.filter(s, "GSQ|120|mate|x", 100.2, SYS) == nil, "another request's line")
+assert(link.filter(s, "GSQ|12|end|1", 100.3, SYS) == false)
 out = link.take(s)
 assert(#out == 1 and out[1].complete and #out[1].lines == 2 and out[1].lines[2] == "end|1")
 
@@ -79,16 +81,42 @@ link.pump(s, 110, false)
 assert(link.filter(s, ">> /say !gsq x 77 1 2 aaa", 110.1) == false, "refused")
 assert(link.filter(s, "...A command error occurred.", 110.1) == false)
 link.pump(s, 111.5, false)
-assert(link.filter(s, "GSQ|77|ack|1|2", 111.7) == false)
+assert(link.filter(s, "GSQ|77|ack|1|2", 111.7, SYS) == false)
 link.pump(s, 113, false)
-assert(link.filter(s, "GSQ|77|ok|5|3|w1", 113.2) == false)
+assert(link.filter(s, "GSQ|77|ok|5|3|w1", 113.2, SYS) == false)
 out = link.take(s)
 assert(#out == 1 and out[1].tag == "save" and #out[1].lines == 2 and out[1].lines[2] == "ok|5|3|w1", #out)
 
 -- listened marks: hidden whenever they come, handed on
 link.listen(s, "[HC-ICONS]")
-assert(link.filter(s, "[HC-ICONS] Fayd=2", 200) == false)
-assert(link.filter(s, "Plain line", 200) == nil)
-assert(link.filter(s, "Bob : [HC-ICONS] Bob=1", 200) == nil, "a player's chat line naming the mark is not the server's")
+assert(link.filter(s, "[HC-ICONS] Fayd=2", 200, NS) == false)
+assert(link.filter(s, "Plain line", 200, NS) == nil)
+assert(link.filter(s, "Bob : [HC-ICONS] Bob=1", 200, 9) == nil, "a player's chat line naming the mark is not the server's")
 local _, heard = link.take(s)
 assert(#heard == 1 and heard[1].mark == "[HC-ICONS]" and heard[1].text == " Fayd=2")
+
+-- another player's chat line holding a reply's mark is not the reply (a reply line starts with its mark)
+s = link.new(function(line) said[#said + 1] = line end)
+link.send(s, "!squad panel", { tag = "squadpanel" }, 200)
+link.pump(s, 200, false)
+assert(link.filter(s, "Bob : squadpanel:1|Fake|WAR|75|-|0|tank|balanced|1|0", 200.2, 9) == nil, "forged line taken")
+assert(link.filter(s, "(Bob) squadpanel:end", 200.2, 0xd) == nil, "forged end taken")
+-- a player's say holding a line break gives a second log line without the name, in the say's mode
+assert(link.filter(s, "squadpanel:1|Fake|WAR|75|-|0|tank|balanced|1|0", 200.25, 9) == nil, "continuation taken")
+assert(link.filter(s, "squadpanel:end", 200.3, SYS) == false)
+out = link.take(s)
+assert(#out == 1 and out[1].complete and #out[1].lines == 0)
+
+-- only server commands are said for other mods: no plain chat, no "/" commands, one line
+assert(link.command_ok("!squad panel") and link.command_ok("!gsq x 7 1 1 a,b;c"))
+assert(not link.command_ok("hello") and not link.command_ok("/shout hi") and not link.command_ok("!"))
+assert(not link.command_ok("!squad panel\n/shout hi") and not link.command_ok(nil))
+
+-- the Gambits editor's and the hardcore lines come as "basic system messages" (SYSTEM_3, chat kind 0x1d, mode 0x79)
+s = link.new(function(line) said[#said + 1] = line end)
+link.send(s, "!gsq mates 5", { tag = "gsq5", mark = "GSQ|5|", ends = { "end", "err" } }, 300)
+link.pump(s, 300, false)
+assert(link.filter(s, "GSQ|5|mate|1|33|Fayd|WHM|30|-|0|1|-", 300.1, NS) == false)
+assert(link.filter(s, "GSQ|5|end|1", 300.2, NS) == false)
+out = link.take(s)
+assert(#out == 1 and out[1].complete and #out[1].lines == 2)
