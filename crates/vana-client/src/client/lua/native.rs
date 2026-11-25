@@ -309,6 +309,10 @@ pub(super) fn install(lua: &Lua, ui: &Table, mod_id: &str) -> mlua::Result<()> {
             let info = info(lua);
             let f = info.borrow();
             let out = lua.create_table()?;
+            // Only while the modern UI draws (it is the one that records them).
+            if f.modern_ppp.is_none() {
+                return Ok(out);
+            }
             for (panel, slot, name, r) in &f.party_rows {
                 let t = lua.create_table()?;
                 t.set("panel", panel.as_str())?;
