@@ -29,10 +29,13 @@ end
 
 function M.has_switch(mask, n) return (mask >> (n - 1)) & 1 == 1 end
 
--- "!squad panel": { mates = { {slot, name, job, level, sub, sub_level, role, mode, out, switches, levels, cooldown} },
--- camp = {on, puller, paused, pulls}, bots = {names}, bot_puller }
+-- "!squad panel": { mates = { {slot, name, job, level, sub, sub_level, role, mode, out, switches, levels, cooldown,
+-- rules} }, camp = {on, puller, paused, pulls}, bots = {names}, bot_puller, caps = {word = true} }
+-- rules (servers from v0.3.11, line "rs"): what the mate runs and what its next call will run: {state, why, live,
+-- live_name, sel, sel_name, fallback, dropped, live_job}. state: off (not out), set, job, fallback, pending (why: job,
+-- choice, gone, edited, role), addon, unknown. caps (line "cap"): what the server can do beyond the first menus.
 function M.panel(lines)
-  local p = { mates = {}, camp = { on = false, puller = 0, paused = false, pulls = 0 }, bots = {} }
+  local p = { mates = {}, camp = { on = false, puller = 0, paused = false, pulls = 0 }, bots = {}, caps = {} }
   local by_slot = {}
   for _, line in ipairs(lines) do
     local f = split(line)
@@ -50,6 +53,11 @@ function M.panel(lines)
       end
     elseif f[1] == "cd" and by_slot[num(f[2])] then
       by_slot[num(f[2])].cooldown = num(f[3])
+    elseif f[1] == "rs" and by_slot[num(f[2])] and #f >= 11 then
+      by_slot[num(f[2])].rules = { state = f[3], why = f[4], live = num(f[5]), live_name = f[6], sel = num(f[7]),
+        sel_name = f[8], fallback = num(f[9]), dropped = num(f[10]), live_job = f[11] ~= "-" and f[11] or nil }
+    elseif f[1] == "cap" then
+      for _, word in ipairs(list(f[2])) do p.caps[word] = true end
     elseif f[1] == "camp" then
       p.camp = { on = f[2] == "1", puller = num(f[3]), paused = f[4] == "1", pulls = num(f[5]) }
     elseif f[1] == "campbots" then
@@ -61,7 +69,7 @@ function M.panel(lines)
   return p
 end
 
--- "!squad sheet <slot>": { name, job, level, sub, sub_level, role, mode, race, switches, jobs = {{job, level}},
+-- "!squad sheet <slot>": { slot (servers from v0.3.11: whose answer this is), name, job, level, sub, sub_level, role, mode, race, switches, jobs = {{job, level}},
 -- exp = {job, level, now, need}, vitals = {HP = {now, max}, ...}, stats = {{name, value}}, combat = {{name, value}},
 -- haste = {{kind, hundredths}}, gear = {{slot, slot_name, item, id}}, look = {...}, notes = {}, spells = {{name, mp}},
 -- abilities = {{name, level}} }
@@ -71,7 +79,9 @@ function M.sheet(lines)
   for _, line in ipairs(lines) do
     local f = split(line)
     local k = f[1]
-    if k == "hdr" then
+    if k == "slot" then
+      s.slot = tonumber(f[2])
+    elseif k == "hdr" then
       s.name, s.job, s.level, s.sub, s.sub_level = f[2], f[3], num(f[4]), f[5] ~= "-" and f[5] or nil, num(f[6])
       s.role, s.mode, s.race, s.switches = f[7], f[8], f[9], num(f[10])
     elseif k == "job" then
@@ -100,6 +110,46 @@ function M.sheet(lines)
   table.sort(s.gear, function(a, b) return a.slot < b.slot end)
   table.sort(s.look, function(a, b) return a.slot < b.slot end)
   return s
+end
+
+-- Why a chosen Rule Set is not running (the server's fallback reasons).
+local FALLBACK = { "the chosen set is gone", "that number is now another set", "the chosen set cannot be used here",
+  "no set for this job" }
+local PENDING = { job = "its job changed", choice = "another set was chosen", gone = "its set was deleted",
+  edited = "its set was edited", role = "its role changed" }
+
+local function set_name(num, name)
+  if num == 0 then return "its job rules" end
+  if name == "?" then return ("set %d (no longer usable)"):format(num) end
+  return ("set %d %s"):format(num, name ~= "-" and name or "")
+end
+
+-- A mate's rules as one line for the window ("Rules: ..."), or nil when the server does not say.
+function M.rules_text(r)
+  if not r then return nil end
+  local live = set_name(r.live, r.live_name)
+  local t
+  if r.state == "off" then
+    t = "Rules: " .. set_name(r.sel, r.sel_name) .. " at its next call"
+  elseif r.state == "set" then
+    t = "Rules: " .. live
+  elseif r.state == "job" then
+    t = "Rules: its job rules"
+  elseif r.state == "fallback" then
+    t = "Rules: its job rules (" .. (FALLBACK[r.fallback] or "the chosen set could not be used") .. ")"
+  elseif r.state == "pending" then
+    t = ("Rules: %s now; %s, so the next call changes them (Apply now)"):format(live, PENDING[r.why] or "settings changed")
+  elseif r.state == "addon" then
+    t = "Rules: an add-on runs this mate"
+  elseif r.state == "unknown" then
+    t = "Rules: not known (called before the server kept track)"
+  else
+    t = "Rules: " .. tostring(r.state)
+  end
+  if r.dropped > 0 and r.state ~= "off" then
+    t = t .. (" (%d rule%s left out)"):format(r.dropped, r.dropped == 1 and "" or "s")
+  end
+  return t
 end
 
 return M

@@ -53,3 +53,24 @@ assert(sh.gear[1].slot_name == "main" and sh.gear[2].id == 12345, "gear sorted b
 assert(#sh.look == 1 and sh.look[1].item == "Robe")
 assert(sh.notes[1]:find("Not called", 1, true))
 assert(sh.spells[1].name == "Cure II" and sh.spells[1].mp == 24 and sh.abilities[1].level == 15)
+
+-- Servers from v0.3.11: the Rules line per mate, the capability words, the sheet's slot line.
+local r = P.panel({
+  "1|Fayd|WHM|30|BLM|15|healer|balanced|1|15",
+  "rs|1|pending|edited|4|Heals|4|Heals|0|1|WHM",
+  "2|Salia|WAR|28|-|0|tank|aggressive|0|5",
+  "rs|2|off|-|0|-|0|-|0|0|-",
+  "3|Bo|BLM|20|-|0|auto|balanced|1|15",
+  "rs|3|fallback|-|0|-|6|?|1|0|BLM",
+  "cap|reapply1,later",
+})
+assert(r.caps.reapply1 and r.caps.later)
+local f1 = r.mates[1].rules
+assert(f1.state == "pending" and f1.why == "edited" and f1.live == 4 and f1.live_name == "Heals" and f1.dropped == 1)
+assert(f1.live_job == "WHM" and r.mates[2].rules.live_job == nil)
+assert(P.rules_text(f1) == "Rules: set 4 Heals now; its set was edited, so the next call changes them (Apply now) (1 rule left out)",
+  P.rules_text(f1))
+assert(P.rules_text(r.mates[2].rules) == "Rules: its job rules at its next call", P.rules_text(r.mates[2].rules))
+assert(P.rules_text(r.mates[3].rules) == "Rules: its job rules (the chosen set is gone)", P.rules_text(r.mates[3].rules))
+assert(P.rules_text(nil) == nil and next(p.caps) == nil and p.mates[1].rules == nil)
+assert(P.sheet({ "slot|3", "hdr|Bo|BLM|20|-|0|auto|balanced|Taru|15" }).slot == 3)
