@@ -57,9 +57,20 @@ local function lookups()
       table.insert(statuses[k], id)
     end
   end
-  if next(spells) == nil then return nil end
+  -- Status names come with the battle text, which can load after the spell names: wait for both.
+  if next(spells) == nil or next(statuses) == nil then return nil end
   names = { spells = spells, abilities = abilities, statuses = statuses }
   return names
+end
+
+-- Whether /ra can shoot with what the range and ammo slots hold (res.item records): archery and marksmanship need
+-- ammo, a throwing weapon shoots by itself, an instrument does not shoot.
+local function can_shoot(range, ammo)
+  if range then
+    if range.skill == 27 then return true end
+    return (range.skill == 25 or range.skill == 26) and ammo ~= nil
+  end
+  return ammo ~= nil and ammo.skill == 27
 end
 
 local function env()
@@ -68,14 +79,18 @@ local function env()
   local me = game.player()
   local buffs = {}
   for _, b in ipairs(game.buffs()) do buffs[b.id] = true end
-  local known = {}
+  local known, has_ability = {}, {}
   for _, id in ipairs(game.spells()) do known[id] = true end
+  for _, id in ipairs(game.abilities()) do has_ability[id] = true end
+  local eq = game.equipment()
+  local function worn(slot) return eq[slot] and eq[slot].id and res.item(eq[slot].id) or nil end
   local party, ours = game.party(), { [me.id] = true }
   for _, m in ipairs(party) do ours[m.id] = true end
   local info = game.info()
   local pet = info.pet_index and game.entity(info.pet_index) or nil
   return {
-    now = clock(), on = on(), me = me, buffs = buffs, known = known, party = party, ours = ours,
+    now = clock(), on = on(), me = me, buffs = buffs, known = known, has_ability = has_ability, party = party, ours = ours,
+    can_shoot = can_shoot(worn(2), worn(3)),
     target = game.target(), pet = pet, entity = game.entity, rules = rules(),
     casting = game.cast() ~= nil, event = info.event,
     usable = function(kind, id) return (game.usable(kind, id)) end,
@@ -177,7 +192,7 @@ local function what_items(kind, current)
     end
   end
   table.sort(list)
-  if kind == "ws" then table.insert(list, 1, "Best") end
+  if kind == "ws" then table.insert(list, 1, "Best"); seen.Best = true end
   if current and current ~= "" and not seen[current] then table.insert(list, kind == "ws" and 2 or 1, current) end
   if #list == 0 then list[1] = "-" end
   return list
@@ -246,6 +261,8 @@ end
 
 local function open_rule(i)
   view.editing = i
+  -- The rule edited and its sheet, to find it again on Save (the sheet may be reordered meanwhile, or the job changed).
+  view.source, view.sheet = i and rules()[i] or nil, rules()
   view.draft = i and copy(rules()[i]) or
     { on = true, target = "me", when = { kind = "always" }, action = { kind = "spell", name = "", best = false } }
   view.draft.when = view.draft.when or { kind = "always" }
@@ -306,7 +323,17 @@ ui.on(R, function(_, e)
       return
     end
     local list = rules()
-    if view.editing and list[view.editing] then list[view.editing] = d else list[#list + 1] = d; view.at = #list end
+    if list ~= view.sheet then
+      ui.update(R, "problem", { text = "Not saved: the job or its sheet changed meanwhile." })
+      return
+    end
+    local at = nil
+    for k, r in ipairs(list) do if r == view.source then at = k end end
+    if view.source and not at then
+      ui.update(R, "problem", { text = "Not saved: that rule was deleted meanwhile." })
+      return
+    end
+    if at then list[at] = d; view.at = at else list[#list + 1] = d; view.at = #list end
     storage.save()
     ui.close(R)
     view.draft = nil

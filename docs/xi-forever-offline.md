@@ -76,7 +76,9 @@ code against the server's `!squad` chat commands; none of XIFO's Ashita add-on c
   "best tier I can cast", a job ability, a weapon skill or the best one the game takes now, ranged attack, attack).
   Every 0.2 s the first rule that holds and that the game's menus would take is done; it waits while you move, cast,
   talk to an NPC or zone, 1.5 s after each action, and 4 s before the same rule fires again. Party rules pick the
-  lowest HP member in casting range; battle target rules only touch a monster you or your party claimed. The rules
+  lowest HP member in casting range; battle target rules only touch a monster you or your party claimed, or any
+  monster while you are engaged with it. Spells wait out silence and mute, abilities amnesia; ranged attack needs
+  something to shoot. The rules
   start switched off (`//autobox on`); each job starts from a small preset (WHM, RDM, BLM, PLD, WAR, SAM, DRK; the
   rest a weapon skill rule). Not ported: their Parser, EXP Watch and Enemy Info tabs (DPS and XP Tracker cover the
   first two) and the Recruit / Sort / Optimize buttons.

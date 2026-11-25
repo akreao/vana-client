@@ -83,8 +83,12 @@ end
 
 local ROMAN = { "", "II", "III", "IV", "V", "VI" }
 
--- A spell family's ids, highest tier first: "Cure" -> Cure VI .. Cure.
+-- A spell family's ids, highest tier first: "Cure" (or "Cure II") -> Cure VI .. Cure.
 local function family(spell_id, name)
+  for t = #ROMAN, 2, -1 do
+    local base = name:match("^(.-) " .. ROMAN[t] .. "$")
+    if base then name = base break end
+  end
   local out = {}
   for t = #ROMAN, 1, -1 do
     local id = spell_id(t == 1 and name or (name .. " " .. ROMAN[t]))
@@ -171,10 +175,25 @@ local function fits(targets, cand)
 end
 
 -- What the rule's action is on this candidate now: {kind, id, tag, text}, or nil.
+-- Status effects that stop a kind of action, by name: spells, abilities and weapon skills.
+local NO_SPELLS, NO_ABILITIES = { "silence", "mute" }, { "amnesia" }
+
+local function blocked(env, names)
+  for _, n in ipairs(names) do
+    for _, id in ipairs(env.status_ids(n) or {}) do
+      if env.buffs[id] then return true end
+    end
+  end
+  return false
+end
+
 local function resolve(rule, cand, env)
   local a = rule.action or {}
+  if (a.kind == "spell" and blocked(env, NO_SPELLS)) or ((a.kind == "ability" or a.kind == "ws") and blocked(env, NO_ABILITIES)) then
+    return nil
+  end
   if a.kind == "ranged" then
-    if cand.kind ~= "mob" then return nil end
+    if cand.kind ~= "mob" or not env.can_shoot then return nil end
     return { kind = "ranged", tag = cand.tag, text = "Ranged attack" }
   elseif a.kind == "attack" then
     if cand.kind ~= "mob" or env.me.status == 1 then return nil end
@@ -189,7 +208,7 @@ local function resolve(rule, cand, env)
     end
   elseif a.kind == "ability" then
     local id = env.ability_id(a.name or "")
-    local r = id and env.ability(id)
+    local r = id and env.has_ability[id] and env.ability(id)
     if r and fits(r.targets, cand) and env.usable("ability", id) then
       return { kind = "ability", id = id, tag = cand.tag, text = r.name }
     end
@@ -198,7 +217,7 @@ local function resolve(rule, cand, env)
     local names = a.best and M.BEST_WS or { a.name or "" }
     for _, n in ipairs(names) do
       local id = env.ability_id(n)
-      if id and id < 512 and env.usable("ability", id) then
+      if id and id < 512 and env.has_ability[id] and env.usable("ability", id) then
         return { kind = "ability", id = id, tag = cand.tag, text = n }
       end
     end

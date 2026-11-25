@@ -10,7 +10,7 @@ local SPELLS = {
   [109] = { name = "Refresh", targets = 0x1 }, [164] = { name = "Thunder", targets = 0x20 },
 }
 local ABILITIES = { [32] = { name = "Fast Blade" }, [42] = { name = "Savage Blade" }, [520] = { name = "Berserk", targets = 1 } }
-local STATUS = { protect = { 40 }, refresh = { 43 }, poison = { 3 }, berserk = { 56 } }
+local STATUS = { protect = { 40 }, refresh = { 43 }, poison = { 3 }, berserk = { 56 }, silence = { 6 }, amnesia = { 16 } }
 
 local function env(o)
   local e = {
@@ -18,6 +18,7 @@ local function env(o)
     me = o.me or { id = 1, pos = { x = 0, z = 0 }, hpp = 100, mpp = 100, tp = 0, status = 0 },
     buffs = o.buffs or {}, known = o.known or { [1] = true, [2] = true, [43] = true, [109] = true, [164] = true },
     party = o.party or {}, ours = o.ours or { [1] = true }, target = o.target, pet = nil,
+    has_ability = o.has_ability or { [32] = true, [42] = true, [520] = true }, can_shoot = o.can_shoot,
     entity = function(id) return (o.near or {})[id] end, rules = o.rules,
     casting = o.casting or false, event = false,
     usable = function(kind, id) return not (o.refuse or {})[kind .. id] end,
@@ -97,3 +98,31 @@ assert(core.condition_text({ kind = "tp_at_least", value = 1000 }) == "My TP at 
 for _, j in ipairs({ "WHM", "RDM", "BLM", "PLD", "WAR", "SAM", "DRK", "THF" }) do
   for i, r in ipairs(presets.for_job(j)) do assert(core.check(r), j .. " rule " .. i) end
 end
+
+-- Best weapon skill only from the ability list (the weapon held): a move the game would not list is passed over.
+s = core.new()
+a = core.tick(s, env({ now = 1, me = me, rules = { ws }, target = mob, has_ability = { [32] = true } }))
+assert(a and a.id == 32, "only listed weapon skills")
+
+-- Best tier from a numbered spell: Cure II's family is Cure's.
+local cure2 = { target = "me", when = { kind = "always" }, action = { kind = "spell", name = "Cure II", best = true } }
+s = core.new()
+a = core.tick(s, env({ now = 1, rules = { cure2 } }))
+assert(a and a.id == 2, "Cure II best -> Cure II (Cure III unknown)")
+s = core.new()
+a = core.tick(s, env({ now = 1, rules = { cure2 }, refuse = { spell2 = true } }))
+assert(a and a.id == 1, "falls back to Cure")
+
+-- Silence stops spells, amnesia abilities and weapon skills.
+s = core.new()
+assert(core.tick(s, env({ now = 1, rules = { cure2 }, buffs = { [6] = true } })) == nil)
+s = core.new()
+assert(core.tick(s, env({ now = 1, me = me, rules = { ws }, target = mob, buffs = { [16] = true } })) == nil)
+
+-- Ranged attack only with something to shoot.
+local ra = { target = "target", when = { kind = "engaged" }, action = { kind = "ranged" } }
+s = core.new()
+assert(core.tick(s, env({ now = 1, me = me, rules = { ra }, target = mob, can_shoot = false })) == nil)
+s = core.new()
+a = core.tick(s, env({ now = 1, me = me, rules = { ra }, target = mob, can_shoot = true }))
+assert(a and a.kind == "ranged" and a.tag == "<t>")

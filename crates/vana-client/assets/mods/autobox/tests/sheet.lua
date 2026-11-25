@@ -14,6 +14,7 @@ res = {
   spell = function(id) return spells[id] end,
   ability = function() return nil end,
   status = function(id) return ({ [40] = "Protect" })[id] end,
+  item = function() return nil end,
 }
 game = {
   player = function() return { id = 1, main_job = 3, pos = { x = 0, z = 0 }, hpp = 100, mpp = 100, tp = 0, status = 0 } end,
@@ -26,6 +27,7 @@ game = {
   target = function() return nil end,
   cast = function() return nil end,
   usable = function() return true end,
+  equipment = function() return {} end,
 }
 local on_window, update = ui.on, ui.update
 H = {}
@@ -56,6 +58,25 @@ H.autobox_rule("autobox_rule", { kind = "set", id = "what", index = 1 })
 H.autobox_rule("autobox_rule", { kind = "press", id = "done", index = 1 })
 assert(not ui.is_open("autobox_rule"), drawn["autobox_rule.problem"] and drawn["autobox_rule.problem"].text)
 assert(#storage.character.rules.WHM == 9 and storage.character.rules.WHM[9].action.name == "Cure")
+
+-- An edit saved after its rule moved goes to that rule, wherever it is now.
+-- (a click moves the list's cursor, then sends select)
+ui.update("autobox", "rules", { at = 2 })
+H.autobox("autobox", { kind = "select", id = "rules", index = 2 })
+local second = storage.character.rules.WHM[2]
+H.autobox("autobox", { kind = "press", id = "ops", index = 5 }) -- Up: now first
+H.autobox_rule("autobox_rule", { kind = "set", id = "on", index = 2 })
+H.autobox_rule("autobox_rule", { kind = "press", id = "done", index = 1 })
+assert(storage.character.rules.WHM[1].on == false and storage.character.rules.WHM[1].when.value == second.when.value,
+  "the moved rule was edited")
+assert(storage.character.rules.WHM[2].on ~= false, "the rule now second was left alone")
+-- An edit of a deleted rule is refused.
+ui.update("autobox", "rules", { at = 1 })
+H.autobox("autobox", { kind = "select", id = "rules", index = 1 })
+H.autobox("autobox", { kind = "press", id = "ops", index = 4 })
+H.autobox_rule("autobox_rule", { kind = "press", id = "done", index = 1 })
+assert(ui.is_open("autobox_rule") and drawn["autobox_rule.problem"].text:find("deleted"), "deleted rule not saved")
+H.autobox_rule("autobox_rule", { kind = "press", id = "done", index = 2 })
 
 -- On: the first rule that holds is Protect (we lack it, not engaged).
 H.autobox("autobox", { kind = "set", id = "switch", index = 1 })
