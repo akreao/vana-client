@@ -100,7 +100,13 @@ function M.parse_hello(lines)
   if not r then return nil, err end
   for _, f in ipairs(r) do
     if f[1] == "hello" then
-      return { version = tonumber(f[2]) or 0, max_rules = tonumber(f[3]) or 32, max_line = tonumber(f[4]) or 120 }
+      -- (version 10) field 6: the server's capability words ("live", "reapply1"), "-" for none
+      local caps = {}
+      for word in (f[6] or ""):gmatch("[^,]+") do
+        if word ~= "-" then caps[word] = true end
+      end
+      return { version = tonumber(f[2]) or 0, max_rules = tonumber(f[3]) or 32, max_line = tonumber(f[4]) or 120,
+        caps = caps }
     end
   end
   return nil, { code = "noreply", text = "no answer" }
@@ -114,11 +120,40 @@ function M.parse_mates(lines)
     if f[1] == "mate" then
       out[#out + 1] = { slot = tonumber(f[2]), id = tonumber(f[3]), name = f[4], job = f[5], level = tonumber(f[6]) or 0,
         sub = f[7] ~= "-" and f[7] or nil, set = tonumber(f[8]) or 0, out = f[9] == "1",
-        sub_level = tonumber(f[10]) or 0 }
+        sub_level = tonumber(f[10]) or 0,
+        -- (version 10, capability "live") what the mate runs now: state, why, set (0 = job rules), fallback, left out
+        live = #f >= 15 and { state = f[11], why = f[12], set = tonumber(f[13]) or 0, fallback = tonumber(f[14]) or 0,
+          dropped = tonumber(f[15]) or 0 } or nil }
     end
   end
   table.sort(out, function(a, b) return a.slot < b.slot end)
   return out
+end
+
+local FALLBACK = { "the chosen set is gone", "that number is now another set", "the chosen set cannot be used here",
+  "no set for this job" }
+local PENDING = { job = "its job changed", choice = "another set was chosen", gone = "its set was deleted",
+  edited = "its set was edited", role = "its role changed" }
+
+-- What a mate runs now (version 10), as a sentence; nil when the server does not say or the mate is not out.
+function M.live_text(m)
+  local l = m.live
+  if not l or l.state == "off" then return nil end
+  local now = l.set > 0 and ("Rule Set %d"):format(l.set) or "its job rules"
+  local t
+  if l.state == "set" or l.state == "job" then
+    t = "Runs " .. now .. "."
+  elseif l.state == "fallback" then
+    t = "Runs its job rules: " .. (FALLBACK[l.fallback] or "the chosen set could not be used") .. "."
+  elseif l.state == "pending" then
+    t = ("Runs %s; %s, so the next call changes them (Apply)."):format(now, PENDING[l.why] or "settings changed")
+  elseif l.state == "addon" then
+    t = "An add-on runs this mate."
+  else
+    t = "What it runs is not known (called before the server kept track)."
+  end
+  if l.dropped > 0 then t = t .. (" %d rule%s left out."):format(l.dropped, l.dropped == 1 and "" or "s") end
+  return t
 end
 
 -- flags: o yours (editable), m written by hand (copy only), x another's, r read-only

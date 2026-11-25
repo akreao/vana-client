@@ -59,6 +59,9 @@ code against the server's `!squad` chat commands; none of XIFO's Ashita add-on c
   which needs the mod's `clipboard` permission (granted on a catalogue install; else `/lua grant xifo-gambits
   clipboard`). An imported set saves under its own job, also with no squad mates. The format is XIFO's own (their Gambits add-on reads ours and we read
   theirs; the test holds a code their add-on made), written anew here from its description.
+  Version 10 servers (XIFO v0.3.11) also say what each mate really runs: the status line names it (the set, its job
+  rules, why a chosen set fell back, rules left out, or that its next call would change them, marked `*` in the mate
+  list), and with the `reapply1` word an out mate gets Apply this mate (`!squad reapply <slot>`).
 
 - **Auto Ranged** (`auto-ranged`, `//autora`): their autora as our own mod, and not tied to XIFO (it only uses `/ra`).
   A small edge window picks Manual, Auto or Until hate. Auto keeps shooting while you are engaged with a living
