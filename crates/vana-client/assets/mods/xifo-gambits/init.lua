@@ -83,23 +83,43 @@ ui.window(W, {
   elements = {
     { type = "dropdown", id = "mate", label = "Squad mate", items = { "Asking the server..." }, at = 1 },
     { type = "text", id = "status", text = "", dim = true },
-    { type = "list", id = "sets", height = 5, rows = {},
+    { type = "tabs", id = "tabs", items = { "Rule Sets", "Weapon skills", "Party roles" }, at = 1 },
+    { page = 1, type = "list", id = "sets", height = 5, rows = {},
       columns = { { title = "#", width = 30 }, { title = "Rule Set" }, { title = "Rules", width = 50, align = "right" },
         { title = "", width = 110 } } },
-    { type = "buttons", id = "setbtn", items = { "Open", "New", "Copy", "Delete" } },
-    { type = "buttons", id = "use", items = { "Use this set", "Use job rules", "Apply now" },
+    { page = 1, type = "buttons", id = "setbtn", items = { "Open", "New", "Copy", "Delete" } },
+    { page = 1, type = "buttons", id = "use", items = { "Use this set", "Use job rules", "Apply now" },
       tip = "Use this set: the mate follows the picked Rule Set from its next call. Use job rules: back to its built-in "
         .. "rules. Apply now: dismiss and call the squad, so the change counts now." },
-    { type = "separator" },
-    { type = "text", id = "editing", text = "No Rule Set open." },
-    { type = "input", id = "name", label = "Name", text = "", max = 24 },
-    { type = "list", id = "rules", height = 8, rows = {},
+    { page = 1, type = "separator" },
+    { page = 1, type = "text", id = "editing", text = "No Rule Set open." },
+    { page = 1, type = "input", id = "name", label = "Name", text = "", max = 24 },
+    { page = 1, type = "list", id = "rules", height = 8, rows = {},
       columns = { { title = "#", width = 26 }, { title = "", width = 34 }, { title = "Target", width = 130 },
         { title = "When" }, { title = "Do", width = 150 } } },
-    { type = "buttons", id = "ruleops", items = { "Add", "Edit", "Copy", "Delete", "Up", "Down" },
+    { page = 1, type = "buttons", id = "ruleops", items = { "Add", "Edit", "Copy", "Delete", "Up", "Down" },
       tip = "Edit (or a click on a rule) opens the rule in its own window." },
-    { type = "buttons", id = "save", items = { "Save", "Check", "Undo changes" },
+    { page = 1, type = "buttons", id = "save", items = { "Save", "Check", "Undo changes" },
       tip = "Check: the server tries the saved set at the called mate's level and lists the rules it would skip." },
+    { page = 2, type = "text", id = "ws_info", text = "Pick a squad mate." },
+    { page = 2, type = "choice", id = "ws_ctl", label = "Weapon skills", items = { "Squad default", "Custom" }, at = 1,
+      tip = "Squad default: the squad picks skillchain roles and weapon skills itself. Custom: the settings below." },
+    { page = 2, type = "choice", id = "ws_mode", label = "Skillchains", items = { "Open", "Close", "Open + Close",
+      "Independent" }, at = 3, tip = "Open: starts skillchains. Close: only closes them. Independent: at its TP." },
+    { page = 2, type = "choice", id = "ws_tp", label = "At TP", items = { "1000", "1500", "2000", "3000" }, at = 1,
+      tip = "Not used by Close." },
+    { page = 2, type = "dropdown", id = "ws_ws", label = "Weapon skill", items = { "Best" }, at = 1,
+      tip = "Best: the best closer when a skillchain is open, else its strongest. The list is the called mate's." },
+    { page = 2, type = "buttons", id = "ws_btn", items = { "Save", "Put on now", "Refresh" },
+      tip = "Save keeps the setting for the mate's main job (from its next call). Put on now: the called mate takes it at once." },
+    { page = 3, type = "text", id = "pr_info",
+      text = "Who the Rule Sets' Tank, Melee, Mage and Ranged targets mean. Auto follows the main job." },
+    { page = 3, type = "list", id = "pr_list", height = 8, rows = {},
+      columns = { { title = "" }, { title = "Job", width = 70 }, { title = "Role", width = 150 },
+        { title = "Counts as", width = 130 } } },
+    { page = 3, type = "choice", id = "pr_role", label = "Role", items = { "Auto", "Tank", "Melee", "Mage", "Ranged" },
+      at = 1, tip = "Not the Squad window's Role: this one only decides who a Rule Set's role targets mean." },
+    { page = 3, type = "buttons", id = "pr_btn", items = { "Refresh" } },
   },
 })
 
@@ -113,6 +133,11 @@ ui.window(R, {
     { type = "text", id = "which", text = "" },
     { type = "choice", id = "on", label = "Rule", items = { "On", "Off" }, at = 1 },
     { type = "dropdown", id = "target", label = "Target", items = { "-" }, at = 1 },
+    { type = "text", id = "rf_hint", text = "", dim = true },
+    { type = "choice", id = "rf1", label = "Tank", items = { "-" }, at = 1 },
+    { type = "choice", id = "rf2", label = "Melee", items = { "-" }, at = 1 },
+    { type = "choice", id = "rf3", label = "Mage", items = { "-" }, at = 1 },
+    { type = "choice", id = "rf4", label = "Ranged", items = { "-" }, at = 1 },
     { type = "dropdown", id = "cond", label = "When", items = { "-" }, at = 1 },
     { type = "input", id = "arg", label = "Value", text = "", max = 24,
       tip = "A number for HP, MP, TP and the like; a status effect's name (Haste, Protect...) for Has / Missing effect." },
@@ -204,6 +229,19 @@ local function show_rule()
   local tn, tl = {}, {}
   for _, t in ipairs(cat.t or {}) do tn[#tn + 1] = t; tl[#tl + 1] = G.target_label(t) end
   st.targets = fill_dropdown("target", tn, tl, r.target, G.target_label)
+  local role_target = index_of(G.ROLE_TARGETS, r.target) and (st.version or 0) >= 9
+  ui.update(R, "rf_hint", { text = role_target and "Other roles: also include them, or leave them out."
+    or "Other roles can be included or left out only for the targets Tank, Melee, Mage and Ranged." })
+  for i, role in ipairs(G.ROLE_TARGETS) do
+    if not role_target then
+      ui.update(R, "rf" .. i, { items = { "-" }, at = 1 })
+    elseif role == r.target then
+      ui.update(R, "rf" .. i, { items = { "This target" }, at = 1 })
+    else
+      ui.update(R, "rf" .. i, { items = { "-", "Include", "Exclude" },
+        at = index_of(r.include or {}, role) and 2 or (index_of(r.exclude or {}, role) and 3) or 1 })
+    end
+  end
   local cn, cl = {}, {}
   for _, c in ipairs(cat.c or {}) do cn[#cn + 1] = c.name; cl[#cl + 1] = G.cond_label(c.name) end
   st.conds = fill_dropdown("cond", cn, cl, r.cond, G.cond_label)
@@ -339,6 +377,119 @@ local function start()
   end, { "hello", "err" })
 end
 
+-- weapon skills and party roles -----------------------------------------------------------------------------------
+
+st.tab = 1
+st.ws = nil        -- the picked mate's weapon skill setting as the server has it ("wsg")
+st.ws_edit = nil   -- { control, mode, tp, ws } as the player is setting it
+st.ws_list = nil   -- the called mate's weapon skills ("wsl")
+st.ws_ids = {}     -- the weapon skill dropdown's ids by row (0 = Best)
+st.roles = nil     -- "prl"
+st.pr_row = 1
+
+local function ws_name(id)
+  for _, w in ipairs(st.ws_list or {}) do
+    if w.id == id then return G.tidy(w.name) end
+  end
+  return ("Weapon skill %d"):format(id)
+end
+
+local function show_ws()
+  local w, m, e = st.ws, mate(), st.ws_edit
+  if not w or not e or not m then return end
+  local notes = {}
+  notes[#notes + 1] = ({ custom = "Uses the Custom setting.", default = "Uses the squad default.",
+    legacy = "No Gambits setting: the !squad ws setting applies." })[w.source] or ""
+  if not w.engine then notes[#notes + 1] = "This map server cannot run Custom settings." end
+  if w.usable == false then notes[#notes + 1] = m.name .. " cannot use the chosen weapon skill now and uses Best." end
+  if w.applied == false then notes[#notes + 1] = "The called mate still runs the old setting: Put on now." end
+  if not w.out then notes[#notes + 1] = "Call " .. m.name .. " to pick from its weapon skills." end
+  ui.update(W, "ws_info", { text = ("%s as %s. %s"):format(m.name, w.job, table.concat(notes, " ")) })
+  ui.update(W, "ws_ctl", { at = e.control + 1 })
+  ui.update(W, "ws_mode", { at = e.mode })
+  ui.update(W, "ws_tp", { at = index_of(G.WS_TPS, e.tp) or 1 })
+  local ids, items = { 0 }, { "Best" }
+  for _, x in ipairs(st.ws_list or {}) do ids[#ids + 1] = x.id; items[#items + 1] = G.tidy(x.name) end
+  if not index_of(ids, e.ws) then
+    ids[#ids + 1] = e.ws
+    items[#items + 1] = ws_name(e.ws) .. (w.out and " (not usable now)" or "")
+  end
+  st.ws_ids = ids
+  ui.update(W, "ws_ws", { items = items, at = index_of(ids, e.ws) or 1 })
+end
+
+local function took_ws(lines)
+  local w, err = G.parse_ws(lines)
+  if not w then return failed(err, "Weapon skills") end
+  st.ws = w
+  st.ws_edit = { control = w.control, mode = w.mode, tp = w.tp, ws = w.ws }
+  show_ws()
+end
+
+local function load_ws()
+  local m = mate()
+  if not m then return end
+  if (st.version or 0) < 5 then
+    return ui.update(W, "ws_info", { text = "This server's Gambits editor has no weapon skill settings (version 5)." })
+  end
+  local slot = m.slot
+  st.ws_list = nil
+  request(function(id) return G.wsg(id, slot) end, function(lines)
+    if not mate() or mate().slot ~= slot then return end
+    took_ws(lines)
+    if st.ws and st.ws.out then
+      request(function(id) return G.wsl(id, slot) end, function(l2)
+        local list = G.parse_wsl(l2)
+        if list and mate() and mate().slot == slot then
+          st.ws_list = list
+          show_ws()
+        end
+      end)
+    end
+  end)
+end
+
+local function role_text(set, auto)
+  if set == 0 then return "Auto (" .. (auto ~= "" and G.letters(auto) or "none") .. ")" end
+  return G.ROLE_LABELS[set] or "?"
+end
+
+local function show_roles()
+  local r = st.roles
+  if not r then return end
+  local rows = {}
+  for _, x in ipairs(r.own) do
+    rows[#rows + 1] = { x.who == 0 and (x.name .. " (you)") or x.name, ("%s %d"):format(x.job, x.level),
+      role_text(x.set, x.auto),
+      x.live and (x.live == 0 and G.letters(x.auto) or G.ROLE_LABELS[x.live]) or "not called",
+      colour = (x.who ~= 0 and not x.out) and DIM or nil }
+  end
+  for _, x in ipairs(r.others) do
+    rows[#rows + 1] = { x.name .. (x.kind == "t" and " (trust)" or ""), x.job, "their own", G.letters(x.targets),
+      colour = DIM }
+  end
+  if st.pr_row > #rows then st.pr_row = 1 end
+  ui.update(W, "pr_list", { rows = rows, at = st.pr_row })
+  local own = r.own[st.pr_row]
+  ui.update(W, "pr_role", { at = own and own.set + 1 or 1 })
+end
+
+local function load_roles()
+  if (st.version or 0) < 7 then
+    return ui.update(W, "pr_info", { text = "This server's Gambits editor has no party roles (version 7)." })
+  end
+  request(G.prl, function(lines)
+    local r, err = G.parse_roles(lines)
+    if not r then return failed(err, "Party roles") end
+    st.roles = r
+    show_roles()
+  end)
+end
+
+local function load_page()
+  if st.tab == 2 then load_ws() elseif st.tab == 3 then load_roles() end
+end
+
 -- opening, editing, saving ----------------------------------------------------------------------------------------
 
 local function copy_rules(rules)
@@ -454,7 +605,46 @@ ui.on(W, function(_, e)
       show_rules()
       load_sets()
       load_catalog()
+      load_page()
     end)
+  elseif e.kind == "set" and e.id == "tabs" then
+    st.tab = e.index
+    load_page()
+  elseif e.kind == "set" and st.ws_edit and (e.id == "ws_ctl" or e.id == "ws_mode" or e.id == "ws_tp" or e.id == "ws_ws") then
+    local x = st.ws_edit
+    if e.id == "ws_ctl" then x.control = e.index - 1
+    elseif e.id == "ws_mode" then x.mode = e.index
+    elseif e.id == "ws_tp" then x.tp = G.WS_TPS[e.index] or x.tp
+    else x.ws = st.ws_ids[e.index] or x.ws end
+  elseif e.kind == "press" and e.id == "ws_btn" and m then
+    local slot = m.slot
+    if e.index == 1 and st.ws_edit then
+      local x = st.ws_edit
+      request(function(id) return G.wss(id, slot, x) end, function(lines)
+        took_ws(lines)
+        if st.ws then status("Weapon skill setting saved for " .. m.name .. ".") end
+      end)
+    elseif e.index == 2 then
+      request(function(id) return G.wsa(id, slot) end, took_ws)
+    else
+      load_ws()
+    end
+  elseif e.kind == "select" and e.id == "pr_list" then
+    st.pr_row = e.index
+    show_roles()
+  elseif e.kind == "set" and e.id == "pr_role" then
+    local own = st.roles and st.roles.own[st.pr_row]
+    if not own then
+      status("Only you and your squad mates' roles are set here; others set their own.", true)
+      return show_roles()
+    end
+    request(function(id) return G.prs(id, own.who, e.index - 1) end, function(lines)
+      local r, err = G.parse_roles(lines)
+      if not r then return failed(err, "Party role") end
+      load_roles()
+    end)
+  elseif e.kind == "press" and e.id == "pr_btn" then
+    load_roles()
   elseif e.kind == "select" and e.id == "sets" then
     st.set_row = e.index
   elseif e.kind == "press" and e.id == "setbtn" and m then
@@ -552,6 +742,22 @@ ui.on(R, function(_, e)
     r.on = e.index == 1
   elseif e.kind == "set" and e.id == "target" and st.targets[e.index] then
     r.target = st.targets[e.index]
+    local function without(list)
+      local out = {}
+      for _, v in ipairs(list or {}) do
+        if v ~= r.target and index_of(G.ROLE_TARGETS, r.target) then out[#out + 1] = v end
+      end
+      return out
+    end
+    r.include, r.exclude = without(r.include), without(r.exclude)
+  elseif e.kind == "set" and e.id:match("^rf%d$") then
+    local role = G.ROLE_TARGETS[tonumber(e.id:sub(3))]
+    if not role or role == r.target or not index_of(G.ROLE_TARGETS, r.target) then return end
+    local inc, exc = {}, {}
+    for _, v in ipairs(r.include or {}) do if v ~= role then inc[#inc + 1] = v end end
+    for _, v in ipairs(r.exclude or {}) do if v ~= role then exc[#exc + 1] = v end end
+    if e.index == 2 then inc[#inc + 1] = role elseif e.index == 3 then exc[#exc + 1] = role end
+    r.include, r.exclude = inc, exc
   elseif e.kind == "set" and e.id == "cond" and st.conds[e.index] then
     r.cond = st.conds[e.index]
     r.arg = arg_text(r.cond, r.arg)

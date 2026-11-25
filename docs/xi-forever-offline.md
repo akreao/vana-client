@@ -49,8 +49,12 @@ code against the server's `!squad` chat commands; none of XIFO's Ashita add-on c
   catalog (`catm`, checked with the server's catalog check); a value it does not list is kept, marked. Save sends
   the set in parts (`x`, at most 90 bytes each); a set that is not yours saves as a new one. Check (`chk`) lists the
   rules the called mate would skip at its level. Rules the wire cannot carry show as "?" and block saving that set.
-  Not built yet: the weapon skill settings (`wsg`/`wss`), party roles (`prl`/`prs`), share codes, include/exclude roles
-  in the editor (kept as they are when a rule has them).
+  For the targets Tank, Melee, Mage and Ranged the rule window also includes or leaves out the other roles
+  (version 9 servers). A Weapon skills page holds the mate's setting per main job (`wsg`/`wsl`/`wss`/`wsa`: Squad
+  default or Custom, Open / Close / Open + Close / Independent, the TP, Best or one of the called mate's weapon
+  skills; Put on now gives it to the called mate at once), and a Party roles page who the role targets mean
+  (`prl`/`prs`: Auto by job or a set role, for you and each mate; other party members shown read-only).
+  Not built yet: share codes.
 
 Server reply formats used (from their `modules/custom/lua/squad.lua`): `squadpanel:<slot>|<name>|<job>|<level>|<sub or
 ->|<sub level>|<role>|<mode>|<out 0/1>|<switch mask>`, `jl|<slot>|<JOB:level,...>`, `cd|<slot>|<seconds>`,

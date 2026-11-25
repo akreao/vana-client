@@ -321,4 +321,81 @@ function M.describe(r)
   return when, what
 end
 
+-- Weapon skills (version 5) --------------------------------------------------------------------------------------
+
+M.WS_MODES = { "Open", "Close", "Open + Close", "Independent" }
+M.WS_TPS = { 1000, 1500, 2000, 3000 }
+
+function M.wsg(id, slot) return ("!gsq wsg %d %d"):format(id, slot) end
+function M.wsl(id, slot) return ("!gsq wsl %d %d"):format(id, slot) end
+function M.wsa(id, slot) return ("!gsq wsa %d %d"):format(id, slot) end
+-- control 0 Squad default / 1 Custom, mode 1-4, tp 1000/1500/2000/3000, ws 0 = Best
+function M.wss(id, slot, s) return ("!gsq wss %d %d %d %d %d %d"):format(id, slot, s.control, s.mode, s.tp, s.ws) end
+
+local function bool(v) if v == "1" then return true elseif v == "0" then return false end end
+
+-- "ws": { slot, job, source (custom / default / legacy), control, mode, tp, ws, legacy_tp, legacy_ws, out, usable,
+-- applied, engine }; usable / applied nil when not known
+function M.parse_ws(lines)
+  local r, err = rows(lines)
+  if not r then return nil, err end
+  for _, f in ipairs(r) do
+    if f[1] == "ws" then
+      return { slot = tonumber(f[2]), job = f[3], source = ({ c = "custom", d = "default", l = "legacy" })[f[4]] or f[4],
+        control = tonumber(f[5]) or 0, mode = tonumber(f[6]) or 3, tp = tonumber(f[7]) or 1000, ws = tonumber(f[8]) or 0,
+        legacy_tp = tonumber(f[9]) or 0, legacy_ws = f[10], out = f[11] == "1", usable = bool(f[12]),
+        applied = bool(f[13]), engine = f[14] == "1" }
+    end
+  end
+  return nil, { code = "noreply", text = "no answer" }
+end
+
+-- "wsl": { {id, name} } in the server's order
+function M.parse_wsl(lines)
+  local r, err = rows(lines)
+  if not r then return nil, err end
+  local out = {}
+  for _, f in ipairs(r) do
+    if f[1] == "wsl" then
+      for e in table.concat(f, "|", 2):gmatch("[^,]+") do
+        local id, name = e:match("^(%d+):(.*)$")
+        if id then out[#out + 1] = { id = tonumber(id), name = name } end
+      end
+    end
+  end
+  return out
+end
+
+-- Party roles (version 7) ----------------------------------------------------------------------------------------
+
+M.ROLE_LABELS = { [0] = "Auto", "Tank", "Melee", "Mage", "Ranged" }
+M.ROLE_LETTERS = { T = "Tank", M = "Melee", C = "Mage", R = "Ranged" }
+-- The Rule Set targets that are roles, in the role numbers' order.
+M.ROLE_TARGETS = { "TANK", "MELEE", "CASTER", "RANGED" }
+
+function M.prl(id) return ("!gsq prl %d"):format(id) end
+function M.prs(id, who, role) return ("!gsq prs %d %d %d"):format(id, who, role) end
+
+function M.letters(text)
+  local out = {}
+  for c in (text or ""):gmatch("%a") do out[#out + 1] = M.ROLE_LETTERS[c] or c end
+  return table.concat(out, ", ")
+end
+
+-- "prl": { own = { {who, name, job, level, set, auto, out, live} }, others = { {name, job, kind, targets} } }
+function M.parse_roles(lines)
+  local r, err = rows(lines)
+  if not r then return nil, err end
+  local out = { own = {}, others = {} }
+  for _, f in ipairs(r) do
+    if f[1] == "pr" then
+      out.own[#out.own + 1] = { who = tonumber(f[2]), name = f[3], job = f[4], level = tonumber(f[5]) or 0,
+        set = tonumber(f[6]) or 0, auto = f[7], out = f[8] == "1", live = tonumber(f[9]) }
+    elseif f[1] == "pm" then
+      out.others[#out.others + 1] = { name = f[2], job = f[3], kind = f[4], targets = f[5] }
+    end
+  end
+  return out
+end
+
 return M
