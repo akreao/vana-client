@@ -16,7 +16,8 @@ is stopped) and vana-client is the game:
      crowd and bot chat helper) when the RULES page has it on.
   4. Pins their server's TLS key for vana-client (a reinstall makes a new one), then opens vana-client on 127.0.0.1.
   5. When vana-client closes, stops all of it the normal way, so the database is saved and the next start is clean.
-     (An update that restarts vana-client is followed: the world stays up for the restarted client.)
+     (An update that restarts vana-client is followed: the world stays up for the restarted client. A client from
+     before that handoff cannot say it restarted: after that one update the world stops; start this again.)
 
 Only their own programs are run, unchanged, through their packaged launcher's `--run` (or python for a source
 install). Nothing of theirs is copied into vana-client. Their launcher must be closed: the world refuses to start
@@ -181,6 +182,7 @@ def sync_game(source, target):
         since = 0
     has_user = any(os.path.isdir(os.path.join(target, rel)) for rel in SYNC_SKIP)
     present = set()                                  # every file their folder has now (those the copy follows)
+    unread = []                                      # what could not be listed or looked at: then nothing is removed
     if since == 0 and not (os.path.isdir(target) and os.listdir(target)):      # a new, empty copy
         say(f"Copying their game folder to {target} (once; later runs copy only what changed)...")
         os.makedirs(target, exist_ok=True)
@@ -188,21 +190,22 @@ def sync_game(source, target):
             subprocess.run(["cp", "-a", "--reflink=auto", os.path.join(source, "."), target], check=True)
         else:
             shutil.copytree(source, target, dirs_exist_ok=True)
-        present = source_files(source, skip_user=False)
+        present = source_files(source, skip_user=False, unread=unread)
     else:
         changed = []
-        for root, dirs, files in os.walk(source):
+        for root, dirs, files in os.walk(source, onerror=unread.append):
             rel_root = os.path.relpath(root, source)
             dirs[:] = [d for d in dirs if os.path.normpath(os.path.join(rel_root, d)).replace("\\", "/") not in SYNC_SKIP
                        or not has_user]
             for name in files:
                 path = os.path.join(root, name)
+                rel = os.path.normpath(os.path.join(rel_root, name))
+                present.add(rel)                     # (there, even when it cannot be looked at now)
                 try:
                     st = os.stat(path)
-                except OSError:
+                except OSError as problem:
+                    unread.append(problem)
                     continue
-                rel = os.path.normpath(os.path.join(rel_root, name))
-                present.add(rel)
                 # ctime too: an update or a DAT restore can put back a file with an old modification time. On
                 # Windows ctime is the creation time, so a file whose time or size is not the copy's (copies keep
                 # the time) counts as changed as well.
@@ -224,8 +227,13 @@ def sync_game(source, target):
             say("The game copy is up to date.")
     if last_source and last_source != source:
         drop_extra_files(last_source, source, target, keep_user=has_user)
-    elif last_source == source:
+    elif last_source == source and not unread:
         drop_removed_files(target, present)
+    if unread:
+        # An incomplete look at their folder: nothing is removed, and the list and the stamp stay as they were, so
+        # the next run looks again.
+        say(f"Some of their game folder could not be read ({unread[0]}); nothing was removed from the copy.")
+        return
     write_file_list(target, present)
     for name in VANA_UPDATE_FILES:                   # a retail update vana-client applied here before: no longer true
         path = os.path.join(target, "FINAL FANTASY XI", name)
@@ -234,9 +242,9 @@ def sync_game(source, target):
     write_stamp(target, source, started)
 
 
-def source_files(source, skip_user):
+def source_files(source, skip_user, unread):
     out = set()
-    for root, dirs, files in os.walk(source):
+    for root, dirs, files in os.walk(source, onerror=unread.append):
         rel_root = os.path.relpath(root, source)
         if skip_user:
             dirs[:] = [d for d in dirs if os.path.normpath(os.path.join(rel_root, d)).replace("\\", "/") not in SYNC_SKIP]
@@ -254,13 +262,21 @@ def drop_removed_files(target, present):
     except OSError:
         return                                       # (no list yet: nothing says which files came from them)
     gone = 0
+    # (a case-insensitive disk: a name whose case alone changed is the same file as its new spelling, kept)
+    by_case = {}
+    for rel in present:
+        by_case.setdefault(rel.lower(), []).append(rel)
     for rel in sorted(before - present):
         if any(rel.replace("\\", "/").startswith(skip + "/") for skip in SYNC_SKIP):
             continue                                 # (the player's own files: left alone after the first copy)
         path = os.path.join(target, rel)
-        if os.path.isfile(path):
-            os.remove(path)
-            gone += 1
+        if not os.path.isfile(path):
+            continue
+        if any(os.path.exists(os.path.join(target, other)) and os.path.samefile(path, os.path.join(target, other))
+               for other in by_case.get(rel.lower(), [])):
+            continue
+        os.remove(path)
+        gone += 1
     if gone:
         say(f"Removed {gone} file(s) their folder no longer has.")
 
@@ -580,6 +596,7 @@ class Client:
         return self.proc.poll() is None if self.pid is None else pid_alive(self.pid)
 
     def returncode(self):
+        # (a restarted client is not this script's child: its exit code cannot be had, so it counts as a normal close)
         return self.proc.returncode if self.pid is None else 0
 
     def follow(self, restart_file):
@@ -725,7 +742,10 @@ def main(argv):
                         code = 1
                         break
                     time.sleep(1)
-                if stopping or code or not player.follow(restart):
+                followed = player.follow(restart)    # (also when stopping: a restarted client is ended too)
+                if followed and stopping:
+                    player.end(20)
+                if stopping or code or not followed:
                     break
                 say("vana-client restarted after an update; the world stays up for it.")
             if code == 0 and not stopping and player.returncode():
