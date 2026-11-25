@@ -216,7 +216,7 @@ def sync_game(source, target):
         else:
             say("The game copy is up to date.")
     if last_source and last_source != source:
-        drop_extra_files(source, target, keep_user=has_user)
+        drop_extra_files(last_source, source, target, keep_user=has_user)
     for name in VANA_UPDATE_FILES:                   # a retail update vana-client applied here before: no longer true
         path = os.path.join(target, "FINAL FANTASY XI", name)
         if os.path.isfile(path):
@@ -232,8 +232,12 @@ def write_stamp(target, source, when):
     os.utime(stamp, (when, when))
 
 
-def drop_extra_files(source, target, keep_user):
-    """After switching to another install: files the copy has and that install does not (another kit's DATs) go."""
+def drop_extra_files(old_source, source, target, keep_user):
+    """After switching to another install: files the copy took from the old one and the new one does not have (its
+    DATs) go. Anything else in the copy (screenshots the client saved there) stays, as does all of it when the old
+    install is gone and nothing says which files came from it."""
+    if not os.path.isdir(old_source):
+        return
     gone = 0
     for root, dirs, files in os.walk(target):
         rel_root = os.path.relpath(root, target)
@@ -241,7 +245,8 @@ def drop_extra_files(source, target, keep_user):
             dirs[:] = [d for d in dirs if os.path.normpath(os.path.join(rel_root, d)).replace("\\", "/") not in SYNC_SKIP]
         for name in files:
             rel = os.path.normpath(os.path.join(rel_root, name))
-            if rel == SYNC_STAMP or name in VANA_UPDATE_FILES or os.path.exists(os.path.join(source, rel)):
+            if (rel == SYNC_STAMP or name in VANA_UPDATE_FILES or os.path.exists(os.path.join(source, rel))
+                    or not os.path.exists(os.path.join(old_source, rel))):
                 continue
             os.remove(os.path.join(root, name))
             gone += 1
@@ -276,14 +281,16 @@ def prepare_profile(profile, game):
 
 
 def regular_data_dir():
-    """vana-client's own data folder (config.rs data_dir: the platform's data folder + vana-client)."""
+    """vana-client's own data folder (config.rs data_dir: the platform's data folder + vana-client, or the old name
+    ffxi-linux while the client has not moved it yet)."""
     if os.name == "nt":
         base = os.environ.get("APPDATA") or os.path.expanduser("~")
     elif sys.platform == "darwin":
         base = os.path.expanduser("~/Library/Application Support")
     else:
         base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
-    return os.path.join(base, "vana-client")
+    new, old = os.path.join(base, "vana-client"), os.path.join(base, "ffxi-linux")
+    return old if not os.path.exists(new) and os.path.isdir(old) else new
 
 
 def prepare_mods(profile):
@@ -292,12 +299,16 @@ def prepare_mods(profile):
     mods = os.path.join(profile, "mods")
     if os.environ.get("VANA_MODS_DIR") or os.path.isdir(mods):
         return
-    regular = os.path.join(regular_data_dir(), "mods")
+    regular = os.path.realpath(os.path.join(regular_data_dir(), "mods"))   # a linked library: copy what it points to
     if os.path.isdir(regular):
+        part = mods + ".copying"                     # renamed once complete, so a failed copy is redone next time
+        if os.path.lexists(part):
+            shutil.rmtree(part)
         if shutil.which("cp") and os.name != "nt":
-            subprocess.run(["cp", "-a", "--reflink=auto", regular, mods], check=True)
+            subprocess.run(["cp", "-a", "--reflink=auto", regular, part], check=True)
         else:
-            shutil.copytree(regular, mods)
+            shutil.copytree(regular, part)
+        os.rename(part, mods)
         say(f"The XIFO profile has its own mods folder now ({mods}), a copy of your regular one.")
     else:
         os.makedirs(mods)
@@ -534,7 +545,8 @@ def main(argv):
         sync_game(kit.game_dir(), game)
     elif os.path.isdir(game) and not os.path.isfile(os.path.join(game, SYNC_STAMP)):
         write_stamp(game, "", time.time())          # (no source: the next sync looks at every file)
-    prepare_mods(profile)
+    if not args.world_only:
+        prepare_mods(profile)
 
     world = World(kit)
     stopping = []
