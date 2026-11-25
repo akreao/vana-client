@@ -150,6 +150,52 @@
       "version": "1.0.1"
     },
     {
+      "authors": [
+        "vana-client"
+      ],
+      "commands": {
+        "autora": {
+          "args": "",
+          "forms": [
+            {
+              "args": "manual | auto | hate",
+              "help": "Nothing automatic; keep shooting while engaged; the same, but hold while the monster attacks you."
+            },
+            {
+              "args": "delay <seconds>",
+              "help": "The pause after each shot (0 to 5, 0.5 at first)."
+            }
+          ],
+          "help": "Shows or hides the Auto RA window, or sets its mode."
+        }
+      },
+      "description": "Keeps shooting /ra while you are engaged: Manual, Auto, or Auto until the monster turns on you.",
+      "files": [
+        {
+          "path": "init.lua",
+          "sha256": "2b5c27f8ce134fd7fd4cd2a3ecb84a7158f630ff28a0776adddffb1a9477e288",
+          "size": 3163,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/auto-ranged/init.lua"
+        },
+        {
+          "path": "mod.toml",
+          "sha256": "f08eeb2f2c84e11ea0067843983a8dea89d2131572e2d13d40fa7a4fd6b5f1ff",
+          "size": 752,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/auto-ranged/mod.toml"
+        },
+        {
+          "path": "src/core.lua",
+          "sha256": "1f6a59f653677f83c7bb230227f27bbb497ae50648f552e492f8a5d9f84bf712",
+          "size": 4303,
+          "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/auto-ranged/src/core.lua"
+        }
+      ],
+      "id": "auto-ranged",
+      "kind": "lua",
+      "name": "Auto Ranged",
+      "version": "1.0.0"
+    },
+    {
       "authors": [],
       "commands": {
         "automaton": {

@@ -58,6 +58,12 @@ code against the server's `!squad` chat commands; none of XIFO's Ashita add-on c
   or the clipboard) as a new unsaved set. The format is XIFO's own (their Gambits add-on reads ours and we read
   theirs; the test holds a code their add-on made), written anew here from its description.
 
+- **Auto Ranged** (`auto-ranged`, `//autora`): their autora as our own mod, and not tied to XIFO (it only uses `/ra`).
+  A small edge window picks Manual, Auto or Until hate. Auto keeps shooting while you are engaged with a living
+  monster targeted and a ranged weapon or ammo on; it waits for each shot (and spells, items), holds while you move,
+  waits `//autora delay <s>` after a shot (0.5 at first) and pauses 3 s when the game refuses a shot (out of range,
+  cannot see). Until hate also holds while the monster's last action (within 10 s) was on you.
+
 Server reply formats used (from their `modules/custom/lua/squad.lua`): `squadpanel:<slot>|<name>|<job>|<level>|<sub or
 ->|<sub level>|<role>|<mode>|<out 0/1>|<switch mask>`, `jl|<slot>|<JOB:level,...>`, `cd|<slot>|<seconds>`,
 `camp|<on>|<puller slot, 0 = you>|<paused>|<pulls>`, `campbots|<names or ->|<pulling bot or ->`, then
