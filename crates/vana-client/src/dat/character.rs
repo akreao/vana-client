@@ -1012,16 +1012,37 @@ fn slot_count(race: u8, slot: usize) -> u16 {
     ranges.iter().map(|&(_, n)| n).sum::<u32>().min(u16::MAX as u32) as u16
 }
 
-/// File ids for a look: skeleton file first, then (slot, model id, file id) per part.
+fn slot_ids(look: &Look) -> [u16; 9] {
+    [look.face, look.head, look.body, look.hands, look.legs, look.feet, look.main, look.sub, look.range]
+}
+
+/// The look as FUN_100d2f60 loads it: a PC model id at or past its slot's total count (the six ranges summed) is
+/// logged and loaded as model id 0 of that slot; the weapon infos (motions, dual wield) then come from that file.
+/// NPC races are left as they are. Also returns the slots that were moved to 0, with the ids sent.
+pub fn effective_look(look: &Look) -> (Look, Vec<(&'static str, u16)>) {
+    if pc_race(look.race).is_none() {
+        return (*look, Vec::new());
+    }
+    let mut ids = slot_ids(look);
+    let mut moved = Vec::new();
+    for (slot, id) in ids.iter_mut().enumerate() {
+        if *id >= slot_count(look.race, slot) {
+            moved.push((SLOTS[slot], *id));
+            *id = 0;
+        }
+    }
+    let [face, head, body, hands, legs, feet, main, sub, range] = ids;
+    (Look { race: look.race, face, head, body, hands, legs, feet, main, sub, range }, moved)
+}
+
+/// File ids for a look: skeleton file first, then (slot, model id, file id) per part, after `effective_look`.
 pub fn file_ids(look: &Look) -> Result<(u32, Vec<(&'static str, u16, u32)>)> {
+    let look = &effective_look(look).0;
     let Some(skel) = skeleton_file(look.race) else { bail!("race {} has no model tables (0..8, 29..36)", look.race) };
     let npc = pc_race(look.race).is_none();
-    let ids = [look.face, look.head, look.body, look.hands, look.legs, look.feet, look.main, look.sub, look.range];
+    let ids = slot_ids(look);
     let mut parts = Vec::new();
     for (slot, &id) in ids.iter().enumerate() {
-        // FUN_100d2f60: a PC model id at or past the slot's total count (the six ranges summed) is logged and
-        // loaded as model id 0 of that slot.
-        let id = if npc || id < slot_count(look.race, slot) { id } else { 0 };
         // Weapon id 0 is an empty dummy mesh; skip it rather than draw it. The range slot always loads, id 0 too
         // (retail loads all nine; its class byte drives songs). NPC races stop after feet (FUN_100d0ef0), and
         // chocobos have no face slot.
@@ -1230,6 +1251,8 @@ pub fn load_character(index: &DatIndex, look: &Look) -> Result<Character> {
 
 fn load_look(index: &DatIndex, look: &Look) -> Result<Character> {
     let (skel_id, part_ids) = file_ids(look)?;
+    let (eff, moved) = effective_look(look);
+    let look = &eff;
     let base = match pc_race(look.race) {
         Some(_) => race_file(index, skel_id)?.as_ref().clone(),
         None => load_file(&index.read(skel_id)?)?,
@@ -1238,6 +1261,11 @@ fn load_look(index: &DatIndex, look: &Look) -> Result<Character> {
     let mut log =
         vec![format!("skeleton {skel_id}: {} bones, {} animations", skeleton.bones.len(), base.animations.len())];
     log.extend(base.warnings);
+    // FUN_100d2f60 prints these (FUN_10017d30) before loading model id 0.
+    for (slot, id) in moved {
+        log::debug!("{slot} model id {id} is past the race {} table: model id 0 loaded", look.race);
+        log.push(format!("{slot} model id {id} is past the race {} table: model id 0 loaded", look.race));
+    }
     let mut ch = Character {
         skeleton,
         parts: base.parts,
@@ -1362,6 +1390,20 @@ mod tests {
         let look = super::Look { race: 6, body: last, ..look };
         let (_, parts) = super::file_ids(&look).unwrap();
         assert_eq!(parts.iter().find(|p| p.0 == "body").unwrap().1, last);
+    }
+
+    /// The weapon infos follow the loaded file: a main or sub past the table counts as model id 0 (unarmed, no dual
+    /// wield), the same look as one sent with 0 there.
+    #[test]
+    fn weapons_past_the_table_are_id_0() {
+        let look = super::Look { race: 1, main: 1300, sub: 1300, range: 4000, ..Default::default() };
+        let (eff, moved) = super::effective_look(&look);
+        assert_eq!(eff, super::Look { race: 1, ..Default::default() });
+        assert_eq!(moved, vec![("main", 1300), ("sub", 1300), ("range", 4000)]);
+        assert!(!crate::dat::motionfile::dual_wield(eff.sub));
+        // NPC races keep their ids.
+        let npc = super::Look { race: 29, body: 900, ..Default::default() };
+        assert_eq!(super::effective_look(&npc), (npc, Vec::new()));
     }
 
     /// Point 2 of the PC skeletons anchors the name plate: bone 0, (0, -h, 0) with h by race.
