@@ -76,7 +76,8 @@ end
 local function can_shoot(range, ammo)
   if range then
     if range.skill == 27 then return true end
-    return (range.skill == 25 or range.skill == 26) and ammo ~= nil
+    -- the ammo must be of the weapon's skill (arrows for a bow...): a utility item in the slot does not shoot
+    return (range.skill == 25 or range.skill == 26) and ammo ~= nil and ammo.skill == range.skill
   end
   return ammo ~= nil and ammo.skill == 27
 end
@@ -97,6 +98,13 @@ local function env()
   for _, m in ipairs(party) do ours[m.id] = true end
   local info = game.info()
   local pet = info.pet_index and game.entity(info.pet_index) or nil
+  -- ninjutsu only with its tool in the inventory (the server's check)
+  local inv = {}
+  for _, it in ipairs(game.items(0)) do
+    if it.count > 0 then inv[it.id] = true end
+  end
+  local main = me.main_job or 0
+  local mine = game.entity(me.id)
   return {
     now = clock(), on = on(), me = me, buffs = buffs, known = known, has_ability = has_ability, party = party, ours = ours,
     can_shoot = can_shoot(worn(2), worn(3)),
@@ -104,6 +112,8 @@ local function env()
     casting = game.cast() ~= nil, event = info.event,
     usable = function(kind, id) return (game.usable(kind, id)) end,
     spell = res.spell, ability = res.ability,
+    my_hitbox = mine and mine.hitbox or 0,
+    has_tool = function(id) return core.has_tool(id, function(item) return inv[item] == true end, main) end,
     spell_id = function(name) return n.spells[name:lower()] end,
     ability_id = function(name) return n.abilities[name:lower()] end,
     status_ids = function(name) return st[name:lower()] end,

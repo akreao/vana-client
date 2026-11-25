@@ -55,6 +55,7 @@ local function finish(s, tag, complete)
   local w = s.waiting[tag]
   if not w then return end
   s.waiting[tag] = nil
+  if complete then s.server_seen = true end
   s.out[#s.out + 1] = { tag = tag, lines = w.lines, complete = complete }
 end
 
@@ -117,6 +118,7 @@ function M.filter(s, text, now, mode)
     local body = text:gsub("^%s+", "")
     if body:sub(1, #mark) == mark then
       s.heard[#s.heard + 1] = { mark = mark, text = body:sub(#mark + 1) }
+      s.server_seen = true
       return false
     end
   end

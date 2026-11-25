@@ -93,6 +93,8 @@ local function late(q)
 end
 
 -- Whether the server stops before WotG; a client without game.quest_areas cannot tell, so nothing is held back.
+-- (The area counts only when WotG is also installed here: without it the game's own quest menu has no WotG tab
+-- either, and this log shows what the game would. The server's flag alone is not handed to mods.)
 local function before_wotg()
   if not game.quest_areas then return false end
   for _, a in ipairs(game.quest_areas()) do

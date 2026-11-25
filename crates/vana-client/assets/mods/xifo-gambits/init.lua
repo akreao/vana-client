@@ -370,7 +370,8 @@ end
 
 local load_page -- (below: the Weapon skills or Party roles page, when one is up)
 
-local function load_mates(keep)
+-- `hold`: a mate's slot that stays picked whatever the open set would want (the one whose job just changed).
+local function load_mates(keep, hold)
   request(G.mates, function(lines)
     local mates, err = G.parse_mates(lines)
     if not mates then return failed(err, "The squad") end
@@ -398,7 +399,12 @@ local function load_mates(keep)
     local e, w = st.ws_edit, st.ws
     local ws_dirty = e and w and (e.control ~= w.control or e.mode ~= w.mode or e.tp ~= w.tp or e.ws ~= w.ws)
     if kept and pick and mates[kept].job ~= st.draft.job and not ws_dirty then kept = nil end
-    st.mate = kept or pick or same or 1
+    local held = hold and index_of((function()
+      local n = {}
+      for i, m in ipairs(mates) do n[i] = m.slot end
+      return n
+    end)(), hold)
+    st.mate = held or kept or pick or same or 1
     if not kept then st.ws, st.ws_edit = nil, nil end
     show_mates()
     if #mates == 0 then return status("You have no squad mates yet (!squad new <name> <job>).") end
@@ -470,6 +476,19 @@ end
 local function took_ws(lines)
   local w, err = G.parse_ws(lines)
   if not w then return failed(err, "Weapon skills") end
+  -- The server names the mate's main job now: changed since the roster was read (in XIFO Squad, say), the roster is
+  -- read again (level, support job, set and all), which reloads this page for the new job. Once per change: a
+  -- roster that still disagrees is not read again and again.
+  local m = mate()
+  if m and w.slot == m.slot and w.job and w.job ~= m.job then
+    local key = m.slot .. ":" .. w.job
+    if st.job_reread ~= key then
+      st.job_reread = key
+      return load_mates(true, m.slot) -- (that mate stays picked)
+    end
+  elseif m and w.slot == m.slot then
+    st.job_reread = nil -- the roster and the server agree: a later change is read again too
+  end
   st.ws = w
   st.ws_edit = { control = w.control, mode = w.mode, tp = w.tp, ws = w.ws }
   show_ws()
@@ -715,6 +734,7 @@ ui.on(W, function(_, e)
       local r, err = G.parse_roles(lines)
       if not r then return failed(err, "Party role") end
       load_roles()
+      load_mates(true) -- (the live line follows the role)
     end)
   elseif e.kind == "press" and e.id == "pr_btn" then
     load_roles()
@@ -745,6 +765,7 @@ ui.on(W, function(_, e)
           if d and d.num == s.num then st.draft, st.dirty = nil, false end
           show_rules()
           load_sets()
+          load_mates(true) -- (a mate running the deleted set: its live line)
         end, { "ok", "err" })
       end)
     end

@@ -128,8 +128,9 @@ local function set_name(num, name)
   return ("set %d %s"):format(num, name ~= "-" and name or "")
 end
 
--- A mate's rules as one line for the window ("Rules: ..."), or nil when the server does not say.
-function M.rules_text(r)
+-- A mate's rules as one line for the window ("Rules: ..."), or nil when the server does not say. `one`: the mate's own
+-- Apply button is there (a server with "reapply1", the mate out); else the hint names Apply now (the whole squad).
+function M.rules_text(r, one)
   if not r then return nil end
   local live = set_name(r.live, r.live_name)
   local t
@@ -144,7 +145,8 @@ function M.rules_text(r)
   elseif r.state == "pending" then
     -- what the next call runs: the chosen set, or its job rules (also when the chosen set can no longer be used)
     local nxt = (r.sel > 0 and r.sel_name ~= "?") and set_name(r.sel, r.sel_name) or "its job rules"
-    t = ("Rules: %s now, %s from its next call (%s; Apply)"):format(live, nxt, PENDING[r.why] or "settings changed")
+    t = ("Rules: %s now, %s from its next call (%s; %s)"):format(live, nxt, PENDING[r.why] or "settings changed",
+      one and "Apply" or "Apply now")
   elseif r.state == "addon" then
     t = "Rules: an add-on runs this mate"
   elseif r.state == "unknown" then

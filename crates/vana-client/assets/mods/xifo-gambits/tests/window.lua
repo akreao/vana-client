@@ -2,16 +2,16 @@
 -- editing a rule, saving it in parts, assigning it.
 
 local sent, windows, handlers, ev, cmd, open, prompts = {}, {}, {}, {}, {}, {}, {}
-local timers = {}
+local timers, delays, queued = {}, {}, 0 -- timer.after's callbacks and delays; XIFO Link's waiting commands
 mods = { call = function(id, name, text, opts)
   assert(id == "xifo-link")
-  if name == "pending" then return 0 end
+  if name == "pending" then return queued end
   assert(name == "send")
   sent[#sent + 1] = { text = text, tag = opts.tag, mark = opts.mark, ends = opts.ends }
   return true
 end }
 events = { on = function(name, f) ev[name] = f end }
-timer = { after = function(_, f) timers[#timers + 1] = f end }
+timer = { after = function(s, f) timers[#timers + 1] = f; delays[#timers] = s end }
 commands = { register = function(n, f) cmd[n] = f end }
 ui = {
   get = function(id, el) return { text = windows[id][el].text } end,
@@ -378,6 +378,39 @@ cmd.gambits()
 answer({ "mate|1|41|Salia|RDM|28|-|0|0|-", "mate|3|42|Bea|BLM|20|-|0|0|-", "end|2" })
 assert(w4.mate.at == 2 and last():match("^!gsq wsg %d+ 3$"), last())
 
+-- changed jobs while the window stayed open (in XIFO Squad): the setting's read names the new job, the mate follows
+-- it, and Save saves
+answer({ "ws|3|SMN|d|0|3|1000|0|0|-|0|1|1|1", "end|1" })
+assert(last():match("^!gsq mates %d+$"), "the roster is read again: " .. last())
+answer({ "mate|1|41|Salia|RDM|28|-|0|0|-", "mate|3|42|Bea|SMN|22|WHM|0|0|11", "end|2" })
+assert(w4.mate.at == 2 and w4.mate.items[2]:find("SMN 22/WHM 11", 1, true), w4.mate.items[2])
+assert(last():match("^!gsq wsg %d+ 3$"), last())
+answer({ "ws|3|SMN|d|0|3|1000|0|0|-|0|1|1|1", "end|1" })
+H({ kind = "set", id = "ws_tp", index = 4 })
+H({ kind = "press", id = "ws_btn", index = 1 })
+assert(last():match("^!gsq wss %d+ 3 0 3 3000 0$"), last())
+
+-- back to the job it had, after the roster agreed once: read again too (the guard cleared), and the mate stays
+-- picked even with an open set another mate's job fits
+answer({ "ws|3|SMN|c|0|3|3000|0|0|-|0|1|1|1", "end|1" })
+w4.code.text = assert(require("src.share").encode({ job = "WAR", name = "Axe", rules = { { on = true,
+  target = "SELF", cond = "ALWAYS", arg = "", kind = "r" } } }))
+H({ kind = "press", id = "share", index = 2 })
+assert(w4.mate.at == 2 and w4.status.text:find("No squad mate is a WAR", 1, true), w4.status.text)
+H({ kind = "press", id = "ws_btn", index = 3 }) -- Refresh: the server now says BLM again
+answer({ "ws|3|BLM|d|0|3|1000|0|0|-|0|1|1|1", "end|1" })
+assert(last():match("^!gsq mates %d+$"), last())
+answer({ "mate|1|41|Salia|WAR|28|-|0|0|-", "mate|3|42|Bea|BLM|20|-|0|0|-", "end|2" })
+assert(w4.mate.at == 2 and last():match("^!gsq wsg %d+ 3$"), "the mate that changed jobs stays picked: " .. last())
+-- the same mismatch again after the roster agreed in between: read again (the guard was cleared by the agreement)
+answer({ "ws|3|BLM|d|0|3|1000|0|0|-|0|1|1|1", "end|1" }) -- agrees with the roster
+cmd.gambits()
+cmd.gambits()
+answer({ "mate|1|41|Salia|RDM|28|-|0|0|-", "mate|3|42|Bea|SMN|20|-|0|0|-", "end|2" }) -- the roster says SMN now
+assert(last():match("^!gsq wsg %d+ 3$"), last())
+answer({ "ws|3|BLM|d|0|3|1000|0|0|-|0|1|1|1", "end|1" }) -- but the server's setting is BLM's again
+assert(last():match("^!gsq mates %d+$"), "the repeated mismatch is read again: " .. last())
+
 -- a version 10 server: capability words, each mate's live Rule Set state, Apply this mate
 sent, windows, open = {}, {}, {}
 load(TEST.source("init.lua"), "@init.lua")()
@@ -391,15 +424,49 @@ assert(w5.use.items[4] == "Apply this mate", tostring(w5.use.items[4]))
 local list5 = sent[#sent - 1]
 ev.xifo_link_reply(list5.tag, { "set|4|WHM|2|o|3|w5|Fayd heals", "end|1" }, true)
 assert(w5.live.text:find("Runs Rule Set 4; its set was edited", 1, true), w5.live.text)
-timers = {}
+timers, delays, queued = {}, {}, 1 -- the command still waits in XIFO Link
 handlers.gambits("gambits", { kind = "press", id = "use", index = 4 })
 assert(last() == "!squad reapply 1", last())
--- the roster asked again after the wait: Fayd now runs the edited set, nothing pending
-timers[#timers]()
-timers[#timers]()
+-- while the link still holds it, checked again every half second; once said, the 6 s recall wait; then the roster
+assert(#timers == 1 and delays[1] == 0.5, tostring(delays[1]))
+timers[1]()
+assert(#timers == 2 and delays[2] == 0.5, "still queued")
+queued = 0
+timers[2]()
+assert(#timers == 3 and delays[3] == 6, tostring(delays[3]))
+assert(last() == "!squad reapply 1", "no roster read before the wait")
+timers[3]()
 assert(last():match("^!gsq mates %d+$"), last())
 answer({ "mate|1|40|Fayd|WHM|30|BLM|4|1|15|set|-|4|0|0", "mate|2|41|Salia|WAR|28|-|0|0|-|off|-|0|0|0", "end|2" })
 assert(w5.mate.items[1] == "Fayd  WHM 30/BLM 15  (out)" and w5.live.text == "Runs Rule Set 4.", w5.live.text)
 -- an away mate: no Apply this mate
 handlers.gambits("gambits", { kind = "set", id = "mate", index = 2 })
 assert(w5.use.items[4] == nil)
+
+-- deleting the set a mate runs: the roster is read again and the live line says what the mate runs now
+handlers.gambits("gambits", { kind = "set", id = "mate", index = 1 })
+for i = #sent, 1, -1 do
+  if sent[i].text:match("^!gsq list %d+ WHM$") then
+    ev.xifo_link_reply(sent[i].tag, { "set|4|WHM|2|o|3|w5|Fayd heals", "end|1" }, true)
+    break
+  end
+end
+handlers.gambits("gambits", { kind = "select", id = "sets", index = 1 })
+handlers.gambits("gambits", { kind = "press", id = "setbtn", index = 4 })
+prompts[#prompts].f(1)
+assert(last():match("^!gsq del %d+ 4 3$"), last())
+answer({ "ok|4|3|w5" })
+assert(last():match("^!gsq mates %d+$"), "the roster after a delete: " .. last())
+answer({ "mate|1|40|Fayd|WHM|30|BLM|0|1|15|fallback|-|0|1|0", "mate|2|41|Salia|WAR|28|-|0|0|-|off|-|0|0|0", "end|2" })
+assert(w5.live.text == "Runs its job rules: the chosen set is gone.", w5.live.text)
+
+-- a role set on the Party roles page: once the server takes it, the roles and the roster are read again
+handlers.gambits("gambits", { kind = "set", id = "tabs", index = 3 })
+answer({ "pr|0|Nymh|RDM|5|0|C|1|0", "pr|1|Fayd|WHM|30|0|C|1|0", "end|2" })
+handlers.gambits("gambits", { kind = "select", id = "pr_list", index = 2 })
+handlers.gambits("gambits", { kind = "set", id = "pr_role", index = 2 })
+assert(last():match("^!gsq prs %d+ 1 1$"), last())
+answer({ "pr|1|Fayd|WHM|30|1|C|1|1", "end|1" })
+assert(last():match("^!gsq mates %d+$") and sent[#sent - 1].text:match("^!gsq prl %d+$"), last())
+answer({ "mate|1|40|Fayd|WHM|30|BLM|0|1|15|pending|role|0|0|0", "mate|2|41|Salia|WAR|28|-|0|0|-|off|-|0|0|0", "end|2" })
+assert(w5.live.text:find("its role changed", 1, true), w5.live.text)

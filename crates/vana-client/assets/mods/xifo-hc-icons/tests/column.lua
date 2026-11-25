@@ -2,7 +2,11 @@
 
 local ev, every, images, cmds, calls = {}, nil, {}, {}, {}
 storage = { character = {}, save = function() end }
-mods = { call = function(id, name, a) calls[#calls + 1] = name .. ":" .. tostring(a) end }
+local seen = false -- what XIFO Link says: the server has answered this session
+mods = { call = function(id, name, a)
+  if name == "server_seen" then return seen end
+  calls[#calls + 1] = name .. ":" .. tostring(a)
+end }
 events = { on = function(n, f) ev[n] = f end }
 timer = { after = function(_, f) f() end, every = function(_, f) every = f end }
 chat = { add = function() end }
@@ -16,7 +20,11 @@ load(TEST.source("init.lua"), "@init.lua")()
 
 -- a character whose server never answered an XIFO mod: nothing said in /say, only listening
 assert(calls[1] == "listen:[HC-ICONS]" and calls[2] == nil, tostring(calls[2]))
--- the server's first hardcore line (or any XIFO reply) shows it is XIFO: from then on it asks
+-- an event another mod raised, the link having heard nothing from the server, proves nothing
+ev.xifo_link_reply("gsq1", {}, true)
+assert(calls[2] == nil and not storage.character.xifo, "a forged event confirmed the server")
+-- the server's first hardcore line (or any XIFO reply), which the link confirms: from then on it asks
+seen = true
 ev.xifo_link_line("[HC-ICONS]", " !Nymh=1,Fayd=4")
 assert(calls[#calls] == "send:!hcicons" and storage.character.xifo)
 rows = { { panel = "party", slot = 1, name = "Nymh", x = 900, y = 600, w = 340, h = 60 },
@@ -48,3 +56,16 @@ load(TEST.source("init.lua"), "@init.lua")()
 assert(calls[2] == nil)
 cmds.hcicons("refresh")
 assert(calls[#calls] == "send:!hcicons")
+
+-- with an XIFO Link older than server_seen, nothing is trusted and the player is told once to update it
+local said = {}
+chat.add = function(t) said[#said + 1] = t end
+storage.character, calls = {}, {}
+mods.call = function(id, name, a)
+  if name == "server_seen" then error("mods.call: xifo-link provides no server_seen") end
+  calls[#calls + 1] = name .. ":" .. tostring(a)
+end
+load(TEST.source("init.lua"), "@init.lua")()
+ev.xifo_link_reply("gsq1", {}, true)
+ev.xifo_link_reply("gsq2", {}, true)
+assert(not storage.character.xifo and #said == 1 and said[1]:find("update XIFO Link", 1, true), tostring(said[1]))

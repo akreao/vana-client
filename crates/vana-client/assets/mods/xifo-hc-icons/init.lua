@@ -14,6 +14,7 @@ local size = 22
 -- "!hcicons" is said in /say: on a server that is not XI: Forever Offline everyone near would read it. So it is said
 -- by itself only for a character whose server has answered an XIFO mod before (a reply to XIFO Squad or Gambits, or
 -- a hardcore line); `//hcicons refresh` says it anyway.
+local warned = false
 local function xifo() return storage.character.xifo == true end
 
 local function ask(by_player)
@@ -23,6 +24,15 @@ end
 
 local function confirmed()
   if xifo() then return end
+  -- (the events come from any mod: the link itself says whether the server answered)
+  local ok, seen = pcall(mods.call, LINK, "server_seen")
+  if not ok and tostring(seen):find("provides no server_seen", 1, true) and not warned then
+    -- an XIFO Link older than 1.2.4: it cannot say, and the events alone are not trusted
+    warned = true
+    chat.add("XIFO HC Icons: update XIFO Link (1.2.4 or later) in the Mods list so the shields load by themselves; "
+      .. "//hcicons refresh asks now.")
+  end
+  if not (ok and seen) then return end
   storage.character.xifo = true
   storage.save()
   ask()

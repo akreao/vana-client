@@ -159,7 +159,7 @@ local function show_mate()
   ui.update("squad", "sel", { text = ("#%d %s: %s, %s"):format(m.slot, m.name, jobs_text(m),
     m.out and "out now" or "away") })
   -- the classic window cuts a long line short: the whole line is its tip too
-  local rules = P.rules_text(m.rules) or ""
+  local rules = P.rules_text(m.rules, st.panel and st.panel.caps.reapply1 and m.out) or ""
   ui.update("squad", "rules", { text = rules, tip = rules })
   ui.update("squad", "mate", { items = mate_buttons() })
   ui.update("squad", "role", { at = index_of(P.ROLES, m.role) or 1 })
@@ -209,7 +209,7 @@ local function show_panel()
     if m.rules and m.rules.state == "pending" then note = note .. "*" end
     -- the Rules line as the row's tip too: the classic window cuts a long line and shows a row's tip for the cursor
     rows[#rows + 1] = { tostring(m.slot), m.name, jobs_text(m), cap(m.role), cap(m.mode), note,
-      colour = not m.out and DIM or nil, tip = P.rules_text(m.rules) }
+      colour = not m.out and DIM or nil, tip = P.rules_text(m.rules, st.panel and st.panel.caps.reapply1 and m.out) }
   end
   if st.sel > #rows then st.sel = math.max(1, #rows) end
   ui.update("squad", "mates", { rows = rows, at = st.sel })

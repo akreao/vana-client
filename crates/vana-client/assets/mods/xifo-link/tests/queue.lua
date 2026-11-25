@@ -120,3 +120,15 @@ assert(link.filter(s, "GSQ|5|mate|1|33|Fayd|WHM|30|-|0|1|-", 300.1, NS) == false
 assert(link.filter(s, "GSQ|5|end|1", 300.2, NS) == false)
 out = link.take(s)
 assert(#out == 1 and out[1].complete and #out[1].lines == 2)
+
+-- the server counts as seen once a reply ends whole (or a listened line comes), not before
+local fresh_s = link.new(function() end)
+assert(not fresh_s.server_seen)
+link.send(fresh_s, "!gsq mates 9", { tag = "gsq9", mark = "GSQ|9|", ends = { "end" }, wait = 1 }, 0)
+link.pump(fresh_s, 0, false)
+link.pump(fresh_s, 2, false) -- no answer: given up, not seen
+assert(not fresh_s.server_seen)
+link.send(fresh_s, "!gsq mates 10", { tag = "gsq10", mark = "GSQ|10|", ends = { "end" } }, 3)
+link.pump(fresh_s, 3, false)
+link.filter(fresh_s, "GSQ|10|end|0", 3.1, NS)
+assert(fresh_s.server_seen)
