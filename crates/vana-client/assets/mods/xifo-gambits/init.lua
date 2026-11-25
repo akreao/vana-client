@@ -358,15 +358,16 @@ local function load_mates(keep)
   request(G.mates, function(lines)
     local mates, err = G.parse_mates(lines)
     if not mates then return failed(err, "The squad") end
-    local slot = mate() and mate().slot
+    local slot, job = mate() and mate().slot, mate() and mate().job
     st.mates = mates
-    -- the picked mate is kept only when it is still there; otherwise (none before, or it left) the new pick's sets
-    -- and choices load
+    -- the picked mate is kept only when it is still there with the same main job (a mate's sets, choices and weapon
+    -- skill setting are per job); otherwise (none before, it left, or it changed jobs) the new pick's load
     local kept = keep and slot and index_of((function()
       local n = {}
       for i, m in ipairs(mates) do n[i] = m.slot end
       return n
     end)(), slot)
+    if kept and mates[kept].job ~= job then kept = nil end
     -- a new pick: a mate of the open set's job when there is one (its choices fit the set); a kept mate of another
     -- job gives way to one that has arrived since (the open set and its unsaved edits stay)
     local pick
@@ -666,6 +667,8 @@ ui.on(W, function(_, e)
   elseif e.kind == "press" and e.id == "ws_btn" and m then
     local slot = m.slot
     if e.index == 1 and st.ws_edit then
+      -- (the setting is per main job: one loaded for another job is not saved over this one's)
+      if st.ws and st.ws.job ~= m.job then return load_ws() end
       local x = st.ws_edit
       request(function(id) return G.wss(id, slot, x) end, function(lines)
         if not mate() or mate().slot ~= slot then return end
