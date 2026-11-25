@@ -448,7 +448,9 @@ def main(argv):
                     break
                 if not world.alive():
                     say("Their world stopped by itself (see logs/world.log); vana-client stays open.")
-                    game_proc.wait()
+                    while game_proc.poll() is None and not stopping:
+                        time.sleep(1)
+                    end(game_proc, 20)
                     code = 1
                     break
                 time.sleep(1)
