@@ -104,8 +104,9 @@ ui.window(W, {
       tip = "Check: the server tries the saved set at the called mate's level and lists the rules it would skip." },
     { page = 1, type = "buttons", id = "share", label = "Share codes (the same GS1 codes as XIFO's Gambits add-on)",
       items = { "Copy code", "Import code" },
-      tip = "Copy code: the open Rule Set as a code on the clipboard. Import code: reads the box below, or the clipboard "
-        .. "when the box is empty, and opens the set as a new one; nothing is saved until you Save." },
+      tip = "Copy code: the open Rule Set as a code on the clipboard. Import code: reads a code from the clipboard, or "
+        .. "from the box below when the clipboard holds none that reads, and opens the set as a new one; nothing is "
+        .. "saved until you Save." },
     { page = 1, type = "input", id = "code", label = "Share code", text = "", max = 1024 },
     { page = 2, type = "text", id = "ws_info", text = "Pick a squad mate." },
     { page = 2, type = "choice", id = "ws_ctl", label = "Weapon skills", items = { "Squad default", "Custom" }, at = 1,
@@ -729,15 +730,19 @@ ui.on(W, function(_, e)
             #set.rules, note))
         end)
       end
-      -- The clipboard first (the box holds at most 1024 characters, a long code is cut there), else the box.
+      -- Whichever of the clipboard and the box holds a code that reads, the clipboard first (the box keeps 1024
+      -- characters, so a long code is cut there).
       local typed = ui.get(W, "code")
       typed = typed and typed.text or ""
-      local ok = pcall(client.paste, function(text)
-        import(Share.looks_like(text) and text or typed)
-      end)
-      if not ok then
-        if typed:match("%S") then import(typed) else status("Paste the code into the box, then Import code.", true) end
+      local function pick(clip)
+        for _, text in ipairs({ clip, typed }) do
+          if text and Share.decode(text) then return import(text) end
+        end
+        if typed:match("%S") then return import(typed) end
+        if clip and Share.looks_like(clip) then return import(clip) end
+        status("No share code to import: copy one, or paste it into the box.", true)
       end
+      if not pcall(client.paste, pick) then pick(nil) end
     end
   elseif e.kind == "change" and e.id == "name" and d then
     d.name = e.text

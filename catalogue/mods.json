@@ -3622,8 +3622,8 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "85560c8e02b67c3e720675767ba3fcf18222a74406790778014404a61d065882",
-          "size": 35780,
+          "sha256": "61f5677d5669fef4925e48bb988f41a92c7ad2a0cb805ac2854160bc23ada60f",
+          "size": 36061,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-gambits/init.lua"
         },
         {

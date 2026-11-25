@@ -217,3 +217,14 @@ client.paste = function(f) f(brd) end
 H({ kind = "press", id = "share", index = 2 })
 prompts[#prompts].f(1)
 assert(w2.status.text:find("No squad mate is a BRD", 1, true), w2.status.text)
+
+-- a cut code on the clipboard does not hide a good one in the box
+client.paste = function(f) f(code:sub(1, -4)) end
+w2.code.text = brd
+H({ kind = "press", id = "share", index = 2 })
+prompts[#prompts].f(1)
+assert(w2.status.text:find("Imported Songs", 1, true), w2.status.text)
+-- neither reads: the box's reason is given
+w2.code.text = "GS1zz"
+H({ kind = "press", id = "share", index = 2 })
+assert(w2.status.text:find("Not imported", 1, true))
