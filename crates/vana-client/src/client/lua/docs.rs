@@ -1920,7 +1920,7 @@ pub const FUNCS: &[Func] = &[
     Func {
         ns: "mods",
         name: "caller",
-        doc: "Inside a function offered with mods.provide, while another mod's mods.call runs it: that mod's id; nil anywhere else. Lets a mod offer a function only to the mods it trusts.",
+        doc: "Inside a function offered with mods.provide, while a mods.call runs it: the calling mod's id (its own on a self-call); nil anywhere else. Lets a mod offer a function only to the mods it trusts (the id is the one a mod is loaded under, not proof of who wrote it).",
         params: &[],
         ret: "string?",
     },

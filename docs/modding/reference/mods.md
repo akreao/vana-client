@@ -165,9 +165,13 @@ end
 mods.caller() -> string?
 ```
 
-Inside a function this mod offers with `mods.provide`, while another mod's `mods.call` runs it: the id of that mod.
-Anywhere else, nil. A mod that does something on the player's behalf for other mods (one that holds a permission they
-may not have) can use it to serve only the mods it knows.
+Inside a function this mod offers with `mods.provide`, while a `mods.call` runs it: the id of the mod that called (this
+mod's own id when it calls its own function). Anywhere else, nil. A mod that does something on the player's behalf for
+other mods (one that holds a permission they may not have) can use it to serve only the mods it knows.
+
+The id is the one the calling mod is loaded under (its folder or manifest id). It tells loaded mods apart, but it does
+not prove who wrote a mod: an installed mod that takes a trusted mod's id while that mod is not loaded passes the same
+check. Trust it as far as you trust the player's installed mods.
 
 **Returns** `string?`: the calling mod's id, or nil.
 
