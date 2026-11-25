@@ -2,16 +2,16 @@
 -- editing a rule, saving it in parts, assigning it.
 
 local sent, windows, handlers, ev, cmd, open, prompts = {}, {}, {}, {}, {}, {}, {}
-local timers = {}
+local timers, delays, queued = {}, {}, 0 -- timer.after's callbacks and delays; XIFO Link's waiting commands
 mods = { call = function(id, name, text, opts)
   assert(id == "xifo-link")
-  if name == "pending" then return 0 end
+  if name == "pending" then return queued end
   assert(name == "send")
   sent[#sent + 1] = { text = text, tag = opts.tag, mark = opts.mark, ends = opts.ends }
   return true
 end }
 events = { on = function(name, f) ev[name] = f end }
-timer = { after = function(_, f) timers[#timers + 1] = f end }
+timer = { after = function(s, f) timers[#timers + 1] = f; delays[#timers] = s end }
 commands = { register = function(n, f) cmd[n] = f end }
 ui = {
   get = function(id, el) return { text = windows[id][el].text } end,
@@ -424,12 +424,18 @@ assert(w5.use.items[4] == "Apply this mate", tostring(w5.use.items[4]))
 local list5 = sent[#sent - 1]
 ev.xifo_link_reply(list5.tag, { "set|4|WHM|2|o|3|w5|Fayd heals", "end|1" }, true)
 assert(w5.live.text:find("Runs Rule Set 4; its set was edited", 1, true), w5.live.text)
-timers = {}
+timers, delays, queued = {}, {}, 1 -- the command still waits in XIFO Link
 handlers.gambits("gambits", { kind = "press", id = "use", index = 4 })
 assert(last() == "!squad reapply 1", last())
--- the roster asked again after the wait: Fayd now runs the edited set, nothing pending
-timers[#timers]()
-timers[#timers]()
+-- while the link still holds it, checked again every half second; once said, the 6 s recall wait; then the roster
+assert(#timers == 1 and delays[1] == 0.5, tostring(delays[1]))
+timers[1]()
+assert(#timers == 2 and delays[2] == 0.5, "still queued")
+queued = 0
+timers[2]()
+assert(#timers == 3 and delays[3] == 6, tostring(delays[3]))
+assert(last() == "!squad reapply 1", "no roster read before the wait")
+timers[3]()
 assert(last():match("^!gsq mates %d+$"), last())
 answer({ "mate|1|40|Fayd|WHM|30|BLM|4|1|15|set|-|4|0|0", "mate|2|41|Salia|WAR|28|-|0|0|-|off|-|0|0|0", "end|2" })
 assert(w5.mate.items[1] == "Fayd  WHM 30/BLM 15  (out)" and w5.live.text == "Runs Rule Set 4.", w5.live.text)

@@ -734,6 +734,7 @@ ui.on(W, function(_, e)
       local r, err = G.parse_roles(lines)
       if not r then return failed(err, "Party role") end
       load_roles()
+      load_mates(true) -- (the live line follows the role)
     end)
   elseif e.kind == "press" and e.id == "pr_btn" then
     load_roles()
@@ -764,6 +765,7 @@ ui.on(W, function(_, e)
           if d and d.num == s.num then st.draft, st.dirty = nil, false end
           show_rules()
           load_sets()
+          load_mates(true) -- (a mate running the deleted set: its live line)
         end, { "ok", "err" })
       end)
     end
