@@ -735,7 +735,10 @@ pub fn party_panel(
         exp_bar(p, id, r, e);
     }
     if shown.is_some() {
-        p.party_rows.extend(drawn_rows);
+        // A mod's scale (ui.native.place) is put on the panel's layer after its rows are laid out.
+        let layer = egui::LayerId::new(egui::Order::Middle, egui::Id::unique(("modern panel", id)));
+        let zoom = p.ctx.layer_transform_to_global(layer).unwrap_or_default();
+        p.party_rows.extend(drawn_rows.into_iter().map(|(panel, slot, name, r)| (panel, slot, name, zoom.mul_rect(r))));
     }
     clicked
 }

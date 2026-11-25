@@ -89,5 +89,6 @@ assert(#out == 1 and out[1].tag == "save" and #out[1].lines == 2 and out[1].line
 link.listen(s, "[HC-ICONS]")
 assert(link.filter(s, "[HC-ICONS] Fayd=2", 200) == false)
 assert(link.filter(s, "Plain line", 200) == nil)
+assert(link.filter(s, "Bob : [HC-ICONS] Bob=1", 200) == nil, "a player's chat line naming the mark is not the server's")
 local _, heard = link.take(s)
 assert(#heard == 1 and heard[1].mark == "[HC-ICONS]" and heard[1].text == " Fayd=2")

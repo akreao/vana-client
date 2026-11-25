@@ -27,3 +27,10 @@ assert(images.hcparty3 == nil, "a member who left loses the shield")
 cmds.hcicons()
 every()
 assert(next(images) == nil, "turned off")
+
+-- a window at the screen's left edge: the shields at 0, not counted from the right
+cmds.hcicons()
+ui.native.rect = function() return { x = 10, y = 560, w = 380, h = 240 } end
+rows = { { panel = "party", slot = 1, name = "Nymh", x = 20, y = 600, w = 340, h = 60 } }
+every()
+assert(images.hcparty1.x == 0)

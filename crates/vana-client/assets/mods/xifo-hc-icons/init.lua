@@ -41,7 +41,8 @@ timer.every(0.25, function()
       -- left of the window's frame (HUD elements draw under the panels), level with the member's row
       panels[r.panel] = panels[r.panel] or ui.native.rect(r.panel) or r
       local id = "hc" .. r.panel .. r.slot
-      local spec = { path = "img/" .. Modes.NAMES[mode] .. ".png", x = panels[r.panel].x - size - 2,
+      -- (a negative x counts from the right edge: a window at the screen's left edge gets them at 0)
+      local spec = { path = "img/" .. Modes.NAMES[mode] .. ".png", x = math.max(0, panels[r.panel].x - size - 2),
         y = r.y + (r.h - size) // 2, w = size, h = size }
       hud.image(id, spec)
       now[id] = true

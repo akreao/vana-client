@@ -3692,8 +3692,8 @@
         },
         {
           "path": "init.lua",
-          "sha256": "eb6eac88bf304ad19c03eb74a47c3057b1240341e96c0ffeefa7d86a2e99a78f",
-          "size": 2353,
+          "sha256": "aadadcab02e1f7bf1fb18164a473a50e6ae3f462e4251218ef264aa164d05080",
+          "size": 2468,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-hc-icons/init.lua"
         },
         {
@@ -3734,8 +3734,8 @@
         },
         {
           "path": "src/link.lua",
-          "sha256": "a0e5d052f8ea30f4ca529082b11a54ba7ab43094be4a00493151c66c56300f5c",
-          "size": 5556,
+          "sha256": "d4adeeb896cd1b12b73b796a58ba0f0e30b8fb7418616e5f9ac00ae6f4a022e7",
+          "size": 5685,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/xifo-link/src/link.lua"
         }
       ],

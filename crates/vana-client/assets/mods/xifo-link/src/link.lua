@@ -99,10 +99,11 @@ function M.filter(s, text, now)
   -- A server line comes as two log lines: this header, then the text. While a reply is due the header is hidden too
   -- (a header whose text is not a reply line loses only the header).
   if next(s.waiting) and text:find("^%-%-%-%-== SystemMessage ==%-%-%-%-$") then return false end
+  -- (only a line that starts with the mark: a player's chat line naming it starts with the player's name)
   for mark in pairs(s.listening) do
-    local at = text:find(mark, 1, true)
-    if at then
-      s.heard[#s.heard + 1] = { mark = mark, text = text:sub(at + #mark) }
+    local body = text:gsub("^%s+", "")
+    if body:sub(1, #mark) == mark then
+      s.heard[#s.heard + 1] = { mark = mark, text = body:sub(#mark + 1) }
       return false
     end
   end
