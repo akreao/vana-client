@@ -173,8 +173,8 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "95fa5eed41fe329c730891f6169a3a7c5a40aaaacfc859976e47a90ab792b1be",
-          "size": 2944,
+          "sha256": "2b5c27f8ce134fd7fd4cd2a3ecb84a7158f630ff28a0776adddffb1a9477e288",
+          "size": 3163,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/auto-ranged/init.lua"
         },
         {
@@ -185,8 +185,8 @@
         },
         {
           "path": "src/core.lua",
-          "sha256": "ec8b9bdbc8403307dbd51f13d2b8c9f90accd5214ea9357f786fdf6762e6e12c",
-          "size": 3523,
+          "sha256": "1f6a59f653677f83c7bb230227f27bbb497ae50648f552e492f8a5d9f84bf712",
+          "size": 4303,
           "url": "https://raw.githubusercontent.com/akreao/vana-client/forever/crates/vana-client/assets/mods/auto-ranged/src/core.lua"
         }
       ],

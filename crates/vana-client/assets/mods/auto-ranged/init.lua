@@ -30,9 +30,9 @@ ui.window(W, {
   },
 })
 
+-- A new mode keeps what is known: the monster's last target and any shot, spell or item under way.
 local function set_mode(mode)
   s.mode = mode
-  C.reset(s)
   save()
   ui.update(W, "mode", { marked = marked() })
   ui.update(W, "why", { text = "" })
@@ -49,7 +49,9 @@ local shown_why
 timer.every(0.2, function()
   local me = game.player()
   local eq = game.equipment()
-  local shoot = C.tick(s, { now = clock(), me = me, target = game.target(), ranged = eq[2] ~= nil or eq[3] ~= nil })
+  local function worn(slot) return eq[slot] and eq[slot].id and res.item(eq[slot].id) or nil end
+  local shoot = C.tick(s, { now = clock(), me = me, target = game.target(), ranged = C.can_shoot(worn(2), worn(3)),
+    casting = game.cast() ~= nil })
   if s.holding ~= shown_why then
     shown_why = s.holding
     ui.update(W, "why", { text = s.holding and ("Holding: " .. s.holding) or "" })

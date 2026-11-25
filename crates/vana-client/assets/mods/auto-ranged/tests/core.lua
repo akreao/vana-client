@@ -46,13 +46,30 @@ assert(not tick(35))
 C.action(s, { actor = ME, category = 4, param = 0, targets = {} }, ME, 36)
 assert(not tick(36.5) and tick(37.1))
 
--- "out of range" pauses three seconds
+-- "out of range" pauses three seconds, only as the answer to our shot
+C.reset(s)
+assert(tick(39.9))
 C.reset(s)
 C.message(s, ME, 4, ME, 40)
 assert(not tick(42) and tick(43.1))
+C.reset(s)
+s.asked_at = -math.huge
+C.message(s, ME, 78, ME, 60)
+assert(tick(60.1), "a spell's refusal long after our last shot is not ours")
+
+-- the cast bar holds it, however long the cast
+C.reset(s)
+C.action(s, { actor = ME, category = 8, param = 0, targets = {} }, ME, 70)
+assert(not tick(83, { casting = true }) and tick(83))
+
+-- what shoots: a bow or gun with ammo, a boomerang, throwing ammo alone; not an instrument
+local bow, arrow, boomerang, pebble, harp = { skill = 25 }, { skill = 25 }, { skill = 27 }, { skill = 27 }, { skill = 41 }
+assert(C.can_shoot(bow, arrow) and not C.can_shoot(bow, nil) and C.can_shoot(boomerang, nil))
+assert(C.can_shoot(nil, pebble) and not C.can_shoot(nil, arrow) and not C.can_shoot(harp, nil) and not C.can_shoot(harp, arrow))
 
 -- Until hate: holds while the monster's last swing was on you, shoots when it turns to someone else
 C.reset(s)
+s.asked_at = -math.huge
 s.mode = "hate"
 C.action(s, { actor = 500, category = 1, param = 0, targets = { { id = ME } } }, ME, 50)
 assert(not tick(51) and s.holding == "it is attacking you")

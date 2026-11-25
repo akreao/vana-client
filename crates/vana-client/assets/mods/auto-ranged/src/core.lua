@@ -15,10 +15,24 @@ M.PAUSE = { [4] = true, [5] = true, [12] = true, [16] = true, [17] = true, [78] 
 
 function M.new()
   return { mode = "manual", delay = 0.5, busy_until = 0, next_at = 0, hate = {}, last_pos = nil, moved_at = -math.huge,
-    holding = nil }
+    holding = nil, asked_at = -math.huge }
 end
 
--- s, the game as `g` = { now, me (player), target (entity or nil), ranged (bool) } -> true to shoot now. Also keeps
+-- Skills (res.skill ids): 25 archery, 26 marksmanship need ammo; 27 throwing shoots by itself. Instruments (41 string,
+-- 42 wind) and anything else in the range slot do not shoot.
+local NEEDS_AMMO, THROWN = { [25] = true, [26] = true }, 27
+
+-- What is worn in the range and ammo slots (res.item records or nil) -> whether /ra can shoot.
+function M.can_shoot(range, ammo)
+  if range then
+    if range.skill == THROWN then return true end
+    return NEEDS_AMMO[range.skill] == true and ammo ~= nil
+  end
+  return ammo ~= nil and ammo.skill == THROWN
+end
+
+-- s, the game as `g` = { now, me (player), target (entity or nil), ranged (bool), casting (bool: the cast bar
+-- shows) } -> true to shoot now. Also keeps
 -- s.holding: why it is not shooting (for the window), nil when it is free to.
 function M.tick(s, g)
   local t, me = g.now, g.me
@@ -31,7 +45,7 @@ function M.tick(s, g)
   end
   s.holding = nil
   if s.mode == "manual" or not me then return false end
-  if t < s.busy_until or t < s.next_at then return false end
+  if t < s.busy_until or t < s.next_at or g.casting then return false end
   if me.status ~= 1 then return false end
   local mob = g.target
   if not mob or mob.kind ~= "mob" or (mob.hpp or 0) <= 0 then return false end
@@ -49,6 +63,7 @@ function M.tick(s, g)
     return false
   end
   s.busy_until = t + 6 -- until the shot's own action says how it went
+  s.asked_at = t
   return true
 end
 
@@ -81,8 +96,9 @@ function M.action(s, a, me_id, t)
   end
 end
 
+-- Only a refusal soon after a shot we asked for counts (some of these ids also answer spells and abilities).
 function M.message(s, actor, message, me_id, t)
-  if actor == me_id and s.mode ~= "manual" and M.PAUSE[message % 32768] then
+  if actor == me_id and s.mode ~= "manual" and M.PAUSE[message % 32768] and t - s.asked_at < 3 then
     s.busy_until, s.next_at = 0, t + 3
   end
 end
