@@ -114,7 +114,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn values_and_paths() {
+    fn install_values_read() {
         let reg = "[Software\\\\Wow6432Node\\\\PlayOnlineEU\\\\InstallFolder] 1\n\"0001\"=\"D:\\\\FFXI\"\n\
                    [Software\\\\Wow6432Node\\\\PlayOnlineUS\\\\InstallFolder] 1\n\
                    \"0001\"=\"C:\\\\Program Files (x86)\\\\PlayOnline\\\\SquareEnix\\\\FINAL FANTASY XI\\\\\"\n\
@@ -123,9 +123,16 @@ mod tests {
         let v = install_values(reg);
         assert_eq!(v.len(), 2, "{v:?}");
         assert!(v[0].0.contains("PlayOnlineUS") && v[0].1.ends_with("FINAL FANTASY XI\\"));
+    }
+
+    /// Wine prefixes are read only off Windows, where these paths would join with backslashes.
+    #[cfg(not(windows))]
+    #[test]
+    fn wine_paths() {
         let pfx = Path::new("/nowhere/pfx");
+        let win = "C:\\Program Files (x86)\\PlayOnline\\SquareEnix\\FINAL FANTASY XI\\";
         assert_eq!(
-            unix_path(pfx, &v[0].1).unwrap(),
+            unix_path(pfx, win).unwrap(),
             Path::new("/nowhere/pfx/drive_c/Program Files (x86)/PlayOnline/SquareEnix/FINAL FANTASY XI")
         );
         assert_eq!(unix_path(pfx, "D:\\FFXI").unwrap(), Path::new("/nowhere/pfx/dosdevices/d:/FFXI"));
