@@ -703,6 +703,8 @@ impl GameUi {
     /// draws its hand there. Call it only when the cursor changed (FUN_1011a240 does nothing for the same child).
     pub fn warp_to_cursor(&self, name: &str, child: u16) {
         *self.cursor_warp.borrow_mut() = Some((crate::dat::ui::norm_name(name.as_bytes()), child, false));
+        // The later pointer move wins (each is FUN_10125b90 at once in retail).
+        self.part_warp.set(None);
     }
 
     /// Window code set `name`'s cursor on a part whose rect it gives and put the pointer there (FUN_1011a240(child, 1)
@@ -711,6 +713,7 @@ impl GameUi {
     /// to the selected row with no pointer move).
     pub fn warp_to_part(&self, rect: [f32; 4]) {
         self.part_warp.set(Some(centre(rect)));
+        *self.cursor_warp.borrow_mut() = None;
     }
 
     /// The pointer warp a focus change or a window's cursor move asked for at the last frame's end (UI pixels), once.
