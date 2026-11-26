@@ -898,6 +898,19 @@ pub(crate) mod tests {
         assert_eq!(d.raw(1).unwrap(), b"defgh");
         assert_eq!(d.raw(2).unwrap(), b"");
         assert_eq!(d.raw(3).unwrap(), b"gh");
+
+        // As in 6660: the last offset is past the end, the one before it is fine.
+        let mut body = Vec::new();
+        for o in [12u32, 15, 40] {
+            body.extend_from_slice(&o.to_le_bytes());
+        }
+        body.extend_from_slice(b"abcde");
+        let mut file = (body.len() as u32).to_le_bytes().to_vec();
+        file.extend_from_slice(&body);
+        let d = Dialog::parse(&file).unwrap();
+        assert_eq!(d.len(), 3);
+        assert_eq!(d.raw(1).unwrap(), b"de");
+        assert_eq!(d.raw(2).unwrap(), b"");
     }
 
     /// A string cut off right after a `0c` alternatives code expands without its alternatives.
