@@ -90,14 +90,13 @@ pub struct Engine {
     pub upscale: Option<Dispatch>,
     pub nr: Option<Dispatch>,
     settle: wgpu::ComputePipeline,
-    /// The views and settle group of the last inputs, made again only when a texture changes (a resize).
-    #[cfg(any(target_os = "linux", windows))]
-    views: std::sync::Mutex<Option<Views>>,
 }
 
-/// One set of inputs' views (color, motion, reactive, composition, output, depth) and the settle group over them.
-#[cfg(any(target_os = "linux", windows))]
-struct Views {
+/// One pass's views of its inputs (color, motion, reactive, composition, output, depth) and the settle group over
+/// them, kept by the pass (the upscale and the neural rendering each have one) and made again only when a texture
+/// changes. The pass owning it lets a dropped upscaler free its output.
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+pub struct Views {
     textures: [wgpu::Texture; 6],
     views: [wgpu::TextureView; 6],
     group: wgpu::BindGroup,
@@ -272,7 +271,7 @@ impl Engine {
             cache: None,
         });
         log::info!("engine {}: upscale {}, neural rendering {}", path.display(), upscale.is_some(), nr.is_some());
-        Ok(Engine { _lib: lib, upscale, nr, settle, views: Default::default() })
+        Ok(Engine { _lib: lib, upscale, nr, settle })
     }
 
     #[cfg(not(any(target_os = "linux", windows)))]
@@ -290,11 +289,11 @@ impl Engine {
         inp: &Inputs,
         out: &wgpu::Texture,
         f: Dispatch,
+        cache: &mut Option<Views>,
     ) -> bool {
         use ash::vk::Handle;
         use wgpu::hal::api::Vulkan;
         let textures = [inp.color, inp.motion, inp.reactive, inp.composition, out, inp.depth];
-        let mut cache = self.views.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if cache.as_ref().is_none_or(|c| c.textures.iter().zip(textures).any(|(a, b)| a != b)) {
             let v = |t: &wgpu::Texture| t.create_view(&Default::default());
             let depth = inp.depth.create_view(&wgpu::TextureViewDescriptor {
@@ -387,7 +386,15 @@ impl Engine {
     }
 
     #[cfg(not(any(target_os = "linux", windows)))]
-    pub fn run(&self, _: &Gpu, _: &mut wgpu::CommandEncoder, _: &Inputs, _: &wgpu::Texture, _: Dispatch) -> bool {
+    pub fn run(
+        &self,
+        _: &Gpu,
+        _: &mut wgpu::CommandEncoder,
+        _: &Inputs,
+        _: &wgpu::Texture,
+        _: Dispatch,
+        _: &mut Option<Views>,
+    ) -> bool {
         false
     }
 }
@@ -442,6 +449,7 @@ pub fn output_texture(gpu: &Gpu, label: &str, size: [u32; 2]) -> wgpu::Texture {
 pub struct External {
     engine: std::sync::Arc<Engine>,
     output: Option<wgpu::Texture>,
+    views: Option<Views>,
 }
 
 impl External {
@@ -449,7 +457,7 @@ impl External {
         if engine.upscale.is_none() {
             return Err("the engine has no vana_upscale_dispatch".into());
         }
-        Ok(External { engine, output: None })
+        Ok(External { engine, output: None, views: None })
     }
 }
 
@@ -464,7 +472,7 @@ impl Upscaler for External {
             self.output = Some(output_texture(gpu, "upscale external output", inp.output));
         }
         let out = self.output.as_ref()?;
-        self.engine.run(gpu, encoder, inp, out, f).then(|| out.create_view(&Default::default()))
+        self.engine.run(gpu, encoder, inp, out, f, &mut self.views).then(|| out.create_view(&Default::default()))
     }
 }
 

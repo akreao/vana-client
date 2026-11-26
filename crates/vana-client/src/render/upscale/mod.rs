@@ -310,6 +310,8 @@ pub struct Upscale {
     lib: Option<Result<std::sync::Arc<external::Engine>, String>>,
     /// Neural rendering's output (render size).
     nr_out: Option<wgpu::Texture>,
+    /// The neural rendering pass's views (its own: the upscale's inputs differ).
+    nr_views: Option<external::Views>,
     /// This frame's camera and jitter, from the world.
     pub frame_camera: Option<FrameCamera>,
     pub jitter_px: [f32; 2],
@@ -366,6 +368,7 @@ impl Upscale {
             engine: None,
             lib: None,
             nr_out: None,
+            nr_views: None,
             frame_camera: None,
             jitter_px: [0.0; 2],
             render: [1, 1],
@@ -590,7 +593,7 @@ impl Upscale {
                 nr_out = Some(external::output_texture(gpu, "neural rendering output", size));
             }
             if let Some(o) = &nr_out {
-                neural_done = lib.run(gpu, encoder, &Inputs { output: size, ..inputs }, o, f);
+                neural_done = lib.run(gpu, encoder, &Inputs { output: size, ..inputs }, o, f, &mut self.nr_views);
             }
         }
         let inputs = match (&nr_out, neural_done) {

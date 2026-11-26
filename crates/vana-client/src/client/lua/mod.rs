@@ -4564,9 +4564,10 @@ impl Host {
         if let Some((k, id)) = wanted {
             for (j, vm) in self.vms.iter().enumerate() {
                 for win in vm.st.borrow_mut().windows.iter_mut() {
-                    win.focus = j == k && win.id == id && win.open;
-                    if win.focus {
-                        win.raise = true;
+                    let focus = j == k && win.id == id && win.open;
+                    if win.focus != focus || (focus && !win.raise) {
+                        win.focus = focus;
+                        win.raise |= focus;
                     }
                 }
             }
@@ -4650,7 +4651,10 @@ pub(super) fn window_click(w: &mut World, mod_id: &str, win_id: &str, click: sup
                 if win.focus && !this {
                     ended.extend(win.end_edit().into_iter().map(|e| (vm.manifest.id.clone(), win.id.clone(), e)));
                 }
-                win.focus = this;
+                // Written only on a change: a write copies a window the UI still holds this frame (window::Shared).
+                if win.focus != this {
+                    win.focus = this;
+                }
             }
             if this {
                 out = Some(click.apply(win));
