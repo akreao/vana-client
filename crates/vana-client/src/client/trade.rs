@@ -17,6 +17,7 @@ pub(super) const GIFT: &str = "menu    gift";
 const GIL: u16 = 0xffff;
 const MONEYCTR: &str = "menu    moneyctr";
 const ITEMCTRL: &str = "menu    itemctrl";
+const INVENTOR: &str = "menu    inventor";
 /// FUN_10152490: 6.0 between the two actors (squared 36).
 const REACH: f32 = 6.0;
 const ORANGE: u32 = 0x8080_4020;
@@ -262,8 +263,11 @@ fn handover_key(w: &mut World, gu: &GameUi, key: egui::Key) {
                 }
             }
             K::Enter => match h.cursor {
+                // win_handover_onkey: the inventory list raised (FUN_1015f150), which gives it the focus and the
+                // pointer on its cursor row.
                 1..=8 => {
                     h.focus = Focus::Picker;
+                    gu.raise(INVENTOR, false);
                     w.sounds.push(Ui::Select as u32);
                 }
                 9 if send(w, &h) => {
@@ -318,13 +322,16 @@ fn handover_key(w: &mut World, gu: &GameUi, key: egui::Key) {
                             } else {
                                 place(&mut h, r.index, r.id, 1);
                                 h.focus = Focus::Window;
+                                gu.raise(HANDOVER, false);
                             }
                         }
                     }
                 }
+                // FUN_1013abf0 (the list's handler for the hand-over): Escape raises the hand-over again.
                 K::Escape => {
                     w.sounds.push(Ui::Cancel as u32);
                     h.focus = Focus::Window;
+                    gu.raise(HANDOVER, false);
                 }
                 _ => {}
             }
@@ -348,6 +355,8 @@ fn handover_key(w: &mut World, gu: &GameUi, key: egui::Key) {
                     let item = w.inv.slots.get(&(super::items::INVENTORY, inv)).map_or(0, |x| x.0);
                     place(&mut h, inv, item, v);
                     (h.qty, h.focus) = (None, Focus::Window);
+                    // FUN_1013abb0, itemctrl's callback: the item in, the hand-over raised.
+                    gu.raise(HANDOVER, false);
                 }
                 K::Escape => {
                     w.sounds.push(Ui::Cancel as u32);
