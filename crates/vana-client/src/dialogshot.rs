@@ -5,7 +5,7 @@ use crate::config::Config;
 use crate::dat::DatIndex;
 use crate::dat::dialog::{Ctx, Dialog, expand};
 use crate::dat::font::{Font, Quality, encode_sjis};
-use crate::dat::ui::{MENU_US, UiFile, UiImage, WINDOW_STYLE_BASE, norm_name};
+use crate::dat::ui::{UiFile, UiImage, WINDOW_STYLE_BASE, norm_name};
 use crate::render::screens::{frame_rect, push_window};
 use crate::render::ui::{UiBatch, render_png};
 use crate::uishot::{load_ui, load_ui_full};
@@ -70,10 +70,15 @@ pub fn dialogue_shot(
 ) -> Result<()> {
     let cfg = Config::load();
     let index = DatIndex::open(&cfg.ffxi_dir())?;
-    let menu = load_ui_full(&index, MENU_US)?;
+    let menu = load_ui_full(&index, crate::dat::ui::menu_file())?;
     let style_file = load_ui(&index, WINDOW_STYLE_BASE)?;
     let style = style_file.libs.first().context("window style file has no sprite library")?;
-    let font = Font::load(&index, &std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir()))?, 1, Quality::Compressed)?;
+    let font = Font::load(
+        &index,
+        &std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir()))?,
+        crate::dat::lang::files() as u8,
+        Quality::Compressed,
+    )?;
     let dialog = Dialog::load(&index, zone)?;
     let ctx = Ctx { player: "Lenon".into(), speaker: speaker.into(), ..Default::default() };
     let (w, h) = (width as f32, height as f32);

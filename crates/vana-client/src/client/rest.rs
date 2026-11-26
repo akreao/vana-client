@@ -74,8 +74,12 @@ fn transition(phase: Phase, healing: bool, now: Instant) -> Step {
 /// Per frame, after the statuses are applied and before the motions: new rests, `res0` once ready, `res2` on leaving.
 pub fn update(w: &mut World) {
     let now = Instant::now();
-    let mut ids: Vec<u32> =
-        w.entities.iter().filter(|(id, e)| **id != w.my_id && healing(e.motion.status)).map(|(id, _)| *id).collect();
+    let mut ids: Vec<u32> = w
+        .entities
+        .iter()
+        .filter(|(id, e)| **id != w.my_id && healing(e.motion.status) && !super::event::is_parked(w, **id))
+        .map(|(id, _)| *id)
+        .collect();
     if healing(w.my_motion.status) {
         ids.push(w.my_id);
     }
@@ -86,7 +90,7 @@ pub fn update(w: &mut World) {
     }
     let ids: Vec<u32> = w.rests.keys().copied().collect();
     for id in ids {
-        let gone = id != w.my_id && !w.entities.contains_key(&id);
+        let gone = id != w.my_id && (!w.entities.contains_key(&id) || super::event::is_parked(w, id));
         let status = status_of(w, id);
         let phase = w.rests[&id];
         let next = match transition(phase, healing(status), now) {

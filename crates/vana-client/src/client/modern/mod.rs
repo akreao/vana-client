@@ -393,6 +393,7 @@ impl Modern {
             scan_kinds: &mut cfg.modern_scan_kinds,
             this: HashMap::new(),
             rooms: HashMap::new(),
+            party_rows: Vec::new(),
             retail: HashMap::new(),
             focus,
             hidden: modern_hidden(w),
@@ -474,6 +475,10 @@ impl Modern {
             ghosts.iter().map(|(k, r)| (k.clone(), px(r))).collect(),
         );
         w.lua.set_native_rooms(rooms.iter().map(|(k, r)| (k.clone(), px(r))).collect());
+        let party_rows = std::mem::take(&mut p.party_rows);
+        w.lua.set_party_rows(
+            party_rows.iter().map(|(panel, slot, name, r)| (panel.clone(), *slot, name.clone(), px(r))).collect(),
+        );
         *self.rects.borrow_mut() = this;
         if changed {
             cfg.modern_places.insert(w.name.clone(), layout.clone());
@@ -617,6 +622,8 @@ struct Panels<'a> {
     this: HashMap<String, Rect>,
     /// The whole room of the panels drawn folded or growing this frame (Show::full).
     rooms: HashMap<String, Rect>,
+    /// The party and alliance windows' member rows drawn this frame: (panel, party slot, name, row).
+    party_rows: Vec<(String, usize, String, Rect)>,
     /// Places retail works out this frame (the minimap left of the windows at the edge): the default until moved.
     retail: HashMap<String, Place>,
     /// The panel with the keys (focus_panel): drawn in the focused frame.
@@ -1043,6 +1050,18 @@ impl Default for Show<'_> {
     }
 }
 
+/// The least room a resize leaves a resizable panel.
+const MIN_ROOM: Vec2 = vec2(240.0, 60.0);
+
+/// A resizable panel's room `want` on a screen of `screen` points: no larger than the screen, so the whole window and
+/// its resize corner stay on it (the room is saved in points, so one saved at a smaller Interface Size or a larger
+/// resolution would run past the edge), and no smaller than a resize leaves it (or the screen, smaller still). The
+/// saved room is kept as it was: back on the larger screen it is whole again.
+fn fit_room(want: Vec2, screen: Vec2) -> Vec2 {
+    let max = screen.max(Vec2::splat(1.0));
+    want.max(MIN_ROOM.min(max)).min(max)
+}
+
 /// Where `r` stands moved onto `screen` (as egui keeps an area on screen; one larger than the screen keeps its top left).
 fn on_screen(r: Rect, screen: Rect) -> Pos2 {
     pos2(
@@ -1121,10 +1140,11 @@ impl<'a> Panels<'a> {
         p
     }
 
-    /// The resizable panel's room: its saved width and height, else `size`.
+    /// The resizable panel's room: its saved width and height, else `size`, fitted to the screen as it is now.
     fn room(&self, id: &str, size: Vec2) -> Vec2 {
         let p = self.place(id);
-        vec2(if p.w > 0.0 { p.w } else { size.x }, if p.h > 0.0 { p.h } else { size.y })
+        let want = vec2(if p.w > 0.0 { p.w } else { size.x }, if p.h > 0.0 { p.h } else { size.y });
+        fit_room(want, self.ctx.content_rect().size())
     }
 
     /// A panel's top left for its height `h`: on the panel it is docked on, else from its place.
@@ -1432,7 +1452,14 @@ impl<'a> Panels<'a> {
         }
         // A resize moves the bottom with the pointer: a bottom-placed panel keeps its top.
         if let Some(g) = shown.inner {
-            (place.w, place.h) = ((room.x + g.x).max(240.0), (room.y + g.y).max(60.0));
+            // Only the side dragged is saved: a room saved on a larger screen keeps its other side.
+            let fit = fit_room(room + g, screen.size());
+            if g.x != 0.0 || place.w <= 0.0 {
+                place.w = fit.x;
+            }
+            if g.y != 0.0 || place.h <= 0.0 {
+                place.h = fit.y;
+            }
             if bottom && place.dock.is_none() {
                 place.b = (r.min.y + if h > 0.0 { h } else { r.height() } + g.y) / sh;
             }
@@ -1884,6 +1911,7 @@ mod panel_tests {
                     scan_kinds: &mut 7,
                     this: Default::default(),
                     rooms: Default::default(),
+                    party_rows: Vec::new(),
                     retail: Default::default(),
                     focus: None,
                     hidden: Vec::new(),
@@ -1913,6 +1941,84 @@ mod panel_tests {
             assert!((bottom - (under - gap)).abs() < 0.5, "bottom {bottom} on {under}");
         }
     }
+    /// A chat window resized wide on a large screen, shown at a higher Interface Size or a smaller resolution, fits the
+    /// screen with its resize corner on it (players could not reach the corner to shrink it); its saved room is kept,
+    /// so back on the large screen it is as wide as before.
+    #[test]
+    fn resizable_panel_fits_the_screen() {
+        assert_eq!(fit_room(vec2(1800.0, 500.0), vec2(1280.0, 720.0)), vec2(1280.0, 500.0));
+        assert_eq!(fit_room(vec2(1800.0, 900.0), vec2(640.0, 360.0)), vec2(640.0, 360.0));
+        assert_eq!(fit_room(vec2(100.0, 20.0), vec2(1280.0, 720.0)), MIN_ROOM);
+        assert_eq!(fit_room(vec2(100.0, 20.0), vec2(200.0, 50.0)), vec2(200.0, 50.0));
+        assert_eq!(fit_room(vec2(900.0, 174.0), vec2(0.0, 0.0)), vec2(1.0, 1.0));
+
+        let ctx = egui::Context::default();
+        let side = Some(16384);
+        egui_pass(&ctx, egui::RawInput { max_texture_side: side, ..Default::default() }, |_| {});
+        let m = Modern::new(&ctx);
+        let mut layout = Layout::new();
+        let saved = Place { x: 0.0121, w: 1800.0, h: 500.0, b: 0.9998, ..Default::default() };
+        layout.insert("chat".into(), saved.clone());
+        // The screen in points: the large screen it was sized on, the same at twice the Interface Size (half the points),
+        // a small resolution, then back.
+        let frames = [vec2(1920.0, 1080.0), vec2(960.0, 540.0), vec2(1024.0, 768.0)];
+        let mut seen = Vec::new();
+        for (f, px) in frames.into_iter().chain([frames[0]]).enumerate() {
+            for k in 0..3 {
+                let raw = egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, px)),
+                    time: Some((f * 3 + k) as f64 * 0.1),
+                    max_texture_side: side,
+                    ..Default::default()
+                };
+                let mut last = None;
+                egui_pass(&ctx, raw, |ui| {
+                    let ctx = ui.ctx();
+                    let (mut changed, mut chat_font) = (false, 14.0);
+                    let mut p = Panels {
+                        m: &m,
+                        ctx,
+                        gu: None,
+                        layout: &mut layout,
+                        vis: Default::default(),
+                        changed: &mut changed,
+                        chat_font: &mut chat_font,
+                        battle_in_all: &mut true,
+                        condense: &mut true,
+                        chat_hidden: &mut Vec::new(),
+                        folded: &mut Default::default(),
+                        scan_kinds: &mut 7,
+                        this: Default::default(),
+                        rooms: Default::default(),
+                        retail: Default::default(),
+                        focus: None,
+                        hidden: Vec::new(),
+                        placed: Default::default(),
+                        opacity: Default::default(),
+                        party_rows: Vec::new(),
+                    };
+                    let show =
+                        Show { size: vec2(900.0, 174.0), resizable: true, height: Some(200.0), ..Default::default() };
+                    last = p.show("chat", show, |_, _| {}).map(|r| (r, ctx.content_rect()));
+                    *m.rects.borrow_mut() = std::mem::take(&mut p.this);
+                });
+                if k == 2 {
+                    seen.push(last.unwrap());
+                }
+            }
+        }
+        for (r, screen) in &seen {
+            assert!(screen.expand(0.5).contains_rect(*r), "{r:?} off {screen:?}");
+        }
+        // Sized on the large screen: as saved, and as wide again once back.
+        assert!((seen[0].0.width() - 1800.0).abs() < 0.5, "{:?}", seen[0]);
+        assert!((seen[3].0.width() - 1800.0).abs() < 0.5, "{:?}", seen[3]);
+        // At twice the size and at the small resolution: the screen's width.
+        assert!((seen[1].0.width() - seen[1].1.width()).abs() < 0.5, "{:?}", seen[1]);
+        assert!((seen[2].0.width() - seen[2].1.width()).abs() < 0.5, "{:?}", seen[2]);
+        assert_eq!(layout["chat"], saved);
+    }
+
     /// A mod's place (ui.native.place): the panel at its top left (window pixels; negative from the right edge),
     /// scaled about it, and back where it was once released.
     #[test]
@@ -1966,6 +2072,7 @@ mod panel_tests {
                     scan_kinds: &mut 7,
                     this: Default::default(),
                     rooms: Default::default(),
+                    party_rows: Vec::new(),
                     retail: Default::default(),
                     focus: None,
                     hidden: Vec::new(),

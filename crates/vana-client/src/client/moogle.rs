@@ -153,7 +153,11 @@ pub(super) fn moogle_actor(w: &World) -> Option<u32> {
     {
         return Some(id);
     }
-    w.entities.iter().filter(|(id, e)| is_moogle(**id, e)).min_by_key(|(_, e)| e.index).map(|(&id, _)| id)
+    w.entities
+        .iter()
+        .filter(|(id, e)| is_moogle(**id, e) && !super::event::is_parked(w, **id))
+        .min_by_key(|(_, e)| e.index)
+        .map(|(&id, _)| id)
 }
 
 /// Event text's `17 n` codes: the moogle actor plays each motion (vtable +0x298), as the text is built.

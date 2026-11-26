@@ -97,9 +97,11 @@ pub fn update(w: &mut World) {
     let lifts: Vec<(u32, u32, u8, u32, u32)> = w
         .entities
         .iter()
+        .filter(|(id, _)| !super::event::is_parked(w, **id))
         .filter_map(|(id, e)| e.lift.map(|(tag, start, end)| (*id, tag, e.motion.status, start, end)))
         .collect();
-    w.lifts.lifts.retain(|id, _| w.entities.get(id).is_some_and(|e| e.lift.is_some()));
+    let parked = super::event::parked_set(w);
+    w.lifts.lifts.retain(|id, _| w.entities.get(id).is_some_and(|e| e.lift.is_some()) && !parked.contains(id));
     for (id, tag, status, start, end) in lifts {
         let floor_of = |s: u8| s.saturating_sub(10).min(7);
         match w.lifts.lifts.get(&id).map(|l| (l.state, l.floor)) {

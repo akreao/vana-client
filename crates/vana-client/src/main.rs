@@ -1235,6 +1235,9 @@ fn main() -> Result<()> {
     if std::env::var_os("FFXI_MATERIAL_MAPS").is_some() {
         material::set_enabled(true);
     }
+    // The process's language, as retail's global DAT_10457bd8 +8 that PlayOnline fills before the game starts: every
+    // language file, menu library and per-language rule reads it from here on.
+    dat::lang::set(config::Config::load().client_language());
     let Some(cmd) = cli.cmd else {
         return client::run(config::Config::load(), client::Drive::default());
     };
@@ -2452,8 +2455,8 @@ fn main() -> Result<()> {
             let cfg = config::Config::load();
             let index = dat::DatIndex::open(&cfg.ffxi_dir())?;
             let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir()))?;
-            let file =
-                dat::msg::group_file(&dll, 1, group).ok_or_else(|| anyhow::anyhow!("no file for group {group:#x}"))?;
+            let file = dat::msg::group_file(&dll, dat::lang::files() as u8, group)
+                .ok_or_else(|| anyhow::anyhow!("no file for group {group:#x}"))?;
             let m = dat::msg::Messages::load(&index, file)?;
             println!("group {group:#x}: file {file}");
             let ids = if ids.is_empty() { (0..4096).take_while(|&i| m.raw(i).is_some()).collect() } else { ids };
@@ -2470,7 +2473,7 @@ fn main() -> Result<()> {
             let file = if slot >= 0x1000 {
                 slot
             } else {
-                dat::msg::current_slot_file(&dll, 1, slot as usize)
+                dat::msg::current_slot_file(&dll, dat::lang::files() as u8, slot as usize)
                     .ok_or_else(|| anyhow::anyhow!("no file for slot {slot:#x}"))?
             };
             // Message tables in the event text format (FUN_10095430's slots) print their readable text.
@@ -3867,7 +3870,7 @@ fn battle_dump(ids: &[u32]) -> Result<()> {
         target: who("Wild Rabbit", false),
         me: "Actor".into(),
         work: [11, 12, 13, 14, 15],
-        names: dat::names::Names::load(&index, dat::items::Lang::En).ok().map(|n| dat::battle::Tables(n.into())),
+        names: dat::names::Names::load(&index, dat::lang::files()).ok().map(|n| dat::battle::Tables(n.into())),
         ..Default::default()
     };
     let all: Vec<u32> = if ids.is_empty() { (0..2000).collect() } else { ids.to_vec() };

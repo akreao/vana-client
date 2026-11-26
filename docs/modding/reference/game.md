@@ -339,6 +339,30 @@ end
 print(("San d'Oria: %d of %d done"):format(done, #(q[0] or {})))
 ```
 
+## `game.quest_areas`
+
+```lua
+game.quest_areas() -> integer[]
+```
+
+The quest areas the game's own quest menu lists, numbered as in `game.quests`, in order. Areas 0 to 4 are always
+there; the others need the expansion the server enables: 5 Outlands Rise of the Zilart, 6 Aht Urhgan Treasures of Aht
+Urhgan, 7 Crystal War Wings of the Goddess, 8 Abyssea one of the Abyssea add-ons, 9 Adoulin and 10 Coalition Seekers of
+Adoulin. An expansion counts only when the server enables it and it is installed. A mod that lists quests by area can
+use it to show what the game shows; check that `game.quest_areas` exists first if the mod should also run on clients
+released before it.
+
+**Errors** "game state is not available here" in the lobby or a chat filter.
+
+**Example**
+
+```lua
+local q = game.quests()
+for _, area in ipairs(game.quest_areas()) do
+  print(area, #(q[area] or {}))
+end
+```
+
 ## `game.roe`
 
 ```lua

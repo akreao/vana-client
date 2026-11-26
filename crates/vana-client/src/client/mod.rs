@@ -1,6 +1,7 @@
 //! The windowed client: login and character select (in place of PlayOnline), then the world.
 
 mod actmotion;
+mod area;
 mod border;
 mod chair;
 mod charlnk;
@@ -385,6 +386,14 @@ fn world_window_open(w: &World) -> bool {
     w.action_menu.is_some() || window_over_actions(w)
 }
 
+/// FUN_101585f0's window test (30261102_0: FUN_10159bc0) before the field command table: the sub-target prompt lets
+/// it run; else no window may hold the keys (the input lock count, DAT_1057876c +0x6a). The status icon list focused by
+/// key function 0x78 (Num+ / Ctrl+F, the pad's top button) holds them as any window does: there the d-pad's 0x27..0x2a
+/// move its cursor (buffs::key) and not the target (retail, as seen).
+fn field_table_open(prompt: bool, window: bool, buff_focus: bool) -> bool {
+    prompt || !(window || buff_focus)
+}
+
 /// FUN_101a33e0's tests, in its order.
 #[derive(Clone, Copy, Default)]
 struct GateState {
@@ -690,9 +699,17 @@ struct Entity {
     reset_bases: bool,
     /// +0x138 bit 31 (event op 0xac sub 2 / 3): while its model is hidden its schedulers' sounds stay off.
     ev_reserved: bool,
-    /// Entity +0x145 = 0 after a despawn that came while an event held the actor (0x1009b90f / 0x10099c80): the next
-    /// update must be a full one, or the slot is reset and asked for again.
+    /// Entity +0x145 = 0 after any despawn (0x1009b90f / 0x10099c80): the next update must be a full one, or the slot
+    /// is reset and asked for again.
     awaiting_full: bool,
+    /// The despawn mark, +0x124 bit 12 (0x1009b8f6 / 0x10099c6a), which any later update for the slot clears
+    /// (0x1009b7de / 0x10099c07). The slot
+    /// stays, with its name, look and flags, until the zone changes (FUN_10093b70) or another id takes the index; the
+    /// frame pass (FUN_10096640) frees its model while no event holds it (`World::parked`).
+    despawned: bool,
+    /// A SubKind 5 / 6 / 7 despawn zeroes the look words (+0xf4, +0xfc..+0x11a, 0x1009b841..0x1009b87d): the model is not made
+    /// again from the old look, only from one an update brings.
+    look_gone: bool,
     /// +0x13c bit 0 (event op 0xac sub 4; only the entity reset clears it): 0x00E leaves its position alone, and an
     /// event end reseats it though it is reserved (FUN_100ae3f0).
     keep_event_pos: bool,
@@ -747,6 +764,10 @@ struct Entity {
     marks: net::Marks,
     female: bool,
     sub_kind: u8,
+    /// +0x1fa: a character's pet by ActIndex (0x00D @0x3c), 0 none; ours is `World::my_pet`.
+    pet: u16,
+    /// +0x2a0: a character's adventuring fellow by ActIndex (0x067 kind 2 @0x0c), 0 none; ours is `World::my_fellow`.
+    fellow: u16,
 }
 
 impl Entity {
@@ -1555,21 +1576,134 @@ fn first_update(known: Option<bool>, reserved: bool, complete: bool) -> FirstUpd
     }
 }
 
+/// A new slot (FUN_1008a120 / FUN_1008a350(0)) for an update's actor.
+fn new_entity(e: &net::EntityUpdate) -> Entity {
+    Entity {
+        name: String::new(),
+        pos: Vec3::ZERO,
+        kind: e.kind,
+        hpp: 100,
+        dir: 0,
+        target: Vec3::ZERO,
+        motion: e.motion,
+        ratio: 0.0,
+        last_pos: Vec3::ZERO,
+        drawn: None,
+        claim: 0,
+        mob: false,
+        index: e.index,
+        named: false,
+        plural: false,
+        slide: Vec3::ZERO,
+        remain: 0.0,
+        counter: e.counter,
+        yaw: event::rad_of(e.dir),
+        dir_seen: e.dir,
+        grounded: e.ground,
+        flags: e.status,
+        no_gauge: false,
+        no_plate: false,
+        gens_off: false,
+        mouth_off: false,
+        race: None,
+        steps_always: false,
+        steps_off: false,
+        quiet_status: false,
+        status_held: false,
+        area_frozen: None,
+        area_override: 0,
+        untargetable: false,
+        target_off: false,
+        listed_only: false,
+        unlisted: false,
+        invisible: false,
+        radar_off: false,
+        plate: net::PlateExtra::default(),
+        sync: 0,
+        monstrosity: 0,
+        mon_prefix: [0; 2],
+        mon_name: None,
+        mon_key: (0, [0; 2]),
+        sub: [0, 8, 0],
+        sub_prev: 8,
+        sub_flag: false,
+        mon_stat: 0,
+        ev_mon_stat: None,
+        idle_swap: 0.0,
+        server_y: 0.0,
+        raw_y: 0.0,
+        floor_noted: false,
+        master: 0,
+        init_done: false,
+        motion_bases: Vec::new(),
+        reset_bases: false,
+        ev_reserved: false,
+        awaiting_full: false,
+        despawned: false,
+        look_gone: false,
+        keep_event_pos: false,
+        no_occlusion: false,
+        no_near_fade: false,
+        half_fade: false,
+        no_snap: e.no_snap.unwrap_or(false),
+        door: 0,
+        lift: None,
+        ship: None,
+        ship_rebuild: false,
+        active: 0.0,
+        no_bump: false,
+        model: 0,
+        appearance: None,
+        object: false,
+        face: 0,
+        spawn_fx: false,
+        shadowless: false,
+        ev_shadowless: false,
+        noblob: false,
+        hitbox: 0.0,
+        ride: Default::default(),
+        aura: Default::default(),
+        gate: 0,
+        name_ncol: 0x17,
+        marks: net::Marks::default(),
+        // FUN_1008a350: +0x124 = 0x880, bit 25 clear (female) until a mask-4 update.
+        female: true,
+        sub_kind: 0,
+        pet: 0,
+        fellow: 0,
+    }
+}
+
 /// A slot reset (FUN_1008ee30 / FUN_10092900 / FUN_1008a350(0)) as ours has it: the entity leaves any event and all it
 /// owns goes.
 fn reset_entity(w: &mut World, id: u32) {
     event::unbind(w, id);
-    drop_entity(w, id);
-}
-
-/// A despawn: the entity and all it owns go, but no event is told. Retail's despawn path (0x1009b7e4..0x1009b945)
-/// never calls FUN_1008ee30; it sets +0x124 bit 12, +0x145 = 0 and the +0x120 bit 14 hide, so an actor the VM drives
-/// that respawns mid-event is posed again.
-fn drop_entity(w: &mut World, id: u32) {
     w.forget_entity(id);
     w.actors.remove(&id);
     w.rests.remove(&id);
     w.effects.forget_actor(id);
+}
+
+/// A despawn (0x00E 0x1009b7e4..0x1009b945, 0x00D 0x10099c6a..0x10099cd2). The slot stays: the mark (+0x124 bit 12),
+/// +0x145 = 0 (`awaiting_full`) and, for an actor no event holds (+0x120 bit 8), the hide bit (+0x120 bit 14). No
+/// FUN_1008ee30, so an actor the VM drives keeps its place in the event. 0x00E also puts +0x124's sub-animation
+/// fields back to 0x880, and for SubKinds 5 / 6 / 7 clears +0x120 bit 0, +0xef with +0x12c bit 6 (`race`) and the look
+/// words. 0x00D clears +0x1fa, the player's pet index (`pet`). The model goes in the frame pass (`World::parked`).
+/// `kind`: the 0x00E's SubKind (u8 @0x30 & 7), None for an 0x00D.
+fn despawn(x: &mut Entity, kind: Option<u8>, held: bool) {
+    x.despawned = true;
+    x.awaiting_full = true;
+    if let Some(k) = kind {
+        (x.sub[0], x.sub[1], x.sub_prev) = (0, 8, 8);
+        if matches!(k, 5..=7) {
+            (x.race, x.appearance, x.look_gone) = (None, None, true);
+        }
+    } else {
+        x.pet = 0;
+    }
+    if !held {
+        x.flags |= Entity::HIDE;
+    }
 }
 
 /// FUN_10093430 from the 0x00D / 0x00E handlers: the packet's name, or for an 0x00E without one below index 0x700
@@ -1893,9 +2027,15 @@ fn push_chat_line(world: &mut World, line: String, mode: u8, kind: u8, gm: bool,
         // the tell's tone.
         let rumble = match flags {
             0 => true,
-            f if f & crate::dat::tables::CALL_NEAR != 0 => {
-                call_near(&line, (&world.name, world.pos), world.entities.values().map(|e| (e.name.as_str(), e.pos)))
-            }
+            f if f & crate::dat::tables::CALL_NEAR != 0 => call_near(
+                &line,
+                (&world.name, world.pos),
+                world
+                    .entities
+                    .iter()
+                    .filter(|(id, _)| !event::is_parked(world, **id))
+                    .map(|(_, e)| (e.name.as_str(), e.pos)),
+            ),
             _ => false,
         };
         // FUN_100380f0: one call task at a time (DAT_10463938); a call that comes while it runs makes no sound.
@@ -2262,6 +2402,8 @@ fn self_entity(w: &World) -> Entity {
         reset_bases: false,
         ev_reserved: false,
         awaiting_full: false,
+        despawned: false,
+        look_gone: false,
         keep_event_pos: false,
         no_occlusion: false,
         no_near_fade: false,
@@ -2289,6 +2431,8 @@ fn self_entity(w: &World) -> Entity {
         marks: net::Marks::default(),
         female: false,
         sub_kind: 0,
+        pet: 0,
+        fellow: 0,
     }
 }
 
@@ -3585,10 +3729,12 @@ fn world_hud(
     }
     (world.key_shift, world.key_repeat) = (false, false);
     world.key_shift = false;
-    // Set again by the pointer handlers when the pointer moves onto a page arrow, and cleared by an arrow's click (it
-    // rebuilds the list, FUN_10221ce0). Ours also drops it when the pointer moves anywhere else.
+    // Set by the pointer handlers when the hover takes a page arrow (message 9 there), kept while the pointer moves on
+    // that arrow, and cleared by an arrow's click (it rebuilds the list, FUN_10221ce0). Ours also drops it when the
+    // pointer moves anywhere else.
+    world.list_arrow_keep = false;
     if input.moved {
-        world.list_arrow_hover = false;
+        world.list_arrow_keep = std::mem::take(&mut world.list_arrow_hover);
     }
 
     // Mouse on the main menu: a row takes the cursor by winhits::takes, a click on the cursor's row picks it; the arrows swap pages. Not while the group walk
@@ -3707,7 +3853,7 @@ fn world_hud(
                 c.mon = monstrosity::active(world);
                 c.cam_keys = world.cam_keys;
                 c.recall(world.cursor_recall(configui::CONFIGWI_MENU));
-                config_anon(Some(&mut c), world.self_flags);
+                config_anon(Some(&mut c), &world.conf_sys);
                 world.config = Some(c);
                 world.menu = None;
                 world.sounds.push(crate::audio::Ui::Select as u32);
@@ -5542,6 +5688,15 @@ fn timers_foot(gu: &GameUi, world: &World, sw: f32, sh: f32) -> f32 {
     foot
 }
 
+/// The config block at a zone-in: FUN_100fa000 zero-fills the character data (+0x2cfd8 with it) and FUN_100fae40
+/// writes the 0x00A's first four bytes (the anonymous and seek-party bits among them); the rest stay 0 until a 0x0B4
+/// brings all twelve, so the zone-in walk's 0x0DB carries them as 0.
+fn zone_conf(conf: [u8; 4]) -> [u8; 12] {
+    let mut out = [0; 12];
+    out[..4].copy_from_slice(&conf);
+    out
+}
+
 /// What a lobycwin change needs from the app (FUN_10196390): title music 0xaf, volume 0xa8 / aspect 0xab.
 #[derive(Default)]
 struct LobbyApply {
@@ -5586,21 +5741,22 @@ fn config_out(world: &mut World, out: configui::Out) {
         textcmd::config_flag(world, 0, hide);
     }
     // The modern page has no conf3win window to close: its Show / Hide goes out when picked.
-    let flags = world.self_flags;
+    let conf = world.conf_sys;
     let modern = world.config.as_mut().filter(|c| c.anon_dirty && !c.stack.iter().any(|w| w.name == "conf3win"));
     if let Some(c) = modern {
         c.anon_dirty = false;
         let hide = c.anon;
         textcmd::config_flag(world, 0, hide);
     } else {
-        config_anon(world.config.as_mut(), flags);
+        config_anon(world.config.as_mut(), &conf);
     }
 }
 
-/// Show / Hide follows our anonymous flag (0x037 flags bit 5, FUN_100e47c0(0)) until one is picked.
-fn config_anon(c: Option<&mut configui::ConfigUi>, flags: u32) {
+/// Show / Hide follows our anonymous flag until one is picked: conf3win reads it from the s2c 0x0B4 config block
+/// (FUN_100e4830(0): +0x2cfd8 bit 2, `conf_sys[0]` bit 2), not from 0x037.
+fn config_anon(c: Option<&mut configui::ConfigUi>, conf: &[u8; 12]) {
     if let Some(c) = c.filter(|c| !c.anon_dirty) {
-        c.anon = flags & 1 << 5 != 0;
+        c.anon = conf[0] & 4 != 0;
     }
 }
 
@@ -6015,6 +6171,8 @@ fn place_mogdoor(w: &mut World) {
             reset_bases: false,
             ev_reserved: false,
             awaiting_full: false,
+            despawned: false,
+            look_gone: false,
             keep_event_pos: false,
             no_occlusion: false,
             no_near_fade: false,
@@ -6043,6 +6201,8 @@ fn place_mogdoor(w: &mut World) {
             female: false,
             // +0xee 3 is SubKind 2 + 1 (MODLOG "0x00E SubKind 5 / 6"): a door, kind bit 0x20 (FUN_1008e290).
             sub_kind: 2,
+            pet: 0,
+            fellow: 0,
         },
     );
 }
@@ -6976,6 +7136,10 @@ fn actor_place(w: &World, id: u32, my_dir: u8) -> Option<Place> {
             size: 0,
         });
     }
+    // FUN_100ca310 / FUN_100ca730: the area display's rings, at the pick and at the ground cursor.
+    if let Some((pos, forward)) = area::place_of(w, id) {
+        return Some(Place { pos, forward, tilt: [0.0; 2], status: 0, ratio: 0.0, size: 0 });
+    }
     // FUN_100c9c10: a border part on its arc.
     if let Some((pos, yaw)) = w.border.place_of(id) {
         return Some(Place {
@@ -7197,6 +7361,11 @@ struct FxActors<'a> {
     me_moving: bool,
     /// Our move's quarter (World::my_strafe, +0x598).
     me_strafe: u8,
+    /// Our InvisFlag (+0x128 bit 6) and applied status (+0x170).
+    me_invisible: bool,
+    me_status: u8,
+    /// Riders whose applied status a dismount holds at the riding one (ride::applied).
+    ride_held: HashMap<u32, u8>,
     pet: u16,
     /// Our party (roster mode 0, FUN_100e5dd0(0)): ourselves first; our ActIndex (we are not in `entities`).
     party: Vec<u32>,
@@ -7399,6 +7568,17 @@ impl crate::fx::Actors for FxActors<'_> {
         self.places.get(&id).map_or(0, |p| p.status)
     }
 
+    fn applied_status(&self, id: u32) -> u8 {
+        if let Some(&s) = self.ride_held.get(&id) {
+            return s;
+        }
+        if id == self.me { self.me_status } else { self.entities.get(&id).map_or(0, |e| e.motion.status) }
+    }
+
+    fn invisible(&self, id: u32) -> bool {
+        if id == self.me { self.me_invisible } else { self.entities.get(&id).is_some_and(|e| e.invisible) }
+    }
+
     fn decal_cell(&self, c: Vec3) -> Option<(usize, usize)> {
         self.ground?.decal_cell(c)
     }
@@ -7435,7 +7615,9 @@ impl crate::fx::Actors for FxActors<'_> {
         let Some(&[b0, b1, b2, b3, b4, b5]) = a.character.as_ref().and_then(|c| c.skeleton.boxes.first()) else {
             return [1.0; 3];
         };
-        [a.scale * (b2 - b3) / 1.7, a.scale * (b1 - b0) / 1.9, a.scale * (b4 - b5) / 1.9]
+        // Each axis its own scale where one is set (+0x1d8 / +0x1d7 / +0x1d6: chairs, the area rings), else +0x1d5.
+        let s = a.axes.unwrap_or(Vec3::splat(a.scale));
+        [s.x * (b2 - b3) / 1.7, s.y * (b1 - b0) / 1.9, s.z * (b4 - b5) / 1.9]
     }
 
     fn posed(&self, id: u32) -> bool {
@@ -7753,8 +7935,6 @@ struct World {
     /// The party / alliance roster (client/party.rs) and whether its names were asked for (c2s 0x076).
     party: party::Roster,
     party_asked: bool,
-    /// Our 0x037 flags word (u32 @0x28): bit 4 seeking a party, bit 5 anonymous (the /anon / /invite toggles).
-    self_flags: u32,
     /// The gauges' eased values (FUN_101cad00, a 30 Hz step): per party row (member id, HP, MP), the target's (id,
     /// HP), and the unstepped time.
     party_gauges: Vec<(u32, u8, u8)>,
@@ -7789,6 +7969,9 @@ struct World {
     /// The pointer is over a paged list's page arrows (children 9 / 10), which disables the list itself
     /// (FUN_10221cd0: window +0x62 = 0, list +0x5c bit 1): no hand, and the list ignores keys.
     list_arrow_hover: bool,
+    /// The flag as it was before this frame's pointer move: an arrow handler keeps it while the pointer is still on
+    /// the arrow.
+    list_arrow_keep: bool,
     /// Shift was held with the key being dispatched by world_hud's loop (Shift+Tab turns a modern window's tabs back;
     /// the pad's LB sends it); false anywhere else.
     key_shift: bool,
@@ -7842,6 +8025,8 @@ struct World {
     my_ride: net::Ride,
     /// Our Geomancer Indi aura (s2c 0x037 @0x58, client/indi.rs).
     my_aura: indi::Aura,
+    /// The area display (config 0xc0): our entity's fields and the two ring actors (client/area.rs).
+    aoe: area::Area,
     /// Our fenced-content gate (s2c 0x037 @0x5a high nibble, asm 0x1009d8d1).
     my_gate: u8,
     /// Our actor's "init" ran (+0x128 bit 29; again after each zone-in, as a new actor).
@@ -8154,6 +8339,9 @@ struct World {
     /// most, newest first; retail keeps them in acq.dat, ours for the session).
     chat_mode: u8,
     chat_prev: (u8, String),
+    /// A mod's line (commands.run, not on the player's input) is running: a channel it says something in does not become
+    /// the chat line's default, and a one-off Shout / Message mode stays set.
+    mod_line: bool,
     tell_name: Option<String>,
     tell_hist: Vec<String>,
     /// The chat mode window ("menu    chatctrl").
@@ -9052,6 +9240,8 @@ pub struct App {
     tasks: Receiver<Task>,
     keys: HashSet<KeyCode>,
     dragging: bool,
+    /// The left button's gesture since its press turned into a camera look (the release is no window's).
+    left_look: bool,
     left_down: bool,
     middle_down: bool,
     /// Where and when the middle button went down (a click is told from a look drag on release).
@@ -9480,6 +9670,7 @@ impl App {
             tasks,
             keys: HashSet::new(),
             dragging: false,
+            left_look: false,
             left_down: false,
             middle_down: false,
             middle_press: None,
@@ -10201,13 +10392,14 @@ impl App {
             self.knock_table = crate::dat::tables::knockback(&dll).ok();
             self.search_words =
                 crate::dat::tables::search_words(&dll).map_err(|e| log::warn!("{e:#}")).ok().map(Arc::new);
-            let blu_desc = crate::dat::msg::current_slot_file(&dll, 1, 0x1a);
+            let lang = crate::dat::lang::files() as u8;
+            let blu_desc = crate::dat::msg::current_slot_file(&dll, lang, 0x1a);
             self.blu_data = Some(Arc::new(crate::dat::blumagic::BluData::load(self.index.as_ref().unwrap(), blu_desc)));
             self.cnq_tables = crate::dat::tables::conquest(&dll).map_err(|e| log::warn!("{e:#}")).ok().map(Arc::new);
             self.point_files = [0x1d, 0x1e, 0x1f, 0x20, 0x21, maze::TEXT_SLOT]
-                .map(|slot| crate::dat::msg::current_slot_file(&dll, 1, slot));
+                .map(|slot| crate::dat::msg::current_slot_file(&dll, lang, slot));
             self.msg_files = [0, 0, 0x63, 0x64, 0x65, 0x66, 0x68, 0x69, 0, 0, 0x6a]
-                .map(|slot| (slot != 0).then(|| crate::dat::msg::current_slot_file(&dll, 1, slot)).flatten());
+                .map(|slot| (slot != 0).then(|| crate::dat::msg::current_slot_file(&dll, lang, slot)).flatten());
             self.input.load(&dll);
         }
         Ok((self.index.clone().unwrap(), self.keys_table.clone().unwrap()))
@@ -10871,6 +11063,7 @@ impl App {
                             chat_prefix: "/say ".into(),
                             chat_mode: 2,
                             chat_prev: (2, "/say ".into()),
+                            mod_line: false,
                             tell_name: None,
                             tell_hist: Vec::new(),
                             chatctrl: None,
@@ -10974,7 +11167,6 @@ impl App {
                             target_event: None,
                             gauge_acc: 0.0,
                             gauge_last: None,
-                            self_flags: 0,
                             party_asked: false,
                             macros: None,
                             palette: (0, 0, 0, [0, 0]),
@@ -10990,6 +11182,7 @@ impl App {
                             key_repeat: false,
                             macro_palette: (1, [0, 0]),
                             list_arrow_hover: false,
+                            list_arrow_keep: false,
                             my_face: None,
                             ui_hidden: false,
                             shot_request: None,
@@ -11014,6 +11207,7 @@ impl App {
                             rebuild_models: false,
                             my_ride: Default::default(),
                             my_aura: Default::default(),
+                            aoe: Default::default(),
                             my_gate: 0,
                             my_init_done: false,
                             my_motion_bases: Vec::new(),
@@ -11297,9 +11491,6 @@ impl App {
                                 w.index = Some(index.clone());
                             }
                             let dll = crate::dat::ffximain(&self.cfg.ffxi_dir());
-                            // The process's language, as retail's global, set once here: the dictionary loading
-                            // next reads it, and so do its blocks and German's quotes after.
-                            crate::dat::lang::set(self.cfg.client_language());
                             let tx = self.tasks_tx.clone();
                             let idx = index.clone();
                             std::thread::spawn(move || {
@@ -11315,7 +11506,7 @@ impl App {
                             });
                             let tx = self.tasks_tx.clone();
                             std::thread::spawn(move || {
-                                let n = crate::dat::names::Names::load(&index, crate::dat::items::Lang::En)
+                                let n = crate::dat::names::Names::load(&index, crate::dat::lang::files())
                                     .map(|n| (Arc::new(n), crate::dat::msgshift::MsgShift::bundled()));
                                 let _ = tx.send(Task::Names(n));
                             });
@@ -12075,6 +12266,7 @@ impl App {
                     monstrosity,
                     pol_return,
                     plate,
+                    conf,
                 } => {
                     world.gm.zoned();
                     // FUN_10094190: the new entity takes its flags from the 0x00A (net::zone_in_plate). The model
@@ -12082,6 +12274,10 @@ impl App {
                     // comes.
                     // The new entity's forced-follow index starts at 0 (0x1008a65c).
                     world.my_pull = 0;
+                    // 0x10094e12: the new entity's team byte (+0x1ff) starts at 0; 0x037 sets it.
+                    world.my_team = 0;
+                    world.conf_sys = zone_conf(conf);
+                    config_anon(world.config.as_mut(), &world.conf_sys);
                     // FUN_100fa000 (the map session's setup, run for every zone) zero-fills the whole character data
                     // block, the auction parcel store with it: the slots start empty in each zone and come back
                     // through the Sales Status LotChecks.
@@ -12392,21 +12588,27 @@ impl App {
                     {
                         name_update(x, &e, &world.npc_names);
                     }
-                    // Any update lifts the despawn mark (+0x124 bit 12, 0x1009b7db / 0x10099c07).
-                    event::respawned(world, e.id);
+                    // Any update lifts the despawn mark (+0x124 bit 12, 0x1009b7db / 0x10099c07). A slot coming back
+                    // from it has no model: the update places it as a new one is placed.
+                    let parked = world
+                        .entities
+                        .get_mut(&e.id)
+                        .filter(|x| x.index == e.index)
+                        .is_some_and(|x| std::mem::replace(&mut x.despawned, false));
                     if e.despawn && !reserved {
-                        // 0x1009b90f: +0x145 = 0 always; the hide bit (+0x120 bit 14) only for an actor no event
-                        // holds (bit 8), so a participant stays until the event ends, and must be sent whole again.
-                        if event::holds(world, e.id) {
-                            if let Some(x) = world.entities.get_mut(&e.id) {
-                                x.awaiting_full = true;
-                                // 0x00E: +0x124 back to its 0x880, no sub-animation wanted or applied.
-                                if e.kind == EntityKind::Npc {
-                                    (x.sub[0], x.sub[1], x.sub_prev) = (0, 8, 8);
-                                }
-                            }
-                        } else {
-                            drop_entity(world, e.id);
+                        // Retail makes the slot if there is none (0x1009b57a / 0x10099b05) and keeps it.
+                        if !world.entities.contains_key(&e.id) {
+                            world.entity_index.insert(e.index, e.id);
+                            world.entities.insert(e.id, new_entity(&e));
+                        }
+                        let held = event::holds(world, e.id);
+                        if let Some(x) = world.entities.get_mut(&e.id) {
+                            despawn(x, (e.kind == EntityKind::Npc).then_some(e.look_kind), held);
+                        }
+                        // The status machines (FUN_1008e9a0 -> FUN_1008b460) skip a marked actor: its rest goes with
+                        // the model.
+                        if !held {
+                            world.rests.remove(&e.id);
                         }
                         continue;
                     }
@@ -12438,6 +12640,8 @@ impl App {
                         world.costumes.entry(e.id).or_default().set_id(c);
                     }
                     let fresh = !world.entities.contains_key(&e.id);
+                    // A new model's place: no slide from where the slot was.
+                    let placed = fresh || parked;
                     let raw_y = e.kind == EntityKind::Player && event::raw_pc_y(world, e.id);
                     let rising = e.hpp.is_some() && chair::rise(world, e.id, e.motion.status);
                     let held =
@@ -12446,96 +12650,10 @@ impl App {
                     if !world.entities.contains_key(&e.id) {
                         world.entity_index.insert(e.index, e.id);
                     }
-                    let entry = world.entities.entry(e.id).or_insert(Entity {
-                        name: String::new(),
-                        pos: Vec3::ZERO,
-                        kind: e.kind,
-                        hpp: 100,
-                        dir: 0,
-                        target: Vec3::ZERO,
-                        motion: e.motion,
-                        ratio: 0.0,
-                        last_pos: Vec3::ZERO,
-                        drawn: None,
-                        claim: 0,
-                        mob: false,
-                        index: e.index,
-                        named: false,
-                        plural: false,
-                        slide: Vec3::ZERO,
-                        remain: 0.0,
-                        counter: e.counter,
-                        yaw: event::rad_of(e.dir),
-                        dir_seen: e.dir,
-                        grounded: e.ground,
-                        flags: e.status,
-                        no_gauge: false,
-                        no_plate: false,
-                        gens_off: false,
-                        mouth_off: false,
-                        race: None,
-                        steps_always: false,
-                        steps_off: false,
-                        quiet_status: false,
-                        status_held: false,
-                        area_frozen: None,
-                        area_override: 0,
-                        untargetable: false,
-                        target_off: false,
-                        listed_only: false,
-                        unlisted: false,
-                        invisible: false,
-                        radar_off: false,
-                        plate: net::PlateExtra::default(),
-                        sync: 0,
-                        monstrosity: 0,
-                        mon_prefix: [0; 2],
-                        mon_name: None,
-                        mon_key: (0, [0; 2]),
-                        sub: [0, 8, 0],
-                        sub_prev: 8,
-                        sub_flag: false,
-                        mon_stat: 0,
-                        ev_mon_stat: None,
-                        idle_swap: 0.0,
-                        server_y: 0.0,
-                        raw_y: 0.0,
-                        floor_noted: false,
-                        master: 0,
-                        init_done: false,
-                        motion_bases: Vec::new(),
-                        reset_bases: false,
-                        ev_reserved: false,
-                        awaiting_full: false,
-                        keep_event_pos: false,
-                        no_occlusion: false,
-                        no_near_fade: false,
-                        half_fade: false,
-                        no_snap: e.no_snap.unwrap_or(false),
-                        door: 0,
-                        lift: None,
-                        ship: None,
-                        ship_rebuild: false,
-                        active: 0.0,
-                        no_bump: false,
-                        model: 0,
-                        appearance: None,
-                        object: false,
-                        face: 0,
-                        spawn_fx: false,
-                        shadowless: false,
-                        ev_shadowless: false,
-                        noblob: false,
-                        hitbox: 0.0,
-                        ride: Default::default(),
-                        aura: Default::default(),
-                        gate: 0,
-                        name_ncol: 0x17,
-                        marks: net::Marks::default(),
-                        // FUN_1008a350: +0x124 = 0x880, bit 25 clear (female) until a mask-4 update.
-                        female: true,
-                        sub_kind: 0,
-                    });
+                    let entry = world.entities.entry(e.id).or_insert_with(|| new_entity(&e));
+                    if let Some(p) = e.pet {
+                        entry.pet = p;
+                    }
                     if e.mask & 7 != 0 {
                         entry.flags = e.status;
                     }
@@ -12544,6 +12662,9 @@ impl App {
                     }
                     if let Some(crate::dat::npc::NpcLook::Equipped(l)) = &e.npc {
                         entry.appearance = Some(*l);
+                    }
+                    if e.look.is_some() || e.npc.is_some() {
+                        entry.look_gone = false;
                     }
                     // Falling dead plays the death motion once (the "dead" scheduler), then the corpse loop.
                     // Fields outside this update's mask bits are zero, not news.
@@ -12631,9 +12752,10 @@ impl App {
                         entry.server_y = p.y;
                         entry.grounded = e.ground;
                         entry.target = p;
-                        // FUN_10091220: a new actor stands on the floor under the server's position (not a player character
-                        // while op 0xab 0x0f holds the sent height, event::raw_pc_y).
-                        if fresh
+                        // FUN_10091220 (in the model maker FUN_1008f740): a new model stands on the floor under the
+                        // server's position (not a player character while op 0xab 0x0f holds the sent height,
+                        // event::raw_pc_y).
+                        if placed
                             && e.ground
                             && !raw_y
                             && let Some(y) = world
@@ -12659,7 +12781,7 @@ impl App {
                         }
                         entry.remain = dur as f32 + 8.0;
                         entry.counter = c;
-                        if fresh {
+                        if placed {
                             entry.pos = p;
                             entry.last_pos = p;
                             entry.slide = p;
@@ -12903,7 +13025,11 @@ impl App {
                         e.master = master;
                     }
                 }
-                NetEvent::CharSync { id, owner, floors, open, level, sync, custom } => {
+                NetEvent::CharSync { id, owner, floors, open, level, sync, custom, fellow } => {
+                    // FUN_1009cee0: +0x2a0, the character's fellow.
+                    if let Some(e) = world.entities.get_mut(&id) {
+                        e.fellow = fellow;
+                    }
                     if id == world.my_id {
                         world.my_ride.custom = custom;
                     }
@@ -13119,7 +13245,6 @@ impl App {
                     hpp,
                     dead,
                     pet,
-                    flags,
                     icons,
                     team,
                     fellow,
@@ -13148,8 +13273,6 @@ impl App {
                     world.my_fellow = fellow;
                     world.my_pull = follow;
                     world.costume.set_id(costume);
-                    world.self_flags = flags;
-                    config_anon(world.config.as_mut(), flags);
                     // 0x1009d84a: our 0x037 clears entity +0x130 bit 18, the half-alpha draw.
                     if let Some(e) = world.entities.get_mut(&me) {
                         e.half_fade = false;
@@ -13248,7 +13371,10 @@ impl App {
                         _ => world.ko_offer = 0,
                     }
                 }
-                NetEvent::ConfSys(c) => cfgapply::from_server(world, c),
+                NetEvent::ConfSys(c) => {
+                    cfgapply::from_server(world, c);
+                    config_anon(world.config.as_mut(), &c);
+                }
                 NetEvent::MissionLog { port, data } => world.journal.record(port, data),
                 NetEvent::RoeUnity { sparks, deeds, plaudits, rot } => {
                     (world.roe.sparks, world.roe.deeds, world.roe.plaudits, world.roe.rot) =
@@ -13702,6 +13828,9 @@ impl App {
                 e.sub[1] = want;
             }
         }
+        // Ops 0x75 / 0xa3 set their hide bytes inside the op (FUN_100d5f10 / FUN_100d60e0): applied before this
+        // frame's glow refreshes read them.
+        wepfx::apply_ops(world);
         for id in readies {
             wepfx::refresh(world, id);
         }
@@ -13779,7 +13908,6 @@ impl App {
         for id in std::mem::take(&mut world.effects.releases) {
             combat::fx_release(world, id);
         }
-        wepfx::apply_ops(world);
         for (id, pick) in std::mem::take(&mut world.effects.death_picks) {
             if let Some(a) = world.actors.get_mut(&id) {
                 a.death_pick = pick;
@@ -14000,19 +14128,22 @@ impl App {
         rest::update(world);
         indi::update(world, dt);
         border::update(world);
+        area::update(world);
         racing::step(world, dt * 60.0);
         combat::run_map_schedulers(world);
         ride::dig_update(world);
         actmotion::update(world, dt * world.opts.anim_rate);
         // FUN_10096640: the lock goes with its target; inferred, after 10 s (a talk the server never answers).
-        // FUN_10096640 (0x10096bd7): the talked-to index is dropped once that actor is gone.
-        if world.talked_index != 0 && world.entity_at(world.talked_index).is_none() {
+        // FUN_10096640 (0x10096bd7): the talked-to index is dropped once that actor is gone: its slot is, or it is a
+        // talkable pet / trust (+0x12c bit 30) with the despawn mark (+0x124 bit 12), as a dismissed trust's slot stays.
+        let gone = |e: Option<&Entity>| e.is_none_or(|e| e.marks.npc_pet && e.despawned);
+        if world.talked_index != 0 && gone(world.entity_at(world.talked_index).map(|(_, e)| e)) {
             world.talked_index = 0;
         }
         if !event::active(world)
             && world
                 .control_lock
-                .is_some_and(|(t, id)| t.elapsed().as_secs_f32() > 10.0 || !world.entities.contains_key(&id))
+                .is_some_and(|(t, id)| t.elapsed().as_secs_f32() > 10.0 || gone(world.entities.get(&id)))
         {
             world.control_lock = None;
         }
@@ -14068,6 +14199,8 @@ impl App {
         if let Some(set) = carrier::rider_set(world.my_motion.status).filter(|_| !ev_bound.contains(&world.my_id)) {
             world.pos += world.carriers.step(set, world.my_index);
         }
+        // FUN_10096640 runs FUN_1008e9a0 (the move and the status machine) for no despawned slot an event lets go.
+        let parked = event::parked_set(world);
         let carriers = &world.carriers;
         let carry = |eid: &u32, e: &mut Entity| {
             if let Some(set) = carrier::rider_set(e.motion.status).filter(|_| !ev_bound.contains(eid)) {
@@ -14076,7 +14209,7 @@ impl App {
                 e.target = e.pos;
             }
         };
-        for (eid, e) in world.entities.iter_mut() {
+        for (eid, e) in world.entities.iter_mut().filter(|(id, _)| !parked.contains(id)) {
             // Moved by someone else since last frame (an event script): take that as the slide and drawn spot (the
             // place setters FUN_100ab830 / FUN_100c3ff0 go through FUN_100929a0, which snaps +0x5fc).
             if e.pos != e.last_pos {
@@ -15559,7 +15692,7 @@ impl App {
             && !world.ko_open
             && world.ko_offer != 2
             && !locked_only
-            && (world.prompt.is_some() || !world_window_open(world))
+            && field_table_open(world.prompt.is_some(), world_window_open(world), world.log_focus == 2)
             && world.palette.0 == 0
         {
             let rep = |input: &mut input::Input, k: usize| input.test(k, input::mode::REPEAT);
@@ -15791,6 +15924,7 @@ impl App {
                 if pressed {
                     self.press_at = self.last_cursor;
                     self.press_time = Some(Instant::now());
+                    self.left_look = false;
                 } else if let Some((b, drag)) =
                     release(self.press_at.take().zip(self.press_time.take()), self.last_cursor, self.ui_k)
                 {
@@ -16019,7 +16153,8 @@ impl App {
             clicked: i.pointer.primary_clicked() && !swallow && mine,
             pressed: i.pointer.primary_pressed() && mine,
             down: i.pointer.primary_down() && mine,
-            released: i.pointer.primary_released() && !swallow && mine,
+            // A left drag that turned into a camera look is the camera's gesture: no window takes its release.
+            released: i.pointer.primary_released() && !swallow && mine && !self.left_look,
             right_clicked: i.pointer.secondary_clicked() && mine,
             page: i.modifiers.ctrl || i.modifiers.alt,
             events: i.events.clone(),
@@ -17010,9 +17145,14 @@ impl App {
                             }
                             _ => {}
                         }
-                        // Escape does not leave: the cursor goes to Back (0001).
+                        // Escape does not leave: the cursor goes to Back (0001). loby2win's handler (FUN_10241c00
+                        // message 6) sets its cursor child 4 and calls FUN_10126000, so the pointer goes onto Back
+                        // too, whether or not the cursor was already there.
                         if escape && !config_open {
                             *menu = 4;
+                            if let Some(lu) = self.game_ui.as_ref() {
+                                lu.warp_to_cursor("menu    loby2win", 4);
+                            }
                             if let Some(a) = self.audio.as_mut() {
                                 a.ui(crate::audio::Ui::Cursor);
                             }
@@ -17037,7 +17177,8 @@ impl App {
                             events: &input.events,
                             pointer: input.pointer,
                             moved: input.moved,
-                            clicked: input.clicked,
+                            // The windows act on the release (FUN_1015f420), not egui's click.
+                            clicked: input.released,
                             busy,
                             modern: modern_ui,
                         };
@@ -17743,6 +17884,8 @@ impl App {
                     if let Some(gu) = self.game_ui.as_ref() {
                         gu.modern_order.borrow_mut().clear();
                     }
+                    // No party windows drawn this frame (the UI hidden, cinema): none for ui.native.party_rows either.
+                    world.lua.set_party_rows(Vec::new());
                 }
                 // What the Config windows and the settings screen hand to the app.
                 let keys = [world.cam_keys[1] as u32, world.cam_keys[0] as u32];
@@ -21530,6 +21673,14 @@ fn draw_effects(
             me: w.my_id,
             me_moving: w.moving,
             me_strafe: w.my_strafe,
+            me_invisible: w.my_plate.invisible,
+            me_status: w.my_motion.status,
+            ride_held: w
+                .rides
+                .keys()
+                .filter_map(|&id| Some((id, ride::applied(w, id, 0xff))))
+                .filter(|x| x.1 != 0xff)
+                .collect(),
             pet: w.my_pet,
             party,
             my_index: w.my_index,
@@ -22039,6 +22190,10 @@ impl ApplicationHandler for App {
                     || (self.left_down
                         && self.press_at.is_some_and(|a| (a.0 - position.x).abs() + (a.1 - position.y).abs() >= 5.0));
                 if let (true, Some((x, y))) = (looking, self.last_cursor) {
+                    // Only a drag that turns the camera owns the release (no camera in the lobby, none while the map
+                    // takes the drag).
+                    self.left_look |=
+                        self.left_down && matches!(&self.phase, Phase::World(w) if w.map.is_none() && w.cnq.is_none());
                     if self.look_grab.is_none() {
                         self.grab_pointer();
                     }
@@ -22481,6 +22636,11 @@ mod tests {
     /// The zone-in walk's sends as a retail capture has them after c2s 0x00F: 0x0DB kind 1, 0x112 kind 0, 0x05A; again
     /// at the next zone-in, within the conquest gate's 120 s and with no reply to either request.
     #[test]
+    fn zone_in_config_block() {
+        assert_eq!(super::zone_conf([4, 0x18, 0, 1]), [4, 0x18, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
     fn zone_walk_sends_in_retail_order() {
         let mut conquest = super::region::Data::new(None);
         let mut bf = super::battlefield::Battlefield::default();
@@ -22554,6 +22714,18 @@ mod tests {
             close(&mut s);
             assert!(!gate_open(s), "test {k}");
         }
+    }
+
+    /// With the status icons focused, the d-pad's Left / Right stepped the target as well as the icon cursor. The field command table now waits while the list holds the keys, as for any window; the sub-target
+    /// prompt still runs it.
+    #[test]
+    fn field_table_waits_while_buffs_focused() {
+        use super::field_table_open as open;
+        assert!(open(false, false, false));
+        assert!(!open(false, false, true), "status icons focused");
+        assert!(!open(false, true, false), "a window");
+        assert!(open(true, true, false), "the sub-target prompt over its list");
+        assert!(open(true, false, true));
     }
 
     #[test]
@@ -22845,6 +23017,36 @@ mod tests {
         assert_eq!(slot_resets(7, None, true, true), [7]);
         assert_eq!(slot_resets(7, None, true, false), Vec::<u32>::new());
         assert_eq!(slot_resets(7, Some(5), true, false), [5, 7]);
+    }
+
+    /// A despawn keeps the slot (row 171): marked, waiting for a full update, hidden unless an event holds it. The 0x00E
+    /// puts the sub-animation fields back and, for SubKinds 5 / 6 / 7 (the packet's), drops the race and the look;
+    /// the 0x00D does neither.
+    #[test]
+    fn despawn_keeps_the_slot() {
+        let u = net::test_entity(
+            0x00E,
+            0x48,
+            &[(4, &0x0100_0010u32.to_le_bytes()), (8, &0x10u16.to_le_bytes()), (10, &[0x20])],
+            EntityKind::Npc,
+        );
+        let fresh = || {
+            let mut e = new_entity(&u);
+            (e.race, e.sub, e.sub_prev, e.sub_kind) = (Some(3), [5, 2, 1], 2, 6);
+            e
+        };
+        let mut e = fresh();
+        despawn(&mut e, Some(0), false);
+        assert!(e.despawned && e.awaiting_full && e.flags & Entity::HIDE != 0);
+        assert_eq!((e.sub, e.sub_prev, e.race, e.look_gone), ([0, 8, 1], 8, Some(3), false));
+        let mut held = fresh();
+        despawn(&mut held, Some(6), true);
+        assert!(held.despawned && held.awaiting_full && held.flags & Entity::HIDE == 0);
+        assert!(held.race.is_none() && held.appearance.is_none() && held.look_gone);
+        let mut pc = fresh();
+        despawn(&mut pc, None, false);
+        assert!(pc.despawned && pc.flags & Entity::HIDE != 0);
+        assert_eq!((pc.sub, pc.race, pc.look_gone), ([5, 2, 1], Some(3), false));
     }
 
     /// A mask-0 0x00E names an NPC: one ask until a full update; a full first update asks nothing.

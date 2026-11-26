@@ -47,6 +47,9 @@ FSR 3.1, so the scaling pass grades and encodes it the same way.
   static library: `DLSS_SDK` set to its absolute path, `VULKAN_SDK` to the Vulkan headers' prefix (`/usr` on Linux),
   and clang. CI's `dlss` job fetches the headers and the Linux library and checks the feature.
 
+  `release/build-dlss.sh` does all of it (it fetches only the headers and the NGX library, into
+  `target/dlss-sdk`); by hand:
+
   ```sh
   git clone --depth 1 --branch v310.9.1 https://github.com/NVIDIA/DLSS.git /path/to/DLSS
   DLSS_SDK=/path/to/DLSS VULKAN_SDK=/usr cargo build --release --features dlss

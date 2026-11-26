@@ -44,7 +44,8 @@ Ours:
   menu, the action menu, the K.O. and raise prompts, the party cursor, the title menu, character select and the
   creator's steps), and the release acts only on the cursor's child: the windows take the button's release edge, not
   egui's click (which drops a release after a drag or a long hold); a press that began on a scroll bar keeps its
-  release (scrollbar::frame, retail's +0x86). Before, the cursor moved on any pointer
+  release (scrollbar::frame, retail's +0x86), and a left drag that turned into a camera look gives no window its
+  release. Character select takes the release too. Before, the cursor moved on any pointer
   move over another child or on a click, and a click on another child picked it at once.
 - itemctrl / moneyctr (`winhits::ctr`): the hover or the button held puts the window's cursor on - / + (ours keeps it
   as the held child), the release on it steps once; held frames off that child or outside the frame count nothing
@@ -52,8 +53,9 @@ Ours:
   frames a second, 1 at Movement Rate 60). Ours stepped on the press and repeated after 400 ms every 60 ms.
 - conf11s: children 15 / 16 take the mouse, Enter on them switches the log window, Down / Up do nothing there, and
   Left / Right first put the cursor back on the row the last Down / Up left (`Extra::key_row`).
-- The list page arrows (miss00 / quest01 / guide01 9 / 10) keep their list disabled while the pointer is on them (no
-  hand), as message 9 there cleared +0x62.
+- The list page arrows (miss00 / quest01 / guide01 9 / 10): the hover taking an arrow (message 9 there, no hand)
+  disables the list, it stays disabled while the pointer moves on that arrow, and after the arrow's click (the list
+  rebuilt) only a new hover disables it again.
 - The raise prompt's own hover memory (`raise_hover`) is gone; it uses `takes`.
 
 Not built (new queue row 182): the release over no child (SE 0004, +0x87); itemctrl / moneyctr's cursor on - / +
