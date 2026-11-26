@@ -549,8 +549,17 @@ pub(super) fn poll(vm: &super::vm::Vm) {
                 match (b, from) {
                     (Ok(b), Some(a)) => vm.call(data, (id, b, a.ip().to_string(), a.port())),
                     (Ok(b), None) => vm.call(data, (id, b)),
-                    // Past the mod's memory limit, a datagram is lost as UDP may lose one, the error reported.
-                    (Err(e), Some(_)) => vm.error(&mlua::Error::runtime(format!("socket {id}: datagram dropped: {e}"))),
+                    // Past the mod's memory limit, a datagram is lost as UDP may lose one: said once, not counted as
+                    // the mod's error (a run of them would suspend it).
+                    (Err(e), Some(_)) => {
+                        log::warn!("{}: socket {id}: datagram dropped: {e}", vm.manifest.id);
+                        let text = format!("socket {id}: datagrams dropped past the memory limit");
+                        let mut st = vm.st.borrow_mut();
+                        if st.reported.insert(text.clone()) {
+                            let note = format!("{}: {text}", vm.manifest.id);
+                            st.notices.push(note);
+                        }
+                    }
                     // A stream would go on with a hole in it, so it is closed.
                     (Err(e), None) => {
                         let gone = take(vm, id);
@@ -692,12 +701,16 @@ mod tests {
         let h: Table =
             vm.lua.load("got = {}; return {close = function() got.closed = true end, data = print}").eval().unwrap();
         keep(&vm.lua, 6, h, Kind::Listen { stop: Arc::new(AtomicBool::new(false)) }).unwrap();
-        let c = Arc::new(Budget::default()).take(1, || false).unwrap();
-        report.send(Msg::Data(6, vec![b'x'; vm::MEMORY + 1], Some("127.0.0.1:9".parse().unwrap()), c)).unwrap();
+        // More than the error limit's worth: not one counts toward suspending the mod.
+        for _ in 0..30 {
+            let c = Arc::new(Budget::default()).take(1, || false).unwrap();
+            report.send(Msg::Data(6, vec![b'x'; vm::MEMORY + 1], Some("127.0.0.1:9".parse().unwrap()), c)).unwrap();
+        }
         poll(&vm);
         let closed: Option<bool> = vm.lua.load("return got.closed").eval().unwrap();
         assert_eq!(closed, None);
         assert_eq!(vm.st.borrow().socks.len(), 1);
-        assert_eq!(vm.st.borrow().errors.len(), 1);
+        assert!(vm.st.borrow().errors.is_empty());
+        assert_eq!(vm.st.borrow().notices.len(), 1);
     }
 }
