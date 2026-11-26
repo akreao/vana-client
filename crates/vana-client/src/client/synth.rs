@@ -1620,7 +1620,8 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         _ => (0.0, 0.0),
     };
     if let Some((_, _, v, max)) = s.qty.or(amount)
-        && let Some(win) = gu.lobby_window_off(ITEMCTRL, sw, sh, off, Some(1), true, &[])
+        && let Some(win) =
+            gu.lobby_window_off(ITEMCTRL, sw, sh, off, Some(super::winhits::ctr_cursor(w, gu, ITEMCTRL)), true, &[])
     {
         super::winhits::record(w, ITEMCTRL, &win);
         let [x, y, ..] = win.frame;

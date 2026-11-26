@@ -370,6 +370,8 @@ pub struct GameUi {
     /// The focused lists' bars drawn this frame, and a press held on one (client/scrollbar.rs).
     pub bars: Vec<super::scrollbar::Site>,
     pub bar_hold: Option<super::scrollbar::Hold>,
+    /// The frames of the windows drawn this frame, in draw order (`drawn_since`).
+    drawn_frames: Vec<[f32; 4]>,
     /// Window open / close animations by menu name, the UI frame number and the tick clock; `open_ticks` is N
     /// (DAT_1036c190: 25, 0 with config 0xa4).
     anims: std::collections::HashMap<String, WinAnim>,
@@ -503,6 +505,7 @@ impl GameUi {
             modern_order: Default::default(),
             bars: Vec::new(),
             bar_hold: None,
+            drawn_frames: Vec::new(),
             anims: Default::default(),
             contents: Default::default(),
             anim_frame: 1,
@@ -547,9 +550,19 @@ impl GameUi {
         }
         (a.seen, a.shape) = (frame, shape.clone());
         if a.open <= 0.0 {
+            // Only a window at its place counts as drawn there (an opening one zooms from its centre).
+            if let Shape::Frame(r) = shape {
+                self.drawn_frames.push(r);
+            }
             return true;
         }
         let f = ((n - a.open) / n).max(0.0);
+        // An opening window covers what its zoom paints (zoom_frame's f^2 frame about the centre).
+        if let Shape::Frame([x, y, w, h]) = shape {
+            let s = f * f;
+            let at = |p: f32, d: f32| (p - (d / 2.0).trunc() * (s - 1.0)).trunc();
+            self.drawn_frames.push([at(x, w), at(y, h), w * s, h * s]);
+        }
         self.zoom(&shape, f);
         false
     }
@@ -635,6 +648,7 @@ impl GameUi {
         }
         self.anims.retain(|_, a| a.seen == frame || a.close > 0.0);
         self.anim_frame += 1;
+        self.drawn_frames.clear();
         self.run_walk();
         let hand = self.batch.hand.take();
         let moved = cursor_warp_due(&mut self.cursor_warp.borrow_mut(), hand.as_ref());
@@ -759,6 +773,28 @@ impl GameUi {
             self.walk.now.insert(key.clone(), stamp);
         }
         !self.walk.suspended.contains(&key)
+    }
+
+    /// How many framed windows were drawn so far this frame, to mark a point in the draw order.
+    pub fn drawn_count(&self) -> usize {
+        self.drawn_frames.len()
+    }
+
+    /// The frames of the windows drawn this frame after mark `from` (`drawn_count`).
+    pub fn drawn_since(&self, from: usize) -> Vec<[f32; 4]> {
+        self.drawn_frames.get(from..).map_or(Vec::new(), <[_]>::to_vec)
+    }
+
+    /// The window that has the focus (+0x54, walk key), as the last frame's end left it.
+    pub fn focused(&self) -> Option<&str> {
+        self.focus_state.was.as_ref().map(|w| w.0.as_str())
+    }
+
+    /// The raise stamp of window `name` while it stays open (this frame's walk, else the last one's): a new number for
+    /// each open, None while it is shut.
+    pub fn open_stamp(&self, name: &str) -> Option<i64> {
+        let key = crate::dat::ui::norm_name(name.as_bytes());
+        self.walk.now.get(&key).or_else(|| self.walk.last.get(&key)).copied()
     }
 
     /// A window the last walk had open and did not suspend; unlike `want`, it does not open it.
