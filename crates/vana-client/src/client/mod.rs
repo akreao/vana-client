@@ -4376,6 +4376,8 @@ fn world_hud(
         regime::draw(gu, &mut world.regime, sw);
     }
     skillchain::draw(gu, &mut world.skillchain, sw);
+    // The mods' HUD and edge windows stand with the Timers' dock, under the HUD and every window (World::over_mod_hud).
+    let mod_hud = if world.modern { Vec::new() } else { lua::draw_classic(gu, world, true) };
     let slots = gu.hud(sw, sh, &st);
 
     // Target cursor (FUN_10149900): anc_l at the target's point, 6 frames of 4 ticks, tint 0xe0808080;
@@ -4925,15 +4927,17 @@ fn world_hud(
     if let Some(s) = world.settings.as_ref().filter(|_| !world.modern) {
         blockers.push(s.draw(gu, sw, sh));
     }
-    // The Lua mods' windows (the modern UI draws them as panels).
+    // The Lua mods' other windows (the modern UI draws them as panels): their managers, popups and modal ones.
     if !world.modern {
-        blockers.extend(lua::draw_classic(gu, world));
+        blockers.extend(lua::draw_classic(gu, world, false));
         blockers.extend(voicechat::draw_classic(gu, world, sw, sh));
     }
-    // The map covers the screen (mapframe takes the mouse), as does cnqframe.
-    if world.map.is_some() || world.cnq.is_some() {
+    // The map covers the screen (mapframe takes the mouse), as does cnqframe. Both draw under the mods' HUD layer,
+    // so this one keeps the mouse off the world only (not off that layer).
+    let map_at = (world.map.is_some() || world.cnq.is_some()).then(|| {
         blockers.push([0.0, 0.0, sw, sh]);
-    }
+        blockers.len() - 1
+    });
     // The choice menu (FUN_100b0960).
     if let Some(c) = event::choice(world).filter(|_| !world.modern) {
         let options: Vec<String> = c.options.iter().map(|o| o.1.clone()).collect();
@@ -5423,6 +5427,15 @@ fn world_hud(
         (Some(false), _) => world.confirm = None,
         _ => {}
     }
+    // All drawn after the mods' HUD layer (not the minimap nor the map, under it), then the layer itself under Timers'
+    // clicks.
+    world.over_mod_hud = blockers
+        .iter()
+        .enumerate()
+        .filter(|(k, r)| world.minimap_rect != Some(**r) && map_at != Some(*k))
+        .map(|x| *x.1)
+        .collect();
+    blockers.extend(mod_hud);
     // The Timers window under every other window: its clicks only where none is over it.
     blockers.extend(timers::pointer(world, gu, input.pointer, input.clicked, &blockers));
     blockers.extend(regime::pointer(world, gu, input.pointer, input.clicked, &blockers));
@@ -8330,6 +8343,9 @@ struct World {
     info_page: std::cell::Cell<(usize, u16, usize)>,
     /// Windows as drawn this frame (name, frame, children), for the mouse (winhits.rs).
     win_hits: std::cell::RefCell<Vec<(String, [f32; 4], Vec<(u16, [f32; 4])>)>>,
+    /// The game's windows and the HUD drawn over the mods' HUD layer last frame (lua::hud_layer, drawn with the Timers'
+    /// dock): the mouse there is theirs, not those windows'.
+    over_mod_hud: Vec<[f32; 4]>,
     /// The left button this frame (pressed, held), for the windows' held buttons (winhits::ctr).
     ptr_button: (bool, bool),
     /// itemctrl / moneyctr's - / + held under the pointer, and when it repeats next (winhits::ctr).
@@ -10955,6 +10971,7 @@ impl App {
                             info_win: None,
                             info_page: std::cell::Cell::new((0, 0, 1)),
                             win_hits: Default::default(),
+                            over_mod_hud: Vec::new(),
                             ptr_button: (false, false),
                             ctr_hold: None,
                             event_ext: [0; 24],
@@ -15056,11 +15073,12 @@ impl App {
         garden::update(world, dt);
         // The map window's keys and animations (FUN_101ef0a0); it goes once its fade-out ends, reopening the main menu
         // it came from (LAB_101faff0).
+        // Not a press a classic mod window holds (a hotbar slot dragged over the map).
         let k = self.ui_k;
         let drag = self
             .press_at
             .zip(self.last_cursor)
-            .filter(|_| self.left_down)
+            .filter(|_| self.left_down && !(!world.modern && lua::holds_pointer(world)))
             .map(|(a, b)| ((b.0 - a.0) as f32 * k.0, (b.1 - a.1) as f32 * k.1));
         if world.cnq.is_some() && !region::update(world, &mut self.input, dt * 60.0) {
             world.cnq = None;
