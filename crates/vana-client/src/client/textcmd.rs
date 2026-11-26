@@ -178,7 +178,7 @@ mod id {
 }
 
 /// 0x01A categories (LSB GP_CLI_COMMAND_ACTION ActionID).
-mod cat {
+pub(super) mod cat {
     pub const ATTACK: u16 = 0x02;
     pub const MAGIC: u16 = 0x03;
     pub const DISENGAGE: u16 = 0x04;
@@ -1178,8 +1178,12 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             }
             Ok(())
         }
-        id::ATTACK => attack(w, args, mode),
+        id::ATTACK => {
+            target::asked(w);
+            attack(w, args, mode)
+        }
         id::ATTACKOFF => {
+            target::asked(w);
             act(w, (w.my_id, w.my_index), cat::DISENGAGE, 0);
             Ok(())
         }

@@ -7924,6 +7924,8 @@ struct World {
     camst: camera::State,
     last_status: u8,
     auto_lock: bool,
+    /// The closest auto-target (config closest_auto_target) and its state.
+    closest: target::Closest,
     /// Loaded models by source key, shared by every actor with that look, and keys being loaded.
     models: HashMap<String, Arc<Model>>,
     models_loading: HashSet<String>,
@@ -10663,6 +10665,7 @@ impl App {
                             camst: camera::State::new(),
                             last_status: 0,
                             auto_lock: true,
+                            closest: target::Closest::new(self.cfg.closest_auto_target),
                             models: HashMap::new(),
                             models_loading: HashSet::new(),
                             zone_uploading: None,
