@@ -354,6 +354,8 @@ pub struct MapWin {
     /// Sets 2 / 3: the one member of each whose label shows (flag 8 cleared by FUN_101fa6d0; it stays over set changes).
     label_only: [Option<usize>; 2],
     list: Option<List>,
+    /// map0 / mapscan / mapv2 as drawn this frame (name, frame, children), for the mouse (winhits::record_rects).
+    pub drawn: std::cell::RefCell<Vec<(&'static str, [f32; 4], Vec<(u16, [f32; 4])>)>>,
     /// Change Map's list (maplist) while open.
     pub maplist: Option<MapList>,
     /// Change Map's pick (+0x110 / +0x112): reopened in mode 5 once this map has closed.
@@ -429,6 +431,12 @@ pub struct MapWin {
 }
 
 impl MapWin {
+    /// mapv2's Place cursor is up (FUN_101fa130 sets mouse +0x87 until FUN_101fa1a0): a release on no window child
+    /// plays no SE 0004 meanwhile.
+    pub fn placing(&self) -> bool {
+        self.list.as_ref().is_some_and(|l| l.placing.is_some())
+    }
+
     /// Opens the map of the zone (FUN_101f9a50 mode 0). None when the zone has no record (group 7 0x62).
     pub fn open(w: &World, regions: &[Region], sw: f32, sh: f32) -> Option<Self> {
         let region = Region::here(regions, w)?;
@@ -809,6 +817,7 @@ impl MapWin {
             Mode::Illustration | Mode::Primer => false,
         };
         let mut m = Self {
+            drawn: Default::default(),
             region,
             key: region.key as u8,
             no_record: false,
@@ -1668,6 +1677,7 @@ impl MapWin {
     /// level 0 the player arrow and the grid text under titlewin; then map0.
     /// `modern`: the modern layer draws map0, Markers and Change Map's list (and takes their mouse).
     pub fn draw(&mut self, gu: &mut GameUi, sw: f32, sh: f32, modern: bool) {
+        self.drawn.borrow_mut().clear();
         if let Some(Ok(Some((name, iw, ih, rgba)))) = self.rx.as_ref().map(|r| r.try_recv()) {
             gu.image(&name, iw, ih, rgba);
             self.texture = Some(name);
@@ -1746,7 +1756,11 @@ impl MapWin {
         }
         if self.has_menu() && !modern {
             let hide: &[u16] = if self.scan_ok { &[] } else { &[2] };
-            if let Some(win) = gu.lobby_window_off("menu    map0", sw, sh, (0.0, 0.0), Some(self.cursor), true, hide)
+            let win = gu.lobby_window_off("menu    map0", sw, sh, (0.0, 0.0), Some(self.cursor), true, hide);
+            if let Some(w) = &win {
+                self.drawn.borrow_mut().push(("menu    map0", w.frame, w.children.clone()));
+            }
+            if let Some(win) = win
                 && !self.scan_ok
                 && let Some(&(_, r)) = win.children.iter().find(|c| c.0 == 1)
             {
@@ -1825,7 +1839,11 @@ impl MapWin {
         if let Some(c) = s.mapscan {
             let off = s.rows.get(s.cursor).is_some_and(|r| !r.trackable);
             let hide: &[u16] = if off { &[1] } else { &[] };
-            if let Some(win) = gu.lobby_window_off("menu    mapscan", sw, sh, (0.0, 0.0), Some(c), true, hide)
+            let win = gu.lobby_window_off("menu    mapscan", sw, sh, (0.0, 0.0), Some(c), true, hide);
+            if let Some(w) = &win {
+                self.drawn.borrow_mut().push(("menu    mapscan", w.frame, w.children.clone()));
+            }
+            if let Some(win) = win
                 && off
                 && let Some(&(_, r)) = win.children.iter().find(|ch| ch.0 == 2)
             {
@@ -2032,7 +2050,11 @@ impl MapWin {
             // Child 2's sprite: keytops3 29 "Place", 35 "Remove" (the window's +0x18 / +0x1c).
             let swaps: &[(u16, usize)] = if valid { &[(2, 35)] } else { &[] };
             let hide: &[u16] = if valid { &[] } else { &[1] };
-            if let Some(win) = gu.lobby_window_swaps("menu    mapv2", sw, sh, at, Some(c), true, hide, swaps)
+            let win = gu.lobby_window_swaps("menu    mapv2", sw, sh, at, Some(c), true, hide, swaps);
+            if let Some(w) = &win {
+                self.drawn.borrow_mut().push(("menu    mapv2", w.frame, w.children.clone()));
+            }
+            if let Some(win) = win
                 && !valid
                 && let Some(&(_, r)) = win.children.iter().find(|ch| ch.0 == 2)
             {
@@ -2854,6 +2876,58 @@ pub fn marker_set_click(w: &mut World, s: usize) {
     m.want_party();
     m.set = s as u8;
     m.sounds.push(crate::audio::Ui::Cursor as u32);
+}
+
+impl MapWin {
+    /// The map's window that has the mouse in ours, and its cursor: mapscan, mapv2 or map0, generic windows in retail
+    /// (win_mapframe_onkey_3 0x101fd140, win_mapv2_onkey 0x101fda10, win_mapframe_onkey 0x101f9270: messages 5 / 6
+    /// only). Not mapv3, scanlist or maplist (their mouse is not done), nor the event maps that take no keys.
+    fn mouse_window(&self) -> Option<(&'static str, u16)> {
+        if self.closing.is_some() || self.primer.is_some() {
+            return None;
+        }
+        if let Some(s) = &self.scan {
+            return s.mapscan.filter(|_| !s.hidden && s.narrow.is_none()).map(|c| ("menu    mapscan", c));
+        }
+        if let Some(l) = &self.list {
+            return l
+                .v2
+                .filter(|_| !self.locked() && l.placing.is_none() && l.rename.is_none())
+                .map(|(_, c)| ("menu    mapv2", c));
+        }
+        self.has_menu().then_some(("menu    map0", self.cursor))
+    }
+
+    /// The mouse's cursor move onto `child` of the window `mouse_window` names.
+    fn set_mouse_child(&mut self, name: &str, child: u16) {
+        match name {
+            "menu    mapscan" => {
+                if let Some(s) = self.scan.as_mut() {
+                    s.mapscan = Some(child);
+                }
+            }
+            "menu    mapv2" => {
+                if let Some((_, c)) = self.list.as_mut().and_then(|l| l.v2.as_mut()) {
+                    *c = child;
+                }
+            }
+            _ => self.cursor = child,
+        }
+    }
+}
+
+/// The mouse on the map's generic windows (mapscan, mapv2, map0) by the shared window steps (winhits::generic): a child
+/// takes the cursor (SE 0001), a click on the cursor's child is Enter, a right click on the window Escape.
+pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool, right: bool) {
+    let Some(m) = w.map.as_ref() else { return };
+    let Some((name, cursor)) = m.mouse_window() else { return };
+    let ids = if name == "menu    mapscan" { 1..=2 } else { 1..=3 };
+    let set = |w: &mut World, id: u16| {
+        if let Some(m) = w.map.as_mut() {
+            m.set_mouse_child(name, id);
+        }
+    };
+    super::winhits::generic(w, gu, name, cursor, ids, p, clicked, right, set, |w, _, k| key(w, k));
 }
 
 /// A key for the map's windows: MapWin::key, and on its false (Escape, a pick) the zoom into config 0x8a and the

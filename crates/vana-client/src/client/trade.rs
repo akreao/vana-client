@@ -47,12 +47,13 @@ pub fn active(w: &World) -> bool {
 
 /// FUN_1013fe70 (the main menu's Trade): a waiting request or a target that is not us goes to FUN_1013fd30; else the
 /// target prompt (filter 0x5c: PCs, party, alliance, NPCs; title 0xd 10, help 0xe 0x2d), with no candidate group 7
-/// 0x7f "No trade targets in range.".
+/// 0x7f "No trade targets in range.". The arrow's range: 5 flat, less the radii (30261102_0 FUN_10141270 ->
+/// FUN_10141c50(1)).
 pub(super) fn open(w: &mut World, title: String) -> bool {
     if w.p2p.incoming.is_some() || w.target.is_some_and(|t| t != w.my_id) {
         return start(w);
     }
-    if super::target::open_sub(w, 0x5c, super::target::SubThen::Trade, None, title, 0x2d) {
+    if super::target::open_sub(w, 0x5c, super::target::SubThen::Trade, super::target::TRADE_REACH, title, 0x2d) {
         return true;
     }
     super::textcmd::refuse(w, 0x7f);
@@ -415,7 +416,7 @@ fn handover_bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
             bars.help[1] = gu.menu_msg(0x10c, "");
             bars.title[1] = gu.title_msg(0x3e).unwrap_or_default();
         }
-        Focus::Money => focus(MONEYCTR, 1, bars),
+        Focus::Money => focus(MONEYCTR, super::winhits::ctr_cursor(w, gu, MONEYCTR), bars),
     }
     if bars.title[1].is_empty() {
         bars.title[1] = gu.title_msg(10).unwrap_or_default();
@@ -446,7 +447,15 @@ fn handover_draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> 
         rects.push(win.frame);
     }
     if let Some((_, v, max)) = h.qty
-        && let Some(win) = gu.lobby_window_off(ITEMCTRL, sw, sh, (0.0, 0.0), Some(1), true, &[])
+        && let Some(win) = gu.lobby_window_off(
+            ITEMCTRL,
+            sw,
+            sh,
+            (0.0, 0.0),
+            Some(super::winhits::ctr_cursor(w, gu, ITEMCTRL)),
+            true,
+            &[],
+        )
     {
         super::winhits::record(w, ITEMCTRL, &win);
         let [x, y, ..] = win.frame;
@@ -455,7 +464,15 @@ fn handover_draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> 
         rects.push(win.frame);
     }
     if let Some((step, max, v)) = h.money
-        && let Some(win) = gu.lobby_window_off(MONEYCTR, sw, sh, (0.0, 0.0), Some(1), true, &[])
+        && let Some(win) = gu.lobby_window_off(
+            MONEYCTR,
+            sw,
+            sh,
+            (0.0, 0.0),
+            Some(super::winhits::ctr_cursor(w, gu, MONEYCTR)),
+            true,
+            &[],
+        )
     {
         super::winhits::record(w, MONEYCTR, &win);
         super::post::draw_moneyctr(gu, win.frame, step, max, v);
@@ -1258,7 +1275,7 @@ fn p2p_bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
             bars.help[1] = gu.menu_msg(0x10c, "");
             bars.title[1] = gu.title_msg(0x3e).unwrap_or_default();
         }
-        PFocus::Money => focus(MONEYCTR, 1, bars),
+        PFocus::Money => focus(MONEYCTR, super::winhits::ctr_cursor(w, gu, MONEYCTR), bars),
     }
     if bars.title[1].is_empty() {
         bars.title[1] = gu.title_msg(2).unwrap_or_default();
@@ -1314,7 +1331,15 @@ fn p2p_draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         rects.push(win.frame);
     }
     if let Some((_, v, max)) = u.qty
-        && let Some(win) = gu.lobby_window_off(ITEMCTRL, sw, sh, (0.0, 0.0), Some(1), true, &[])
+        && let Some(win) = gu.lobby_window_off(
+            ITEMCTRL,
+            sw,
+            sh,
+            (0.0, 0.0),
+            Some(super::winhits::ctr_cursor(w, gu, ITEMCTRL)),
+            true,
+            &[],
+        )
     {
         super::winhits::record(w, ITEMCTRL, &win);
         let [x, y, ..] = win.frame;
@@ -1323,7 +1348,15 @@ fn p2p_draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         rects.push(win.frame);
     }
     if let Some((step, max, v)) = u.money
-        && let Some(win) = gu.lobby_window_off(MONEYCTR, sw, sh, (0.0, 0.0), Some(1), true, &[])
+        && let Some(win) = gu.lobby_window_off(
+            MONEYCTR,
+            sw,
+            sh,
+            (0.0, 0.0),
+            Some(super::winhits::ctr_cursor(w, gu, MONEYCTR)),
+            true,
+            &[],
+        )
     {
         super::winhits::record(w, MONEYCTR, &win);
         super::post::draw_moneyctr(gu, win.frame, step, max, v);

@@ -2874,8 +2874,52 @@ fn world_hud(
         }
         _ => input,
     };
-    let taken = scrollbar::frame(gu, world, input);
-    let input = taken.as_ref().unwrap_or(input);
+    // A mod window over the game's windows owns the mouse there: the bars under it see neither the wheel nor the
+    // buttons. Not in cinema mode (none is drawn), not where a game window drawn over the mods is (the event choice,
+    // the main menu, comyn ...), nor while a bar already holds the mouse (its drag goes on).
+    let over_mod = !world.modern
+        && !event::cinema(world)
+        && gu.bar_hold.is_none()
+        && input.pointer.is_some_and(|p| lua::over_classic(world, p) && !world.above_mods.iter().any(|r| inside(r, p)));
+    let bar_input;
+    let for_bars = if over_mod {
+        bar_input = UiInput {
+            pointer: None,
+            clicked: false,
+            pressed: false,
+            released: false,
+            right_clicked: false,
+            wheel: 0,
+            events: input.events.clone(),
+            ..*input
+        };
+        &bar_input
+    } else {
+        input
+    };
+    let taken = scrollbar::frame(gu, world, for_bars);
+    let input = if over_mod { input } else { taken.as_ref().unwrap_or(input) };
+    // Enter on itemctrl / moneyctr is message 5 on the cursor child the mouse left there (winhits::ctr_enter).
+    let ctr_keys;
+    let input = if !world.typing
+        && !world.modern
+        && input.events.iter().any(|e| matches!(e, egui::Event::Key { key: egui::Key::Enter, pressed: true, .. }))
+    {
+        let mut events = input.events.clone();
+        for e in &mut events {
+            if let egui::Event::Key { key, pressed: true, modifiers, .. } = e {
+                let k = winhits::ctr_enter(world, gu, *key);
+                // Message 5 whatever the modifiers: the step it re-sends is no Shift + arrow.
+                if k != *key {
+                    (*key, modifiers.shift) = (k, false);
+                }
+            }
+        }
+        ctr_keys = UiInput { events, ..*input };
+        &ctr_keys
+    } else {
+        input
+    };
     // A middle click is this frame's only: one made while the HUD is down (downloading, hidden) is dropped.
     let middle = std::mem::take(&mut world.middle_click);
     // FUN_1022eca0: keytops3 165 + (n >> 2) % 5 at (W - 234, H - 48 + 8 - min(2n, 8)), y scale min(n / 4, 1), n
@@ -3886,13 +3930,19 @@ fn world_hud(
         }
         world.sounds.extend(s.sounds.drain(..).map(|x| x as u32));
     }
-    // Mouse on the Lua mods' windows (the modern UI's panels take egui's).
+    // Mouse on the Lua mods' windows (the modern UI's panels take egui's). Where a game window drawn over them is, the
+    // pointer is nowhere for them (no control is hit, a popup still closes on the click outside it), unless a press or
+    // a drag on a mod window already holds it: that one keeps the real place until the button comes up.
     if !world.modern
         && let Some(p) = input.pointer
         && lua::pointer_classic(
             world,
             gu,
-            p,
+            if world.above_mods.iter().any(|r| inside(r, p)) && !lua::holds_pointer(world) {
+                (-1.0e6, -1.0e6)
+            } else {
+                p
+            },
             input.moved,
             input.clicked,
             input.right_clicked,
@@ -3901,6 +3951,23 @@ fn world_hud(
     {
         gu.hover.set(true);
     }
+    // A mod window over the game's windows owns the mouse there: nothing under it sees the pointer or its buttons.
+    let mod_owned;
+    let input = if over_mod {
+        mod_owned = UiInput {
+            pointer: None,
+            clicked: false,
+            pressed: false,
+            released: false,
+            right_clicked: false,
+            wheel: 0,
+            events: input.events.clone(),
+            ..*input
+        };
+        &mod_owned
+    } else {
+        input
+    };
     if !world.modern
         && let Some(p) = input.pointer
         && voicechat::pointer_classic(
@@ -4097,7 +4164,7 @@ fn world_hud(
     }
     // Mouse on the magic / ability lists and their category windows, or the Set Spells screen over them.
     if let Some(p) = input.pointer.filter(|_| world.bluset.is_some() && world.confirm.is_none()) {
-        bluset::pointer(world, gu, sw, sh, p, input.moved, input.released);
+        bluset::pointer(world, gu, sw, sh, p, input.moved, input.released, input.right_clicked);
     } else if let Some(p) = input.pointer.filter(|_| world.moncustom.is_some() && world.confirm.is_none()) {
         moncustom::pointer(world, gu, p, input.released, input.right_clicked);
     } else if let Some(p) = input
@@ -4121,6 +4188,12 @@ fn world_hud(
         let takes = winhits::takes(gu, gmtell::WINDOW, k as u16 + 1, winhits::inside(r, p));
         let k = k + world.gmtell.open.as_ref().map_or(0, |o| o.scroll);
         gmtell::pointer(world, k, takes, input.released);
+    }
+    // The map's generic windows (map0, mapscan, mapv2); the modern layer takes map0's. A release that ends a drag
+    // (the map's pan) is no click: retail's drag from outside the focused window is mouse mode 5 (FUN_10126600,
+    // 0x41 px^2), whose release FUN_1015f420 ignores.
+    if let Some(p) = input.pointer.filter(|_| world.map.is_some() && !world.modern && world.confirm.is_none()) {
+        map::pointer(world, gu, p, input.released && !world.release_drag, input.right_clicked);
     }
     // Mouse in an event: a click on a choice row picks it, anywhere else advances a prompt.
     if input.clicked && world.event.is_some() {
@@ -4753,6 +4826,12 @@ fn world_hud(
     let mut blockers: Vec<[f32; 4]> = [party.as_str()].iter().filter_map(|n| gu.window_rect(n, sw, sh)).collect();
     let mut sidebar_eases = None;
     winhits::clear(world);
+    // The map's windows were drawn above (MapWin::draw).
+    if let Some(m) = &world.map {
+        for (name, frame, kids) in m.drawn.borrow().iter() {
+            winhits::record_all(world, gu, name, *frame, kids);
+        }
+    }
     gu.clear_disabled_parts();
     for (k, n) in ["menu    raid1", "menu    raid2"].iter().enumerate() {
         if st.alliance[k].is_some() {
@@ -5113,6 +5192,8 @@ fn world_hud(
         blockers.extend(lua::draw_classic(gu, world));
         blockers.extend(voicechat::draw_classic(gu, world, sw, sh));
     }
+    // The game's windows drawn from here on are over the mods' (World::above_mods).
+    let above_from = gu.drawn_count();
     // The map covers the screen (mapframe takes the mouse), as does cnqframe.
     if world.map.is_some() || world.cnq.is_some() {
         blockers.push([0.0, 0.0, sw, sh]);
@@ -5602,9 +5683,27 @@ fn world_hud(
         _ => {}
     }
     // The Timers window under every other window: its clicks only where none is over it.
+    let ours_from = blockers.len();
+    world.above_mods = gu.drawn_since(above_from);
     blockers.extend(timers::pointer(world, gu, input.pointer, input.clicked, &blockers));
     blockers.extend(regime::pointer(world, gu, input.pointer, input.clicked, &blockers));
     blockers.extend(skillchain::pointer(world, gu, input.pointer, input.clicked, &blockers));
+    // The left release over no child of the focused window (FUN_1015f420): SE 0004, unless rem4line / rem4li2 is
+    // open or the map's marker cursor is up (mouse +0x87). A release that ended a drag is the camera's; ours' own windows (a mod's, Timers and
+    // the like: the hand over them) are no miss.
+    let drag = std::mem::take(&mut world.release_drag);
+    let hold = event::message_ref(world).is_some() || world.map.as_ref().is_some_and(|m| m.placing());
+    if input.released
+        && !drag
+        && !hold
+        && !world.modern
+        && let Some(p) = input.pointer
+        && !gu.hover.get()
+        && !blockers[ours_from..].iter().any(|r| inside(r, p))
+        && winhits::release_off_child(world, gu, sw, sh, p)
+    {
+        world.sounds.push(crate::audio::Ui::Error as u32);
+    }
     // Cinema mode (FUN_101177d0 at 0x101177ee): no window draws but the event text box, mapframe and cnqframe; the
     // name plates are a 3D pass and stay. The windows' state still updates underneath (the log's included, which
     // retail freezes).
@@ -8616,6 +8715,11 @@ struct World {
     ptr_button: (bool, bool),
     /// The held button's count on the cursor's child (window +0xb0, FUN_1015f360; winhits::ctr).
     ctr_hold: winhits::Held,
+    /// The last left release ended a drag (65 UI px^2 from the press, or a camera look, as retail's mode-5 entry
+    /// FUN_10126600): no window's release.
+    release_drag: bool,
+    /// The game's windows drawn over the mods' last frame (their frames): the mouse there is theirs, not a mod's.
+    above_mods: Vec<[f32; 4]>,
     /// The ops' shared extdata buffer (DAT_104886bc).
     event_ext: [u8; 24],
     event_mem: crate::event_vm::Memory,
@@ -11254,6 +11358,8 @@ impl App {
                             win_hits: Default::default(),
                             ptr_button: (false, false),
                             ctr_hold: Default::default(),
+                            release_drag: false,
+                            above_mods: Vec::new(),
                             event_ext: [0; 24],
                             event_mem: Default::default(),
                             event_end_at: None,
@@ -15886,9 +15992,19 @@ impl App {
                     self.press_at = self.last_cursor;
                     self.press_time = Some(Instant::now());
                     self.left_look = false;
-                } else if let Some((b, drag)) =
-                    release(self.press_at.take().zip(self.press_time.take()), self.last_cursor, self.ui_k)
-                {
+                } else if let Some((b, drag)) = {
+                    let from = self.press_at.take().zip(self.press_time.take());
+                    // The windows' drag (retail's mode 5, FUN_10126600) is the distance alone (0x41 px^2), or a look
+                    // that turned the camera: a long still press is still a click on them.
+                    let moved = from.zip(self.last_cursor).is_some_and(|((a, _), c)| {
+                        let (dx, dy) = ((c.0 - a.0) as f32 * self.ui_k.0, (c.1 - a.1) as f32 * self.ui_k.1);
+                        looked || dx * dx + dy * dy >= 65.0
+                    });
+                    if let Phase::World(w) = &mut self.phase {
+                        w.release_drag = moved;
+                    }
+                    release(from, self.last_cursor, self.ui_k)
+                } {
                     self.swallow_click |= world_click(&mut self.phase, b, true, drag);
                 }
                 self.left_down = pressed;

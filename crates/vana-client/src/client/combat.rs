@@ -2368,9 +2368,10 @@ pub(super) fn choose(w: &mut World, c: u8) -> bool {
         (cmd::ATTACK, Some((t, i))) => send(w, NetCommand::Act { target: t, index: i, action: 2 }),
         // Case 0x12: the sub-target prompt over monsters (FUN_10159440 flags 0x20), then "/attack <id>" of the pick.
         (cmd::SWITCH_TARGET, _) => {
+            // FUN_10158e20: the arrow's range checks (30 with height, less the radii).
             // No candidate: nothing (the result is ignored).
             let line = super::target::SubThen::Line { stash: "/attack ".into(), quoted: false, from_macro: false };
-            super::target::open_sub(w, 0x20, line, None, String::new(), 0);
+            super::target::open_sub(w, 0x20, line, super::target::ATTACK_REACH, String::new(), 0);
         }
         // Case 2: "/help".
         (cmd::CALL_HELP, _) => super::textcmd::run(w, "/help", super::textcmd::Mode::Internal),

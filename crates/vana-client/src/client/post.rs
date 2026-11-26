@@ -1311,7 +1311,7 @@ pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
             bars.help[1] = gu.menu_msg(0x10c, "");
             bars.title[1] = gu.title_msg(0x3e).unwrap_or_default();
         }
-        SFocus::Money => focus(MONEYCTR, 1, bars),
+        SFocus::Money => focus(MONEYCTR, super::winhits::ctr_cursor(w, gu, MONEYCTR), bars),
     }
 }
 
@@ -1445,7 +1445,15 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         rects.push(win.frame);
     }
     if let Some((_, v, max)) = s.qty
-        && let Some(win) = gu.lobby_window_off(ITEMCTRL, sw, sh, (0.0, 0.0), Some(1), true, &[])
+        && let Some(win) = gu.lobby_window_off(
+            ITEMCTRL,
+            sw,
+            sh,
+            (0.0, 0.0),
+            Some(super::winhits::ctr_cursor(w, gu, ITEMCTRL)),
+            true,
+            &[],
+        )
     {
         super::winhits::record(w, ITEMCTRL, &win);
         let [x, y, ..] = win.frame;
@@ -1454,7 +1462,15 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         rects.push(win.frame);
     }
     if let Some((step, max, v)) = s.money
-        && let Some(win) = gu.lobby_window_off(MONEYCTR, sw, sh, (0.0, 0.0), Some(1), true, &[])
+        && let Some(win) = gu.lobby_window_off(
+            MONEYCTR,
+            sw,
+            sh,
+            (0.0, 0.0),
+            Some(super::winhits::ctr_cursor(w, gu, MONEYCTR)),
+            true,
+            &[],
+        )
     {
         super::winhits::record(w, MONEYCTR, &win);
         draw_moneyctr(gu, win.frame, step, max, v);

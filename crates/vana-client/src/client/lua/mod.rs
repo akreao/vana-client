@@ -4646,6 +4646,26 @@ pub(super) fn wheel_classic(w: &World, p: (f32, f32), notches: i32) -> bool {
     false
 }
 
+/// The pointer over any open classic mod window (an open dropdown's list included): drawn over the game's windows,
+/// the mouse there is the mod's alone.
+pub(super) fn over_classic(w: &World, p: (f32, f32)) -> bool {
+    classic_places(w).iter().any(|(v, id, x, y)| {
+        w.lua.vms[*v].st.borrow().windows.iter().find(|win| win.id == *id).is_some_and(|win| {
+            let (ww, wh) = win.classic_reach();
+            p.0 >= *x && p.1 >= *y && p.0 < x + ww && p.1 < y + wh
+        })
+    })
+}
+
+/// A classic mod window holds the pointer: a press or a canvas drag on it goes on until the button comes up, wherever
+/// the pointer is.
+pub(super) fn holds_pointer(w: &World) -> bool {
+    w.lua
+        .vms
+        .iter()
+        .any(|vm| vm.st.borrow().windows.iter().any(|win| win.open && (win.drag.is_some() || win.press.is_some())))
+}
+
 /// The pointer on the classic mod windows (the topmost under it); whether it is over a control.
 pub(super) fn pointer_classic(
     w: &mut World,
@@ -4671,8 +4691,16 @@ pub(super) fn pointer_classic(
         }
     }
     w.lua.ui_events.extend(left);
+    // A window holding the pointer (a press or a canvas drag on it) is the only one it reaches until the button comes
+    // up: neither a window over it nor a modal opened meanwhile takes the release.
+    let holds = |w: &World, v: usize, id: &str| {
+        w.lua.vms[v].st.borrow().windows.iter().any(|x| x.id == id && (x.drag.is_some() || x.press.is_some()))
+    };
+    let holder = places.iter().position(|(v, id, _, _)| holds(w, *v, id));
     // An open modal window is the only one the pointer reaches; a click outside a popup closes it.
-    if let Some((k, mid)) = w.lua.modal() {
+    if holder.is_none()
+        && let Some((k, mid)) = w.lua.modal()
+    {
         places.retain(|(v, id, _, _)| *v == k && *id == mid);
         let inside = places.first().is_some_and(|(v, id, x, y)| {
             let (ww, wh) = w.lua.vms[*v]
@@ -4688,6 +4716,23 @@ pub(super) fn pointer_classic(
             close_popup(w, k, &mid);
             return true;
         }
+    }
+    if let Some(k) = holder {
+        let keep = places.swap_remove(k);
+        // The others still close an open dropdown on a click off them.
+        if clicked || right {
+            for (v, id, x, y) in &places {
+                let mut st = w.lua.vms[*v].st.borrow_mut();
+                let Some(win) = st.windows.iter_mut().find(|win| win.id == *id) else { continue };
+                let (wx, wy) = win.classic_reach();
+                if (p.0 < *x || p.1 < *y || p.0 >= x + wx || p.1 >= y + wy)
+                    && let Some(d) = win.drop_open()
+                {
+                    win.drop_close(d);
+                }
+            }
+        }
+        places = vec![keep];
     }
     for (v, id, x, y) in places.into_iter().rev() {
         let (hover, ev, se, mod_id) = {
@@ -4707,9 +4752,11 @@ pub(super) fn pointer_classic(
             let (hover, ev, se) = win.pointer_classic(gu, x, y, p, moved, clicked, right, held);
             (hover, ev, se, vm.manifest.id.clone())
         };
-        // A click on a window gives it the focus (not a HUD's).
+        // A click on a window gives it the focus (not a HUD's, nor a window under an open modal: the release of a press
+        // that began before the modal opened).
         let hud = w.lua.vms[v].st.borrow().windows.iter().any(|x| x.id == id && x.hud);
-        if clicked && !hud {
+        let under_modal = w.lua.modal().is_some_and(|(k, mid)| k != v || mid != id);
+        if clicked && !hud && !under_modal {
             let mut ended = Vec::new();
             for (j, vm) in w.lua.vms.iter().enumerate() {
                 for win in vm.st.borrow_mut().windows.iter_mut() {
