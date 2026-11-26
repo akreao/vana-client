@@ -4691,8 +4691,16 @@ pub(super) fn pointer_classic(
         }
     }
     w.lua.ui_events.extend(left);
+    // A window holding the pointer (a press or a canvas drag on it) is the only one it reaches until the button comes
+    // up: neither a window over it nor a modal opened meanwhile takes the release.
+    let holds = |w: &World, v: usize, id: &str| {
+        w.lua.vms[v].st.borrow().windows.iter().any(|x| x.id == id && (x.drag.is_some() || x.press.is_some()))
+    };
+    let holder = places.iter().position(|(v, id, _, _)| holds(w, *v, id));
     // An open modal window is the only one the pointer reaches; a click outside a popup closes it.
-    if let Some((k, mid)) = w.lua.modal() {
+    if holder.is_none()
+        && let Some((k, mid)) = w.lua.modal()
+    {
         places.retain(|(v, id, _, _)| *v == k && *id == mid);
         let inside = places.first().is_some_and(|(v, id, x, y)| {
             let (ww, wh) = w.lua.vms[*v]
@@ -4709,13 +4717,21 @@ pub(super) fn pointer_classic(
             return true;
         }
     }
-    // A window holding the pointer (a press or a canvas drag on it) is the only one it reaches until the button comes
-    // up: a window over it must not take the release.
-    let holder = places.iter().position(|(v, id, _, _)| {
-        w.lua.vms[*v].st.borrow().windows.iter().any(|x| x.id == *id && (x.drag.is_some() || x.press.is_some()))
-    });
     if let Some(k) = holder {
         let keep = places.swap_remove(k);
+        // The others still close an open dropdown on a click off them.
+        if clicked || right {
+            for (v, id, x, y) in &places {
+                let mut st = w.lua.vms[*v].st.borrow_mut();
+                let Some(win) = st.windows.iter_mut().find(|win| win.id == *id) else { continue };
+                let (wx, wy) = win.classic_reach();
+                if (p.0 < *x || p.1 < *y || p.0 >= x + wx || p.1 >= y + wy)
+                    && let Some(d) = win.drop_open()
+                {
+                    win.drop_close(d);
+                }
+            }
+        }
         places = vec![keep];
     }
     for (v, id, x, y) in places.into_iter().rev() {
