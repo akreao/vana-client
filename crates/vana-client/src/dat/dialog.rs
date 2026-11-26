@@ -905,6 +905,20 @@ pub(crate) mod tests {
         assert_eq!(decode_sjis(&e.lines[0]), want);
     }
 
+    /// s2c 0x02A's string 0 in a line's 0x1c code: Dynamis - Bastok 7355 names who staggered the fiend.
+    #[test]
+    fn talknumwork_string_line() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let d = Dialog::load(&index, 186).unwrap();
+        let ctx = Ctx { strings: vec!["Nine".into()], ..Default::default() };
+        let e = expand(&d.raw(7355).unwrap(), &ctx);
+        assert_eq!(
+            crate::dat::font::strip_codes(&crate::dat::font::decode_sjis(&e.lines[0])),
+            "Nine's attack staggers the fiend!"
+        );
+    }
+
     /// s2c 0x027 lines: Port Bastok 7164 (fishing, String1 = the player, Num1 = item, count) and Valkurm Dunes 8099
     /// (a 1f mode code).
     #[test]

@@ -1,6 +1,6 @@
 -- Gearshift's set builder: of two held copies of the best in slot (each with its own augments), the one that scores
--- more for the set is the pick, whichever comes first in the bags; a copy that adds nothing leaves the slot to the
--- other picks.
+-- more for the set is the pick, whichever comes first in the bags; the best in slot is worn even when the set's weights
+-- give it nothing (its worth is what the weights miss).
 
 local HEAD, BLM, ALL = 1 << 4, 1 << 4, 0x1fe
 local ITEMS = {
@@ -26,10 +26,10 @@ local r = pick.build(ctx({
 local head = r.slots[4]
 assert(head.pick and head.pick.key == "0:2" and head.how == "bis", "picked " .. tostring(head.pick and head.pick.key))
 
--- The only copy adds nothing for the set: another held hat that does is worn instead of none.
+-- The only copy adds nothing for the set: it is still the pick, over another held hat that scores more.
 r = pick.build(ctx({
   { id = 2001, key = "0:1" },
   { id = 2002, key = "0:2" },
 }), set, "Nuke")
 head = r.slots[4]
-assert(head.pick and head.pick.id == 2002, "picked " .. tostring(head.pick and head.pick.id))
+assert(head.pick and head.pick.id == 2001 and head.how == "bis", "picked " .. tostring(head.pick and head.pick.id))

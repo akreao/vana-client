@@ -1375,7 +1375,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
             let shown = listed_at(w, *direct);
             let rows = list_rows(w, info, &shown, *direct);
             let list = ItemList { rows, scroll: *scroll, cursor: *cursor };
-            if !*direct && sub.is_none() && sort.is_none() {
+            if !*direct && sub.is_none() && sort.is_none() && !w.lua.hides("topbar") {
                 draw_count(gu, shown.len() - temp_rows(&shown), w.inv.sizes[INVENTORY as usize], sw, sh);
             }
             upload_icons(gu, info, list.visible().iter().map(|r| r.id));
@@ -2147,7 +2147,7 @@ fn draw_storage(
     upload_icons(gu, info, blist.visible().iter().chain(ilist.visible()).map(|r| r.id));
     let free = b.qty.is_none() && b.sortw.is_none() && b.stora.is_none();
     // FUN_101dcb40 for the bank side; the inventory side's list draws it the same way (inferred).
-    if free {
+    if free && !w.lua.hides("topbar") {
         let (n, c) = if b.on_bank { (banks.len(), b.bank) } else { (inv.len(), b.side) };
         draw_count(gu, n, w.inv.sizes[c as usize], sw, sh);
     }
