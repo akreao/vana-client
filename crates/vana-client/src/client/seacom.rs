@@ -385,7 +385,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     let list = w
         .field_fep
         .as_ref()
-        .map(|f| super::fep::draw_list(gu, &f.cands, f.sel, x0 + dx - 8.0, y0 + 2.0 + 16.0 * e.line as f32));
+        .map(|f| super::fep::draw_list(gu, &f.cands, f.sel, &f.warp, x0 + dx - 8.0, y0 + 2.0 + 16.0 * e.line as f32));
     let g = (w.seacom.kind >> 4 & 0xf) as usize;
     if e.mode == 2
         && let Some(&s) = super::search::GENRE.get(g.wrapping_sub(1))

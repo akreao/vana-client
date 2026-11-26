@@ -4911,6 +4911,15 @@ fn world_hud(
         }
         blockers.push(log.rect);
     }
+    // The chat line is a window that takes the focus while up (FUN_101b5590 opens "menu    inline" with
+    // FUN_1015f920(.., 1, 0)), in both layers. Its auto-translate list joins the walk where it is drawn as retail's
+    // window (fep::draw_list); the modern layer's egui list, like its other egui panels, has no window parts for the
+    // focus to warp to, so the focus stays on the chat line there.
+    // Before the software keyboard: retail opens the line first (FUN_101b29c0: the line, then FUN_101b0100's
+    // keypad), so a keyboard opened with it sits over it and has the focus.
+    if world.typing {
+        gu.want(fep::INLINE);
+    }
     // The software keyboard (FUN_101af440).
     if let Some(r) = swkbd::draw(gu, world, sw, sh) {
         blockers.push(r);
