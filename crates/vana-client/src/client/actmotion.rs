@@ -202,6 +202,14 @@ pub struct Battle {
 }
 
 impl Battle {
+    /// The machine's call each frame: state 2 goes to 3 on the next call that runs, so a draw's own hold (its op
+    /// 0x1f, the busy count) keeps it in state 2, the walk held.
+    fn machine_call(&mut self, busy: bool) {
+        if !busy {
+            self.drew = false;
+        }
+    }
+
     /// State 3: engaged with the files in, which a status of 3 (dead) keeps (0x1008c3f2: neither 1 nor 3 leaves).
     pub fn held(&self) -> bool {
         !self.on.is_empty() && !self.wait && !self.leaving
@@ -872,7 +880,7 @@ pub(super) fn update(w: &mut World, dt: f32) {
         // 0 at its top, so no draw, sheathe or state change happens until every hold on the actor is over.
         let busy = super::combat::held(w, id);
         let a = w.actors.get_mut(&id).unwrap();
-        a.battle.drew = false;
+        a.battle.machine_call(busy);
         if busy {
             // Paused: the machine keeps its state (a draw waiting in state 1 waits on).
         } else if a.battle.wait {
@@ -1127,6 +1135,17 @@ mod tests {
         assert!(battle_holds(&Battle { leaving: true, ..on() }, false, true));
         assert!(!battle_holds(&Battle { leaving: true, ..on() }, false, false));
         assert!(battle_holds(&Battle { leaving: true, ..on() }, true, false));
+    }
+
+    /// State 2 (the draw started) holds the walk until a machine call runs: frames with the busy count up keep it.
+    #[test]
+    fn draw_state_waits_out_the_holds() {
+        let mut b = Battle { on: vec![9672], drew: true, ..Default::default() };
+        b.machine_call(true);
+        b.machine_call(true);
+        assert!(battle_holds(&b, true, true));
+        b.machine_call(false);
+        assert!(!battle_holds(&b, true, true));
     }
 
     /// Event op 0x50: a scheduler stopped at tick 30 starts no later motion and is no longer busy; its looping motion

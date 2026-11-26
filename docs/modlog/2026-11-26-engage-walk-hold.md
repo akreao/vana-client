@@ -25,4 +25,7 @@ are 30261102_0, decompiled with Ghidra.
   the files off the list, the sheathe's end) wait while combat::held is up; and our own engage is parked behind the
   holds like every other status change, which drops the 2026-11-14 exception ("Our engage is never held"): with a
   monster shooting at us our first rounds can land before the draw, as retail's do.
-- Tests: battle_states_hold_walk.
+- State 2 goes to 3 on the next machine call that runs, so the draw's own hold (its op 0x1f) keeps the walk held
+  through it (Battle::machine_call). The gate's refusal returns FUN_100a6240 before the heading, so Q / E do not turn
+  us under the machine's hold either (ride::dismounting included).
+- Tests: battle_states_hold_walk, draw_state_waits_out_the_holds.

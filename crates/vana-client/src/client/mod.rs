@@ -14458,10 +14458,10 @@ impl App {
         // Scheduler op 0x2e: the effect of our action holds the walk input (FUN_100a5ec0 skips FUN_100a6240).
         // `res2` (rest.rs) holds the walk the same way, from the frame it starts.
         // FUN_1008b3a0 (the walk gate's machine test): no walk while our ride ends, nor while we draw or sheathe.
+        let machine_held = ride::dismounting(world) || actmotion::battle_walk_held(world, world.my_id);
         let move_locked = (world.opts.move_lock
             && (world.effects.rooted.contains(&world.my_id) || rest::rising(world)))
-            || ride::dismounting(world)
-            || actmotion::battle_walk_held(world, world.my_id);
+            || machine_held;
         if resting || move_locked {
             (ax, ay) = (0.0, 0.0);
         }
@@ -14682,12 +14682,14 @@ impl App {
             step = Vec3::ZERO;
         }
         world.move_tier = tier;
-        // Q / E: player yaw += ticks x 0.01745 x 1.57075; the camera follows the turn (FUN_1001d4c0).
-        let turn_delta = if turn != 0.0 && !world.autorun && !in_event && !held && world.unlock_ticks <= 0.0 {
-            turn * ticks * 0.017452778 * 1.57075
-        } else {
-            0.0
-        };
+        // Q / E: player yaw += ticks x 0.01745 x 1.57075; the camera follows the turn (FUN_1001d4c0). Not while the
+        // walk gate refuses us (an effect, or the machine: FUN_100a6240 returns before the heading).
+        let turn_delta =
+            if turn != 0.0 && !world.autorun && !in_event && !held && !machine_held && world.unlock_ticks <= 0.0 {
+                turn * ticks * 0.017452778 * 1.57075
+            } else {
+                0.0
+            };
         world.yaw += turn_delta;
         // The turn (0x100a7381): heading += 2 x X x ticks x 0.01745, X normalised and tiered (FUN_100a78d0), wrapped;
         // the step goes along the new heading this frame. Autorun steers itself (the same 2 degrees a tick).
