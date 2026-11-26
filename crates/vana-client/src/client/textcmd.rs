@@ -257,8 +257,9 @@ pub(super) fn is_game_command(name: &str) -> bool {
     table().contains_key(format!("/{name}").as_str())
 }
 
-/// Ours (not retail): the client's own one-slash commands, run by `run_unfiltered` before the game's table.
-const CLIENT_COMMANDS: [&str; 5] = ["timers", "upcapture", "updebug", "uimodes", "favs"];
+/// Ours (not retail): the client's own one-slash commands, /lua (the mods' host) and those `run_unfiltered` runs
+/// before the game's table.
+const CLIENT_COMMANDS: [&str; 6] = ["lua", "timers", "upcapture", "updebug", "uimodes", "favs"];
 
 /// A one-slash name that is never a mod's: a game command or one of the client's own (lowercase, no slash).
 pub(super) fn is_reserved(name: &str) -> bool {

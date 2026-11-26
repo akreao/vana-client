@@ -707,6 +707,11 @@ impl Host {
             .map(|m| m.name)
     }
 
+    /// The running mod whose command `name` (lowercase, no slash) is: the first loaded that registered it.
+    fn command_owner(&self, name: &str) -> Option<&Vm> {
+        self.vms.iter().find(|v| v.suspended.is_none() && v.st.borrow().commands.iter().any(|(n, _)| *n == name))
+    }
+
     /// Whether a typed line is for the mods: //anything, /lua, or a mod's registered /command unless a game command
     /// or one of the client's own has that name (retail's and ours win with one slash).
     pub fn takes(&self, line: &str) -> bool {
@@ -714,12 +719,7 @@ impl Host {
             return true;
         }
         let first = line.trim_start_matches('/').split_whitespace().next().unwrap_or("").to_ascii_lowercase();
-        first == "lua"
-            || !super::textcmd::is_reserved(&first)
-                && self
-                    .vms
-                    .iter()
-                    .any(|v| v.suspended.is_none() && v.st.borrow().commands.iter().any(|(n, _)| *n == first))
+        first == "lua" || !super::textcmd::is_reserved(&first) && self.command_owner(&first).is_some()
     }
 
     /// The number the next printed line gets (the Mods window's Run notes it).
@@ -1354,10 +1354,7 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
                 continue;
             }
             let input = !matches!(from, From::Mod { input: false, .. });
-            let owner = host
-                .vms
-                .iter()
-                .find(|v| v.suspended.is_none() && v.st.borrow().commands.iter().any(|(n, _)| *n == name));
+            let owner = host.command_owner(&name);
             match owner {
                 Some(vm) => lend(vm, w, |vm| {
                     let f = vm
@@ -2429,8 +2426,8 @@ mod tests {
         lua.globals().set("TEST", t)
     }
 
-    /// A mod command named as one of the client's own one-slash commands answers to //name only: /name stays the
-    /// client's (retail's commands the same way, from the DLL's table).
+    /// A mod command named as one of the client's own one-slash commands registers (the mod loads) and answers to
+    /// //name only: /name stays the client's (retail's commands the same way, from the DLL's table).
     #[test]
     fn reserved_names_stay_one_slash() {
         let vm = Vm::new(
@@ -2439,20 +2436,22 @@ mod tests {
             vm::Source::Dir(PathBuf::from(".")),
         )
         .unwrap();
-        for name in ["favs", "where"] {
-            let f = vm.lua.create_function(|_, ()| Ok(())).unwrap();
-            let k = vm.lua.create_registry_value(f).unwrap();
-            vm.st.borrow_mut().commands.push((name.into(), k));
-        }
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        vm.lua
+            .load(r#"commands.register("favs", function() end); commands.register("/Where", function() end)"#)
+            .exec()
+            .unwrap();
+        assert!(vm.lua.load(r#"commands.register("lua", function() end)"#).exec().is_err());
+        assert!(vm.lua.load(r#"return commands.is_game("/favs") and commands.is_game("lua")"#).eval::<bool>().unwrap());
         let mut host = Host::default();
         host.vms.push(vm);
-        assert!(host.takes("//favs") && host.takes("//favs on") && !host.takes("/favs") && !host.takes("/FAVS on"));
+        // The // line reaches the mod's handler: the dispatch finds its owner by the name after the slashes.
+        assert!(host.takes("//favs on") && host.command_owner("favs").is_some());
+        assert!(!host.takes("/favs") && !host.takes("/FAVS on"));
         assert!(host.takes("/where") && host.takes("//where") && host.takes("/lua list") && !host.takes("/nothing"));
         if super::super::textcmd::is_game_command("ma") {
-            let f = host.vms[0].lua.create_function(|_, ()| Ok(())).unwrap();
-            let k = host.vms[0].lua.create_registry_value(f).unwrap();
-            host.vms[0].st.borrow_mut().commands.push(("ma".into(), k));
-            assert!(host.takes("//ma") && !host.takes("/ma \"Cure\" <me>"));
+            host.vms[0].lua.load(r#"commands.register("ma", function() end)"#).exec().unwrap();
+            assert!(host.takes("//ma") && host.command_owner("ma").is_some() && !host.takes("/ma \"Cure\" <me>"));
         }
     }
 
