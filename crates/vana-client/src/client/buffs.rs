@@ -142,11 +142,7 @@ pub fn draw_party(gu: &mut GameUi, w: &World, sw: f32, sh: f32, log: [f32; 4]) {
     let (id, bracketed) = match super::target::focus_member(w) {
         Some(f) => (f, true),
         None => {
-            let t = if w.party_cursor.is_some() {
-                super::target::party_cursor_member(w)
-            } else {
-                w.target
-            };
+            let t = if w.party_cursor.is_some() { super::target::party_cursor_member(w) } else { w.target };
             match t.filter(|&t| valid(t)) {
                 Some(t) => (t, false),
                 None => return,
