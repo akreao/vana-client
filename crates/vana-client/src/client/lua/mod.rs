@@ -4646,6 +4646,17 @@ pub(super) fn wheel_classic(w: &World, p: (f32, f32), notches: i32) -> bool {
     false
 }
 
+/// The pointer over any open classic mod window (an open dropdown's list included): drawn over the game's windows,
+/// the mouse there is the mod's alone.
+pub(super) fn over_classic(w: &World, p: (f32, f32)) -> bool {
+    classic_places(w).iter().any(|(v, id, x, y)| {
+        w.lua.vms[*v].st.borrow().windows.iter().find(|win| win.id == *id).is_some_and(|win| {
+            let (ww, wh) = win.classic_reach();
+            p.0 >= *x && p.1 >= *y && p.0 < x + ww && p.1 < y + wh
+        })
+    })
+}
+
 /// The pointer on the classic mod windows (the topmost under it); whether it is over a control.
 pub(super) fn pointer_classic(
     w: &mut World,

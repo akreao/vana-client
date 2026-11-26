@@ -2884,8 +2884,12 @@ fn world_hud(
     {
         let mut events = input.events.clone();
         for e in &mut events {
-            if let egui::Event::Key { key, pressed: true, .. } = e {
-                *key = winhits::ctr_enter(world, gu, *key);
+            if let egui::Event::Key { key, pressed: true, modifiers, .. } = e {
+                let k = winhits::ctr_enter(world, gu, *key);
+                // Message 5 whatever the modifiers: the step it re-sends is no Shift + arrow.
+                if k != *key {
+                    (*key, modifiers.shift) = (k, false);
+                }
             }
         }
         ctr_keys = UiInput { events, ..*input };
@@ -3918,6 +3922,23 @@ fn world_hud(
     {
         gu.hover.set(true);
     }
+    // A mod window over the game's windows owns the mouse there: nothing under it sees the pointer or its buttons.
+    let mod_owned;
+    let input = if !world.modern && input.pointer.is_some_and(|p| lua::over_classic(world, p)) {
+        mod_owned = UiInput {
+            pointer: None,
+            clicked: false,
+            pressed: false,
+            released: false,
+            right_clicked: false,
+            wheel: 0,
+            events: input.events.clone(),
+            ..*input
+        };
+        &mod_owned
+    } else {
+        input
+    };
     if !world.modern
         && let Some(p) = input.pointer
         && voicechat::pointer_classic(
@@ -4139,9 +4160,11 @@ fn world_hud(
         let k = k + world.gmtell.open.as_ref().map_or(0, |o| o.scroll);
         gmtell::pointer(world, k, takes, input.released);
     }
-    // The map's generic windows (map0, mapscan, mapv2); the modern layer takes map0's.
+    // The map's generic windows (map0, mapscan, mapv2); the modern layer takes map0's. A release that ends a drag
+    // (the map's pan) is no click: retail's drag from outside the focused window is mouse mode 5 (FUN_10126600,
+    // 0x41 px^2), whose release FUN_1015f420 ignores.
     if let Some(p) = input.pointer.filter(|_| world.map.is_some() && !world.modern && world.confirm.is_none()) {
-        map::pointer(world, gu, p, input.released, input.right_clicked);
+        map::pointer(world, gu, p, input.released && !world.release_drag, input.right_clicked);
     }
     // Mouse in an event: a click on a choice row picks it, anywhere else advances a prompt.
     if input.clicked && world.event.is_some() {
