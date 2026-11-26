@@ -14,6 +14,7 @@
 //! used; every new file is staged as `<name>.tmp2` and all of them are renamed into place at the end, so a
 //! stopped update leaves the old files whole and is picked up from the staged ones.
 
+use crate::lock::Locked;
 use anyhow::{Context, Result, anyhow, bail};
 use md5::{Digest, Md5};
 use std::io::{Read, Write};
@@ -918,8 +919,8 @@ fn plan_for(service: Service, root: &Path, code: bool, server: ServerVersion) ->
                         let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         let Some(e) = entries.get(i) else { return Ok(()) };
                         let (d, old) = check(root, e, applied, lags)?;
-                        found.lock().unwrap().push((i, d.0, d.1));
-                        stale.lock().unwrap().extend(old);
+                        found.locked().push((i, d.0, d.1));
+                        stale.locked().extend(old);
                     }
                 })
             })
@@ -1015,7 +1016,7 @@ pub fn apply(root: &Path, plan: &Plan, connections: usize, progress: &(dyn Fn(us
                 // Connected at the first file to fetch: a run that only moves staged files needs no server.
                 let mut sess: Option<Session> = None;
                 loop {
-                    if failed.lock().unwrap().is_some() {
+                    if failed.locked().is_some() {
                         return;
                     }
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1038,7 +1039,7 @@ pub fn apply(root: &Path, plan: &Plan, connections: usize, progress: &(dyn Fn(us
                             let b = bytes.fetch_add(n, std::sync::atomic::Ordering::Relaxed) + n;
                             progress(f, b);
                         }
-                        Err(e) => return *failed.lock().unwrap() = Some(e),
+                        Err(e) => return *failed.locked() = Some(e),
                     }
                 }
             });

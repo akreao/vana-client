@@ -1,6 +1,7 @@
 //! The zone session on a separate thread: decodes what the server sends into events and
 //! keeps the session alive with our position. Follows zone changes to the next server.
 
+use crate::lock::Locked;
 use crate::net::lobby::MapLogin;
 use crate::net::map::compress::Codec;
 use crate::net::map::session::{MapSession, SubPacket, build};
@@ -2148,7 +2149,7 @@ impl Session<'_> {
                 let (event_num, event_para) = (p.u16(0x62), p.u16(0x64));
                 // FUN_10094190 locks control here when the 0x00A carries an event: no 0x015 before the first frame.
                 let locked = event_num != 0;
-                *self.me.lock().unwrap() = SelfState { pos, dir: p.u8(11), locked, ..Default::default() };
+                *self.me.locked() = SelfState { pos, dir: p.u8(11), locked, ..Default::default() };
                 self.zoned = true;
                 self.my_index = p.u16(8);
                 self.queue.push(build(0x00C, &[0u8; 8]));
@@ -3020,7 +3021,7 @@ impl Session<'_> {
                 );
                 self.interval = stepped;
             }
-            let s = *self.me.lock().unwrap();
+            let s = *self.me.locked();
             let mut body = [0u8; 28];
             for (i, v) in s.pos.iter().enumerate() {
                 body[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());

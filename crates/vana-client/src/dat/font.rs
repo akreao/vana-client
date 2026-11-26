@@ -5,6 +5,7 @@
 
 use super::zone::{Texture, parse_img};
 use super::{DatIndex, chunks};
+use crate::lock::RwLocked;
 use anyhow::{Context, Result, bail};
 use md5::{Digest, Md5};
 use std::collections::HashMap;
@@ -15,7 +16,7 @@ use std::sync::RwLock;
 static CODE_TABLES: RwLock<Option<Box<([[u8; 4]; 256], [[u8; 4]; 256])>>> = RwLock::new(None);
 
 pub fn set_code_tables(ids: [[u8; 4]; 256], modes: [[u8; 4]; 256]) {
-    *CODE_TABLES.write().unwrap() = Some(Box::new((ids, modes)));
+    *CODE_TABLES.write_locked() = Some(Box::new((ids, modes)));
 }
 
 /// An entry of those tables: `k` 0 the colour ids (`1e` from 0x11), 1 the modes (`1f xx`); 0x80808080 before they

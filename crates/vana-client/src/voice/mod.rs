@@ -7,6 +7,7 @@ mod play;
 mod wav;
 pub mod wire;
 
+use crate::lock::Locked;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
@@ -157,7 +158,7 @@ pub struct Shared {
 impl Shared {
     fn send_audio(&self, seq: u32, pcm: Vec<i16>) {
         let to: Vec<SocketAddrV4> = {
-            let chan = self.cfg.lock().unwrap().channel.clone();
+            let chan = self.cfg.locked().channel.clone();
             self.peers
                 .lock()
                 .unwrap()
@@ -176,8 +177,8 @@ impl Shared {
     }
 
     fn hello(&self) -> Vec<u8> {
-        let channel = self.cfg.lock().unwrap().channel.clone();
-        wire::encode(&Packet::Hello { session: self.session, name: self.name.lock().unwrap().clone(), channel })
+        let channel = self.cfg.locked().channel.clone();
+        wire::encode(&Packet::Hello { session: self.session, name: self.name.locked().clone(), channel })
     }
 
     /// Beacons to the group, the broadcast address and the typed addresses; a hello to every peer keeps both ways
@@ -186,13 +187,13 @@ impl Shared {
         let b = self.hello();
         let _ = self.sock.send_to(&b, (GROUP, self.port));
         let _ = self.sock.send_to(&b, (Ipv4Addr::BROADCAST, self.port));
-        for a in self.manual.lock().unwrap().iter().filter_map(|m| m.1) {
+        for a in self.manual.locked().iter().filter_map(|m| m.1) {
             let _ = self.sock.send_to(&b, a);
         }
         let now = Instant::now();
         let mut gone = Vec::new();
         {
-            let mut peers = self.peers.lock().unwrap();
+            let mut peers = self.peers.locked();
             peers.retain(|k, p| {
                 let keep = now.duration_since(p.seen) < GONE;
                 if !keep {
@@ -205,7 +206,7 @@ impl Shared {
                 let _ = self.sock.send_to(&b, p.addr);
             }
         }
-        let mut play = self.play.lock().unwrap();
+        let mut play = self.play.locked();
         for k in gone {
             play.forget(k);
         }
@@ -217,7 +218,7 @@ impl Shared {
         }
         match wire::decode(b) {
             Some(Packet::Hello { session, name, channel }) if session != self.session => {
-                let mut peers = self.peers.lock().unwrap();
+                let mut peers = self.peers.locked();
                 let now = Instant::now();
                 match peers.get_mut(&session) {
                     Some(p) => {
@@ -247,22 +248,22 @@ impl Shared {
                     return;
                 };
                 let deaf = {
-                    let c = self.cfg.lock().unwrap();
+                    let c = self.cfg.locked();
                     if !c.channel.eq_ignore_ascii_case(&channel) || c.muted.contains(&name) {
                         return;
                     }
                     c.deafened
                 };
-                if let Some(p) = self.peers.lock().unwrap().get_mut(&session) {
+                if let Some(p) = self.peers.locked().get_mut(&session) {
                     p.heard = Some(Instant::now());
                 }
                 if !deaf {
-                    self.play.lock().unwrap().push(session, seq, pcm);
+                    self.play.locked().push(session, seq, pcm);
                 }
             }
             // Only from the address the peer's hellos come from (a session id is in every beacon).
             Some(Packet::Bye { session }) => {
-                let mut peers = self.peers.lock().unwrap();
+                let mut peers = self.peers.locked();
                 if peers.get(&session).is_none_or(|p| p.addr != from) {
                     return;
                 }
@@ -270,7 +271,7 @@ impl Shared {
                     log::info!("voice: {} left", p.name);
                 }
                 drop(peers);
-                self.play.lock().unwrap().forget(session);
+                self.play.locked().forget(session);
             }
             _ => {}
         }
@@ -405,7 +406,7 @@ impl Engine {
             return;
         }
         let (want, input) = {
-            let c = self.shared.cfg.lock().unwrap();
+            let c = self.shared.cfg.locked();
             (!c.mic_muted, c.input.clone())
         };
         let now = Instant::now();
@@ -438,8 +439,8 @@ impl Engine {
     /// Settings changed (a new microphone device is opened by `tick`).
     pub fn apply(&self, cfg: &Settings) {
         let peers_changed = {
-            let mut c = self.shared.cfg.lock().unwrap();
-            let changed = c.peers != cfg.peers || self.shared.manual.lock().unwrap().len() != cfg.peers.len();
+            let mut c = self.shared.cfg.locked();
+            let changed = c.peers != cfg.peers || self.shared.manual.locked().len() != cfg.peers.len();
             *c = cfg.clone();
             changed
         };
@@ -451,7 +452,7 @@ impl Engine {
             // Host names can take a while to resolve.
             let _ = std::thread::Builder::new().name("voice-resolve".into()).spawn(move || {
                 let resolved = list.iter().map(|s| (s.clone(), resolve(s))).collect();
-                *sh.manual.lock().unwrap() = resolved;
+                *sh.manual.locked() = resolved;
                 sh.beacon();
             });
         }
@@ -459,7 +460,7 @@ impl Engine {
 
     pub fn set_name(&self, name: &str) {
         let name = wire::clip(name, wire::NAME_MAX);
-        let mut n = self.shared.name.lock().unwrap();
+        let mut n = self.shared.name.locked();
         if *n != name {
             *n = name;
         }
@@ -478,7 +479,7 @@ impl Engine {
     pub fn status(&self) -> Status {
         let now = Instant::now();
         let (muted, chan) = {
-            let c = self.shared.cfg.lock().unwrap();
+            let c = self.shared.cfg.locked();
             (c.muted.clone(), c.channel.clone())
         };
         let mut peers: Vec<PeerView> = self
@@ -497,8 +498,7 @@ impl Engine {
             })
             .collect();
         peers.sort_by(|a, b| b.same.cmp(&a.same).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
-        let unresolved =
-            self.shared.manual.lock().unwrap().iter().filter(|m| m.1.is_none()).map(|m| m.0.clone()).collect();
+        let unresolved = self.shared.manual.locked().iter().filter(|m| m.1.is_none()).map(|m| m.0.clone()).collect();
         Status {
             peers,
             level_db: f32::from_bits(self.shared.level.load(Ordering::Relaxed)),
@@ -513,7 +513,7 @@ impl Drop for Engine {
         self.shared.stop.store(true, Ordering::Relaxed);
         PTT_HELD.store(false, Ordering::Relaxed);
         let b = wire::encode(&Packet::Bye { session: self.shared.session });
-        for p in self.shared.peers.lock().unwrap().values() {
+        for p in self.shared.peers.locked().values() {
             let _ = self.shared.sock.send_to(&b, p.addr);
         }
         log::info!("voice: off");
@@ -668,11 +668,11 @@ mod tests {
         // Heard once the three frames are in.
         assert!(wait(|| {
             let mut out = [0.0; FRAME];
-            b.shared.play.lock().unwrap().mix(&mut out);
+            b.shared.play.locked().mix(&mut out);
             (out[0] * 32768.0).round() == 1000.0
         }));
         // Another channel: listed, not heard either way.
-        let other = Settings { channel: "other".into(), ..b.shared.cfg.lock().unwrap().clone() };
+        let other = Settings { channel: "other".into(), ..b.shared.cfg.locked().clone() };
         b.apply(&other);
         assert!(wait(|| a.status().peers.iter().any(|p| p.name == "Beta" && !p.same)));
         std::thread::sleep(Duration::from_millis(300));
@@ -740,10 +740,10 @@ mod tests {
         let s = &e.shared;
         let (peer, other): (SocketAddrV4, SocketAddrV4) =
             ("127.0.0.1:40000".parse().unwrap(), "127.0.0.1:40001".parse().unwrap());
-        let channel = s.cfg.lock().unwrap().channel.clone();
+        let channel = s.cfg.locked().channel.clone();
         s.handle(&wire::encode(&Packet::Hello { session: 7, name: "Beta".into(), channel }), peer);
-        let listed = || s.peers.lock().unwrap().contains_key(&7);
-        let heard = || s.peers.lock().unwrap().get(&7).is_some_and(|p| p.heard.is_some());
+        let listed = || s.peers.locked().contains_key(&7);
+        let heard = || s.peers.locked().get(&7).is_some_and(|p| p.heard.is_some());
         let frame = || wire::encode(&Packet::Audio { session: 7, seq: 0, pcm: vec![1000; FRAME] });
         assert!(listed());
         s.handle(&frame(), other);

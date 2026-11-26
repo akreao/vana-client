@@ -3,6 +3,7 @@
 //! friends' presence from the IRC notices.
 
 use super::World;
+use crate::lock::Locked;
 use crate::net::pol::polpro;
 use crate::net::profile::{self, Cred, FriendInfo, Irc, IrcLink};
 use crate::net::search::Record;
@@ -272,7 +273,7 @@ fn change_retried(c: &Cred, stop: &AtomicBool, pol: &Mutex<PolSide>, args: [i32;
 /// One ChangeMyStatus through polcore (`PolSide::plan`): nothing is sent when it changes nothing; a request that
 /// goes through sets polcore's status, unless its session ended meanwhile (`stop`: polcore has started over).
 fn change_once(c: &Cred, stop: &AtomicBool, pol: &Mutex<PolSide>, args: [i32; 6]) -> anyhow::Result<()> {
-    let plan = pol.lock().unwrap().plan(args).map_err(polpro::Local)?;
+    let plan = pol.locked().plan(args).map_err(polpro::Local)?;
     let Some((payload, status)) = plan else {
         log::info!("friends: ChangeMyStatus {args:?} changes nothing, not sent");
         return Ok(());
@@ -283,7 +284,7 @@ fn change_once(c: &Cred, stop: &AtomicBool, pol: &Mutex<PolSide>, args: [i32; 6]
 
 /// A ChangeMyStatus went through: polcore's status becomes the one it set, unless its session ended meanwhile.
 fn answered(stop: &AtomicBool, pol: &Mutex<PolSide>, status: polpro::Status) -> anyhow::Result<()> {
-    let mut p = pol.lock().unwrap();
+    let mut p = pol.locked();
     if stop.load(Ordering::Relaxed) {
         anyhow::bail!("the session ended");
     }
@@ -339,7 +340,7 @@ impl Friends {
         match r {
             Ok(t) => {
                 {
-                    let mut p = self.pol.lock().unwrap();
+                    let mut p = self.pol.locked();
                     p.tables.load_handles(&t.handles);
                     p.tables.load_characters(&t.chars);
                 }
@@ -465,7 +466,7 @@ fn settle(w: &mut World) {
             spawn(w, move |c| {
                 let read = profile::load_my_status(c).and_then(|s| {
                     let args = {
-                        let mut p = pol.lock().unwrap();
+                        let mut p = pol.locked();
                         let p = &mut *p;
                         p.status.loaded(&s, &p.tables.slots);
                         let mut a = in_force;
@@ -514,7 +515,7 @@ pub fn poll(w: &mut World) {
             Done::MyStatus(Ok(s)) => {
                 let f = &mut w.friends;
                 {
-                    let mut p = f.pol.lock().unwrap();
+                    let mut p = f.pol.locked();
                     let p = &mut *p;
                     p.status.loaded(&s, &p.tables.slots);
                     // FFXiMain's open status is polcore's presence (slot 0x338).
@@ -574,7 +575,7 @@ pub fn poll(w: &mut World) {
                 // gone through yet, and its handle and character tables cleared), the lists and our status are read
                 // again and our character made the active one again (xi_profile clears it at each sign-on).
                 (f.loaded, f.loading, f.in_force, f.tables) = (false, true, None, false);
-                *f.pol.lock().unwrap() = PolSide::default();
+                *f.pol.locked() = PolSide::default();
             }
         }
     }
@@ -614,11 +615,11 @@ pub fn poll(w: &mut World) {
             log::warn!("friends: our character is not in PlayOnline's character list");
             return;
         };
-        let handle = w.friends.pol.lock().unwrap().tables.entries[index as usize & 0x3f].handle;
+        let handle = w.friends.pol.locked().tables.entries[index as usize & 0x3f].handle;
         let (pol, stop) = (w.friends.pol.clone(), w.friends.stop.0.clone());
         spawn(w, move |c| {
             let r = change_once(c, &stop, &pol, [handle as i32, index as i32, 0, -2, -1, 1]);
-            let st = pol.lock().unwrap().status.clone();
+            let st = pol.locked().status.clone();
             Done::Then(Box::new(move |w| {
                 // Answered after its session ended: the next sign-on makes the call again.
                 if stop.load(Ordering::Relaxed) {
@@ -1120,11 +1121,11 @@ mod tests {
         let (stop, pol) = (AtomicBool::new(false), Mutex::new(PolSide::default()));
         let set = polpro::Status { content: 0, service: 3, flag: 0, presence: 0, p5: 0, activity: 1, changed: true };
         answered(&stop, &pol, set.clone()).unwrap();
-        assert_eq!(pol.lock().unwrap().status, set);
-        *pol.lock().unwrap() = PolSide::default();
+        assert_eq!(pol.locked().status, set);
+        *pol.locked() = PolSide::default();
         stop.store(true, Ordering::Relaxed);
         assert!(answered(&stop, &pol, set).is_err());
-        assert_eq!(pol.lock().unwrap().status, polpro::Status::start());
+        assert_eq!(pol.locked().status, polpro::Status::start());
     }
 
     /// A list load asked by a session that has ended changes nothing: a late failure sets no retry over the

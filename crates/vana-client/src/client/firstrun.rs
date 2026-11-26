@@ -4,6 +4,7 @@
 //! files already on disk.
 
 use crate::install::Progress;
+use crate::lock::Locked;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -141,16 +142,16 @@ impl FirstRun {
             if let Some(dir) = start.ancestors().find(|d| d.is_dir()) {
                 dialog = dialog.set_directory(dir);
             }
-            *out.lock().unwrap() = Some(dialog.pick_folder());
+            *out.locked() = Some(dialog.pick_folder());
         });
     }
 
     fn start(&self) {
-        *self.stage.lock().unwrap() = Stage::Working;
+        *self.stage.locked() = Stage::Working;
         let (game_dir, stage, progress) = (self.game_dir.clone(), self.stage.clone(), self.progress.clone());
         std::thread::spawn(move || {
             let r = run(&game_dir, &progress);
-            *stage.lock().unwrap() = match r {
+            *stage.locked() = match r {
                 Ok(()) => Stage::Done,
                 Err(e) => {
                     log::warn!("first start: {e:#}");
@@ -163,7 +164,7 @@ impl FirstRun {
     /// The window (egui: no game art exists yet).
     pub fn ui(&mut self, ctx: &egui::Context) -> Action {
         let mut action = Action::None;
-        let stage = match &*self.stage.lock().unwrap() {
+        let stage = match &*self.stage.locked() {
             Stage::Ask => 0,
             Stage::Working => 1,
             Stage::Done => 2,
@@ -172,7 +173,7 @@ impl FirstRun {
         if stage == 2 && !super::desktop::supported() {
             return Action::Ready;
         }
-        if let Some(answer) = self.picked.lock().unwrap().take()
+        if let Some(answer) = self.picked.locked().take()
             && let Some(what) = self.picking.take()
             && let Some(dir) = answer
         {
@@ -183,7 +184,7 @@ impl FirstRun {
                     Ok(game_dir) => {
                         self.game_dir = game_dir;
                         self.found = true;
-                        *self.stage.lock().unwrap() = Stage::Done;
+                        *self.stage.locked() = Stage::Done;
                         if !super::desktop::supported() {
                             return Action::Ready;
                         }
@@ -192,7 +193,7 @@ impl FirstRun {
                 },
             }
         }
-        let failed = match &*self.stage.lock().unwrap() {
+        let failed = match &*self.stage.locked() {
             Stage::Failed(e) => e.clone(),
             _ => String::new(),
         };
@@ -276,14 +277,14 @@ impl FirstRun {
                                 1 => {
                                     let p = &self.progress;
                                     let (done, total) = (p.done.load(Ordering::Relaxed), p.total.load(Ordering::Relaxed));
-                                    ui.label(egui::RichText::new(p.phase.lock().unwrap().clone()).size(19.0));
+                                    ui.label(egui::RichText::new(p.phase.locked().clone()).size(19.0));
                                     ui.add_space(8.0);
                                     ui.add(egui::ProgressBar::new(p.fraction()).desired_width(620.0).fill(egui::Color32::from_rgb(0x9a, 0x7a, 0x40)));
                                     if total > 0 {
                                         ui.label(format!("{:.2} of {:.2} GB", done as f64 / 1e9, total as f64 / 1e9));
                                     }
                                     ui.add_space(8.0);
-                                    let note = closing_note(&p.phase.lock().unwrap());
+                                    let note = closing_note(&p.phase.locked());
                                     if !note.is_empty() {
                                         ui.label(egui::RichText::new(note).weak());
                                     }
@@ -312,7 +313,7 @@ impl FirstRun {
 }
 
 fn set(p: &Progress, phase: impl Into<String>, done: u64, total: u64) {
-    *p.phase.lock().unwrap() = phase.into();
+    *p.phase.locked() = phase.into();
     p.done.store(done, Ordering::Relaxed);
     p.total.store(total, Ordering::Relaxed);
 }

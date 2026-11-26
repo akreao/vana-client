@@ -9,8 +9,8 @@ use crate::dat::character::{Animation, Character};
 use crate::dat::motionfile::MotionFile;
 use crate::dat::sched;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// FUN_100d22a0's kind: FUN_100d2340(kind) drops every file of a kind (1 battle, 2 event, 3 emote).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -240,26 +240,85 @@ const KLBT: u32 = u32::from_le_bytes(*b"klbt");
 const HWAT: u32 = u32::from_le_bytes(*b"hwat");
 pub(super) const WAOT: u32 = u32::from_le_bytes(*b"waot");
 
+/// Threads the motion-file loads share (one thread per file started hundreds at once on a zone-in to a city).
+const WORKERS: usize = 4;
+
+type Loaded = Option<Arc<MotionFile>>;
+type LoadFn = fn(&DatIndex, u32) -> Loaded;
+
 /// Loads motion files on worker threads and caches them by file id.
 pub struct Loader {
-    tx: Sender<(u32, Option<Arc<MotionFile>>)>,
-    rx: Receiver<(u32, Option<Arc<MotionFile>>)>,
+    tx: Sender<(u32, Loaded)>,
+    rx: Receiver<(u32, Loaded)>,
+    /// The workers' queue, made with the first load; None when no worker could start (loads then run here).
+    jobs: Option<Option<Sender<(Arc<DatIndex>, u32)>>>,
+    load: LoadFn,
     /// None while loading; Some(None) when the file is missing or bad.
-    files: HashMap<u32, Option<Option<Arc<MotionFile>>>>,
+    files: HashMap<u32, Option<Loaded>>,
 }
 
 impl Default for Loader {
     fn default() -> Self {
-        let (tx, rx) = channel();
-        Loader { tx, rx, files: HashMap::new() }
+        Self::with(load_file)
     }
 }
 
+/// A motion file read and packed; None when missing or bad.
+fn load_file(index: &DatIndex, id: u32) -> Loaded {
+    MotionFile::load(index, id).map_err(|e| log::warn!("motion file {id}: {e:#}")).ok().map(|mut f| {
+        f.packed = Some(Arc::new(crate::dat::animpack::pack(&f.animations)));
+        Arc::new(f)
+    })
+}
+
+/// `load`, with a panic (a malformed file from a mod) as None: a load that never answered left the file pending, and
+/// the engaged walk hold (battle_walk_held) waiting on it, for good.
+fn guarded(load: LoadFn, index: &DatIndex, id: u32) -> Loaded {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| load(index, id))).unwrap_or_else(|_| {
+        log::warn!("motion file {id}: reading it panicked");
+        None
+    })
+}
+
 impl Loader {
+    fn with(load: LoadFn) -> Self {
+        let (tx, rx) = channel();
+        Loader { tx, rx, jobs: None, load, files: HashMap::new() }
+    }
+
     pub fn poll(&mut self) {
         while let Ok((id, f)) = self.rx.try_recv() {
             self.files.insert(id, Some(f));
         }
+    }
+
+    /// The workers' queue, started on first use.
+    fn queue(&mut self) -> Option<&Sender<(Arc<DatIndex>, u32)>> {
+        let (tx, load) = (&self.tx, self.load);
+        self.jobs
+            .get_or_insert_with(|| {
+                let (jobs, queue) = channel::<(Arc<DatIndex>, u32)>();
+                let queue = Arc::new(Mutex::new(queue));
+                let started = (0..WORKERS)
+                    .filter(|i| {
+                        let (queue, tx) = (queue.clone(), tx.clone());
+                        std::thread::Builder::new()
+                            .name(format!("motion-{i}"))
+                            .spawn(move || {
+                                loop {
+                                    let job = queue.lock().unwrap_or_else(PoisonError::into_inner).recv();
+                                    let Ok((index, id)) = job else { return };
+                                    if tx.send((id, guarded(load, &index, id))).is_err() {
+                                        return;
+                                    }
+                                }
+                            })
+                            .is_ok()
+                    })
+                    .count();
+                (started > 0).then_some(jobs)
+            })
+            .as_ref()
     }
 
     /// The file once loaded (inner None = unusable), None while it loads; the first call starts it.
@@ -268,15 +327,12 @@ impl Loader {
             return f.clone();
         }
         self.files.insert(id, None);
-        let (tx, index) = (self.tx.clone(), index.clone());
-        std::thread::spawn(move || {
-            let f =
-                MotionFile::load(&index, id).map_err(|e| log::warn!("motion file {id}: {e:#}")).ok().map(|mut f| {
-                    f.packed = Some(Arc::new(crate::dat::animpack::pack(&f.animations)));
-                    Arc::new(f)
-                });
-            let _ = tx.send((id, f));
-        });
+        let queued = self.queue().is_some_and(|q| q.send((index.clone(), id)).is_ok());
+        if !queued {
+            let f = guarded(self.load, index, id);
+            self.files.insert(id, Some(f.clone()));
+            return Some(f);
+        }
         None
     }
 
@@ -1079,6 +1135,38 @@ impl Fade {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A load that panics still answers (None), so `all` completes and the engaged walk is not held for good; the
+    /// files load on the shared workers, many at once.
+    #[test]
+    fn panicking_load_still_answers() {
+        fn load(_: &DatIndex, id: u32) -> Loaded {
+            if id == 13 {
+                panic!("malformed");
+            }
+            None
+        }
+        let dir = std::env::temp_dir().join(format!("vana-motion-loader-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("VTABLE.DAT"), [1u8; 64]).unwrap();
+        std::fs::write(dir.join("FTABLE.DAT"), [0u8; 128]).unwrap();
+        let index = Arc::new(DatIndex::open(&dir).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut l = Loader::with(load);
+        let ids: Vec<u32> = (0..40).collect();
+        assert!(l.all(&index, &ids).is_none());
+        let t0 = std::time::Instant::now();
+        let got = loop {
+            l.poll();
+            if let Some(v) = l.all(&index, &ids) {
+                break v;
+            }
+            assert!(t0.elapsed() < std::time::Duration::from_secs(5), "a load never answered");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        assert!(got.is_empty());
+        assert!(matches!(l.files.get(&13), Some(Some(None))));
+    }
 
     /// Battle files off the list (state 5's FUN_100d44b0(1)) still give the sheathe its motions, but no scheduler: a
     /// late swing finds no `ati?`. Hume M sword files 9672 + 9800.

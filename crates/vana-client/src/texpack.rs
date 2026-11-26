@@ -4,6 +4,7 @@
 //! into a mod folder laid out like the game (dat/overlay.rs merges its images by name).
 
 use crate::dat::{self, zone::Texture};
+use crate::lock::Locked;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::io::Write;
@@ -188,8 +189,8 @@ pub fn export(out: &Path) -> Result<()> {
                             continue;
                         }
                         let key = key(&t);
-                        rows.lock().unwrap().push(format!("{id}\t{k}\t{key}\t{}", t.name.trim()));
-                        if seen.lock().unwrap().insert(key.clone()) {
+                        rows.locked().push(format!("{id}\t{k}\t{key}\t{}", t.name.trim()));
+                        if seen.locked().insert(key.clone()) {
                             let path = out.join(format!("{key}.png"));
                             if !path.exists() && save_png(&path, t.width, t.height, t.rgba()).is_ok() {
                                 saved.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -539,21 +540,21 @@ pub fn slim(pack: &Path, out: &Path) -> Result<()> {
                     }
                     let (Ok(stock), Ok(full)) = (std::fs::read(stock_root.join(rel)), std::fs::read(pack.join(rel)))
                     else {
-                        failed.lock().unwrap().push(format!("{}: unreadable", rel.display()));
+                        failed.locked().push(format!("{}: unreadable", rel.display()));
                         continue;
                     };
                     let Some((bytes, kept)) = dat::overlay::slim(&stock, &full) else {
-                        failed.lock().unwrap().push(format!("{}: not a chunk file", rel.display()));
+                        failed.locked().push(format!("{}: not a chunk file", rel.display()));
                         continue;
                     };
                     if kept == 0 {
-                        counts.lock().unwrap()[1] += 1;
+                        counts.locked()[1] += 1;
                         continue;
                     }
                     if dat::overlay::merge(&stock, std::slice::from_ref(&bytes))
                         != dat::overlay::merge(&stock, std::slice::from_ref(&full))
                     {
-                        failed.lock().unwrap().push(format!("{}: merges differently", rel.display()));
+                        failed.locked().push(format!("{}: merges differently", rel.display()));
                         continue;
                     }
                     if let Some(dir) = dest.parent() {
@@ -561,10 +562,10 @@ pub fn slim(pack: &Path, out: &Path) -> Result<()> {
                     }
                     let tmp = dest.with_extension("part");
                     if std::fs::write(&tmp, &bytes).and_then(|_| std::fs::rename(&tmp, &dest)).is_err() {
-                        failed.lock().unwrap().push(format!("{}: not written", rel.display()));
+                        failed.locked().push(format!("{}: not written", rel.display()));
                         continue;
                     }
-                    let mut c = counts.lock().unwrap();
+                    let mut c = counts.locked();
                     (c[0], c[2], c[3]) = (c[0] + 1, c[2] + full.len() as u64, c[3] + bytes.len() as u64);
                     if c[0].is_multiple_of(2000) {
                         println!("{} files written", c[0]);
@@ -726,7 +727,7 @@ pub fn mat_pack(manifest_dir: &Path, maps: &Path, hd: Option<&Path>, out: &Path)
                         }
                         made.fetch_add(1, Relaxed);
                     }
-                    have.lock().unwrap().insert(key.clone());
+                    have.locked().insert(key.clone());
                     if (i + 1) % 2000 == 0 {
                         println!("maps: {} / {}", i + 1, keys.len());
                     }
@@ -772,7 +773,7 @@ pub fn mat_pack(manifest_dir: &Path, maps: &Path, hd: Option<&Path>, out: &Path)
                             }
                         }
                     }
-                    entries.lock().unwrap().extend(found);
+                    entries.locked().extend(found);
                 }
             });
         }

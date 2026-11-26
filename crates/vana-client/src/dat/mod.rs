@@ -1,6 +1,7 @@
 //! The game's file system: numeric file ids mapped to ROM*/dir/file.DAT, and the chunk
 //! container most DATs use.
 
+use crate::lock::Locked;
 use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 
@@ -69,7 +70,7 @@ impl DatIndex {
             return None;
         }
         static SCANNED: OnceLock<Mutex<Option<(Vec<PathBuf>, Arc<overlay::Overlays>)>>> = OnceLock::new();
-        let mut s = SCANNED.get_or_init(Default::default).lock().unwrap();
+        let mut s = SCANNED.get_or_init(Default::default).locked();
         if let Some((d, o)) = s.as_ref()
             && *d == dirs
         {

@@ -17,6 +17,7 @@ mod fx;
 mod gamecfg;
 mod install;
 mod itemshot;
+mod lock;
 mod mpeg1;
 mod padreg;
 mod patch;
@@ -54,6 +55,7 @@ mod texpack;
 mod uishot;
 mod voice;
 
+use crate::lock::Locked;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -2688,7 +2690,7 @@ fn run_with_progress(opts: &install::Options) -> Result<()> {
             let gib = |n: u64| n as f64 / (1u64 << 30) as f64;
             eprintln!(
                 "{}: {:.1}% ({:.2}/{:.2} GiB)",
-                progress.phase.lock().unwrap(),
+                progress.phase.locked(),
                 progress.fraction() * 100.0,
                 gib(progress.done.load(Ordering::Relaxed)),
                 gib(progress.total.load(Ordering::Relaxed)),

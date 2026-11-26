@@ -190,6 +190,7 @@ pub fn voyage_for_tests() -> voyage::Voyage {
 use crate::config::Config;
 use crate::dat::character::{Character as Model, Look};
 use crate::dat::{DatIndex, zone};
+use crate::lock::Locked;
 use crate::net::auth::{self, Command, Reply, Request};
 use crate::net::lobby::{Character, LEAVES_LOBBY, Lobby, MapLogin, NAME_REFUSALS, NewCharacter};
 use crate::render::{Camera, Gpu, ZoneRenderer, depth_view};
@@ -10497,7 +10498,7 @@ impl App {
             let _ = self.cfg.save();
         }
         // PlayOnline picked after start: the Viewer's row, for the update the check below may ask for.
-        if let Some(s) = self.updates.as_ref().filter(|s| s.lock().unwrap().viewer.is_none()) {
+        if let Some(s) = self.updates.as_ref().filter(|s| s.locked().viewer.is_none()) {
             updater::start_viewer(s);
         }
         let replies = self.start_entry_run();
@@ -16418,7 +16419,7 @@ impl App {
                     let update_help = self.update_ui.as_ref().map(|u| u.help());
                     let help_over = update_help.as_deref().or_else(|| self.twofa.as_ref().map(|t| t.help()));
                     // Not retail: Update while something is out of date.
-                    let update = self.updates.as_ref().is_some_and(|s| s.lock().unwrap().any());
+                    let update = self.updates.as_ref().is_some_and(|s| s.locked().any());
                     let chosen = login_window(
                         lu,
                         shown,
@@ -16743,7 +16744,7 @@ impl App {
                     let viewer_behind = self
                         .updates
                         .as_ref()
-                        .is_some_and(|s| s.lock().unwrap().viewer.as_ref().is_some_and(updater::Game::offered));
+                        .is_some_and(|s| s.locked().viewer.as_ref().is_some_and(updater::Game::offered));
                     if viewer_behind
                         && !self.viewer_asked
                         && self.update_ui.is_none()
@@ -16826,7 +16827,7 @@ impl App {
                         // FUN_10235fa0: while lobycwin (or our settings screen) is up the title takes no input.
                         // The change notes an update left (or the start asked for) open first, over everything else on the
                         // title. An answer with none marks this version seen.
-                        if let Some(answer) = self.notes_fetch.as_ref().and_then(|f| f.lock().unwrap().take()) {
+                        if let Some(answer) = self.notes_fetch.as_ref().and_then(|f| f.locked().take()) {
                             self.notes_fetch = None;
                             match answer {
                                 Some(s) => self.whats_new = Some(s),

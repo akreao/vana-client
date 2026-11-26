@@ -3,6 +3,7 @@
 //! network's model made from the player's copy of NVIDIA's nvngx_dlssnr.dll: one a Steam game has, one picked in the
 //! game, or one dropped in `<data>/nr/dll/`. The DLL is only read by the engine, never kept. Settings shows `state`.
 
+use crate::lock::Locked;
 use crate::render::upscale::{self, external};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -54,12 +55,12 @@ static NR: Mutex<Inner> =
 
 /// The row's state, the DLLs found, whether the scan still runs, whether a restart is needed, the last failure.
 pub fn view() -> (State, Vec<Found>, bool, bool, Option<String>) {
-    let n = NR.lock().unwrap();
+    let n = NR.locked();
     (n.state.clone(), n.found.clone(), n.scanning, n.restart, n.last.clone())
 }
 
 fn set(state: State) {
-    NR.lock().unwrap().state = state;
+    NR.locked().state = state;
 }
 
 /// Whether this platform can fetch the engine (Linux x86_64, the Vulkan backend, no VANA_UPSCALE_ENGINE naming the
@@ -99,7 +100,7 @@ fn work_out() -> State {
     }
     // An engine the device was made without (just fetched) still makes its model; the row asks for a restart.
     if let Err(e) = &device
-        && !NR.lock().unwrap().restart
+        && !NR.locked().restart
     {
         return State::Unavailable(e.clone());
     }
@@ -125,7 +126,7 @@ pub fn turn_on() -> bool {
                 }
                 match done {
                     Ok(true) => {
-                        NR.lock().unwrap().restart = upscale::neural_status().is_err();
+                        NR.locked().restart = upscale::neural_status().is_err();
                         set(State::Absent);
                         refresh(true);
                     }
@@ -195,7 +196,7 @@ pub fn scan_soon() {
     if view().0 != State::NeedsDll {
         return;
     }
-    let due = LAST_SCAN.lock().unwrap().is_none_or(|t| t.elapsed().as_secs() >= 4);
+    let due = LAST_SCAN.locked().is_none_or(|t| t.elapsed().as_secs() >= 4);
     if due {
         scan();
     }
@@ -205,19 +206,19 @@ pub fn scan_soon() {
 /// (same size and time) is not checked again.
 pub fn scan() {
     {
-        let mut n = NR.lock().unwrap();
+        let mut n = NR.locked();
         if n.scanning {
             return;
         }
         n.scanning = true;
     }
-    *LAST_SCAN.lock().unwrap() = Some(std::time::Instant::now());
+    *LAST_SCAN.locked() = Some(std::time::Instant::now());
     std::thread::spawn(|| {
         let mut found = Vec::new();
         for (path, game) in candidates() {
             let meta = std::fs::metadata(&path).ok();
             let key = (meta.as_ref().map_or(0, |m| m.len()), meta.and_then(|m| m.modified().ok()));
-            let known = CHECKED.lock().unwrap().get_or_insert_default().get(&path).cloned();
+            let known = CHECKED.locked().get_or_insert_default().get(&path).cloned();
             let note = match known {
                 Some((len, time, note)) if (len, time) == key => note,
                 _ => {
@@ -232,7 +233,7 @@ pub fn scan() {
                             None
                         }
                     };
-                    CHECKED.lock().unwrap().get_or_insert_default().insert(path.clone(), (key.0, key.1, note.clone()));
+                    CHECKED.locked().get_or_insert_default().insert(path.clone(), (key.0, key.1, note.clone()));
                     note
                 }
             };
@@ -240,7 +241,7 @@ pub fn scan() {
                 found.push(Found { path, game, note });
             }
         }
-        let mut n = NR.lock().unwrap();
+        let mut n = NR.locked();
         n.found = found;
         n.scanning = false;
     });
@@ -344,7 +345,7 @@ fn app_names(steamapps: &Path) -> Vec<(String, String)> {
 /// itself when it is done.
 pub fn make_model(path: PathBuf) {
     {
-        let mut n = NR.lock().unwrap();
+        let mut n = NR.locked();
         if matches!(n.state, State::Making(_) | State::Downloading(..)) {
             return;
         }
@@ -353,7 +354,7 @@ pub fn make_model(path: PathBuf) {
     }
     std::thread::spawn(move || {
         let done = external::tools::make_model(&path, &mut |f| set(State::Making(f.clamp(0.0, 1.0))));
-        let mut n = NR.lock().unwrap();
+        let mut n = NR.locked();
         match done {
             Ok((true, msg)) => {
                 log::info!("neural rendering: model made from {}: {msg}", path.display());
@@ -375,9 +376,9 @@ pub fn make_model(path: PathBuf) {
 
 /// Puts the row in `state` with `found` (the Settings row's tests and `modern-shot`).
 pub fn set_for_test(state: State, found: Vec<Found>) {
-    let mut n = NR.lock().unwrap();
+    let mut n = NR.locked();
     (n.state, n.found, n.scanning, n.restart, n.last) = (state, found, false, false, None);
-    *LAST_SCAN.lock().unwrap() = Some(std::time::Instant::now());
+    *LAST_SCAN.locked() = Some(std::time::Instant::now());
 }
 
 #[cfg(test)]

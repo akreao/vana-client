@@ -6,6 +6,8 @@
 //! `maps/<first two hex digits>/<map key>.vmat`: "VMAT", u32 version (1), u32 width, u32 height, u32 levels, then the
 //! normal map's BC5 levels (x, y; DirectX: y down the image), then the roughness / metal map's BC5 levels.
 
+use crate::lock::Locked;
+use crate::lock::RwLocked;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock, Weak};
@@ -99,11 +101,11 @@ impl Pack {
     fn get(&self, content: u64) -> Option<Arc<Material>> {
         let at = self.index.binary_search_by_key(&content, |e| e.0).ok()?;
         let key = self.index[at].1;
-        if let Some(m) = self.loaded.lock().unwrap().get(&key).and_then(Weak::upgrade) {
+        if let Some(m) = self.loaded.locked().get(&key).and_then(Weak::upgrade) {
             return Some(m);
         }
         let m = Arc::new(Material::parse(&std::fs::read(map_path(&self.dir, key)).ok()?)?);
-        self.loaded.lock().unwrap().insert(key, Arc::downgrade(&m));
+        self.loaded.locked().insert(key, Arc::downgrade(&m));
         Some(m)
     }
 }
@@ -119,7 +121,7 @@ pub fn dir() -> PathBuf {
 /// Follows the setting: opens the pack when turned on (once), drops it when off. Takes effect at the next load.
 pub fn set_enabled(on: bool) {
     let on = on && gpu_supported();
-    let open = PACK.read().unwrap().is_some();
+    let open = PACK.read_locked().is_some();
     // A missing pack is looked for once per turn on (or after `reopen`), not every frame.
     if on == open || (on && TRIED.swap(true, std::sync::atomic::Ordering::Relaxed)) {
         if !on {
@@ -138,7 +140,7 @@ pub fn set_enabled(on: bool) {
         None
     };
     // A pack that is missing stays "open" as None: retried on the next turn on.
-    *PACK.write().unwrap() = pack;
+    *PACK.write_locked() = pack;
 }
 
 /// Set once a turn on has looked for the pack (cleared by turning off and by `reopen`).
@@ -146,7 +148,7 @@ static TRIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new
 
 /// After the pack was installed or updated: closed, and opened again by the next `set_enabled(true)`.
 pub fn reopen() {
-    *PACK.write().unwrap() = None;
+    *PACK.write_locked() = None;
     TRIED.store(false, std::sync::atomic::Ordering::Relaxed);
 }
 
@@ -157,7 +159,7 @@ pub fn env_strength() -> f32 {
 
 /// Whether a pack is open (the setting on, the GPU able to sample the maps, and the pack found).
 pub fn available() -> bool {
-    PACK.read().unwrap().is_some()
+    PACK.read_locked().is_some()
 }
 
 /// Whether the GPU samples the maps' BC5 (TEXTURE_COMPRESSION_BC: not on GL / GLES or most mobile Vulkan); set when
@@ -167,7 +169,7 @@ static GPU_BC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::ne
 pub fn set_gpu_support(bc: bool) {
     GPU_BC.store(bc, std::sync::atomic::Ordering::Relaxed);
     if !bc {
-        *PACK.write().unwrap() = None;
+        *PACK.write_locked() = None;
     }
 }
 
@@ -178,7 +180,7 @@ pub fn gpu_supported() -> bool {
 /// Gives each texture its maps, when the pack has them.
 /// Returns how many have maps (0 while the pack is closed).
 pub fn attach(textures: &mut [crate::dat::zone::Texture]) -> usize {
-    let Some(pack) = PACK.read().unwrap().clone() else { return 0 };
+    let Some(pack) = PACK.read_locked().clone() else { return 0 };
     for t in textures.iter_mut() {
         t.material = pack.get(t.content_key());
     }
