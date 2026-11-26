@@ -2475,7 +2475,7 @@ impl GameUi {
         use crate::dat::linebreak;
         let width = |s: &str| self.text_width(s);
         let max = |k: usize| if k == 0 { first } else { rest };
-        let cut = linebreak::StrCut { width: &width, max: &max, tail, cap: LINE_BUFFER, hang: false };
+        let cut = linebreak::StrCut { width: &width, max: &max, tail, cap: LINE_BUFFER, hang: false, resume: true };
         let mut out: Vec<_> = linebreak::str_lines(line, &cut).into_iter().map(|l| (l.start, l.text(line))).collect();
         if out.is_empty() {
             out.push((0, String::new()));

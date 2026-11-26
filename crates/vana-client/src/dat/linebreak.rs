@@ -183,15 +183,16 @@ fn char_width(cw: CharWidth, s: &[u8]) -> i32 {
 }
 
 /// FUN_1011e810(s, 0, max) (FUN_1011ee00): the bytes of `s` that fit in `max` px (a char that goes past it is left
-/// out; 04 has no width).
-pub fn fit(s: &[u8], max: i16, cw: CharWidth) -> usize {
-    let (mut i, mut w) = (0usize, 0i16);
+/// out; 04 has no width). Retail's widths are shorts in whole pixels; ours are i32 so 1/16 px units ([`str_lines`])
+/// keep retail's 32767 px reach.
+pub fn fit(s: &[u8], max: i32, cw: CharWidth) -> usize {
+    let (mut i, mut w) = (0usize, 0i32);
     while at(s, i) != 0 {
         let next = if at(s, i) == 4 {
             i + 1
         } else {
             let l = clen(at(s, i));
-            w = w.wrapping_add(char_width(cw, &s[i..(i + l).min(s.len())]) as i16);
+            w = w.saturating_add(char_width(cw, &s[i..(i + l).min(s.len())]));
             i + l
         };
         if max < w {
@@ -204,7 +205,7 @@ pub fn fit(s: &[u8], max: i16, cw: CharWidth) -> usize {
 
 /// FUN_1011ee70, the Japanese item descriptions' fit: a 、。！ where the line would end hangs on it, with the
 /// widthless chars after it.
-pub fn fit_hanging(s: &[u8], max: i16, cw: CharWidth) -> usize {
+pub fn fit_hanging(s: &[u8], max: i32, cw: CharWidth) -> usize {
     let n = fit(s, max, cw);
     if at(s, n) != 0 && no_start_ja(&s[n..]) {
         let l = clen(at(s, n));
@@ -245,16 +246,16 @@ pub struct Line {
 pub struct Cut<'a> {
     /// The output buffer's size (param_2): a line holds at most this - 1 bytes.
     pub cap: usize,
-    /// The line's width (param_5, a short).
-    pub max: i16,
+    /// The line's width (param_5, a short; i32 here, see [`fit`]).
+    pub max: i32,
     /// param_6: the width added to the line when a soft hyphen is weighed against a word break, and (FUN_1025ccf0's
     /// first test) the bytes copied when the char where the width ends is a line break. Every caller passes 0.
-    pub extra: i16,
+    pub extra: i32,
     /// param_7: a word that does not fit moves to the next line only when less than this many of its bytes would fit
     /// on this one; else it is cut where the width ends (0x18 for the log and event lines, 0x14 for the others).
     pub tail: usize,
     /// param_8: what fits (FUN_1011ee00, or FUN_1011ee70 for Japanese item descriptions).
-    pub fit: &'a dyn Fn(&[u8], i16) -> usize,
+    pub fit: &'a dyn Fn(&[u8], i32) -> usize,
     /// The font's char widths (param_9 is FUN_1011e400 over them).
     pub cw: CharWidth<'a>,
 }
@@ -382,7 +383,7 @@ pub fn line_for(lang: Lang, european: bool, src: &[u8], c: &Cut) -> Line {
                 copy(&mut out, acc, b + 1, &src[p..], k);
                 out.truncate(acc + b);
                 out.extend_from_slice(HYPHEN);
-                if (c.max as i32) < w(&out, tot) {
+                if c.max < w(&out, tot) {
                     break;
                 }
                 out.truncate(acc + b);
@@ -406,7 +407,7 @@ pub fn line_for(lang: Lang, european: bool, src: &[u8], c: &Cut) -> Line {
                 }
             } else {
                 end = s18;
-                if s10 != 0 && w(src, s18) + (c.extra as i32) < c.max as i32 {
+                if s10 != 0 && w(src, s18) + c.extra < c.max {
                     hyphen = true;
                     end = s10;
                 }
@@ -473,6 +474,9 @@ pub struct StrCut<'a> {
     pub tail: usize,
     pub cap: usize,
     pub hang: bool,
+    /// A line the buffer cut short of what it took goes on at what it did not show (retail's own texts never fill
+    /// the buffer; a mod's long chat line can). Off: the rest is skipped, as retail.
+    pub resume: bool,
 }
 
 /// FUN_1025ccf0 looped over a decoded text until it ends. The text goes back to the game's Shift-JIS (font::
@@ -499,8 +503,8 @@ pub fn str_lines(text: &str, c: &StrCut) -> Vec<StrLine> {
         bytes.extend_from_slice(&e);
     }
     let cw = |s: &[u8]| widths.get(s).copied().unwrap_or_else(|| sixteenths((c.width)(&decode_sjis(s))));
-    let fit_ = |s: &[u8], m: i16| if c.hang { fit_hanging(s, m, &cw) } else { fit(s, m, &cw) };
-    let px = |w: f32| (w * 16.0).floor().clamp(0.0, i16::MAX as f32) as i16;
+    let fit_ = |s: &[u8], m: i32| if c.hang { fit_hanging(s, m, &cw) } else { fit(s, m, &cw) };
+    let px = |w: f32| (w * 16.0).floor().clamp(0.0, (i16::MAX as i32 * 16) as f32) as i32;
     let str_at = |b: usize| match starts.binary_search_by_key(&b, |&(bo, _)| bo) {
         Ok(k) => starts[k].1,
         Err(k) if k >= starts.len() => text.len(),
@@ -515,6 +519,8 @@ pub fn str_lines(text: &str, c: &StrCut) -> Vec<StrLine> {
             // Retail's loops never end on a char wider than the whole line; ours takes it alone.
             let next = starts.iter().map(|&(b, _)| b).find(|&b| b > at_).unwrap_or(bytes.len());
             (l.used, l.shown, l.hyphen) = (next - at_, next - at_, false);
+        } else if c.resume && l.shown != 0 && l.shown < l.used && !is_break(at(&bytes[at_..], l.shown)) {
+            l.used = l.shown;
         }
         out.push(StrLine {
             start: str_at(at_),
@@ -536,7 +542,7 @@ mod tests {
         if s.len() == 2 { 12 } else { 6 }
     }
 
-    fn cut(max_chars: i16, tail: usize) -> Cut<'static> {
+    fn cut(max_chars: i32, tail: usize) -> Cut<'static> {
         Cut { cap: 0x200, max: max_chars * 6, extra: 0, tail, fit: &|s, m| fit(s, m, &cw), cw: &cw }
     }
 
@@ -622,10 +628,32 @@ mod tests {
     #[test]
     fn decoded() {
         let width = |s: &str| s.chars().map(|c| if c == '\u{2192}' { 12.0 } else { 6.0 }).sum::<f32>();
-        let c = StrCut { width: &width, max: &|_| 60.0, tail: 0x18, cap: 0x200, hang: false };
+        let c = StrCut { width: &width, max: &|_| 60.0, tail: 0x18, cap: 0x200, hang: false, resume: false };
         let s = "ab \u{2192}\u{2192} cdefgh ij";
         let ls = str_lines(s, &c);
         assert_eq!(ls.iter().map(|l| l.text(s)).collect::<Vec<_>>(), ["ab \u{2192}\u{2192} ", "cdefgh ij"]);
         assert_eq!(ls[1].start, s.find('c').unwrap());
+    }
+
+    /// Lines wider than 2048 px still wrap (1/16 px units past a short).
+    #[test]
+    fn wide_lines() {
+        let width = |s: &str| s.chars().count() as f32 * 6.0;
+        let c = StrCut { width: &width, max: &|_| 2400.0, tail: 0x18, cap: 0x200, hang: false, resume: true };
+        let s = "abcd ".repeat(90);
+        let ls = str_lines(&s, &c);
+        assert_eq!(ls.iter().map(|l| l.end - l.start).collect::<Vec<_>>(), [400, 50]);
+    }
+
+    /// A line the buffer cuts short goes on at what it did not show when `resume` is on; off, the rest is skipped.
+    #[test]
+    fn buffer_cut() {
+        let width = |s: &str| s.chars().count() as f32 * 6.0;
+        let s = "x".repeat(600);
+        let c = StrCut { width: &width, max: &|_| 4000.0, tail: 0x18, cap: 0x200, hang: false, resume: true };
+        let ls = str_lines(&s, &c);
+        assert_eq!(ls.iter().map(|l| (l.start, l.end)).collect::<Vec<_>>(), [(0, 510), (510, 600)]);
+        let ls = str_lines(&s, &StrCut { resume: false, ..c });
+        assert_eq!(ls.iter().map(|l| (l.start, l.end, l.next)).collect::<Vec<_>>(), [(0, 510, 600)]);
     }
 }

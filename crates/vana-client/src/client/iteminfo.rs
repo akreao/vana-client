@@ -111,7 +111,7 @@ fn desc_lines(text: &str, width: &dyn Fn(&str) -> f32) -> Vec<String> {
     use crate::dat::{items::Lang, lang, linebreak};
     let ja = lang::client() == Lang::Ja;
     let max = |k: usize| if ja && k > 1 { 366.0 } else { 316.0 };
-    let cut = linebreak::StrCut { width, max: &max, tail: 0x14, cap: 0xff, hang: ja };
+    let cut = linebreak::StrCut { width, max: &max, tail: 0x14, cap: 0xff, hang: ja, resume: false };
     linebreak::str_lines(text, &cut)
         .into_iter()
         .take(20)
@@ -473,8 +473,10 @@ pub fn draw(gu: &mut GameUi, info: &Info, page: usize, icon: Option<&str>, x: f3
                 }
             }
             10..=29 => {
+                // FUN_1013e5f0: a Japanese client's rows from the fourth on start under the icon (x + 3).
+                let lx = if k >= 3 && crate::dat::lang::client() == crate::dat::items::Lang::Ja { 3.0 } else { 51.0 };
                 if let Some(l) = info.desc.get(c as usize - 10) {
-                    gu.text(l, x + 51.0, ry, 0, col(WHITE));
+                    gu.text(l, x + lx, ry, 0, col(WHITE));
                 }
             }
             0x1e..=0x31 => {
