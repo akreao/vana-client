@@ -374,6 +374,8 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
             t.set("owned", show == Show::Map)?;
             t.set("zone", r.zone)?;
             t.set("number", r.num)?;
+            // The sub-map key: map points (file 55504) carry it, and the map window shows those whose key it is.
+            t.set("key", r.key)?;
             t.set("file", r.file_id())?;
             t.set("scale", r.scale)?;
             let o = lua.create_table()?;

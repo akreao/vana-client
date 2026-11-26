@@ -1131,6 +1131,7 @@ The map record for where you stand, and how the map window shows it. Use it with
 | `owned` | `boolean` | `kind == "map"`. |
 | `zone` | `integer` | The zone the map belongs to. |
 | `number` | `integer` | The map's number within the zone. |
+| `key` | `integer` | The sub-map key: in a zone with several map pages, which page this record is. The map's points of interest (survival guides, home points and the like, in file 55504) each carry the key of the page they show on, so the map window shows those whose key is this one. 0 in most zones. |
 | `file` | `integer` | The map image's game file id (`res.dat(file)` reads it). |
 | `scale` | `integer` | The map's scale value. |
 | `origin` | `{x: integer, y: integer}` | The image's top left corner, in map pixels. |
