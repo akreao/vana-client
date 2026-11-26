@@ -1,8 +1,9 @@
 //! DAT overlays (not retail: XIPivot's job built in). Mods are folders laid out like the game (ROM*/<dir>/<file>.DAT and
 //! game-root files), listed highest priority first. An overlaid DAT is rebuilt from the current stock file: its
-//! textures (D3s), menu sprite sheets (Msb) and bump maps (Bp) come from the highest-priority mod that has them, every
-//! other chunk stays stock, so SE's updates survive packs made years ago. A file that is not a chunk container is
-//! replaced whole. Merged files are cached, keyed by every source's size and time.
+//! textures (D3s), menu sprite sheets (Msb) and bump maps (Bp) come from the highest-priority mod that has them, and
+//! so does each spell record (mgc_) a mod changed; every other chunk stays stock, so SE's updates survive packs made
+//! years ago. A file that is not a chunk container is replaced whole. Merged files are cached, keyed by every source's
+//! size and time.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -10,6 +11,12 @@ use std::path::{Path, PathBuf};
 
 /// Chunk kinds taken from mods (names from FFXiMain's table at 0x103542a8).
 const MERGED: [u8; 3] = [0x20, 0x31, 0x5d];
+/// File 81's spell records (mgc_, see `actions`): merged record by record, the index being the spell id. Retail reads
+/// a spell's jobs and levels from here alone (FUN_1022cde0), so a server that changes them ships this file (XIPivot
+/// replaces it whole); a record is taken where the mod's differs from stock, so the spells SE adds or changes since
+/// stay stock.
+const SPELLS: u8 = 0x49;
+const SPELL_SIZE: usize = 100;
 
 pub struct Overlays {
     /// File id -> the mods' copies, highest priority first.
@@ -174,26 +181,53 @@ fn image_ok(chunk: &[u8]) -> bool {
     (1..=4096).contains(&w) && (1..=4096).contains(&h) && p.len() >= 57 + w * h / 2
 }
 
-/// The stock file with the mods' D3s / Msb / Bp chunks in place of stock ones of the same key; `mods` highest
-/// priority first. Chunks a mod has that stock lacks are left out (the stock file was restructured since).
+/// The stock file with the mods' D3s / Msb / Bp chunks in place of stock ones of the same key, and their changed
+/// spell records in place of stock's; `mods` highest priority first. Chunks a mod has that stock lacks are left out
+/// (the stock file was restructured since).
 pub fn merge(stock: &[u8], mods: &[Vec<u8>]) -> Option<Vec<u8>> {
     let base = raw(stock)?;
     let parsed: Vec<Vec<Raw>> = mods.iter().map(|m| raw(m)).collect::<Option<_>>()?;
     let mut take: HashMap<&(Vec<[u8; 4]>, [u8; 4], u8, Vec<u8>, usize), &[u8]> = HashMap::new();
+    let mut spells: HashMap<&(Vec<[u8; 4]>, [u8; 4], u8, Vec<u8>, usize), Vec<&[u8]>> = HashMap::new();
     for m in parsed.iter().rev() {
-        for c in m.iter().filter(|c| MERGED.contains(&c.kind) && (c.kind != 0x20 || image_ok(c.bytes))) {
-            take.insert(&c.key, c.bytes);
+        for c in m.iter() {
+            if c.kind == SPELLS {
+                spells.entry(&c.key).or_default().push(c.bytes);
+            } else if MERGED.contains(&c.kind) && (c.kind != 0x20 || image_ok(c.bytes)) {
+                take.insert(&c.key, c.bytes);
+            }
         }
     }
     let mut out = Vec::with_capacity(stock.len());
     for c in &base {
+        if let Some(ms) = spells.get(&c.key).filter(|_| c.kind == SPELLS) {
+            out.extend_from_slice(&spell_records(c.bytes, ms));
+            continue;
+        }
         out.extend_from_slice(take.get(&c.key).copied().filter(|_| MERGED.contains(&c.kind)).unwrap_or(c.bytes));
     }
     Some(out)
 }
 
-/// A pack's `full` copy of a stock file cut to what `merge` takes from it: the D3s chunks that differ from stock's of
-/// the same key, inside the folder markers that key them. Also the number of D3s chunks kept.
+/// A stock spell chunk (header included) with each record that a mod's chunk changes taken from it; `mods` lowest
+/// priority first, so the highest one's change wins. Records past either chunk's end stay as they are.
+fn spell_records(stock: &[u8], mods: &[&[u8]]) -> Vec<u8> {
+    let mut out = stock.to_vec();
+    let n = (stock.len() - 16) / SPELL_SIZE;
+    for m in mods {
+        for k in 0..n.min((m.len() - 16) / SPELL_SIZE) {
+            let at = 16 + k * SPELL_SIZE;
+            let r = &m[at..at + SPELL_SIZE];
+            if r != &stock[at..at + SPELL_SIZE] {
+                out[at..at + SPELL_SIZE].copy_from_slice(r);
+            }
+        }
+    }
+    out
+}
+
+/// A pack's `full` copy of a stock file cut to what `merge` takes from it: the D3s and spell chunks that differ from
+/// stock's of the same key, inside the folder markers that key them. Also the number of those chunks kept.
 pub fn slim(stock: &[u8], full: &[u8]) -> Option<(Vec<u8>, usize)> {
     let base: HashMap<_, &[u8]> = raw(stock)?.into_iter().map(|c| (c.key, c.bytes)).collect();
     let (mut out, mut kept) = (Vec::new(), 0);
@@ -201,10 +235,11 @@ pub fn slim(stock: &[u8], full: &[u8]) -> Option<(Vec<u8>, usize)> {
         let keep = match c.kind {
             0 | 1 => true,
             0x20 => image_ok(c.bytes) && base.get(&c.key).is_some_and(|b| *b != c.bytes),
+            SPELLS => base.get(&c.key).is_some_and(|b| *b != c.bytes),
             _ => false,
         };
         if keep {
-            kept += (c.kind == 0x20) as usize;
+            kept += matches!(c.kind, 0x20 | SPELLS) as usize;
             out.extend_from_slice(c.bytes);
         }
     }
@@ -357,5 +392,25 @@ mod tests {
             [chunk(b"fold", 1, &[]), chunk(b"img1", 0x20, &tex(b"tex1", 7)), chunk(b"end\0", 0, &[])].concat()
         );
         assert_eq!(merge(&stock, &[s]).unwrap(), merge(&stock, &[full]).unwrap());
+    }
+
+    /// Spell records (chunk 0x49, 100 bytes each) are taken one by one where a mod changed them: the higher mod wins
+    /// a record both change, a record no mod changes stays stock (SE's later change kept), a mod's short chunk (made
+    /// before SE added spells) leaves the new ones stock, and the rest of the file stays stock.
+    #[test]
+    fn spell_records_merged_one_by_one() {
+        let spells = |rs: &[u8]| rs.iter().flat_map(|&r| [r; 100]).collect::<Vec<u8>>();
+        let file = |rs: &[u8], model: u8| {
+            [chunk(b"mgc_", 0x49, &spells(rs)), chunk(b"mdl1", 0x2e, &[model; 16]), chunk(b"end\0", 0, &[])].concat()
+        };
+        let stock = file(&[1, 2, 3, 4], 1);
+        let low = file(&[7, 2, 8, 4], 9);
+        let high = file(&[1, 2, 9], 9);
+        assert_eq!(merge(&stock, &[high.clone(), low]).unwrap(), file(&[7, 2, 9, 4], 1));
+        assert_eq!(merge(&stock, std::slice::from_ref(&high)).unwrap(), file(&[1, 2, 9, 4], 1));
+        let (s, kept) = slim(&stock, &high).unwrap();
+        assert_eq!(kept, 1);
+        assert_eq!(merge(&stock, &[s]).unwrap(), merge(&stock, &[high]).unwrap());
+        assert_eq!(slim(&stock, &stock).unwrap().1, 0);
     }
 }
