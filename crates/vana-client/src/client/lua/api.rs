@@ -343,7 +343,7 @@ pub(super) fn install(
     )?;
     g.set("events", events)?;
 
-    // commands.register(name, fn): //name and /name; commands.run(line): as if typed.
+    // commands.register(name, fn): //name, and /name unless a game or client command has it; commands.run(line): as if typed.
     let commands = lua.create_table()?;
     commands.set(
         "register",
@@ -352,9 +352,15 @@ pub(super) fn install(
             if name.is_empty() || name.contains(char::is_whitespace) {
                 return Err(mlua::Error::runtime(format!("command name {name:?}")));
             }
-            // A mod command never hides a game command or /lua (the game's lines and actions would reach the mod).
-            if name == "lua" || super::super::textcmd::is_game_command(&name) {
-                return Err(mlua::Error::runtime(format!("/{name} is a game command: give yours another name")));
+            if name == "lua" {
+                return Err(mlua::Error::runtime("/lua is the client's: give yours another name"));
+            }
+            // A game command's (or the client's own) name stays theirs with one slash; the mod's answers to //name.
+            if super::super::textcmd::is_reserved(&name) {
+                log::warn!(
+                    "{}: /{name} is a game or client command: the mod's is //{name} only",
+                    mod_id(lua).unwrap_or_default()
+                );
             }
             // //mods is the client's list of the mods' commands.
             if name == "mods" {
@@ -404,7 +410,7 @@ pub(super) fn install(
     commands.set(
         "is_game",
         lua.create_function(|_, name: String| {
-            Ok(super::super::textcmd::is_game_command(&name.trim_start_matches('/').to_ascii_lowercase()))
+            Ok(super::super::textcmd::is_reserved(&name.trim_start_matches('/').to_ascii_lowercase()))
         })?,
     )?;
     g.set("commands", commands)?;

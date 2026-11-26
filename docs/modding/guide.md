@@ -248,8 +248,9 @@ forms = [                           # its other forms, each with a separate line
 ]
 ```
 
-Leave `args` out when the command does nothing alone and only its `forms` are used. A command name may not be `lua`,
-`mods` or one of the game's commands: the mod then does not load.
+Leave `args` out when the command does nothing alone and only its `forms` are used. A command name may not be `lua` or
+`mods`: the mod then does not load. A game command's name (or one of the client's own, such as `favs`) is allowed, but
+the command then answers to `//name` only.
 
 A placeholder can be typed, so the Mods window's form for it offers choices: `params` on the command (its main form)
 or on a form, each naming the placeholder by its first word.

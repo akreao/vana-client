@@ -70,7 +70,11 @@ end)
 
 commands.register("aliases", function()
   local out = {}
-  for k, v in pairs(saved().aliases) do out[#out + 1] = "/" .. k .. ": " .. v end
+  for k, v in pairs(saved().aliases) do
+    -- A name that became a game or client command is that command's now: the alias no longer runs.
+    local off = commands.is_game(k) and " (off: /" .. k .. " is a game or client command)" or ""
+    out[#out + 1] = "/" .. k .. ": " .. v .. off
+  end
   table.sort(out)
   chat.add("Key Commands: " .. (#out > 0 and table.concat(out, "; ") or "no aliases"))
 end)
@@ -79,7 +83,9 @@ end)
 filters.typed(function(line)
   if not settings.get("on") then return nil end
   local name, rest = line:match("^/+(%S+)%s*(.*)$")
-  local a = name and saved().aliases[name:lower()]
+  -- An alias saved before its name became a game or client command leaves that command alone.
+  if not name or commands.is_game(name) then return nil end
+  local a = saved().aliases[name:lower()]
   if not a then return nil end
   local words = {}
   for w in rest:gmatch("%S+") do words[#words + 1] = w end

@@ -1589,13 +1589,13 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "4441167147f1b3019fff135b1f8268a40a389997aab83ca567b90d24408b1cf7",
-          "size": 2848,
+          "sha256": "5073c513311c951c527609c5bdd7fbb33fc433d10320ac95bdf2d137b3b8fa01",
+          "size": 3204,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/key-commands/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "501a5c1b3e62f9ac2e8538d755bc19c80464ed698af8a0694c89d4dbf8dfde01",
+          "sha256": "2fd11d65255ec0233493a0cfb9ae87013de512433861c6eef628935cb6adbf60",
           "size": 860,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/key-commands/mod.toml"
         }
@@ -1603,7 +1603,7 @@
       "id": "key-commands",
       "kind": "lua",
       "name": "Key Commands",
-      "version": "1.0.2"
+      "version": "1.0.4"
     },
     {
       "authors": [],

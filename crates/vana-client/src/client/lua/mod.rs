@@ -707,14 +707,19 @@ impl Host {
             .map(|m| m.name)
     }
 
-    /// Whether a typed line is for the mods: //anything, /lua, or a mod's registered /command.
+    /// The running mod whose command `name` (lowercase, no slash) is: the first loaded that registered it.
+    fn command_owner(&self, name: &str) -> Option<&Vm> {
+        self.vms.iter().find(|v| v.suspended.is_none() && v.st.borrow().commands.iter().any(|(n, _)| *n == name))
+    }
+
+    /// Whether a typed line is for the mods: //anything, /lua, or a mod's registered /command unless a game command
+    /// or one of the client's own has that name (retail's and ours win with one slash).
     pub fn takes(&self, line: &str) -> bool {
         if line.starts_with("//") {
             return true;
         }
         let first = line.trim_start_matches('/').split_whitespace().next().unwrap_or("").to_ascii_lowercase();
-        first == "lua"
-            || self.vms.iter().any(|v| v.suspended.is_none() && v.st.borrow().commands.iter().any(|(n, _)| *n == first))
+        first == "lua" || !super::textcmd::is_reserved(&first) && self.command_owner(&first).is_some()
     }
 
     /// The number the next printed line gets (the Mods window's Run notes it).
@@ -751,8 +756,9 @@ impl Host {
         dir: PathBuf,
         src: vm::Source,
     ) -> Result<(), String> {
-        if let Some(n) = m.commands.keys().find(|n| super::textcmd::is_game_command(&n.to_ascii_lowercase())) {
-            return Err(format!("{}: [commands.{n}]: /{n} is a game command; give yours another name", m.id));
+        // A game command's (or the client's own) name: the mod still loads, its command is //name only (takes).
+        for n in m.commands.keys().filter(|n| super::textcmd::is_reserved(&n.to_ascii_lowercase())) {
+            log::warn!("{}: [commands.{n}]: /{n} is a game or client command: the mod's is //{n} only", m.id);
         }
         if self.vms.iter().any(|v| v.manifest.id == m.id) {
             return Err(format!("{} is already loaded", m.id));
@@ -1348,10 +1354,7 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
                 continue;
             }
             let input = !matches!(from, From::Mod { input: false, .. });
-            let owner = host
-                .vms
-                .iter()
-                .find(|v| v.suspended.is_none() && v.st.borrow().commands.iter().any(|(n, _)| *n == name));
+            let owner = host.command_owner(&name);
             match owner {
                 Some(vm) => lend(vm, w, |vm| {
                     let f = vm
@@ -2421,6 +2424,35 @@ mod tests {
             })?,
         )?;
         lua.globals().set("TEST", t)
+    }
+
+    /// A mod command named as one of the client's own one-slash commands registers (the mod loads) and answers to
+    /// //name only: /name stays the client's (retail's commands the same way, from the DLL's table).
+    #[test]
+    fn reserved_names_stay_one_slash() {
+        let vm = Vm::new(
+            manifest::Manifest { id: "t".into(), ..Default::default() },
+            PathBuf::from("."),
+            vm::Source::Dir(PathBuf::from(".")),
+        )
+        .unwrap();
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        vm.lua
+            .load(r#"commands.register("favs", function() end); commands.register("/Where", function() end)"#)
+            .exec()
+            .unwrap();
+        assert!(vm.lua.load(r#"commands.register("lua", function() end)"#).exec().is_err());
+        assert!(vm.lua.load(r#"return commands.is_game("/favs") and commands.is_game("lua")"#).eval::<bool>().unwrap());
+        let mut host = Host::default();
+        host.vms.push(vm);
+        // The // line reaches the mod's handler: the dispatch finds its owner by the name after the slashes.
+        assert!(host.takes("//favs on") && host.command_owner("favs").is_some());
+        assert!(!host.takes("/favs") && !host.takes("/FAVS on"));
+        assert!(host.takes("/where") && host.takes("//where") && host.takes("/lua list") && !host.takes("/nothing"));
+        if super::super::textcmd::is_game_command("ma") {
+            host.vms[0].lua.load(r#"commands.register("ma", function() end)"#).exec().unwrap();
+            assert!(host.takes("//ma") && host.command_owner("ma").is_some() && !host.takes("/ma \"Cure\" <me>"));
+        }
     }
 
     /// The stand-in parked in `World::lua` while the host runs the mods answers the World's queries from the mods'
