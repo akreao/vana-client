@@ -197,7 +197,7 @@ pub fn num_plus(w: &mut World) {
 
 /// Mouse: link5's rows and lscswin's children as the generic handler takes them, a right click the focused window's
 /// Escape (message 6); the pointer over lscswin while the list has the focus hands it over (FUN_101e4610, SE 0013).
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     let Some(c) = w.concierge_ui.clone() else { return };
     // The modern layer draws it and takes its mouse.
     if w.modern {
@@ -220,16 +220,16 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
             .map(|e| e.id)
     };
     if let Some(id) = hit(FILTER) {
-        gu.hover.set(true);
+        let takes = super::winhits::takes(gu, FILTER, id, super::winhits::in_frame(gu, FILTER, sw, sh, p));
         match c.lsc {
             None => num_plus(w),
-            Some(sel) if id != sel && (moved || clicked) => {
+            Some(sel) if id != sel && takes => {
                 if let Some(c) = w.concierge_ui.as_mut() {
                     c.lsc = Some(id);
                 }
                 w.sounds.push(Ui::Cursor as u32);
             }
-            Some(_) if clicked => key(w, gu, egui::Key::Enter),
+            Some(sel) if clicked && id == sel => key(w, gu, egui::Key::Enter),
             _ => {}
         }
         return;
@@ -242,13 +242,13 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     if row >= rows(w).len() {
         return;
     }
-    gu.hover.set(true);
-    if row != c.cursor && (moved || clicked) {
+    let takes = super::winhits::takes(gu, LIST, id, super::winhits::in_frame(gu, LIST, sw, sh, p));
+    if row != c.cursor && takes {
         if let Some(c) = w.concierge_ui.as_mut() {
             c.cursor = row;
         }
         w.sounds.push(Ui::Cursor as u32);
-    } else if clicked {
+    } else if clicked && row == c.cursor {
         key(w, gu, egui::Key::Enter);
     }
 }

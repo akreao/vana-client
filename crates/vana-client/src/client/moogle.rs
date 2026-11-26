@@ -153,7 +153,11 @@ pub(super) fn moogle_actor(w: &World) -> Option<u32> {
     {
         return Some(id);
     }
-    w.entities.iter().filter(|(id, e)| is_moogle(**id, e)).min_by_key(|(_, e)| e.index).map(|(&id, _)| id)
+    w.entities
+        .iter()
+        .filter(|(id, e)| is_moogle(**id, e) && !super::event::is_parked(w, **id))
+        .min_by_key(|(_, e)| e.index)
+        .map(|(&id, _)| id)
 }
 
 /// Event text's `17 n` codes: the moogle actor plays each motion (vtable +0x298), as the text is built.
@@ -716,7 +720,7 @@ pub(super) fn set_cursor(w: &mut World, c: u16) -> bool {
 
 /// The mouse on the focused window (the generic window): myroom / mogext, the storage menu, mogpost, jobchang and
 /// jobcselu. Nothing while a storage view is up (the item lists take it).
-pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool, right: bool) {
     use super::winhits::generic;
     let Some(m) = w.moogle.clone() else { return };
     // The modern layer draws these and takes their mouse.
@@ -740,7 +744,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
                 sel,
                 1..=32,
                 p,
-                moved,
                 clicked,
                 right,
                 |w, id| edit(w, &|mm| mm.jobs = Some(Jobs { select: Some((mode, id)), ..j })),
@@ -753,7 +756,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
                 j.sel,
                 1..=2,
                 p,
-                moved,
                 clicked,
                 right,
                 |w, id| edit(w, &|mm| mm.jobs = Some(Jobs { sel: id, ..j })),
@@ -761,7 +763,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
             ),
         }
     } else if let Some(c) = m.post {
-        generic(w, gu, MOGPOST, c, 1..=2, p, moved, clicked, right, |w, id| edit(w, &|mm| mm.post = Some(id)), keys);
+        generic(w, gu, MOGPOST, c, 1..=2, p, clicked, right, |w, id| edit(w, &|mm| mm.post = Some(id)), keys);
     } else if let Some((sel, off)) = m.storage.clone() {
         let name = if m.nomad { STORAGE2 } else { STORAGE };
         generic(
@@ -771,7 +773,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
             sel,
             1..=15,
             p,
-            moved,
             clicked,
             right,
             |w, id| edit(w, &|mm| mm.storage = Some((id, off.clone()))),
@@ -779,7 +780,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
         );
     } else {
         let n = m.rows();
-        generic(w, gu, m.name(), m.sel, 1..=n, p, moved, clicked, right, |w, id| edit(w, &|mm| mm.sel = id), keys);
+        generic(w, gu, m.name(), m.sel, 1..=n, p, clicked, right, |w, id| edit(w, &|mm| mm.sel = id), keys);
     }
 }
 

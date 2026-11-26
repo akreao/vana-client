@@ -90,7 +90,7 @@ pub fn mode(c: &Ctx, id: u32, s: &Seen, eye: Vec3) -> Option<u8> {
         _ if id == me => (!(c.has)(me | ANIMAL)).then_some(1),
         // FUN_100cbde0: our chair a silhouette, others' chairs none.
         _ if id == me | ANIMAL || id == me | ROD || id == me | CHAIR => Some(1),
-        _ if id & (ROD | AURA | CHAIR) != 0 => None,
+        _ if id & (ROD | AURA | CHAIR) != 0 || matches!(id, super::area::RING | super::area::GEO) => None,
         _ if id & ANIMAL != 0 => blob(),
         // Others' riders have none.
         _ if (c.has)(id | ANIMAL) => None,

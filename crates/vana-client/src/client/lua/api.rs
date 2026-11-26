@@ -464,7 +464,7 @@ pub(super) fn install(
             let k = match s.windows.iter().position(|w| w.id == id) {
                 Some(k) => k,
                 None => {
-                    s.windows.push(super::window::Window::new(&id));
+                    s.windows.push(super::window::Window::new(&id).into());
                     s.windows.len() - 1
                 }
             };
@@ -529,6 +529,7 @@ pub(super) fn install(
                 .windows
                 .iter_mut()
                 .find(|w| w.id == id)
+                .map(|w| &mut **w)
                 .ok_or_else(|| mlua::Error::runtime(format!("no window {id:?}")))?;
             let k = w
                 .elems
@@ -656,6 +657,7 @@ pub(super) fn install(
             w.open = true;
             w.settle();
             if !w.hud {
+                // (granted, it is also raised in the modern UI: Host::grant_focus; a repeat //calc too)
                 s.focus_request = Some(id);
             }
             Ok(())
@@ -935,7 +937,8 @@ pub(super) fn install(
             }
             let e =
                 w.entities.get(&key).map(|e| (key, e)).or_else(|| u16::try_from(key).ok().and_then(|i| w.entity_at(i)));
-            e.map(|(id, e)| entity(lua, w, id, e)).transpose()
+            // A despawned slot is out of range for mods, as in `entities`.
+            e.filter(|(id, _)| !super::super::event::is_parked(w, *id)).map(|(id, e)| entity(lua, w, id, e)).transpose()
         })?,
     )?;
     game.set(
@@ -964,7 +967,9 @@ pub(super) fn install(
             if kinds.as_ref().is_none_or(|k| k.iter().any(|k| k == "player")) {
                 out.push(self_entity(lua, w)?)?;
             }
-            let mut list: Vec<(&u32, &super::super::Entity)> = w.entities.iter().collect();
+            // A despawned slot (kept until the zone changes) is not in the zone for mods.
+            let mut list: Vec<(&u32, &super::super::Entity)> =
+                w.entities.iter().filter(|(id, _)| !super::super::event::is_parked(w, **id)).collect();
             list.sort_by_key(|(_, e)| e.index);
             let slots = w.party.slots();
             for (id, e) in list {
@@ -1047,6 +1052,14 @@ pub(super) fn install(
                 out.push(t)?;
             }
             Ok(out)
+        })?,
+    )?;
+    // The quest areas the game's quest menu lists, by the expansions the server enables (DAT_10386998).
+    game.set(
+        "quest_areas",
+        lua.create_function(|lua, ()| {
+            let w = world(lua)?;
+            lua.create_sequence_from((0..11).filter(|&a| super::super::quests::area_on(w.expansions, a)))
         })?,
     )?;
     // Every quest area's quests in the journal's order, with ours current or completed (s2c 0x056).
@@ -2149,10 +2162,10 @@ fn player(lua: &Lua) -> mlua::Result<Table> {
     t.set("pos", pos)?;
     t.set("heading", my_heading(w))?;
     t.set("status", w.my_motion.status)?;
-    // Our 0x037 flags word: bit 4 seeking a party, 5 anonymous, 7 away.
-    t.set("seeking", w.self_flags >> 4 & 1 != 0)?;
-    t.set("anonymous", w.self_flags >> 5 & 1 != 0)?;
-    t.set("away", w.self_flags >> 7 & 1 != 0)?;
+    // Our entity's flags (+0x124 bits 20 / 23 / 22): the 0x00A's at the zone-in, then 0x037 @0x28 bits 4 / 5 / 7.
+    t.set("seeking", w.my_plate.marks.lfg)?;
+    t.set("anonymous", w.my_plate.marks.anon)?;
+    t.set("away", w.my_plate.marks.away)?;
     if let Some((hp, mp, tp, hpp, mpp)) = w.vitals {
         t.set("hp", hp)?;
         t.set("mp", mp)?;
@@ -2206,7 +2219,7 @@ fn popup(
     w.back = s.windows.iter().find(|x| x.focus && x.open).map(|x| x.id.clone());
     w.anchor = at_pointer.then_some(cursor);
     w.settle();
-    s.windows.push(w);
+    s.windows.push(w.into());
     s.focus_request = Some(id.to_string());
     let key = lua.create_registry_value(wrap)?;
     s.window_handlers.retain(|(w, _)| w != id);

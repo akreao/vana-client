@@ -209,7 +209,7 @@ pub fn set_cursor(w: &mut World, id: i32) -> bool {
 
 /// The mouse: faqsub's rows as the generic window's children (winhits.rs); faqmain only the right click. The modern
 /// layer takes it there.
-pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool, right: bool) {
     let Some(h) = w.helpdesk.as_ref().filter(|_| !w.modern) else { return };
     if h.main.is_some() {
         if right && super::winhits::over(w, "menu    faqmain", p) {
@@ -224,7 +224,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
         h.cursor as u16 + 1,
         1..=6,
         p,
-        moved,
         clicked,
         right,
         |w, id| {
@@ -354,6 +353,9 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Option<[f32; 4]> {
     }
     gu.clip(Some([cx - 16.0, cy, cw + 16.0, ch]));
     let focused = focused(w);
+    if focused {
+        focus_part(gu, WIN, sw, sh);
+    }
     // The rows are code-drawn entries: each row's lines from its marker, inside the view.
     let rows = entries
         .iter()
@@ -402,5 +404,15 @@ pub fn keep_scroll(w: &mut World, gu: &GameUi, sw: f32, sh: f32) {
     }
     if let Some(h) = w.helpdesk.as_mut() {
         h.scroll = scroll;
+    }
+}
+
+/// faqsub and faqmain move their own cursor (an entry, +0x128): the window's cursor (+0x4c) stays on child 1, where
+/// the window load leaves it (FUN_101193d0 ends with FUN_1011a320(1); win_faqsub_v14 / FUN_10219330 clear +0x61, so
+/// the generic keys never move it, and nothing in either window sets it). That child, hidden (so not in the drawn
+/// window's children), is the part the focus warp aims at (FUN_1011c080), not the hand on the entry.
+pub(super) fn focus_part(gu: &mut GameUi, name: &str, sw: f32, sh: f32) {
+    if let Some((x, y)) = gu.window_xy(name, sw, sh) {
+        gu.focus_layout_child(name, 1, x, y);
     }
 }

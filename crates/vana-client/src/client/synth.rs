@@ -843,15 +843,16 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
 }
 
 /// The mouse (winhits.rs): cmbmenu, cmbhwin, cmbhlst's rows and tskill1 as the generic window; the crystal list and
-/// the picker as the item list (hover moves the row, a click on it is Enter, a right click Escape); itemctrl as
+/// the picker as the item list (a row takes the cursor by winhits::takes, a click on it is Enter, a right click
+/// Escape); itemctrl as
 /// retail's (winhits::ctr).
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     use super::winhits::generic;
     if w.modern {
         return;
     }
     let keys = |w: &mut World, gu: &GameUi, k: egui::Key| key(w, gu, k);
-    // A picker row: hover moves the cursor, a click on it is Enter.
+    // A picker row: it takes the cursor by winhits::takes, a click on it is Enter.
     let list = |w: &mut World, (scroll, cursor): (usize, usize), n: usize, set: fn(&mut World, usize)| {
         let row = super::post::picker_row(gu, sw, sh, p);
         if right && row.is_some() {
@@ -859,11 +860,10 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
             return;
         }
         let Some(r) = row.filter(|r| scroll + r < n) else { return };
-        gu.hover.set(true);
-        if r != cursor && (moved || clicked) {
+        if super::winhits::takes(gu, "menu    inventor", r as u16 + 1, true) && r != cursor {
             set(w, r);
             w.sounds.push(Ui::Cursor as u32);
-        } else if clicked {
+        } else if clicked && r == cursor {
             key(w, gu, egui::Key::Enter);
         }
     };
@@ -875,7 +875,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
             cursor,
             1..=10,
             p,
-            moved,
             clicked,
             right,
             |w, id| {
@@ -905,7 +904,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                     f,
                     1..=2,
                     p,
-                    moved,
                     clicked,
                     right,
                     |w, id| {
@@ -922,7 +920,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                     cur,
                     1..=n.max(1),
                     p,
-                    moved,
                     clicked,
                     right,
                     |w, id| {
@@ -950,7 +947,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                         sel,
                         1..=2,
                         p,
-                        moved,
                         clicked,
                         right,
                         |w, id| {
@@ -1624,7 +1620,8 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         _ => (0.0, 0.0),
     };
     if let Some((_, _, v, max)) = s.qty.or(amount)
-        && let Some(win) = gu.lobby_window_off(ITEMCTRL, sw, sh, off, Some(1), true, &[])
+        && let Some(win) =
+            gu.lobby_window_off(ITEMCTRL, sw, sh, off, Some(super::winhits::ctr_cursor(w, gu, ITEMCTRL)), true, &[])
     {
         super::winhits::record(w, ITEMCTRL, &win);
         let [x, y, ..] = win.frame;

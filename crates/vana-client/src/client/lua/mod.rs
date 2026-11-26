@@ -469,11 +469,13 @@ struct Snap {
     moon: Option<usize>,
     weather: u16,
     party: Vec<u32>,
-    items: Option<std::collections::BTreeMap<(u8, u8), (u16, u32)>>,
+    /// The bags at an inventory generation (Inventory::slots_gen), shared with the last snapshot while it holds.
+    items: Option<(u64, std::rc::Rc<std::collections::BTreeMap<(u8, u8), (u16, u32)>>)>,
 }
 
 impl Snap {
-    fn of(w: &World, items: bool) -> Self {
+    /// `prev`'s bags are kept while the inventory is unchanged (a clone of every bag each frame, before).
+    fn of(w: &World, items: bool, prev: Option<&Snap>) -> Self {
         let clock = w.clock.map(|_| crate::dat::msgfmt::VanaParts::of(super::vana_now(w)));
         let mut buffs: Vec<u16> = w.buffs.iter().copied().filter(|&b| b != 0xffff).collect();
         buffs.sort_unstable();
@@ -488,8 +490,19 @@ impl Snap {
             moon: clock.as_ref().map(|p| p.phase),
             weather: w.weather,
             party: w.party.slots().slots.iter().flatten().map(|m| m.id).collect(),
-            items: items.then(|| w.inv.slots.clone()),
+            items: items.then(|| bags(&w.inv, prev)),
         }
+    }
+}
+
+/// The bags for a snapshot: `prev`'s copy while the inventory's generation is the same.
+fn bags(
+    inv: &super::items::Inventory,
+    prev: Option<&Snap>,
+) -> (u64, std::rc::Rc<std::collections::BTreeMap<(u8, u8), (u16, u32)>>) {
+    match prev.and_then(|p| p.items.as_ref()) {
+        Some((g, m)) if *g == inv.slots_gen => (*g, m.clone()),
+        _ => (inv.slots_gen, std::rc::Rc::new(inv.slots.clone())),
     }
 }
 
@@ -559,8 +572,10 @@ fn changes(a: &Snap, b: &Snap) -> Vec<(&'static str, Vec<serde_json::Value>)> {
     if a.party != b.party {
         out.push(("party_change", vec![]));
     }
-    if let (Some(o), Some(n)) = (&a.items, &b.items) {
-        for (&(bag, slot), &(id, count)) in n {
+    if let (Some((og, o)), Some((ng, n))) = (&a.items, &b.items)
+        && og != ng
+    {
+        for (&(bag, slot), &(id, count)) in n.iter() {
             match o.get(&(bag, slot)) {
                 Some(&(oid, ocount)) if oid == id && ocount == count => {}
                 Some(&(oid, ocount)) if oid == id => {
@@ -573,7 +588,7 @@ fn changes(a: &Snap, b: &Snap) -> Vec<(&'static str, Vec<serde_json::Value>)> {
                 None => out.push(("item_add", vec![bag.into(), slot.into(), id.into(), count.into()])),
             }
         }
-        for (&(bag, slot), &(id, count)) in o {
+        for (&(bag, slot), &(id, count)) in o.iter() {
             if !n.contains_key(&(bag, slot)) {
                 out.push(("item_remove", vec![bag.into(), slot.into(), id.into(), count.into()]));
             }
@@ -1289,7 +1304,7 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
     }
     // The derived change events (items only while someone listens: the bags are big).
     let items = host.vms.iter().any(|v| ["item_add", "item_remove", "item_change"].iter().any(|e| v.has_handler(e)));
-    let snap = Snap::of(w, items);
+    let snap = Snap::of(w, items, host.prev.as_ref());
     if let Some(prev) = &host.prev {
         let found = changes(prev, &snap);
         host.events.extend(found);
@@ -1504,19 +1519,7 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
         }
     }
     host.return_focus();
-    // A window opened this phase takes the focus from every other (not from an open modal one, unless modal itself).
-    let wanted: Option<(usize, String)> =
-        host.vms.iter().enumerate().find_map(|(k, v)| v.st.borrow_mut().focus_request.take().map(|id| (k, id)));
-    let held = host.modal().is_some();
-    let wanted =
-        wanted.filter(|(k, id)| !held || host.vms[*k].st.borrow().windows.iter().any(|w| w.id == *id && w.modal));
-    if let Some((k, id)) = wanted {
-        for (j, vm) in host.vms.iter().enumerate() {
-            for win in vm.st.borrow_mut().windows.iter_mut() {
-                win.focus = j == k && win.id == id && win.open;
-            }
-        }
-    }
+    host.grant_focus();
     let dirty = std::mem::take(&mut host.filters_dirty)
         | host.vms.iter().fold(false, |d, v| d | std::mem::take(&mut v.st.borrow_mut().filters_dirty));
     if dirty {
@@ -1607,7 +1610,10 @@ pub(super) fn run_line(w: &mut World, line: &str, mode: super::textcmd::Mode, fr
     if line.starts_with('/') && w.lua.takes(line) {
         w.lua.typed.push((line.to_string(), from));
     } else {
+        // A mod's own line, not one it runs on the player's input (a saved key bind, a click): see World.mod_line.
+        let mod_line = std::mem::replace(&mut w.mod_line, matches!(from, From::Mod { input: false, .. }));
         super::textcmd::run(w, line, mode);
+        w.mod_line = mod_line;
     }
 }
 
@@ -1878,12 +1884,16 @@ impl Host {
     }
 
     /// The open edge window standing in for a built-in panel (the newest mod's).
-    pub(in crate::client) fn edge_panel(&self, panel: &str) -> Option<window::Window> {
+    pub(in crate::client) fn edge_panel(&self, panel: &str) -> Option<std::rc::Rc<window::Window>> {
         if self.all_hidden.get() {
             return None;
         }
         self.vms.iter().rev().filter(|v| v.suspended.is_none()).find_map(|v| {
-            v.st.borrow().windows.iter().find(|w| w.open && w.edge && w.panel.as_deref() == Some(panel)).cloned()
+            v.st.borrow()
+                .windows
+                .iter()
+                .find(|w| w.open && w.edge && w.panel.as_deref() == Some(panel))
+                .map(|w| w.snapshot())
         })
     }
 
@@ -2086,6 +2096,11 @@ impl Host {
         self.info.borrow_mut().native_rooms.extend(rooms);
     }
 
+    /// The modern party and alliance windows' member rows drawn this frame (ui.native.party_rows).
+    pub(in crate::client) fn set_party_rows(&self, rows: Vec<(String, usize, String, [f32; 4])>) {
+        self.info.borrow_mut().party_rows = rows;
+    }
+
     /// The mods' look for the modern UI, when it changed since version `seen`.
     pub(in crate::client) fn skin_since(&self, seen: u64) -> Option<skin::Skin> {
         let f = self.info.borrow();
@@ -2237,6 +2252,29 @@ fn install_stubs(root: PathBuf) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The item events diff the bags only when the inventory changed; an unchanged inventory shares the last copy.
+    #[test]
+    fn item_events_copy_bags_only_on_change() {
+        let mut inv = crate::client::items::Inventory::default();
+        inv.set(0, 1, 4096, 3);
+        let snap = |inv: &crate::client::items::Inventory, prev: Option<&Snap>| Snap {
+            items: Some(bags(inv, prev)),
+            ..Default::default()
+        };
+        let a = snap(&inv, None);
+        let b = snap(&inv, Some(&a));
+        assert!(std::rc::Rc::ptr_eq(&a.items.as_ref().unwrap().1, &b.items.as_ref().unwrap().1));
+        assert!(changes(&a, &b).is_empty());
+        inv.count(0, 1, 5);
+        inv.set(0, 2, 4097, 1);
+        let c = snap(&inv, Some(&b));
+        let names: Vec<_> = changes(&b, &c).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["item_change", "item_add"]);
+        // A fresh inventory (a zone or a log-out) never reuses a generation.
+        let fresh = crate::client::items::Inventory::default();
+        assert_ne!(fresh.slots_gen, inv.slots_gen);
+    }
 
     /// The repository's mods (assets/mods), each a folder.
     fn repo_mods() -> Vec<PathBuf> {
@@ -2398,7 +2436,7 @@ mod tests {
         .unwrap();
         let mut win = window::Window::new("w");
         (win.open, win.focus) = (true, true);
-        vm.st.borrow_mut().windows.push(win);
+        vm.st.borrow_mut().windows.push(win.into());
         let mut slot = Host::default();
         slot.vms.push(vm);
         assert!(slot.focused());
@@ -2548,6 +2586,46 @@ mod tests {
         assert!(p("{ name = \"a\", type = \"enum\", options = [\"b\"] }").is_ok());
         assert!(p("{ name = \"a\", type = \"enum\" }").is_err());
         assert!(p("{ name = \"a\", type = \"thing\" }").is_err());
+    }
+
+    /// A granted ui.open (or prompt) raises the window in the modern UI, a repeat open again; take_raise answers once
+    /// per grant. A focus change alone (a hover over a canvas, a click) raises nothing, nor does an open refused while
+    /// a modal prompt is up.
+    #[test]
+    fn ui_open_asks_for_raise() {
+        let vm = Vm::new(
+            manifest::Manifest { id: "m".into(), ..Default::default() },
+            PathBuf::from("."),
+            vm::Source::Dir(PathBuf::from(".")),
+        )
+        .unwrap();
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        vm.lua
+            .load(r#"ui.window("a", { title = "A", elements = {} }); ui.window("h", { title = "H", hud = true, elements = {} })"#)
+            .exec()
+            .unwrap();
+        let mut host = Host::default();
+        host.vms.push(vm);
+        assert!(!host.take_raise("m", "a"));
+        host.vms[0].lua.load(r#"ui.open("h"); ui.open("a")"#).exec().unwrap();
+        assert!(!host.take_raise("m", "a"), "nothing before the focus is granted");
+        host.grant_focus();
+        assert!(host.take_raise("m", "a") && !host.take_raise("m", "a"), "once per grant");
+        assert!(!host.take_raise("m", "h"), "a HUD window takes no keys and is not raised");
+        // the focus moving to it (a hover, a click) is no ask
+        host.vms[0].st.borrow_mut().windows[0].focus = true;
+        assert!(!host.take_raise("m", "a"));
+        // a repeat open of an open window asks again
+        host.vms[0].lua.load(r#"ui.open("a")"#).exec().unwrap();
+        host.grant_focus();
+        assert!(host.take_raise("m", "a") && !host.take_raise("x", "a"));
+        // a modal prompt up: an open of another window is refused, and that window is not raised over it
+        host.vms[0].lua.load(r#"ui.prompt("Sure?", function() end)"#).exec().unwrap();
+        host.grant_focus();
+        assert!(host.take_raise("m", "__prompt"), "the prompt itself is raised");
+        host.vms[0].lua.load(r#"ui.open("a")"#).exec().unwrap();
+        host.grant_focus();
+        assert!(!host.take_raise("m", "a"), "refused: not raised over the prompt");
     }
 
     /// A wait_until test that never returns runs out of its budget instead of freezing the frame.
@@ -3274,6 +3352,49 @@ mod tests {
         provider.st.borrow_mut().suspended = true;
         let e = caller.lua.load("return mods.call('provider', 'twice', 21)").eval::<i64>().unwrap_err();
         assert!(e.to_string().contains("suspended"), "{e}");
+    }
+
+    /// mods.caller(): the calling mod's id inside an offered function, nil outside, and back to the outer caller
+    /// after a nested call into the same mod (also one that failed).
+    #[test]
+    fn mods_caller_names_the_calling_mod() {
+        let dir: runtime::Shared = Default::default();
+        let new = |id: &str| {
+            let m = manifest::Manifest { id: id.into(), ..Default::default() };
+            let vm = Vm::new(m, PathBuf::from("."), vm::Source::Dir(PathBuf::from("."))).unwrap();
+            vm.lua.set_app_data(dir.clone());
+            api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+            dir.borrow_mut().mods.push(runtime::Entry {
+                id: id.into(),
+                name: id.into(),
+                version: String::new(),
+                lua: vm.lua.weak(),
+                st: vm.st.clone(),
+            });
+            vm
+        };
+        let (a, b, c) = (new("a"), new("b"), new("c"));
+        c.lua.load("mods.provide('who', function() return mods.caller() end)").exec().unwrap();
+        // b's relay calls back into b (its own who, and a function that fails): b's caller is a again afterwards
+        b.lua
+            .load(
+                "mods.provide('who', function() return mods.caller() end)
+                 mods.provide('fail', function() error('no') end)
+                 mods.provide('relay', function()
+                   local inner = mods.call('b', 'who')
+                   local ok = pcall(mods.call, 'b', 'fail')
+                   assert(not ok)
+                   return mods.caller(), inner, mods.call('c', 'who')
+                 end)",
+            )
+            .exec()
+            .unwrap();
+        assert_eq!(a.lua.load("return mods.call('c', 'who')").eval::<String>().unwrap(), "a");
+        let (outer, inner, other) =
+            a.lua.load("return mods.call('b', 'relay')").eval::<(String, String, String)>().unwrap();
+        assert_eq!((outer.as_str(), inner.as_str(), other.as_str()), ("a", "b", "b"));
+        assert!(b.lua.load("return mods.caller()").eval::<Option<String>>().unwrap().is_none());
+        assert!(c.lua.load("return mods.caller()").eval::<Option<String>>().unwrap().is_none());
     }
 
     /// A `__gc` finalizer would run with the budget hook off: setmetatable refuses one.
@@ -4423,19 +4544,58 @@ impl Host {
     }
 
     /// The open windows `keep` takes (copied: the caller draws them while it changes the world).
-    pub(super) fn open_windows_where(&self, keep: impl Fn(&window::Window) -> bool) -> Vec<(String, window::Window)> {
+    pub(super) fn open_windows_where(
+        &self,
+        keep: impl Fn(&window::Window) -> bool,
+    ) -> Vec<(String, std::rc::Rc<window::Window>)> {
         self.windows_where(|w| w.open && keep(w))
     }
 
     /// The windows `keep` takes, open or not (a closed animated window still folds away).
-    pub(super) fn windows_where(&self, keep: impl Fn(&window::Window) -> bool) -> Vec<(String, window::Window)> {
+    /// A window opened this phase (ui.open, a prompt, a menu) takes the focus from every other, not from an open modal
+    /// one unless modal itself. The window granted it is also raised in the modern UI (Window.raise): only here, so a
+    /// refused request (a modal prompt is up) does not bring a window over the prompt.
+    fn grant_focus(&self) {
+        let wanted: Option<(usize, String)> =
+            self.vms.iter().enumerate().find_map(|(k, v)| v.st.borrow_mut().focus_request.take().map(|id| (k, id)));
+        let held = self.modal().is_some();
+        let wanted =
+            wanted.filter(|(k, id)| !held || self.vms[*k].st.borrow().windows.iter().any(|w| w.id == *id && w.modal));
+        if let Some((k, id)) = wanted {
+            for (j, vm) in self.vms.iter().enumerate() {
+                for win in vm.st.borrow_mut().windows.iter_mut() {
+                    let focus = j == k && win.id == id && win.open;
+                    if win.focus != focus || (focus && !win.raise) {
+                        win.focus = focus;
+                        win.raise |= focus;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether the focus grant raised this window since the last call, and clears the ask (the modern UI raises it).
+    pub(in crate::client) fn take_raise(&self, mod_id: &str, win_id: &str) -> bool {
+        for vm in self.vms.iter().filter(|v| v.manifest.id == mod_id) {
+            if let Some(w) = vm.st.borrow_mut().windows.iter_mut().find(|w| w.id == win_id && w.raise) {
+                w.raise = false;
+                return true;
+            }
+        }
+        false
+    }
+
+    pub(super) fn windows_where(
+        &self,
+        keep: impl Fn(&window::Window) -> bool,
+    ) -> Vec<(String, std::rc::Rc<window::Window>)> {
         let mut out = Vec::new();
         if self.all_hidden.get() {
             return out;
         }
         for vm in self.vms.iter().filter(|v| v.suspended.is_none()) {
             for win in vm.st.borrow().windows.iter().filter(|w| keep(w)) {
-                out.push((vm.manifest.id.clone(), win.clone()));
+                out.push((vm.manifest.id.clone(), win.snapshot()));
             }
         }
         out
@@ -4491,7 +4651,10 @@ pub(super) fn window_click(w: &mut World, mod_id: &str, win_id: &str, click: sup
                 if win.focus && !this {
                     ended.extend(win.end_edit().into_iter().map(|e| (vm.manifest.id.clone(), win.id.clone(), e)));
                 }
-                win.focus = this;
+                // Written only on a change: a write copies a window the UI still holds this frame (window::Shared).
+                if win.focus != this {
+                    win.focus = this;
+                }
             }
             if this {
                 out = Some(click.apply(win));
@@ -4595,6 +4758,26 @@ pub(super) fn wheel_classic(w: &World, p: (f32, f32), notches: i32) -> bool {
     false
 }
 
+/// The pointer over any open classic mod window (an open dropdown's list included): drawn over the game's windows,
+/// the mouse there is the mod's alone.
+pub(super) fn over_classic(w: &World, p: (f32, f32)) -> bool {
+    classic_places(w).iter().any(|(v, id, x, y)| {
+        w.lua.vms[*v].st.borrow().windows.iter().find(|win| win.id == *id).is_some_and(|win| {
+            let (ww, wh) = win.classic_reach();
+            p.0 >= *x && p.1 >= *y && p.0 < x + ww && p.1 < y + wh
+        })
+    })
+}
+
+/// A classic mod window holds the pointer: a press or a canvas drag on it goes on until the button comes up, wherever
+/// the pointer is.
+pub(super) fn holds_pointer(w: &World) -> bool {
+    w.lua
+        .vms
+        .iter()
+        .any(|vm| vm.st.borrow().windows.iter().any(|win| win.open && (win.drag.is_some() || win.press.is_some())))
+}
+
 /// The pointer on the classic mod windows (the topmost under it); whether it is over a control.
 pub(super) fn pointer_classic(
     w: &mut World,
@@ -4620,8 +4803,16 @@ pub(super) fn pointer_classic(
         }
     }
     w.lua.ui_events.extend(left);
+    // A window holding the pointer (a press or a canvas drag on it) is the only one it reaches until the button comes
+    // up: neither a window over it nor a modal opened meanwhile takes the release.
+    let holds = |w: &World, v: usize, id: &str| {
+        w.lua.vms[v].st.borrow().windows.iter().any(|x| x.id == id && (x.drag.is_some() || x.press.is_some()))
+    };
+    let holder = places.iter().position(|(v, id, _, _)| holds(w, *v, id));
     // An open modal window is the only one the pointer reaches; a click outside a popup closes it.
-    if let Some((k, mid)) = w.lua.modal() {
+    if holder.is_none()
+        && let Some((k, mid)) = w.lua.modal()
+    {
         places.retain(|(v, id, _, _)| *v == k && *id == mid);
         let inside = places.first().is_some_and(|(v, id, x, y)| {
             let (ww, wh) = w.lua.vms[*v]
@@ -4637,6 +4828,23 @@ pub(super) fn pointer_classic(
             close_popup(w, k, &mid);
             return true;
         }
+    }
+    if let Some(k) = holder {
+        let keep = places.swap_remove(k);
+        // The others still close an open dropdown on a click off them.
+        if clicked || right {
+            for (v, id, x, y) in &places {
+                let mut st = w.lua.vms[*v].st.borrow_mut();
+                let Some(win) = st.windows.iter_mut().find(|win| win.id == *id) else { continue };
+                let (wx, wy) = win.classic_reach();
+                if (p.0 < *x || p.1 < *y || p.0 >= x + wx || p.1 >= y + wy)
+                    && let Some(d) = win.drop_open()
+                {
+                    win.drop_close(d);
+                }
+            }
+        }
+        places = vec![keep];
     }
     for (v, id, x, y) in places.into_iter().rev() {
         let (hover, ev, se, mod_id) = {
@@ -4656,9 +4864,11 @@ pub(super) fn pointer_classic(
             let (hover, ev, se) = win.pointer_classic(gu, x, y, p, moved, clicked, right, held);
             (hover, ev, se, vm.manifest.id.clone())
         };
-        // A click on a window gives it the focus (not a HUD's).
+        // A click on a window gives it the focus (not a HUD's, nor a window under an open modal: the release of a press
+        // that began before the modal opened).
         let hud = w.lua.vms[v].st.borrow().windows.iter().any(|x| x.id == id && x.hud);
-        if clicked && !hud {
+        let under_modal = w.lua.modal().is_some_and(|(k, mid)| k != v || mid != id);
+        if clicked && !hud && !under_modal {
             let mut ended = Vec::new();
             for (j, vm) in w.lua.vms.iter().enumerate() {
                 for win in vm.st.borrow_mut().windows.iter_mut() {

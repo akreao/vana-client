@@ -3,6 +3,7 @@
 //! the name dictionary the character creator reads is copied (poldic.rs).
 
 use crate::cabx;
+use crate::lock::Locked;
 use crate::msi_db::{Database, DirResolver};
 use anyhow::{Context, Result, anyhow, bail};
 use std::collections::HashMap;
@@ -25,7 +26,7 @@ pub struct Progress {
 
 impl Progress {
     fn begin(&self, phase: impl Into<String>, total: u64) {
-        *self.phase.lock().unwrap() = phase.into();
+        *self.phase.locked() = phase.into();
         self.done.store(0, Ordering::Relaxed);
         self.total.store(total, Ordering::Relaxed);
     }
@@ -73,8 +74,7 @@ fn unpack_rar(
         archive = if entry.is_file() && wanted(&entry.filename) {
             let (name, size) = (entry.filename.clone(), entry.unpacked_size);
             log::info!("unpacking {}", name.display());
-            *progress.phase.lock().unwrap() =
-                format!("Unpacking {}", name.file_name().unwrap_or_default().to_string_lossy());
+            *progress.phase.locked() = format!("Unpacking {}", name.file_name().unwrap_or_default().to_string_lossy());
             let next = header.extract_with_base(staging)?;
             progress.done.fetch_add(size, Ordering::Relaxed);
             next
@@ -242,6 +242,6 @@ pub fn install(opts: &Options, progress: Arc<Progress>) -> Result<()> {
     if unpacked && !opts.keep_staging {
         std::fs::remove_dir_all(&opts.staging).ok();
     }
-    *progress.phase.lock().unwrap() = "Installed".into();
+    *progress.phase.locked() = "Installed".into();
     Ok(())
 }

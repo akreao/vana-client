@@ -4,13 +4,19 @@
 use crate::dat::DatIndex;
 use crate::dat::font::{Font, Quality, encode_sjis};
 use crate::dat::msg::{Messages, group_file};
-use crate::dat::ui::{LOBBY_US, SpriteLib, UiFile, WINDOW_STYLE_BASE, companions};
+use crate::dat::ui::{SpriteLib, UiFile, WINDOW_STYLE_BASE, companions};
 use crate::render::Gpu;
 use crate::render::mtext::{self, Face};
 use crate::render::screens::{self, HudState, LOBBY_CLEAR, TextSlot, TitleState};
 use crate::render::ui::{UiBatch, UiRenderer};
 use anyhow::{Context, Result};
 use std::time::Instant;
+
+/// FUN_1025ccf0's tail for the log and event lines (FUN_1012b980) and for text boxes (FUN_10158200 / FUN_101582a0).
+const TAIL_LINES: usize = 0x18;
+const TAIL_BOX: usize = 0x14;
+/// Their buffers (0x200; the log's are 0x7ff / 0x1ff): the byte cap no line comes near.
+const LINE_BUFFER: usize = 0x200;
 
 /// Texture name the font atlas is uploaded under (cannot clash with a DAT name).
 const ATLAS: &str = "\0font atlas";
@@ -123,8 +129,9 @@ impl GameUiData {
     /// With the font quality of Config-tool 0036.
     pub fn load_with(index: &DatIndex, ffximain: &[u8], quality: Quality) -> Result<Self> {
         let parse = |id: u32| -> Result<UiFile> { UiFile::parse(&index.read(id)?) };
-        let mut lobby = parse(LOBBY_US)?;
-        for &c in companions(LOBBY_US) {
+        let lobby_file = crate::dat::ui::lobby_file();
+        let mut lobby = parse(lobby_file)?;
+        for &c in companions(lobby_file) {
             lobby.absorb(parse(c)?, true);
         }
         match parse(crate::dat::ui::MAP_BACKDROP) {
@@ -150,11 +157,12 @@ impl GameUiData {
         }
         let style =
             parse(WINDOW_STYLE_BASE)?.libs.into_iter().next().context("window style file has no sprite library")?;
-        let font = Font::load(index, ffximain, 1, quality)?;
+        let lang = crate::dat::lang::files() as u8;
+        let font = Font::load(index, ffximain, lang, quality)?;
         let t = crate::dat::tables::of(ffximain)?;
-        let menu_msgs = group_file(ffximain, 1, 0x0e)
+        let menu_msgs = group_file(ffximain, lang, 0x0e)
             .and_then(|f| Messages::load(index, f).map_err(|e| log::warn!("menu messages: {e:#}")).ok());
-        let title_msgs = group_file(ffximain, 1, 0x0d)
+        let title_msgs = group_file(ffximain, lang, 0x0d)
             .and_then(|f| Messages::load(index, f).map_err(|e| log::warn!("title messages: {e:#}")).ok());
         let cmd_help = crate::dat::battle::va_bytes(ffximain, t.cmd_help, 0x1c * 12)
             .map_or(Vec::new(), |b| b.chunks(12).map(|r| u16::from_le_bytes([r[0], r[1]])).collect());
@@ -163,7 +171,7 @@ impl GameUiData {
             .filter_map(|g| {
                 Some((
                     g,
-                    group_file(ffximain, 1, g).and_then(|f| {
+                    group_file(ffximain, lang, g).and_then(|f| {
                         Messages::load(index, f).map_err(|e| log::warn!("message group {g:#x}: {e:#}")).ok()
                     })?,
                 ))
@@ -172,14 +180,14 @@ impl GameUiData {
         let stats = crate::dat::battle::va_bytes(ffximain, t.stats, 8 * 6 * 7).map(<[u8]>::to_vec).unwrap_or_default();
         let map_regions = super::map::regions(ffximain);
         let region_groups = super::map::region_groups(ffximain);
-        let aug_text = crate::dat::msg::slot_file(ffximain, 1, 0x1b)
+        let aug_text = crate::dat::msg::slot_file(ffximain, lang, 0x1b)
             .and_then(|f| Messages::load(index, f).map_err(|e| log::warn!("augment texts: {e:#}")).ok());
-        let servers = crate::dat::msg::group_file(ffximain, 1, 0x16).and_then(|f| Messages::load(index, f).ok());
+        let servers = crate::dat::msg::group_file(ffximain, lang, 0x16).and_then(|f| Messages::load(index, f).ok());
         let aug_tables = super::augment::AugTables::find(ffximain);
         let f81 = index.read(81).ok();
         let mnc2 = f81.as_deref().and_then(super::augment::mnc2);
         let mon_order = f81.as_deref().map(super::monstrosity::order).unwrap_or_default();
-        let item_fmt = crate::dat::msg::slot_file(ffximain, 1, 0x1c)
+        let item_fmt = crate::dat::msg::slot_file(ffximain, lang, 0x1c)
             .and_then(|f| Messages::load(index, f).map_err(|e| log::warn!("item info formats: {e:#}")).ok());
         let area_names = Messages::load(index, 0xd8aa).map_err(|e| log::error!("area names (group 4): {e:#}")).ok();
         let errors = crate::dat::battle::va_bytes(ffximain, t.errors, 16 * 128)
@@ -196,7 +204,7 @@ impl GameUiData {
             .collect();
         let (registry, groups, layers) = menu_registry(ffximain);
         let status = [0x3a, 0x3b].map(|slot| {
-            crate::dat::msg::current_slot_file(ffximain, 1, slot)
+            crate::dat::msg::current_slot_file(ffximain, lang, slot)
                 .and_then(|f| index.read(f).map_err(|e| log::warn!("status info {f}: {e:#}")).ok())
                 .map(std::sync::Arc::new)
         });
@@ -360,7 +368,7 @@ pub struct GameUi {
     stale: Vec<String>,
     /// Wrapped lines by (text, widths, TrueType text): windows wrap the same text every frame, and a wrap measures its
     /// line again for every word (wrap_part).
-    wrapped: std::cell::RefCell<std::collections::HashMap<u64, (String, [u32; 2], bool, Vec<String>)>>,
+    wrapped: std::cell::RefCell<std::collections::HashMap<u64, (String, [u32; 3], bool, Vec<(usize, String)>)>>,
     /// Images made for a while (name plates' rasters): when each was last drawn; unseen for TEMP_KEEP, stale.
     temp_seen: std::collections::HashMap<String, std::time::Instant>,
     /// When temp_seen was last looked over.
@@ -370,11 +378,17 @@ pub struct GameUi {
     /// The pointer is over an enabled item (mouse cursor kind 1); set by the windows' hit tests, cleared when the
     /// pointer moves.
     pub hover: std::cell::Cell<bool>,
+    /// The children drawn in state 5 this frame by window (disabled_children), for the hand (winhits::takes).
+    off_parts: std::collections::HashMap<String, Vec<u16>>,
+    /// The window child under the pointer last frame and this frame, and the left button (winhits::takes).
+    pub ptr_hover: std::cell::RefCell<super::winhits::Hover>,
     /// Ours: the retail windows the modern layer draws as one column this frame, their children top to bottom.
     pub modern_order: std::cell::RefCell<std::collections::HashMap<String, Vec<u16>>>,
     /// The focused lists' bars drawn this frame, and a press held on one (client/scrollbar.rs).
     pub bars: Vec<super::scrollbar::Site>,
     pub bar_hold: Option<super::scrollbar::Hold>,
+    /// The frames of the windows drawn this frame, in draw order (`drawn_since`).
+    drawn_frames: Vec<[f32; 4]>,
     /// Window open / close animations by menu name, the UI frame number and the tick clock; `open_ticks` is N
     /// (DAT_1036c190: 25, 0 with config 0xa4).
     anims: std::collections::HashMap<String, WinAnim>,
@@ -539,9 +553,12 @@ impl GameUi {
             temp_swept: std::time::Instant::now(),
             style_saved: Default::default(),
             hover: Default::default(),
+            off_parts: Default::default(),
+            ptr_hover: Default::default(),
             modern_order: Default::default(),
             bars: Vec::new(),
             bar_hold: None,
+            drawn_frames: Vec::new(),
             anims: Default::default(),
             contents: Default::default(),
             anim_frame: 1,
@@ -588,9 +605,19 @@ impl GameUi {
         }
         (a.seen, a.shape) = (frame, shape.clone());
         if a.open <= 0.0 {
+            // Only a window at its place counts as drawn there (an opening one zooms from its centre).
+            if let Shape::Frame(r) = shape {
+                self.drawn_frames.push(r);
+            }
             return true;
         }
         let f = ((n - a.open) / n).max(0.0);
+        // An opening window covers what its zoom paints (zoom_frame's f^2 frame about the centre).
+        if let Shape::Frame([x, y, w, h]) = shape {
+            let s = f * f;
+            let at = |p: f32, d: f32| (p - (d / 2.0).trunc() * (s - 1.0)).trunc();
+            self.drawn_frames.push([at(x, w), at(y, h), w * s, h * s]);
+        }
         self.zoom(&shape, f);
         false
     }
@@ -682,6 +709,7 @@ impl GameUi {
         if !reshown {
             fresh.extend(self.walk.now.keys().filter(|k| !self.walk.last.contains_key(*k)).cloned());
         }
+        self.drawn_frames.clear();
         self.run_walk();
         let hands = std::mem::take(&mut self.batch.hands);
         // A window's hand is the last one it drew; with no focus window, the last one drawn.
@@ -800,12 +828,28 @@ impl GameUi {
         self.batch.set_hand(name, child, rect);
     }
 
+    /// `focus_child` for layout child `child` of `name` laid out at (wx, wy), drawn or hidden: a window whose cursor
+    /// (+0x4c) rests on a child it does not draw still aims the focus warp at it (FUN_1011c080 takes any type-1 part).
+    pub fn focus_layout_child(&mut self, name: &str, child: u16, wx: f32, wy: f32) {
+        let rect = self
+            .data
+            .lobby
+            .menu(name)
+            .and_then(|m| m.elements.iter().skip(1).find(|e| e.id == child))
+            .map(|e| [wx + e.x as f32, wy + e.y as f32, e.w as f32, e.h as f32]);
+        if let Some(r) = rect {
+            self.focus_child(name, child, r);
+        }
+    }
+
     /// Window code moved `name`'s cursor to `child` and puts the pointer on it: FUN_1011a240(child, 1) (the hand-over's
     /// and the player trade's Escape and OK / Cancel steps) and the title's Escape (cursor set, then FUN_10126000).
     /// Both give +0x48 = 18, the glide of a focus change; the pointer goes to the child's centre as soon as the window
     /// draws its hand there. Call it only when the cursor changed (FUN_1011a240 does nothing for the same child).
     pub fn warp_to_cursor(&self, name: &str, child: u16) {
         *self.cursor_warp.borrow_mut() = Some((crate::dat::ui::norm_name(name.as_bytes()), child, false));
+        // The later pointer move wins (each is FUN_10125b90 at once in retail).
+        self.part_warp.set(None);
     }
 
     /// Window code set `name`'s cursor on a part whose rect it gives and put the pointer there (FUN_1011a240(child, 1)
@@ -814,6 +858,7 @@ impl GameUi {
     /// to the selected row with no pointer move).
     pub fn warp_to_part(&self, rect: [f32; 4]) {
         self.part_warp.set(Some(centre(rect)));
+        *self.cursor_warp.borrow_mut() = None;
     }
 
     /// The pointer warp a focus change or a window's cursor move asked for at the last frame's end (UI pixels), once.
@@ -883,6 +928,28 @@ impl GameUi {
     /// A window's registry layer (window +0x60); unlisted windows are 0.
     fn layer(&self, name: &str) -> u8 {
         self.data.layers.get(crate::dat::ui::norm_name(name.as_bytes()).as_str()).copied().unwrap_or(0)
+    }
+
+    /// How many framed windows were drawn so far this frame, to mark a point in the draw order.
+    pub fn drawn_count(&self) -> usize {
+        self.drawn_frames.len()
+    }
+
+    /// The frames of the windows drawn this frame after mark `from` (`drawn_count`).
+    pub fn drawn_since(&self, from: usize) -> Vec<[f32; 4]> {
+        self.drawn_frames.get(from..).map_or(Vec::new(), <[_]>::to_vec)
+    }
+
+    /// The window that has the focus (+0x54, walk key), as the last frame's end left it.
+    pub fn focused(&self) -> Option<&str> {
+        self.focus_state.was.as_ref().map(|w| w.0.as_str())
+    }
+
+    /// The raise stamp of window `name` while it stays open (this frame's walk, else the last one's): a new number for
+    /// each open, None while it is shut.
+    pub fn open_stamp(&self, name: &str) -> Option<i64> {
+        let key = crate::dat::ui::norm_name(name.as_bytes());
+        self.walk.now.get(&key).or_else(|| self.walk.last.get(&key)).copied()
     }
 
     /// A window the last walk had open and did not suspend; unlike `want`, it does not open it.
@@ -993,6 +1060,13 @@ impl GameUi {
                     }
                 }
                 '\0' => break,
+                // The auto-translate brackets (EF 27 / EF 28, gaiji the TrueType face lacks): a green "{" and a red
+                // "}", as the modern chat log draws them.
+                '\u{E008}' | '\u{E009}' => {
+                    let (t, col) = if c == '\u{E008}' { ("{", [0x28, 0x68, 0x28]) } else { ("}", [0x28, 0x28, 0x70]) };
+                    out.push((t.to_string(), [col[0], col[1], col[2], base[3]]));
+                    out.push((String::new(), out[out.len() - 2].1));
+                }
                 // The same codes kept as one character (decode_sjis), as event item names.
                 c if (crate::dat::font::CODE_BASE..crate::dat::font::CODE_BASE + 0x200).contains(&(c as u32)) => {
                     let k = c as u32 - crate::dat::font::CODE_BASE;
@@ -1180,6 +1254,20 @@ impl GameUi {
         self.text(s, x, y, 0, tint.to_le_bytes());
     }
 
+    /// Game-font text cut to `max` px (FUN_10191c70 with its last argument 0): the last character goes while the
+    /// text (FUN_10191e00) is wider than `max - 14`; a cut text has "..." (DAT_1036d9dc) drawn right after it.
+    pub fn text_cut(&mut self, s: &str, x: f32, y: f32, max: f32, tint: u32) {
+        let mut t = s.to_string();
+        while !t.is_empty() && self.text_width(&t) > max - 14.0 {
+            t.pop();
+        }
+        self.text(&t, x, y, 0, tint.to_le_bytes());
+        if t.len() < s.len() {
+            let wd = self.text_width(&t);
+            self.text("...", x + wd, y, 0, tint.to_le_bytes());
+        }
+    }
+
     /// Sprite-font text fitted into `max` px (FUN_101c04c0).
     pub fn shape_fit(&mut self, s: &str, x: f32, y: f32, max: f32, tint: u32) -> f32 {
         screens::push_shape_fit(&mut self.batch, &self.data.lobby, &encode_sjis(s), x, y, max, tint)
@@ -1212,6 +1300,7 @@ impl GameUi {
     /// kind 0 or 4 wins; a kind-4 sprite at full tint (cursor 0x80805020 at +1 px), a kind-0 one dimmed to 0x30808080
     /// (cursor 0x40402810 at +1 px).
     pub fn disabled_children(&mut self, name: &str, x: f32, y: f32, off: &[u16], cursor: Option<u16>) {
+        self.off_parts.insert(name.to_string(), off.to_vec());
         let Some(l) = self.layout(name).cloned() else { return };
         for e in l.elements.iter().skip(1).filter(|e| off.contains(&e.id)) {
             let Some(r) = e.refs.iter().rfind(|r| r.kind == 0 || r.kind == 4) else { continue };
@@ -2552,24 +2641,40 @@ impl GameUi {
         })
     }
 
+    /// Child `id` of window `name` was drawn in state 5 (disabled_children): the pointer over it is no hand.
+    pub fn disabled_part(&self, name: &str, id: u16) -> bool {
+        self.off_parts.get(name).is_some_and(|off| off.contains(&id))
+    }
+
+    /// Before the windows draw: forget last frame's state-5 children.
+    pub fn clear_disabled_parts(&mut self) {
+        self.off_parts.clear();
+    }
+
     pub fn window_rect(&self, name: &str, w: f32, h: f32) -> Option<[f32; 4]> {
         let dy = self.stack_dy(name, w, h);
         screens::window_rect(&self.data.lobby, name, w, h).map(|[x, y, rw, rh]| [x, y + dy, rw, rh])
     }
 
-    /// Splits a line into pieces no wider than `max`, at each '\n' and at spaces where possible.
+    /// A text box's lines (FUN_10158200 / FUN_101582a0, tail 0x14): the game's line breaker, each line no wider than
+    /// `max`; a colour carries over as `wrap_indent` carries it.
     pub fn wrap(&self, line: &str, max: f32) -> Vec<String> {
-        self.wrap_indent(line, max, false)
+        self.wrap_cut(line, max, false, TAIL_BOX)
     }
 
-    /// FUN_1012a4f0: each wrapped line starts with the last `1e xx` before it, so a colour carries over; with `indent`
-    /// (wrapper mode 1) a continuation line starts with a full-width space and is narrower by its width.
+    /// FUN_1012b980 (the log and event lines, tail 0x18): each wrapped line starts with the last `1e xx` before it, so a
+    /// colour carries over; with `indent` (wrapper mode 1) a continuation line starts with a full-width space and is
+    /// narrower by its width.
     pub fn wrap_indent(&self, line: &str, max: f32, indent: bool) -> Vec<String> {
+        self.wrap_cut(line, max, indent, TAIL_LINES)
+    }
+
+    fn wrap_cut(&self, line: &str, max: f32, indent: bool, tail: usize) -> Vec<String> {
         let code = |c: &char| (crate::dat::font::CODE_BASE..crate::dat::font::CODE_BASE + 0x100).contains(&(*c as u32));
         let line_colour = crate::dat::font::colour_code(1);
         let mut cur = line_colour;
         let mut out = Vec::new();
-        for (_, piece) in self.wrap_spans(line, max, indent) {
+        for (_, piece) in self.spans_cut(line, max, indent, tail) {
             let mut s = if out.is_empty() || !indent { String::new() } else { "\u{3000}".to_string() };
             if cur != line_colour {
                 s.push(cur);
@@ -2584,25 +2689,18 @@ impl GameUi {
     /// The wrapped lines of `line` as `wrap_indent` cuts them, without its prefixes, with the byte offset each starts
     /// at.
     pub fn wrap_spans(&self, line: &str, max: f32, indent: bool) -> Vec<(usize, String)> {
-        let rest = if indent { max - self.text_width("\u{3000}") } else { max };
-        let mut out = Vec::new();
-        let mut base = 0;
-        for (k, part) in line.split('\n').enumerate() {
-            let mut off = 0;
-            for piece in self.wrap_part(part, if k == 0 { max } else { rest }, rest) {
-                let at = part[off..].find(piece.as_str()).map_or(off, |i| off + i);
-                off = at + piece.len();
-                out.push((base + at, piece));
-            }
-            base += part.len() + 1;
-        }
-        out
+        self.spans_cut(line, max, indent, TAIL_LINES)
     }
 
-    /// Words to lines: the first at most `first` wide, the others `rest` (wrapped once for the same text and widths).
-    fn wrap_part(&self, line: &str, first: f32, rest: f32) -> Vec<String> {
+    fn spans_cut(&self, line: &str, max: f32, indent: bool, tail: usize) -> Vec<(usize, String)> {
+        let rest = if indent { max - self.text_width("\u{3000}") } else { max };
+        self.wrap_part(line, max, rest, tail)
+    }
+
+    /// The lines of `line`: the first at most `first` wide, the others `rest` (cut once for the same text and widths).
+    fn wrap_part(&self, line: &str, first: f32, rest: f32, tail: usize) -> Vec<(usize, String)> {
         use std::hash::{Hash, Hasher};
-        let (widths, ttf) = ([first.to_bits(), rest.to_bits()], self.batch.ttf_text());
+        let (widths, ttf) = ([first.to_bits(), rest.to_bits(), tail as u32], self.batch.ttf_text());
         let mut h = std::collections::hash_map::DefaultHasher::new();
         (line, widths, ttf).hash(&mut h);
         let key = h.finish();
@@ -2613,7 +2711,7 @@ impl GameUi {
         {
             return e.3.clone();
         }
-        let out = self.wrap_words(line, first, rest);
+        let out = self.break_lines(line, first, rest, tail);
         let mut c = self.wrapped.borrow_mut();
         if c.len() >= 512 {
             c.clear();
@@ -2622,33 +2720,16 @@ impl GameUi {
         out
     }
 
-    fn wrap_words(&self, line: &str, first: f32, rest: f32) -> Vec<String> {
-        let mut out = Vec::new();
-        let mut cur = String::new();
-        let max = |out: &Vec<String>| if out.is_empty() { first } else { rest };
-        for word in line.split_inclusive(' ') {
-            if !cur.is_empty() && self.text_width(&(cur.clone() + word.trim_end())) > max(&out) {
-                out.push(std::mem::take(&mut cur).trim_end().to_string());
-            }
-            cur.push_str(word);
-            // A single word wider than the line breaks anywhere.
-            while self.text_width(cur.trim_end()) > max(&out) && cur.chars().count() > 1 {
-                let mut head = String::new();
-                for ch in cur.chars() {
-                    if self.text_width(&format!("{head}{ch}")) > max(&out) {
-                        break;
-                    }
-                    head.push(ch);
-                }
-                if head.is_empty() {
-                    break;
-                }
-                cur = cur[head.len()..].to_string();
-                out.push(head);
-            }
-        }
-        if !cur.trim_end().is_empty() || out.is_empty() {
-            out.push(cur.trim_end().to_string());
+    /// The game's line breaker (FUN_1025ccf0, dat::linebreak) over `line` until the text ends: each line with the
+    /// byte offset in `line` it starts at.
+    fn break_lines(&self, line: &str, first: f32, rest: f32, tail: usize) -> Vec<(usize, String)> {
+        use crate::dat::linebreak;
+        let width = |s: &str| self.text_width(s);
+        let max = |k: usize| if k == 0 { first } else { rest };
+        let cut = linebreak::StrCut { width: &width, max: &max, tail, cap: LINE_BUFFER, hang: false, resume: true };
+        let mut out: Vec<_> = linebreak::str_lines(line, &cut).into_iter().map(|l| (l.start, l.text(line))).collect();
+        if out.is_empty() {
+            out.push((0, String::new()));
         }
         out
     }

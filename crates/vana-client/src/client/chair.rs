@@ -123,8 +123,12 @@ fn axes(w: &World, id: u32) -> Option<Vec3> {
 /// Per frame, before the motion files: seats for new sitters, each chair's model, `chi0` once the files are in, the
 /// chair's `init` and scale; a finished stand-up removes the chair (ours then sends one more "/sitchair off").
 pub fn update(w: &mut World) {
-    let mut sitters: Vec<u32> =
-        w.entities.iter().filter(|(id, e)| **id != w.my_id && is_chair(e.motion.status)).map(|(id, _)| *id).collect();
+    let mut sitters: Vec<u32> = w
+        .entities
+        .iter()
+        .filter(|(id, e)| **id != w.my_id && is_chair(e.motion.status) && !super::event::is_parked(w, **id))
+        .map(|(id, _)| *id)
+        .collect();
     if is_chair(w.my_motion.status) {
         sitters.push(w.my_id);
     }

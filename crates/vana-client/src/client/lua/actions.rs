@@ -130,8 +130,13 @@ fn check_target(lua: &Lua, t: &Target) -> mlua::Result<()> {
     }
     let w = super::api::world(lua)?;
     let here = match s.parse::<u32>() {
-        Ok(id) => id == w.my_id || w.entities.contains_key(&id),
-        Err(_) => s.eq_ignore_ascii_case(&w.name) || w.entities.values().any(|e| e.name.eq_ignore_ascii_case(s)),
+        Ok(id) => id == w.my_id || (w.entities.contains_key(&id) && !super::super::event::is_parked(w, id)),
+        Err(_) => {
+            s.eq_ignore_ascii_case(&w.name)
+                || w.entities
+                    .iter()
+                    .any(|(id, e)| e.name.eq_ignore_ascii_case(s) && !super::super::event::is_parked(w, *id))
+        }
     };
     if here { Ok(()) } else { Err(mlua::Error::runtime(format!("no {s} in the zone"))) }
 }
@@ -274,7 +279,10 @@ pub(super) fn apply(w: &mut World, gu: Option<&GameUi>, a: Action) {
         }
         Action::Menu(page, id) => w.menu_click = Some((page, id)),
         Action::Invite(name) => {
-            let here = w.entities.values().any(|e| e.name.eq_ignore_ascii_case(&name));
+            let here = w
+                .entities
+                .iter()
+                .any(|(id, e)| e.name.eq_ignore_ascii_case(&name) && !super::super::event::is_parked(w, *id));
             if here {
                 textcmd::run_unfiltered(w, &format!("/pcmd add {name}"), textcmd::Mode::Internal);
             } else {

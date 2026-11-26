@@ -1691,9 +1691,10 @@ pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
 }
 
 /// The mouse on the focused window (winhits.rs): the menus and shopsell as the generic window, auclist / auchisto's
-/// rows and the sell list's as lists (hover moves the cursor, a click on it is Enter, a right click Escape); moneyctr
+/// rows and the sell list's as lists (a row takes the cursor by winhits::takes, a click on it is Enter, a right click
+/// Escape); moneyctr
 /// as retail's (winhits::ctr).
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     use super::winhits::generic;
     // The modern layer draws these and takes their mouse.
     if w.modern {
@@ -1715,7 +1716,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
             sel,
             1..=2,
             p,
-            moved,
             clicked,
             right,
             |w, id| {
@@ -1737,7 +1737,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                 sel,
                 1..=last,
                 p,
-                moved,
                 clicked,
                 right,
                 |w, id| {
@@ -1757,7 +1756,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                 cursor,
                 1..=ROWS as u16,
                 p,
-                moved,
                 clicked,
                 right,
                 |w, id| {
@@ -1777,7 +1775,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                 cursor,
                 1..=ROWS as u16,
                 p,
-                moved,
                 clicked,
                 right,
                 |w, id| {
@@ -1800,14 +1797,14 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
             if !on || row < 0.0 || row as usize >= crate::inventory::VISIBLE_ROWS || scroll + row as usize >= n {
                 return;
             }
-            gu.hover.set(true);
             let row = row as usize;
-            if row != cursor && (moved || clicked) {
+            let takes = super::winhits::takes(gu, "menu    inventor", row as u16 + 1, on);
+            if row != cursor && takes {
                 if let Some(a) = w.auction.as_mut() {
                     set_top(a, Layer::Sell(scroll, row));
                 }
                 w.sounds.push(Ui::Cursor as u32);
-            } else if clicked {
+            } else if clicked && row == cursor {
                 key(w, egui::Key::Enter);
             }
         }
@@ -1891,7 +1888,15 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         }
     }
     if let Some((step, max, v, _)) = a.money
-        && let Some(win) = gu.lobby_window_off(MONEYCTR, sw, sh, (0.0, 0.0), Some(1), true, &[])
+        && let Some(win) = gu.lobby_window_off(
+            MONEYCTR,
+            sw,
+            sh,
+            (0.0, 0.0),
+            Some(super::winhits::ctr_cursor(w, gu, MONEYCTR)),
+            true,
+            &[],
+        )
     {
         super::winhits::record(w, MONEYCTR, &win);
         super::post::draw_moneyctr(gu, win.frame, step, max, v);

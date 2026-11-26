@@ -512,7 +512,7 @@ pub(super) fn set_row(w: &mut World, k: usize) -> bool {
 /// menus and is not busy (FUN_10127770: +0x4d == 2, FUN_10087070(0) clear) and the pointer is anywhere inside the
 /// other list (FUN_1011a0a0, a plain rectangle test). A resting pointer counts: after Num+ the keys come straight back,
 /// and with a pick held the refusal buzzes each frame, as retail does.
-pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool, right: bool) {
     // The modern layer draws them and takes their mouse.
     if w.modern {
         return;
@@ -526,7 +526,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
             sel,
             1..=7,
             p,
-            moved,
             clicked,
             right,
             |w, id| {
@@ -556,7 +555,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
         cursor as u16 + 1,
         1..=rows as u16,
         p,
-        moved,
         clicked,
         right,
         |w, id| {

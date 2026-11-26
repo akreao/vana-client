@@ -92,6 +92,16 @@ pub struct Engine {
     settle: wgpu::ComputePipeline,
 }
 
+/// One pass's views of its inputs (color, motion, reactive, composition, output, depth) and the settle group over
+/// them, kept by the pass (the upscale and the neural rendering each have one) and made again only when a texture
+/// changes. The pass owning it lets a dropped upscaler free its output.
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+pub struct Views {
+    textures: [wgpu::Texture; 6],
+    views: [wgpu::TextureView; 6],
+    group: wgpu::BindGroup,
+}
+
 /// Entry points of the library at `library_path` without a device (Settings asks before any frame): (upscale, nr).
 #[cfg(any(target_os = "linux", windows))]
 pub fn probe() -> Result<(bool, bool), String> {
@@ -279,34 +289,43 @@ impl Engine {
         inp: &Inputs,
         out: &wgpu::Texture,
         f: Dispatch,
+        cache: &mut Option<Views>,
     ) -> bool {
         use ash::vk::Handle;
         use wgpu::hal::api::Vulkan;
-        let v = |t: &wgpu::Texture| t.create_view(&Default::default());
-        let (color, motion, reactive, composition, output) =
-            (v(inp.color), v(inp.motion), v(inp.reactive), v(inp.composition), v(out));
-        let depth = inp
-            .depth
-            .create_view(&wgpu::TextureViewDescriptor { aspect: wgpu::TextureAspect::DepthOnly, ..Default::default() });
-        let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("upscale settle"),
-            layout: &self.settle.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&color) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&motion) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&reactive) },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&composition) },
-                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&depth) },
-                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&output) },
-            ],
-        });
+        let textures = [inp.color, inp.motion, inp.reactive, inp.composition, out, inp.depth];
+        if cache.as_ref().is_none_or(|c| c.textures.iter().zip(textures).any(|(a, b)| a != b)) {
+            let v = |t: &wgpu::Texture| t.create_view(&Default::default());
+            let depth = inp.depth.create_view(&wgpu::TextureViewDescriptor {
+                aspect: wgpu::TextureAspect::DepthOnly,
+                ..Default::default()
+            });
+            let views = [v(inp.color), v(inp.motion), v(inp.reactive), v(inp.composition), v(out), depth];
+            let entry =
+                |binding, view| wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(view) };
+            let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("upscale settle"),
+                layout: &self.settle.get_bind_group_layout(0),
+                entries: &[
+                    entry(0, &views[0]),
+                    entry(1, &views[1]),
+                    entry(2, &views[2]),
+                    entry(3, &views[3]),
+                    entry(4, &views[5]),
+                    entry(5, &views[4]),
+                ],
+            });
+            *cache = Some(Views { textures: textures.map(|t| t.clone()), views, group });
+        }
+        let Some(Views { views, group, .. }) = cache.as_ref() else { return false };
+        let [color, motion, reactive, composition, output, depth] = views;
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("upscale settle"),
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.settle);
-            pass.set_bind_group(0, &group, &[]);
+            pass.set_bind_group(0, group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
         // The frame so far goes first; the engine's buffer after it.
@@ -314,12 +333,12 @@ impl Engine {
         gpu.queue.submit([prior.finish()]);
         let mut frame = Frame {
             version: ABI_VERSION,
-            color: image(inp.color, &color, SHADER_READ_ONLY_OPTIMAL),
-            depth: image(inp.depth, &depth, DEPTH_STENCIL_READ_ONLY_OPTIMAL),
-            motion: image(inp.motion, &motion, SHADER_READ_ONLY_OPTIMAL),
-            reactive: image(inp.reactive, &reactive, SHADER_READ_ONLY_OPTIMAL),
-            composition: image(inp.composition, &composition, SHADER_READ_ONLY_OPTIMAL),
-            output: image(out, &output, GENERAL),
+            color: image(inp.color, color, SHADER_READ_ONLY_OPTIMAL),
+            depth: image(inp.depth, depth, DEPTH_STENCIL_READ_ONLY_OPTIMAL),
+            motion: image(inp.motion, motion, SHADER_READ_ONLY_OPTIMAL),
+            reactive: image(inp.reactive, reactive, SHADER_READ_ONLY_OPTIMAL),
+            composition: image(inp.composition, composition, SHADER_READ_ONLY_OPTIMAL),
+            output: image(out, output, GENERAL),
             render_size: inp.render,
             output_size: inp.output,
             jitter: inp.jitter,
@@ -356,11 +375,9 @@ impl Engine {
         };
         gpu.queue.submit([raw.finish()]);
         // wgpu tracks the views and textures only through the settle submission, not the engine's raw one: they are
-        // held until all work submitted so far (the engine's buffer included) is done.
-        let keep = (
-            [color, motion, reactive, composition, output, depth],
-            [inp.color, inp.motion, inp.reactive, inp.composition, inp.depth, out].map(|t| t.clone()),
-        );
+        // held until all work submitted so far (the engine's buffer included) is done, past a resize that drops the
+        // cache.
+        let keep = (views.clone(), textures.map(|t| t.clone()));
         gpu.queue.on_submitted_work_done(move || drop(keep));
         if status != Some(0) {
             log::debug!("engine returned {status:?}");
@@ -369,7 +386,15 @@ impl Engine {
     }
 
     #[cfg(not(any(target_os = "linux", windows)))]
-    pub fn run(&self, _: &Gpu, _: &mut wgpu::CommandEncoder, _: &Inputs, _: &wgpu::Texture, _: Dispatch) -> bool {
+    pub fn run(
+        &self,
+        _: &Gpu,
+        _: &mut wgpu::CommandEncoder,
+        _: &Inputs,
+        _: &wgpu::Texture,
+        _: Dispatch,
+        _: &mut Option<Views>,
+    ) -> bool {
         false
     }
 }
@@ -424,6 +449,7 @@ pub fn output_texture(gpu: &Gpu, label: &str, size: [u32; 2]) -> wgpu::Texture {
 pub struct External {
     engine: std::sync::Arc<Engine>,
     output: Option<wgpu::Texture>,
+    views: Option<Views>,
 }
 
 impl External {
@@ -431,7 +457,7 @@ impl External {
         if engine.upscale.is_none() {
             return Err("the engine has no vana_upscale_dispatch".into());
         }
-        Ok(External { engine, output: None })
+        Ok(External { engine, output: None, views: None })
     }
 }
 
@@ -446,7 +472,7 @@ impl Upscaler for External {
             self.output = Some(output_texture(gpu, "upscale external output", inp.output));
         }
         let out = self.output.as_ref()?;
-        self.engine.run(gpu, encoder, inp, out, f).then(|| out.create_view(&Default::default()))
+        self.engine.run(gpu, encoder, inp, out, f, &mut self.views).then(|| out.create_view(&Default::default()))
     }
 }
 

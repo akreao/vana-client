@@ -146,8 +146,8 @@ pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
     moved
 }
 
-/// Mouse *(inf: the paged lists' hover)*: hover moves the cursor to a row.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool) {
+/// Mouse *(inf: the paged lists' hover)*: a row takes the cursor by winhits::takes.
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32)) {
     let Some(c) = w.currencies.as_ref().filter(|c| c.values.is_some()) else { return };
     let Some((x, y)) = gu.window_xy(WINDOW, sw, sh) else { return };
     let n = rows(c.mode).len();
@@ -157,9 +157,9 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
             p.0 >= ex && p.0 < ex + e.w as f32 && p.1 >= ey && p.1 < ey + e.h as f32
         })
     });
-    let Some(row) = hit.map(|e| c.top + e.id as usize - 1).filter(|&r| r < n) else { return };
-    gu.hover.set(true);
-    if moved
+    let Some(e) = hit.filter(|e| c.top + e.id as usize - 1 < n) else { return };
+    let row = c.top + e.id as usize - 1;
+    if super::winhits::takes(gu, WINDOW, e.id, super::winhits::in_frame(gu, WINDOW, sw, sh, p))
         && row != c.cursor
         && let Some(c) = w.currencies.as_mut()
     {

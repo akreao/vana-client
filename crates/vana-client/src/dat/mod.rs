@@ -1,6 +1,7 @@
 //! The game's file system: numeric file ids mapped to ROM*/dir/file.DAT, and the chunk
 //! container most DATs use.
 
+use crate::lock::Locked;
 use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 
@@ -62,6 +63,12 @@ impl DatIndex {
         Ok(Self { root: ffxi_dir.to_path_buf(), entries, overlays })
     }
 
+    /// An index of no files and no mods (tests that never read a file).
+    #[cfg(test)]
+    pub fn empty() -> Self {
+        Self { root: PathBuf::new(), entries: Vec::new(), overlays: None }
+    }
+
     fn overlays(entries: &[(u8, u16)]) -> Option<std::sync::Arc<overlay::Overlays>> {
         use std::sync::{Arc, Mutex, OnceLock};
         let dirs = crate::config::enabled_mod_dirs();
@@ -69,7 +76,7 @@ impl DatIndex {
             return None;
         }
         static SCANNED: OnceLock<Mutex<Option<(Vec<PathBuf>, Arc<overlay::Overlays>)>>> = OnceLock::new();
-        let mut s = SCANNED.get_or_init(Default::default).lock().unwrap();
+        let mut s = SCANNED.get_or_init(Default::default).locked();
         if let Some((d, o)) = s.as_ref()
             && *d == dirs
         {
@@ -209,6 +216,7 @@ pub mod generator;
 pub mod items;
 pub mod journal;
 pub mod lang;
+pub mod linebreak;
 pub mod maze;
 pub mod merits;
 pub mod motionfile;

@@ -225,6 +225,11 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         if !win.open {
             continue;
         }
+        // In front when ui.open asks for it (a command, another window's button, a repeat //calc), as a click on it
+        // brings it there. Only on that ask: a hover or a key moving the focus leaves the windows' order alone.
+        if w.lua.take_raise(&mod_id, &win.id) {
+            p.ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(("modern panel", id.as_str()))));
+        }
         // A click outside a popup closes it.
         if let Some(r) = shown
             && win.popup

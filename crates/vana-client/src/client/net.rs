@@ -1,6 +1,7 @@
 //! The zone session on a separate thread: decodes what the server sends into events and
 //! keeps the session alive with our position. Follows zone changes to the next server.
 
+use crate::lock::Locked;
 use crate::net::lobby::MapLogin;
 use crate::net::map::compress::Codec;
 use crate::net::map::session::{MapSession, SubPacket, build};
@@ -21,6 +22,8 @@ pub enum EntityKind {
 pub struct EntityUpdate {
     /// 0x00D u16 @0x30 (0x10099cd6): the costume, an NPC model id (0 none; FUN_1008cce0).
     pub costume: Option<u16>,
+    /// 0x00D u16 @0x3c without the despawn bit (FUN_10099ae0: actor +0x1fa): the character's pet by ActIndex (0 none).
+    pub pet: Option<u16>,
     pub id: u32,
     pub index: u16,
     pub kind: EntityKind,
@@ -185,6 +188,16 @@ pub struct SelfPlate {
     /// self_asleep. CliPosInitFlag (flags0 bit 3; +0x120 bit 22) is stored by retail and read by nothing.
     pub hide: bool,
     pub asleep: bool,
+    /// Flags3 bit 5 (+0x130 bit 11, 0x1009d534; 0x037 only, so clear from the zone-in until one comes): with our
+    /// team byte one of the PvP teams (`pvp_team`), FUN_1008e4d0 marks for unloading every other player character
+    /// below GM level 3 who is on none of them (event::HideRule::gone).
+    pub pvp_only: bool,
+}
+
+/// The team bytes (+0x1ff) FUN_1008e4d0's PvP mark tests (0x1008e582..0x1008e5cc), ours and the other player's: 2..6
+/// and 0x28..0x2b.
+pub fn pvp_team(team: u8) -> bool {
+    matches!(team, 2..=6 | 0x28..=0x2b)
 }
 
 /// Our own flags at zone-in. s2c 0x00A carries them in 0x00D's layout (Flags0 u32 @0x18, Flags1 @0x20, Flags2 @0x24,
@@ -265,6 +278,7 @@ fn self_plate(p: &SubPacket) -> SelfPlate {
         no_snap: bit(f0, 2) || bit(f1, 12),
         hide: bit(f0, 0),
         asleep: bit(f0, 1),
+        pvp_only: bit(f3, 5),
     }
 }
 
@@ -475,6 +489,9 @@ pub enum NetEvent {
         pol_return: bool,
         /// Our own flags as the zone-in applies them (`zone_in_plate`).
         plate: SelfPlate,
+        /// u32 @0xF4: the config block's first four bytes (FUN_100fae40 0x100fb72d: character data +0x2cfd8, which
+        /// s2c 0x0B4 rewrites with all twelve; `World::conf_sys`).
+        conf: [u8; 4],
     },
     /// s2c 0x053 (GP_SERV_COMMAND_SYSTEMMES): para @4, para2 @8, Number @0xc (file 7031).
     SystemMessage {
@@ -627,6 +644,8 @@ pub enum NetEvent {
         level: u8,
         sync: u8,
         custom: [u32; 2],
+        /// u16 @0x0c: the character's adventuring fellow by ActIndex (+0x2a0).
+        fellow: u16,
     },
     /// s2c 0x067 kind 3 (FUN_1009b4xx, 2019 asm 0x1009b6ad): ActIndex @6, id @8, the master's ActIndex u16 @0x0C.
     EntityMaster {
@@ -761,7 +780,6 @@ pub enum NetEvent {
         hpp: u8,
         dead: (u32, u32),
         pet: u16,
-        flags: u32,
         icons: [u16; 32],
         team: u8,
         fellow: u16,
@@ -1665,6 +1683,18 @@ fn npc_name(p: &SubPacket) -> Option<Option<String>> {
     (index < 0x700).then_some(None)
 }
 
+/// An 0x00D / 0x00E for tests elsewhere: `fill` at byte offsets of a `len`-byte sub-packet `id`.
+#[cfg(test)]
+pub(super) fn test_entity(id: u16, len: usize, fill: &[(usize, &[u8])], kind: EntityKind) -> EntityUpdate {
+    let mut data = vec![0u8; len];
+    data[0] = id as u8;
+    data[1] = ((len / 4) as u8) << 1 | (id >> 8) as u8;
+    for (at, b) in fill {
+        data[*at..*at + b.len()].copy_from_slice(b);
+    }
+    entity(&SubPacket { id, sync: 0, data }, kind)
+}
+
 fn entity(p: &SubPacket, kind: EntityKind) -> EntityUpdate {
     let flags = p.u8(10);
     let name_at = if kind == EntityKind::Npc { 0x34 } else { 0x5A };
@@ -1749,6 +1779,7 @@ fn entity(p: &SubPacket, kind: EntityKind) -> EntityUpdate {
         status: p.u8(0x20) & 7,
         look_kind: p.u8(0x30) & 7,
         costume: (kind == EntityKind::Player && flags & 0x20 == 0 && p.data.len() >= 0x32).then(|| p.u16(0x30)),
+        pet: (kind == EntityKind::Player && flags & 0x20 == 0 && p.data.len() >= 0x3e).then(|| p.u16(0x3c)),
         door: (kind == EntityKind::Npc && p.u8(0x30) & 7 == 2 && p.data.len() >= 0x38)
             .then(|| p.u32(0x34))
             .filter(|d| *d != 0),
@@ -1826,6 +1857,7 @@ impl EntityUpdate {
             mask: 0,
             king: false,
             costume: None,
+            pet: None,
             hpp: None,
             look: None,
             npc: None,
@@ -2117,7 +2149,7 @@ impl Session<'_> {
                 let (event_num, event_para) = (p.u16(0x62), p.u16(0x64));
                 // FUN_10094190 locks control here when the 0x00A carries an event: no 0x015 before the first frame.
                 let locked = event_num != 0;
-                *self.me.lock().unwrap() = SelfState { pos, dir: p.u8(11), locked, ..Default::default() };
+                *self.me.locked() = SelfState { pos, dir: p.u8(11), locked, ..Default::default() };
                 self.zoned = true;
                 self.my_index = p.u16(8);
                 self.queue.push(build(0x00C, &[0u8; 8]));
@@ -2163,6 +2195,7 @@ impl Session<'_> {
                     monstrosity: p.u16(0x7E) != 0,
                     pol_return: pol_return(p.u32(0x80)),
                     plate: zone_in_plate(&p),
+                    conf: std::array::from_fn(|i| p.u8(0xF4 + i)),
                 })?;
             }
             // FUN_100fb730: 4 cancels a logout (nothing sent); otherwise 0x00D goes out with the old key, and 2
@@ -2202,7 +2235,6 @@ impl Session<'_> {
                     hpp: (p.u32(0x28) >> 16) as u8,
                     dead: (p.u32(0x3C), p.u32(0x40)),
                     pet: (p.u32(0x34) >> 3) as u16,
-                    flags: p.u32(0x28),
                     icons,
                     team: (p.u32(0x34) >> 21) as u8,
                     fellow: p.u16(0x48),
@@ -2709,6 +2741,7 @@ impl Session<'_> {
                 level: p.u8(0x25),
                 sync: p.u8(0x10),
                 custom: [p.u32(0x18), p.u32(0x1c)],
+                fellow: p.u16(0xc),
             })?,
             0x02E => self.tx.send(NetEvent::MogMenu)?,
             0x11A => self.tx.send(NetEvent::EmoteUnlocks { jobs: p.u32(4), chairs: p.u16(8) })?,
@@ -2988,7 +3021,7 @@ impl Session<'_> {
                 );
                 self.interval = stepped;
             }
-            let s = *self.me.lock().unwrap();
+            let s = *self.me.locked();
             let mut body = [0u8; 28];
             for (i, v) in s.pos.iter().enumerate() {
                 body[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
@@ -3348,6 +3381,16 @@ mod tests {
         assert!(plate(1).hide && !plate(1).asleep);
         assert!(plate(2).asleep && !plate(2).hide);
         assert_eq!(plate(8), plate(0));
+    }
+
+    /// FUN_1009d0f0 0x1009d534: 0x037 Flags3 u32 @0x38 bit 5 is our +0x130 bit 11 (the PvP mark's switch); the 0x00A
+    /// has no such bit and its new entity starts with it clear.
+    #[test]
+    fn pvp_only_flag() {
+        let plate = |f3: u32| self_plate(&sub(0x037, 0x60, &[(0x38, &f3.to_le_bytes())]));
+        assert!(plate(1 << 5).pvp_only && !plate(1 << 4).pvp_only && !plate(1 << 6).pvp_only);
+        let all = sub(0x00A, 0x104, &[(0x18, &[0xff; 4]), (0x20, &[0xff; 4]), (0x24, &[0xff; 4]), (0x28, &[0xff; 4])]);
+        assert!(!zone_in_plate(&all).pvp_only);
     }
 
     /// 0x00E's name rules (asm 0x1009b666..0x1009b7b5) and FUN_100dde40's length.

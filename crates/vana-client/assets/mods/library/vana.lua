@@ -578,6 +578,10 @@ function ui.native.place(panel, place) end
 ---@return {name: string, x: integer, y: integer, w: integer, h: integer, shown: boolean, room: {x: integer, y: integer, w: integer, h: integer}?}?
 function ui.native.rect(panel) end
 
+--- The member rows of the modern party and alliance windows as last drawn, in window pixels, top to bottom: {panel ("party", "alliance1", "alliance2"), slot (the member's party slot from 1: 1-6 the party, 7-12 and 13-18 the alliance parties), name, x, y, w, h}. Empty in the classic UI, and while those windows are hidden.
+---@return table[]
+function ui.native.party_rows() end
+
 --- Every modern panel a mod may name: {name, about, hideable, movable, shown, placed_by (the mod placing it)} with x, y, w, h once it was drawn.
 ---@return table[]
 function ui.native.panels() end
@@ -955,6 +959,10 @@ function game.items(bag) end
 ---@param bag integer 
 ---@return integer?
 function game.bag_size(bag) end
+
+--- The quest areas the game's quest menu lists (numbered as in game.quests), in order: 0 to 4 always, the others only when the server enables their expansion (Outlands: Zilart, Aht Urhgan: ToAU, Crystal War: WotG, Abyssea: an Abyssea add-on, Adoulin and Coalition: SoA).
+---@return integer[]
+function game.quest_areas() end
 
 --- The quests of each area (0 San d'Oria, 1 Bastok, 2 Windurst, 3 Jeuno, 4 Other Areas, 5 Outlands, 6 Aht Urhgan, 7 Crystal War, 8 Abyssea, 9 Adoulin, 10 Coalition) in the journal's order: {number, name, repeatable, current, completed} each, ours as the server sent them.
 ---@return table<integer, {number: integer, name: string, repeatable: boolean, current: boolean, completed: boolean}[]>
@@ -1597,6 +1605,10 @@ function mods.provide(name, func) end
 ---@return any
 function mods.call(mod, name, ...) end
 
+--- Inside a function offered with mods.provide, while a mods.call runs it: the calling mod's id (its own on a self-call); nil anywhere else. Lets a mod offer a function only to the mods it trusts (the id is the one a mod is loaded under, not proof of who wrote it).
+---@return string?
+function mods.caller() end
+
 --- Raises an event in every other mod: their events.on handlers get the values after the running handler (in this frame or the next). Prefix the name with your mod's id.
 ---@param event string 
 ---@param ... any plain data
@@ -1698,7 +1710,7 @@ function client.set_priority(level) end
 ---@return boolean|number|table
 function client.option(name) end
 
---- Sets a behaviour switch while the mod is loaded (the game's usual behaviour back when it unloads): macro_palette_delay (false: the Ctrl / Alt palette opens at once, not at the next whole second), ah_result_delay (false: a bid's result prints at once), equipset_delay (false: no 0.9 s wait between equip sets), log_slide (false: new log lines show at once), cutscene_speed (1..4: events play that much faster), animation_rate (0.25..4: the actors' animation speed), clear_colour and ambient ({r, g, b} 0..255 in place of the zone's background colour and ambient light; false gives the zone's back), minimap_span (the minimap's zoom, map pixels across, 48..512; kept as the minimap's wheel keeps it), map_opacity (0..1: the HUD maps' opacity where a mod gives none, and the minimap marker's shade; the Map Overlay mod's Map Overlay Opacity; kept when the mod unloads and remembered across sessions); rules: move_lock (false: our abilities' and the weapon draw's move lock is lifted), all_maps (true: every map without its key item), dead_commands (true: text commands while K.O.), compass_monsters (true: monster dots on the compass for every job), player_collision (false: moving players never hold a step), occlusion (false: characters behind scenery still draw and target), menu_reach (false: the auction house and the nomad moogle menu stay open as we move away); send_interval (ms between the datagrams we send, 50..1000; the game's is 400); wireframe (true: the scenery drawn as lines, where the GPU draws them); ttf_text (true: the game font's text in the UI's TrueType face in the classic UI too: the log, the windows' text; sprite numbers and captions stay as the game draws them); stamp_all_lines (true: the game's chat timestamps on every log line, not only chat; with them off, hours, minutes and seconds); synth_amount (true: after Synthesize the synthesis window asks how many, 1 to the sets held, and gives the count to the mods' synth_amount event). A value of the wrong type is an error.
+--- Sets a behaviour switch while the mod is loaded (the game's usual behaviour back when it unloads): macro_palette_delay (false: the Ctrl / Alt palette opens at once, not at the next whole second), ah_result_delay (false: a bid's result prints at once), equipset_delay (false: no 0.9 s wait between equip sets), log_slide (false: new log lines show at once), cutscene_speed (1..4: events play that much faster), animation_rate (0.25..4: the actors' animation speed), clear_colour and ambient ({r, g, b} 0..255 in place of the zone's background colour and ambient light; false gives the zone's back), minimap_span (the minimap's zoom, map pixels across, 48..512; kept as the minimap's wheel keeps it), map_opacity (0..1: the HUD maps' opacity where a mod gives none, and the minimap marker's shade; the Map Overlay mod's Map Overlay Opacity; kept when the mod unloads and remembered across sessions); rules: move_lock (false: our abilities' move lock and the engage / sheathe lock are lifted), all_maps (true: every map without its key item), dead_commands (true: text commands while K.O.), compass_monsters (true: monster dots on the compass for every job), player_collision (false: moving players never hold a step), occlusion (false: characters behind scenery still draw and target), menu_reach (false: the auction house and the nomad moogle menu stay open as we move away); send_interval (ms between the datagrams we send, 50..1000; the game's is 400); wireframe (true: the scenery drawn as lines, where the GPU draws them); ttf_text (true: the game font's text in the UI's TrueType face in the classic UI too: the log, the windows' text; sprite numbers and captions stay as the game draws them); stamp_all_lines (true: the game's chat timestamps on every log line, not only chat; with them off, hours, minutes and seconds); synth_amount (true: after Synthesize the synthesis window asks how many, 1 to the sets held, and gives the count to the mods' synth_amount event). A value of the wrong type is an error.
 ---@param name string 
 ---@param value boolean|number|table 
 function client.set_option(name, value) end

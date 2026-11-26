@@ -67,8 +67,11 @@ pub struct Inventory {
     pub sizes: [u8; 18],
     /// 0x01C ItemNum2 (u16 @0x24): the Locker's is 0 without a lease (FUN_101cc470).
     pub sizes2: [u16; 18],
-    /// (container, index) -> (item id, count).
+    /// (container, index) -> (item id, count). Changed only through `set` and `count`, which renew `slots_gen`.
     pub slots: BTreeMap<(u8, u8), (u16, u32)>,
+    /// Renewed (to a value never given before) by each change to `slots`: the mods' item events copy the bags only
+    /// when it moved.
+    pub slots_gen: u64,
     /// Equipment slot -> (container, index).
     pub equip: [Option<(u8, u8)>; 16],
     /// (container, index) -> LockFlg (s2c 0x01F / 0x020).
@@ -91,9 +94,16 @@ pub struct Inventory {
     pub view3: BTreeMap<u8, Vec<u8>>,
 }
 
+/// A `slots_gen` no inventory had before (a fresh Inventory is 0).
+fn next_gen() -> u64 {
+    static GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 impl Inventory {
     /// Returns true when the slot's row was (re)appended to the view: a new slot, or one whose item changed.
     pub fn set(&mut self, container: u8, index: u8, id: u16, count: u32) -> bool {
+        self.slots_gen = next_gen();
         if id == 0 {
             self.slots.remove(&(container, index));
             self.ext.remove(&(container, index));
@@ -194,6 +204,7 @@ impl Inventory {
     }
 
     pub fn count(&mut self, container: u8, index: u8, count: u32) {
+        self.slots_gen = next_gen();
         if count == 0 {
             self.slots.remove(&(container, index));
             self.unlist(container, index);
@@ -1029,6 +1040,7 @@ fn draw_iuse(gu: &mut GameUi, w: &World, s: Sub, sw: f32, sh: f32) -> Vec<[f32; 
     let off: Vec<u16> = (1..=2).filter(|&c| !on[c as usize - 1]).collect();
     let mut rects = Vec::new();
     if let Some(win) = gu.lobby_window_off("menu    iuse", sw, sh, (0.0, 0.0), child, child.is_some(), &off) {
+        super::winhits::record_all(w, gu, "menu    iuse", win.frame, &win.children);
         let [x, y, ..] = win.frame;
         gu.disabled_children("menu    iuse", x, y, &off, child);
         rects.push(win.frame);
@@ -1037,6 +1049,7 @@ fn draw_iuse(gu: &mut GameUi, w: &World, s: Sub, sw: f32, sh: f32) -> Vec<[f32; 
         && let Some(win) =
             gu.lobby_window_off("menu    sortyn", sw, sh, (0.0, 0.0), Some(if yes { 1 } else { 2 }), true, &[])
     {
+        super::winhits::record(w, "menu    sortyn", &win);
         rects.push(win.frame);
     }
     rects
@@ -1077,14 +1090,18 @@ fn use_entry(w: &mut World, c: u8, index: u8, id: u16) {
                 && gate_line(w, 0x77).is_none();
             if garden || status_gate(w, 0x7f) {
                 let targets = it.map_or(0x7f, |i| i.targets as u32);
-                super::target::open_sub(
+                if super::target::open_sub(
                     w,
                     targets,
                     super::target::SubThen::Item { container: c, index },
-                    None,
+                    Default::default(),
                     String::new(),
                     4,
-                );
+                ) && let Some(id) = w.inv.item(c, index)
+                {
+                    // FUN_101f4870 -> FUN_101f4b40: the item's area display.
+                    super::area::register(w, super::area::Of::Item(id));
+                }
             }
         }
     }
@@ -1408,19 +1425,19 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
                     gu.lobby_window_off("menu    itmsort2", sw, sh, (0.0, 0.0), sel, sel.is_some(), &[])
                         .map(|w| w.frame),
                 );
-                if let Some(yes) = sort.and_then(|s| s.ask) {
-                    rects.extend(
-                        gu.lobby_window_off(
-                            "menu    sortyn",
-                            sw,
-                            sh,
-                            (0.0, 0.0),
-                            Some(if yes { 1 } else { 2 }),
-                            true,
-                            &[],
-                        )
-                        .map(|w| w.frame),
-                    );
+                if let Some(yes) = sort.and_then(|s| s.ask)
+                    && let Some(win) = gu.lobby_window_off(
+                        "menu    sortyn",
+                        sw,
+                        sh,
+                        (0.0, 0.0),
+                        Some(if yes { 1 } else { 2 }),
+                        true,
+                        &[],
+                    )
+                {
+                    super::winhits::record(w, "menu    sortyn", &win);
+                    rects.push(win.frame);
                 }
             }
             if let Some(s) = sub {
@@ -2229,16 +2246,25 @@ fn draw_storage(
             rects.extend(
                 gu.lobby_window_off("menu    itmsortw", sw, sh, (0.0, 0.0), sel, sel.is_some(), &[]).map(|x| x.frame),
             );
-            if let Some(yes) = b.sortw.and_then(|s| s.ask) {
-                rects.extend(
+            if let Some(yes) = b.sortw.and_then(|s| s.ask)
+                && let Some(win) =
                     gu.lobby_window_off("menu    sortyn", sw, sh, (0.0, 0.0), Some(if yes { 1 } else { 2 }), true, &[])
-                        .map(|x| x.frame),
-                );
+            {
+                super::winhits::record(w, "menu    sortyn", &win);
+                rects.push(win.frame);
             }
         }
     }
     if let Some(q) = b.qty
-        && let Some(win) = gu.lobby_window_off("menu    itemctrl", sw, sh, (0.0, 0.0), Some(1), true, &[])
+        && let Some(win) = gu.lobby_window_off(
+            "menu    itemctrl",
+            sw,
+            sh,
+            (0.0, 0.0),
+            Some(super::winhits::ctr_cursor(w, gu, "menu    itemctrl")),
+            true,
+            &[],
+        )
     {
         super::winhits::record(w, "menu    itemctrl", &win);
         rects.push(win.frame);
@@ -2278,8 +2304,12 @@ fn draw_count(gu: &mut GameUi, n: usize, size: u8, sw: f32, sh: f32) {
     gu.shape_text(&(size.saturating_sub(1)).to_string(), x1 - 1.0, y1 - 16.0, white, true);
 }
 
-/// Mouse on the item list: hover moves the cursor, a click on the highlighted row acts as Enter.
+/// Mouse on the item list: a row takes the cursor by winhits::takes, a click on the highlighted row acts as Enter.
 pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+    // The yes / no prompt (comyn) over the list has the focus, so the mouse (FUN_101267f0 tests the focused window only).
+    if w.confirm.is_some() {
+        return;
+    }
     if matches!(w.win, Some(Win::Equip(_))) {
         super::equipwin::pointer(w, gu, sw, sh, p, moved, clicked);
         return;
@@ -2291,9 +2321,60 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         });
         return;
     }
+    // The storage view's sortyn (Auto's "Sort items?") as a generic window: Enter answers, Escape is No.
+    let yn_key = |w: &mut World, _: &GameUi, k: egui::Key| {
+        key(w, k, false, false, false);
+    };
+    if let Some(Win::Items { store: Some(b), .. }) = &w.win
+        && let Some(yes) = b.sortw.and_then(|s| s.ask)
+    {
+        let set = |w: &mut World, id: u16| {
+            if let Some(Win::Items { store: Some(b), .. }) = &mut w.win
+                && let Some(s) = b.sortw.as_mut()
+            {
+                s.ask = Some(id == 1);
+            }
+        };
+        super::winhits::generic(w, gu, "menu    sortyn", 2 - yes as u16, 1..=2, p, clicked, right, set, yn_key);
+        return;
+    }
     // The bin view moves the list; its mouse handling (hover messages 3 / 4) is not done.
     if matches!(w.win, Some(Win::Items { store: Some(_), .. })) {
         return;
+    }
+    // The windows over the list have the mouse, the list none (only the focused window takes it, FUN_101267f0):
+    // iuse (FUN_101f4970: messages 5 / 6 only) and sortyn (FUN_10223ec0: Enter on child 1 Yes, 2 No; Escape No) as
+    // generic windows. itmsort2's own mouse is not done.
+    match &w.win {
+        Some(Win::Items { sub: Some(Sub::Use { child, .. }), .. }) => {
+            let set = |w: &mut World, id: u16| {
+                if let Some(Win::Items { sub: Some(Sub::Use { child, .. }), .. }) = &mut w.win {
+                    *child = id;
+                }
+            };
+            super::winhits::generic(w, gu, "menu    iuse", *child, 1..=2, p, clicked, right, set, yn_key);
+            return;
+        }
+        Some(Win::Items { sub: Some(Sub::Drop { yes, .. }), .. }) => {
+            let set = |w: &mut World, id: u16| {
+                if let Some(Win::Items { sub: Some(Sub::Drop { yes, .. }), .. }) = &mut w.win {
+                    *yes = id == 1;
+                }
+            };
+            super::winhits::generic(w, gu, "menu    sortyn", 2 - *yes as u16, 1..=2, p, clicked, right, set, yn_key);
+            return;
+        }
+        Some(Win::Items { sort: Some(SortWin { ask: Some(yes), .. }), .. }) => {
+            let set = |w: &mut World, id: u16| {
+                if let Some(Win::Items { sort: Some(s), .. }) = &mut w.win {
+                    s.ask = Some(id == 1);
+                }
+            };
+            super::winhits::generic(w, gu, "menu    sortyn", 2 - *yes as u16, 1..=2, p, clicked, right, set, yn_key);
+            return;
+        }
+        Some(Win::Items { sort: Some(_), .. }) => return,
+        _ => {}
     }
     let Some(r) = gu.window_rect("menu    inventor", sw, sh) else { return };
     let row = ((p.1 - r[1] - 4.0) / ROW_PITCH).floor();
@@ -2303,19 +2384,19 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         && p.1 < r[1] + r[3]
         && row >= 0.0
         && (row as usize) < VISIBLE_ROWS;
-    if inside && matches!(w.win, Some(Win::Items { .. })) {
-        gu.hover.set(true);
-    }
-    if !inside || !(moved || clicked) {
+    if !inside || !matches!(w.win, Some(Win::Items { .. })) {
         return;
     }
     let row = row as usize;
+    let takes = super::winhits::takes(gu, "menu    inventor", row as u16 + 1, super::winhits::inside(r, p));
     let (cur, enter) = match &mut w.win {
         Some(Win::Items { cursor, .. }) => (cursor, true),
         _ => return,
     };
     let same = *cur == row;
-    *cur = row;
+    if takes {
+        *cur = row;
+    }
     if clicked && same && enter {
         key(w, egui::Key::Enter, false, false, false);
     }

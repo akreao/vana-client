@@ -1311,7 +1311,7 @@ pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
             bars.help[1] = gu.menu_msg(0x10c, "");
             bars.title[1] = gu.title_msg(0x3e).unwrap_or_default();
         }
-        SFocus::Money => focus(MONEYCTR, 1, bars),
+        SFocus::Money => focus(MONEYCTR, super::winhits::ctr_cursor(w, gu, MONEYCTR), bars),
     }
 }
 
@@ -1445,7 +1445,15 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         rects.push(win.frame);
     }
     if let Some((_, v, max)) = s.qty
-        && let Some(win) = gu.lobby_window_off(ITEMCTRL, sw, sh, (0.0, 0.0), Some(1), true, &[])
+        && let Some(win) = gu.lobby_window_off(
+            ITEMCTRL,
+            sw,
+            sh,
+            (0.0, 0.0),
+            Some(super::winhits::ctr_cursor(w, gu, ITEMCTRL)),
+            true,
+            &[],
+        )
     {
         super::winhits::record(w, ITEMCTRL, &win);
         let [x, y, ..] = win.frame;
@@ -1454,7 +1462,15 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         rects.push(win.frame);
     }
     if let Some((step, max, v)) = s.money
-        && let Some(win) = gu.lobby_window_off(MONEYCTR, sw, sh, (0.0, 0.0), Some(1), true, &[])
+        && let Some(win) = gu.lobby_window_off(
+            MONEYCTR,
+            sw,
+            sh,
+            (0.0, 0.0),
+            Some(super::winhits::ctr_cursor(w, gu, MONEYCTR)),
+            true,
+            &[],
+        )
     {
         super::winhits::record(w, MONEYCTR, &win);
         draw_moneyctr(gu, win.frame, step, max, v);
@@ -1465,7 +1481,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
 
 /// The mouse on the focused window (the generic window): post1 / post2, delivery, stringdl (not while typing); the
 /// inventory list's rows as the item list; itemctrl / moneyctr by winhits::ctr. Nothing while busy.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     use super::winhits::generic;
     // The modern layer draws these and takes their mouse.
     if w.modern {
@@ -1484,7 +1500,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                 r.cursor,
                 1..=8,
                 p,
-                moved,
                 clicked,
                 right,
                 |w, id| {
@@ -1501,7 +1516,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                 r.post2,
                 1..=3,
                 p,
-                moved,
                 clicked,
                 right,
                 |w, id| {
@@ -1528,7 +1542,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                 s.cursor,
                 1..=last,
                 p,
-                moved,
                 clicked,
                 right,
                 |w, id| {
@@ -1547,7 +1560,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
             s.dl.cursor,
             1..=3,
             p,
-            moved,
             clicked,
             right,
             |w, id| {
@@ -1565,12 +1577,11 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                 return;
             }
             let Some(r) = row.filter(|r| scroll + r < picker_rows(w).len()) else { return };
-            gu.hover.set(true);
-            if r != cursor && (moved || clicked) {
+            if super::winhits::takes(gu, "menu    inventor", r as u16 + 1, true) && r != cursor {
                 if let Some(s) = w.post.send_ui.as_mut() {
                     s.list.1 = r;
                 }
-            } else if clicked {
+            } else if clicked && r == cursor {
                 key(w, gu, egui::Key::Enter);
             }
         }

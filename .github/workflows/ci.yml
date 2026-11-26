@@ -117,3 +117,28 @@ jobs:
         run: cargo clippy --release --locked --all-targets --features dlss
       - name: Test
         run: cargo test --profile ci-test --locked --features dlss upscal
+
+  # release/build-dlss.sh as a player runs it on Windows: Git Bash, an empty SDK cache (the sparse fetch of the
+  # headers and the MSVC NGX libraries), the Vulkan headers from Khronos (the runner has no Vulkan SDK), MSVC and the
+  # runner's LLVM for bindgen; a build that links the NGX library.
+  dlss-windows:
+    name: windows-latest (dlss build script)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: dlss-windows
+      - name: Vulkan headers
+        shell: bash
+        run: |
+          git clone -q --depth 1 --branch v1.4.357 https://github.com/KhronosGroup/Vulkan-Headers.git "$RUNNER_TEMP/vulkan-headers"
+          echo "VULKAN_SDK=$RUNNER_TEMP/vulkan-headers" >> "$GITHUB_ENV"
+      - name: release/build-dlss.sh
+        shell: bash
+        run: |
+          rm -rf target/dlss-sdk
+          release/build-dlss.sh --release --locked
+          test -f target/dlss-sdk/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib
+          test -f target/release/vana-client.exe

@@ -103,31 +103,25 @@ fn time(s: u32) -> String {
     }
 }
 
-/// Greedy wrap at `max` px, breaking after any of `breaks` (FUN_101ca520); a piece with no break point is cut.
-fn wrap(s: &str, max: f32, breaks: &[char], width: &dyn Fn(&str) -> f32) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut rest = s.to_string();
-    while width(&rest) > max {
-        let mut cut = 0;
-        let mut last_break = None;
-        for (i, c) in rest.char_indices() {
-            let end = i + c.len_utf8();
-            if width(&rest[..end]) > max {
-                break;
-            }
-            cut = end;
-            if breaks.contains(&c) {
-                last_break = Some(end);
-            }
-        }
-        let at = last_break.unwrap_or(cut.max(rest.chars().next().map_or(1, char::len_utf8)));
-        out.push(rest[..at].trim_end().to_string());
-        rest = rest[at..].trim_start().to_string();
-    }
-    if !rest.is_empty() {
-        out.push(rest);
-    }
-    out
+/// FUN_1015c9e0: the description's lines, at most 20, cut by the game's line breaker (tail 0x14, a 0xff buffer): 316 px
+/// wide, but a Japanese client's third line on is 366 and a 、。！ where a line ends hangs on it (FUN_1011ee70). Each line
+/// is the text it took (no '-' at a soft hyphen), up to a line break. A line the 0xff buffer cut short (only with the
+/// modern panel's zero widths: at 316 px a line never nears 254 bytes) keeps the rest of its source up to the break.
+fn desc_lines(text: &str, width: &dyn Fn(&str) -> f32) -> Vec<String> {
+    use crate::dat::{items::Lang, lang, linebreak};
+    let ja = lang::client() == Lang::Ja;
+    let max = |k: usize| if ja && k > 1 { 366.0 } else { 316.0 };
+    let cut = linebreak::StrCut { width, max: &max, tail: 0x14, cap: 0xff, hang: ja, resume: false };
+    linebreak::str_lines(text, &cut)
+        .into_iter()
+        .take(20)
+        .map(|l| {
+            let took = &text[l.start..l.next];
+            let full = took.find(['\x07', '\r', '\n']).map_or(took, |k| &took[..k]).trim_end_matches(' ');
+            let end = l.end.max(l.start + full.len());
+            text[l.start..end].chars().filter(|&c| c != linebreak::SOFT_HYPHEN as char).collect()
+        })
+        .collect()
 }
 
 /// FUN_100fe150: 6-bit MSB-first names (1..10 '0'..'9', 11..36 'A'..'Z', 37..62 'a'..'z', 0 ends).
@@ -240,8 +234,7 @@ pub fn build(
             info.line2.push(fmt(&f, &[&it.superior_level]));
         }
     }
-    // Description: the item's lines, pre-wrapped at 316 px (FUN_1015b410), at most 20.
-    info.desc = it.description.split('\n').flat_map(|l| wrap(l, 316.0, &[' '], width)).take(20).collect();
+    info.desc = desc_lines(&it.description, width);
     let extra = |k: u16| it.extra.iter().find(|e| e.0 == k).map_or(0, |e| e.1);
     let mut line = String::new();
     if gear {
@@ -480,8 +473,10 @@ pub fn draw(gu: &mut GameUi, info: &Info, page: usize, icon: Option<&str>, x: f3
                 }
             }
             10..=29 => {
+                // FUN_1013e5f0: a Japanese client's rows from the fourth on start under the icon (x + 3).
+                let lx = if k >= 3 && crate::dat::lang::client() == crate::dat::items::Lang::Ja { 3.0 } else { 51.0 };
                 if let Some(l) = info.desc.get(c as usize - 10) {
-                    gu.text(l, x + 51.0, ry, 0, col(WHITE));
+                    gu.text(l, x + lx, ry, 0, col(WHITE));
                 }
             }
             0x1e..=0x31 => {
@@ -568,6 +563,22 @@ mod tests {
         assert_eq!(*i.pages[0].last().unwrap(), 0x50);
         assert_eq!(i.pages[1][0], 1);
         assert!(i.pages[1].contains(&(10 + 10)));
+    }
+
+    /// The modern panel's zero widths: a paragraph past the 0xff line buffer stays whole, up to its line break.
+    #[test]
+    fn zero_width_keeps_long_paragraphs() {
+        let mut it = Item::default();
+        it.item_type = 1;
+        let long: String = (0..300).map(|k| (b'a' + (k % 26) as u8) as char).collect();
+        it.description = format!("{long}\nshort");
+        let i = build(&it, None, &Ctx::default(), &msg, &|_: &str| 0.0, None);
+        assert_eq!(i.desc, vec![long, "short".to_string()]);
+        // At real widths (7 px a char, 316 px a line) the paragraph wraps at 45 chars, as before.
+        let i = build(&it, None, &Ctx::default(), &msg, &width, None);
+        assert_eq!(i.desc.len(), 8);
+        assert!(i.desc[..6].iter().all(|l| l.len() == 45), "{:?}", i.desc);
+        assert_eq!(i.desc.concat().len(), 305);
     }
 
     #[test]

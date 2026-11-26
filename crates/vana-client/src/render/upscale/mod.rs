@@ -310,6 +310,8 @@ pub struct Upscale {
     lib: Option<Result<std::sync::Arc<external::Engine>, String>>,
     /// Neural rendering's output (render size).
     nr_out: Option<wgpu::Texture>,
+    /// The neural rendering pass's views (its own: the upscale's inputs differ).
+    nr_views: Option<external::Views>,
     /// This frame's camera and jitter, from the world.
     pub frame_camera: Option<FrameCamera>,
     pub jitter_px: [f32; 2],
@@ -366,6 +368,7 @@ impl Upscale {
             engine: None,
             lib: None,
             nr_out: None,
+            nr_views: None,
             frame_camera: None,
             jitter_px: [0.0; 2],
             render: [1, 1],
@@ -430,6 +433,11 @@ impl Upscale {
         }
     }
 
+    /// Neural rendering is off: its output and views would hold their sizes' targets past a resize.
+    pub fn drop_neural(&mut self) {
+        (self.nr_views, self.nr_out) = (None, None);
+    }
+
     /// The engine library, loaded once.
     fn lib(&mut self, gpu: &Gpu) -> Option<std::sync::Arc<external::Engine>> {
         let lib = self.lib.get_or_insert_with(|| {
@@ -486,14 +494,22 @@ impl Upscale {
     ) -> Option<(wgpu::TextureView, [u32; 2])> {
         let depth_tex = depth.texture();
         let fc = self.frame_camera?;
+        let nr = if neural && debug == 0 { self.lib(gpu).filter(|l| l.nr.is_some()) } else { None };
+        if nr.is_none() {
+            self.drop_neural();
+        }
         // The upscaler is made first: one that cannot run leaves the frame to the scaling pass.
         let mut engine = if debug == 0 && kind != 0 {
             self.engine(gpu, kind)?;
             Some(self.engine.take()?)
         } else {
+            // Upscaling off: the upscaler goes, with the textures it holds (made anew when turned on again), and an
+            // upscaler's failure stays with its own kind.
+            if kind == 0 {
+                (self.engine, self.kind, self.failed) = (None, 0, None);
+            }
             None
         };
-        let nr = if neural && debug == 0 { self.lib(gpu).filter(|l| l.nr.is_some()) } else { None };
         let mut nr_out = self.nr_out.take();
         let now = std::time::Instant::now();
         let dt_ms = (now - self.last).as_secs_f32() * 1000.0;
@@ -590,7 +606,7 @@ impl Upscale {
                 nr_out = Some(external::output_texture(gpu, "neural rendering output", size));
             }
             if let Some(o) = &nr_out {
-                neural_done = lib.run(gpu, encoder, &Inputs { output: size, ..inputs }, o, f);
+                neural_done = lib.run(gpu, encoder, &Inputs { output: size, ..inputs }, o, f, &mut self.nr_views);
             }
         }
         let inputs = match (&nr_out, neural_done) {

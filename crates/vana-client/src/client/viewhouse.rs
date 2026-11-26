@@ -160,8 +160,8 @@ fn suspended(w: &World) -> bool {
     }
 }
 
-/// Mouse: hover over a row moves the cursor, a click on the cursor row is Enter.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
+/// Mouse: a row takes the cursor by winhits::takes, a click on the cursor row is Enter.
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool) {
     let Some(sel) = w.viewhouse.as_ref().map(|v| v.sel) else { return };
     let Some((wx, wy)) = gu.window_xy(WIN, sw, sh) else { return };
     let Some(layout) = gu.layout(WIN) else { return };
@@ -170,14 +170,13 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         p.0 >= x && p.0 < x + e.w as f32 && p.1 >= y && p.1 < y + e.h as f32
     });
     let Some(e) = hit else { return };
-    gu.hover.set(true);
-    if (moved || clicked)
+    if super::winhits::takes(gu, WIN, e.id, super::winhits::in_frame(gu, WIN, sw, sh, p))
         && e.id != sel
         && let Some(v) = w.viewhouse.as_mut()
     {
         v.sel = e.id;
         w.sounds.push(Ui::Cursor as u32);
-    } else if clicked {
+    } else if clicked && e.id == sel {
         key(w, gu, egui::Key::Enter);
     }
 }

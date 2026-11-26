@@ -32,7 +32,7 @@ pub fn update(w: &mut World) {
     let doors: Vec<(u32, u32, u8, bool)> = w
         .entities
         .iter()
-        .filter(|(_, e)| e.door != 0)
+        .filter(|(id, e)| e.door != 0 && !super::event::is_parked(w, **id))
         .map(|(id, e)| {
             (
                 *id,
@@ -42,7 +42,10 @@ pub fn update(w: &mut World) {
             )
         })
         .collect();
-    w.doors.state.retain(|id, _| w.entities.contains_key(id));
+    // A despawned door's machine stops with its slot's pass (FUN_10096640 skips FUN_1008e9a0): it starts again as
+    // a new door.
+    let parked = super::event::parked_set(w);
+    w.doors.state.retain(|id, _| w.entities.contains_key(id) && !parked.contains(id));
     for (id, door, want, quiet) in doors {
         // FUN_100acba0: doors with a group play open / clos, the others (effects only) evst / eved.
         let grouped = w.renderer.as_ref().is_some_and(|r| r.door_parts.contains_key(&door));

@@ -438,17 +438,27 @@ fn hit(gu: &GameUi, sw: f32, sh: f32, p: (f32, f32)) -> Option<(Focus, usize)> {
     None
 }
 
-/// Mouse *(inf)*: over the other list the focus moves there (message 8) while nothing is picked; rows move the
-/// cursor, a click on the cursor row is Enter.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
+/// Mouse *(inf)*: over the other list the focus moves there (message 8) while nothing is picked; a row takes the
+/// cursor by winhits::takes, a click on the cursor row is Enter.
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     // The modern layer draws it and takes its mouse.
     if w.modern {
         return;
     }
-    let Some(s) = w.bluset.clone().filter(|s| s.sibo.is_none()) else { return };
+    // bluesibo over the lists has the mouse (win_bluequip_onkey 0x101e1210: Enter on child n filters by family n, + 1
+    // past 14), as a generic window: a right click on it is Escape (message 6).
+    if let Some(r) = w.bluset.as_ref().and_then(|s| s.sibo) {
+        let set = |w: &mut World, id: u16| {
+            set_sibo(w, id);
+        };
+        let keys = |w: &mut World, _: &GameUi, k: egui::Key| key(w, k);
+        super::winhits::generic(w, gu, SIBO, r, 1..=SIBO_ROWS, p, clicked, right, set, keys);
+        return;
+    }
+    let Some(s) = w.bluset.clone() else { return };
     let Some((f, k)) = hit(gu, sw, sh, p) else { return };
-    gu.hover.set(true);
     if f != s.focus {
+        gu.hover.set(true);
         if moved && s.spell_pick.is_none() && s.slot_pick.is_none() {
             num_plus(w);
         }
@@ -460,12 +470,14 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     if row >= n {
         return;
     }
-    if row != c.0 && (moved || clicked) {
+    let name = if f == Focus::Equip { EQUIP } else { INVEN };
+    let takes = super::winhits::takes(gu, name, k as u16 + 1, super::winhits::in_frame(gu, name, sw, sh, p));
+    if row != c.0 && takes {
         if let Some(b) = w.bluset.as_mut() {
             if f == Focus::Equip { b.equip.0 = row } else { b.inven.0 = row }
         }
         w.sounds.push(Ui::Cursor as u32);
-    } else if clicked {
+    } else if clicked && row == c.0 {
         key(w, egui::Key::Enter);
     }
 }
@@ -829,6 +841,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     if let Some(r) = s.sibo
         && let Some(win) = gu.lobby_window_off(SIBO, sw, sh, (0.0, 0.0), Some(r), w.confirm.is_none(), &[19])
     {
+        super::winhits::record(w, SIBO, &win);
         rects.push(win.frame);
     }
     rects
