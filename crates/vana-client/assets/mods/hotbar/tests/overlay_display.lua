@@ -168,3 +168,18 @@ OVER.pad_autohide = true
 mode.set("gamepad")
 pad.rebuild()
 assert(HUD.elems["ovp_idle"], "folded crossbars show an Open Manager HUD button in overlay mode")
+-- A screen narrower than the crossbars: the block scales down to fit, every slot on screen.
+OVER.pad_autohide = false
+local wide = hud.screen
+hud.screen = function() return { width = 300, height = 600, ui_scale = 1 } end
+HUD.elems = {}
+pad.rebuild()
+local n = 0
+for id, el in pairs(HUD.elems) do
+  if el.kind == "rect" and id:match("^ovp_[^_]+_[^_]+$") then
+    n = n + 1
+    assert(el.spec.x >= 0 and el.spec.x + el.spec.w <= 300, ("%s off screen at x %s w %s"):format(id, el.spec.x, el.spec.w))
+  end
+end
+assert(n > 0, "no crossbar slots drawn on the narrow screen")
+hud.screen = wide

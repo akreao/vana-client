@@ -111,6 +111,8 @@ end
 
 -- One slot, matching slotview.draw_slot geometry at HUD scale.
 local function slot(seen, id, cell, o)
+  -- Text scale against the HUD's (below 1 where the layout was scaled down to fit the screen).
+  local k = o.k or 1
   local x, y, s, u = o.x, o.y, o.s, o.u
   local macro, act, sh = o.macro, o.act, o.shade
   local hover = o.hover
@@ -157,7 +159,7 @@ local function slot(seen, id, cell, o)
         x3 = 0, y3 = tip - base, colour = GOLD, layer = 6 })
     else
       -- Clients before hud.tri: an ASCII chevron (the HUD font has no triangle glyph).
-      emit(seen, "text", id .. "_g", { x = ax, y = math.min(base, tip), text = o.up and "v" or "^", size = 0.62,
+      emit(seen, "text", id .. "_g", { x = ax, y = math.min(base, tip), text = o.up and "v" or "^", size = 0.62 * k,
         font = "bold", align = "center", colour = GOLD, layer = 6 })
     end
   end
@@ -165,7 +167,7 @@ local function slot(seen, id, cell, o)
     emit(seen, "rect", id .. "_sh", { x = x, y = y, w = s, h = math.max(2, s * sh.frac), round = rnd,
       colour = SHADE, layer = 5 })
     emit(seen, "text", id .. "_cd", { x = x + s / 2, y = y + s / 2 - 11 * u, text = clock_text(sh.left),
-      size = 1.45, font = "bold", align = "center", colour = { 255, 236, 180, 255 }, layer = 7 })
+      size = 1.45 * k, font = "bold", align = "center", colour = { 255, 236, 180, 255 }, layer = 7 })
   elseif sh and not sh.usable then
     emit(seen, "rect", id .. "_sh", { x = x, y = y, w = s, h = s, round = rnd, colour = UNUSABLE, layer = 5 })
   end
@@ -174,20 +176,20 @@ local function slot(seen, id, cell, o)
     local ls, lh = slotview.LABEL, slotview.LABEL_LINE * u
     if act then
       emit(seen, "text", id .. "_l", { x = x + s / 2, y = y + s - lh - 2 * u,
-        text = slotview.fit(label:match("^[^\n]*") or "", s / u), size = ls, align = "center", colour = INK, layer = 6 })
+        text = slotview.fit(label:match("^[^\n]*") or "", s / u), size = ls * k, align = "center", colour = INK, layer = 6 })
     else
       local lines = {}
       for line in label:gmatch("[^\n]+") do lines[#lines + 1] = line end
       local top = y + (s - #lines * lh) / 2
       for n, line in ipairs(lines) do
         emit(seen, "text", id .. "_l" .. n, { x = x + s / 2, y = top + (n - 1) * lh,
-          text = slotview.fit(line, s / u), size = ls, align = "center", colour = INK, layer = 6 })
+          text = slotview.fit(line, s / u), size = ls * k, align = "center", colour = INK, layer = 6 })
       end
     end
   end
   if o.hint then
     emit(seen, "text", id .. "_k", { x = x + slotview.HINT_PAD * u, y = y + 2 * u, text = o.hint,
-      size = slotview.HINT_SIZE, colour = slotview.MUTED, layer = 6 })
+      size = slotview.HINT_SIZE * k, colour = slotview.MUTED, layer = 6 })
   end
   if o.st and o.st.flash[o.key] and o.st.flash[o.key] > os.clock() then
     emit(seen, "rect", id .. "_f", { x = x, y = y, w = s, h = s, round = rnd, colour = FLASH, layer = 8 })
@@ -225,6 +227,7 @@ local function slot(seen, id, cell, o)
 end
 
 local function pocket_slot(seen, id, cell, o)
+  local k = o.k or 1
   local x, y, s, u = o.x, o.y, o.s, o.u
   local hover = o.hover
   local fill = hover and slotview.KEY_HOVER or slotview.KEY
@@ -237,7 +240,7 @@ local function pocket_slot(seen, id, cell, o)
   emit(seen, "rect", id .. "_e", { x = x, y = y, w = s, h = s, round = s / 2, line = slotview.EDGE_W * u,
     colour = edge, layer = 3 })
   emit(seen, "text", id .. "_t", { x = x + s / 2, y = y + s / 2 - 5 * u, text = short,
-    size = 0.62, align = "center", colour = o.dim and slotview.MUTED or INK, layer = 4 })
+    size = 0.62 * k, align = "center", colour = o.dim and slotview.MUTED or INK, layer = 4 })
   hud.on(id, function(_, e)
     if e.kind == "mouse_enter" then
       if o.st.hover ~= o.key then o.st.hover = o.key; o.redraw() end
@@ -386,12 +389,13 @@ function M.crossbars(p)
   -- Narrower than the block (every trigger set while the manager is open): scaled down to fit, so no slot is off
   -- screen where a drop cannot reach it.
   if p.width * u > scr.width then u = scr.width / p.width end
+  local k = u / (scr.ui_scale or 1)
   local x0 = math.floor((scr.width - p.width * u) / 2)
   local y0 = math.floor(scr.height - p.height * u - 36 * u)
   local seen = {}
   if p.heading then
     emit(seen, "text", "ovp_head", { x = math.floor(scr.width / 2), y = y0 - math.floor(18 * u), text = p.heading,
-      size = 0.9, align = "center", colour = GOLD, layer = 4 })
+      size = 0.9 * k, align = "center", colour = GOLD, layer = 4 })
   end
   local active = p.held
   local function id_of(sl) return "ovp_" .. sl.side .. "_" .. sl.button end
@@ -404,7 +408,7 @@ function M.crossbars(p)
     local lit = active == nil or active == side
     local id = "ovp_name_" .. side
     emit(seen, "text", id, { x = x0 + (p.side_x[side] + p.side_w / 2) * u, y = y0 + p.side_y[side] * u,
-      text = p.names[side], size = 0.9, align = "center", colour = lit and GOLD or DIMMED, layer = 4 })
+      text = p.names[side], size = 0.9 * k, align = "center", colour = lit and GOLD or DIMMED, layer = 4 })
   end
   for _, sl in ipairs(p.slots) do
     local key = sl.side .. ":" .. sl.button
@@ -420,13 +424,13 @@ function M.crossbars(p)
       su = math.floor(sl.pocket * u)
       local short = (p.pocket_short and p.pocket_short[sl.button]) or p.labels[sl.button]
       pocket_slot(seen, id_of(sl), { side = sl.side, button = sl.button }, {
-        x = sx, y = sy, s = su, u = u, short = short, fallback = tip,
+        x = sx, y = sy, s = su, u = u, k = k, short = short, fallback = tip,
         hover = p.st.hover == key, dim = not lit, edge = edge, st = p.st, key = key, redraw = p.redraw,
         fire = p.fire, menu = p.menu,
       })
     else
       slot(seen, id_of(sl), { side = sl.side, button = sl.button }, {
-        x = sx, y = sy, s = su, u = u, up = p.top_dock,
+        x = sx, y = sy, s = su, u = u, k = k, up = p.top_dock,
         macro = macro, act = macro and actions.of(macro), shade = p.shades[key], dim = not lit and not fake,
         hover = p.st.hover == key, hint = p.labels[sl.button], fallback = tip,
         edge = edge, st = p.st, key = key, redraw = p.redraw,
