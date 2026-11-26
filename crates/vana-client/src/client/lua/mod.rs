@@ -4657,6 +4657,15 @@ pub(super) fn over_classic(w: &World, p: (f32, f32)) -> bool {
     })
 }
 
+/// A classic mod window holds the pointer: a press or a canvas drag on it goes on until the button comes up, wherever
+/// the pointer is.
+pub(super) fn holds_pointer(w: &World) -> bool {
+    w.lua
+        .vms
+        .iter()
+        .any(|vm| vm.st.borrow().windows.iter().any(|win| win.open && (win.drag.is_some() || win.press.is_some())))
+}
+
 /// The pointer on the classic mod windows (the topmost under it); whether it is over a control.
 pub(super) fn pointer_classic(
     w: &mut World,

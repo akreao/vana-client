@@ -557,6 +557,12 @@ impl GameUi {
             return true;
         }
         let f = ((n - a.open) / n).max(0.0);
+        // An opening window covers what its zoom paints (zoom_frame's f^2 frame about the centre).
+        if let Shape::Frame([x, y, w, h]) = shape {
+            let s = f * f;
+            let at = |p: f32, d: f32| (p - (d / 2.0).trunc() * (s - 1.0)).trunc();
+            self.drawn_frames.push([at(x, w), at(y, h), w * s, h * s]);
+        }
         self.zoom(&shape, f);
         false
     }
