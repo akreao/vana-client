@@ -14458,7 +14458,9 @@ impl App {
         // Scheduler op 0x2e: the effect of our action holds the walk input (FUN_100a5ec0 skips FUN_100a6240).
         // `res2` (rest.rs) holds the walk the same way, from the frame it starts.
         // FUN_1008b3a0 (the walk gate's machine test): no walk while our ride ends, nor while we draw or sheathe.
-        let machine_held = ride::dismounting(world) || actmotion::battle_walk_held(world, world.my_id);
+        // The battle states (the engage and sheathe lock) are the move_lock rule's too, as retail's nolock add-on lifts.
+        let machine_held =
+            ride::dismounting(world) || (world.opts.move_lock && actmotion::battle_walk_held(world, world.my_id));
         let move_locked = (world.opts.move_lock
             && (world.effects.rooted.contains(&world.my_id) || rest::rising(world)))
             || machine_held;

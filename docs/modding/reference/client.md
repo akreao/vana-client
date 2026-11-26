@@ -160,7 +160,7 @@ drawn. A switch stays set while your mod is loaded: when the mod that set it las
 | `ambient` | `{r, g, b}` or `false` | 0..255 each | `false` | The ambient light in place of the zone's; `false` (or `nil`) gives the zone's back. |
 | `minimap_span` | `number` | 48..512 | the player's zoom (160 at first) | The minimap's zoom: how many map pixels it shows across (the Minimap mod sets it from the wheel over its map). It is kept, and not put back when the mod unloads. |
 | `map_opacity` | `number` | 0..1 | `0.6` | How opaque the HUD maps are where a mod gives no `alpha`, and how strongly the minimap's marker is shaded (as the map overlay's). The Map Overlay mod sets it from its Map Overlay Opacity setting. It is the player's choice: it is kept, not put back when the mod unloads, and the client remembers it across sessions, so it holds while the Map Overlay mod is off. |
-| `move_lock` | `boolean` | | `true` | `false`: we can move while an ability's or the weapon draw's animation would normally hold us in place. The battle transitions themselves (the draw waiting for its files or held by a hit, the sheathe) still hold us, as they do a dismount. |
+| `move_lock` | `boolean` | | `true` | `false`: we can move while using an ability, drawing our weapon (also while the draw waits for its files or a hit holds it) or sheathing it would normally hold us in place. |
 | `all_maps` | `boolean` | | `false` | `true`: every map can be opened without its key item. |
 | `dead_commands` | `boolean` | | `false` | `true`: text commands work while K.O. |
 | `compass_monsters` | `boolean` | | `false` | `true`: monsters show as dots on the compass for every job. |

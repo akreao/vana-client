@@ -20,8 +20,8 @@ are 30261102_0, decompiled with Ghidra.
 - Retail capture (Escha, a mob's spell landing within about 3 s of an engage, a move key held): the c2s 0x015
   position and facing stop about 1 s after the engage and stay for 6.1 / 6.5 s; one ends about 1.8 s after the
   disengage (the sheathe). A mob casting at us with no engage: the walk never stops, through the cast and its landing.
-- Ours: actmotion::battle_walk_held (Battle.drew for state 2) joins the walk lock like ride::dismounting (not behind
-  the move_lock rule: it is the machine, not scheduler op 0x2e); the battle machine's steps (draw, `bntg` -> sheathe,
+- Ours: actmotion::battle_walk_held (Battle.drew for state 2) joins the walk lock beside ride::dismounting, behind
+  the move_lock rule (what retail players lift with the nolock add-on); the battle machine's steps (draw, `bntg` -> sheathe,
   the files off the list, the sheathe's end) wait while combat::held is up; and our own engage is parked behind the
   holds like every other status change, which drops the 2026-11-14 exception ("Our engage is never held"): with a
   monster shooting at us our first rounds can land before the draw, as retail's do.
