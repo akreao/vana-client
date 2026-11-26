@@ -4936,7 +4936,12 @@ pub(super) fn wheel_classic(w: &World, p: (f32, f32), notches: i32) -> bool {
 /// The pointer over any open classic mod window (an open dropdown's list included): drawn over the game's windows,
 /// the mouse there is the mod's alone.
 pub(super) fn over_classic(w: &World, p: (f32, f32)) -> bool {
-    pointer_places(w, p).iter().any(|(v, id, x, y)| {
+    under_any(w, &pointer_places(w, p), p)
+}
+
+/// The pointer over one of `places`' windows (an open dropdown's list included).
+fn under_any(w: &World, places: &[(usize, String, f32, f32)], p: (f32, f32)) -> bool {
+    places.iter().any(|(v, id, x, y)| {
         w.lua.vms[*v].st.borrow().windows.iter().find(|win| win.id == *id).is_some_and(|win| {
             let (ww, wh) = win.classic_reach();
             p.0 >= *x && p.1 >= *y && p.0 < x + ww && p.1 < y + wh
@@ -4953,9 +4958,10 @@ pub(super) fn holds_pointer(w: &World) -> bool {
         .any(|vm| vm.st.borrow().windows.iter().any(|win| win.open && (win.drag.is_some() || win.press.is_some())))
 }
 
-/// A classic mod window or a recorded game window under the pointer, drawn over the HUD there.
+/// A classic mod window or a recorded game window under the pointer, drawn over the HUD there (a HUD-layer window a
+/// game window covers too: something is over the HUD).
 pub(super) fn covers_hud(w: &World, p: (f32, f32)) -> bool {
-    over_classic(w, p)
+    under_any(w, &classic_places(w), p)
         || w.win_hits.borrow().iter().any(|h| {
             let r = h.1;
             p.0 >= r[0] && p.1 >= r[1] && p.0 <= r[0] + r[2] && p.1 <= r[1] + r[3]
@@ -5043,15 +5049,7 @@ pub(super) fn pointer_classic(
         }
     }
     // A mod window or a recorded game window under the pointer, over the HUD there (canvas drags report it).
-    let covered = places.iter().any(|(v, id, x, y)| {
-        w.lua.vms[*v].st.borrow().windows.iter().find(|win| win.id == *id).is_some_and(|win| {
-            let (ww, wh) = win.classic_reach();
-            p.0 >= *x && p.1 >= *y && p.0 < x + ww && p.1 < y + wh
-        })
-    }) || w.win_hits.borrow().iter().any(|h| {
-        let r = h.1;
-        p.0 >= r[0] && p.1 >= r[1] && p.0 <= r[0] + r[2] && p.1 <= r[1] + r[3]
-    });
+    let covered = covers_hud(w, p);
     if let Some(k) = holder {
         let keep = places.swap_remove(k);
         // The others still close an open dropdown on a click off them.

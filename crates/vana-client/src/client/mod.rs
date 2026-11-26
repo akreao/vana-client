@@ -5204,10 +5204,12 @@ fn world_hud(
     }
     // The game's windows drawn from here on are over the mods' (World::above_mods).
     let above_from = gu.drawn_count();
-    // The map covers the screen (mapframe takes the mouse), as does cnqframe.
-    if world.map.is_some() || world.cnq.is_some() {
+    // The map covers the screen (mapframe takes the mouse), as does cnqframe. Both draw under the mods' HUD layer,
+    // so this one keeps the mouse off the world only (not off that layer).
+    let map_at = (world.map.is_some() || world.cnq.is_some()).then(|| {
         blockers.push([0.0, 0.0, sw, sh]);
-    }
+        blockers.len() - 1
+    });
     // The choice menu (FUN_100b0960).
     if let Some(c) = event::choice(world).filter(|_| !world.modern) {
         let options: Vec<String> = c.options.iter().map(|o| o.1.clone()).collect();
@@ -5695,9 +5697,16 @@ fn world_hud(
     // The Timers window under every other window: its clicks only where none is over it.
     let ours_from = blockers.len();
     world.above_mods = gu.drawn_since(above_from);
-    // All drawn after the mods' HUD layer (the minimap is under it), then the layer itself under Timers' clicks.
+    // All drawn after the mods' HUD layer (not the minimap nor the map, under it), then the layer itself under Timers'
+    // clicks.
     let mut over = gu.drawn_since(mod_hud_from);
-    over.extend(blockers.iter().filter(|r| world.minimap_rect != Some(**r)));
+    over.extend(
+        blockers
+            .iter()
+            .enumerate()
+            .filter(|(k, r)| world.minimap_rect != Some(**r) && map_at != Some(*k))
+            .map(|x| *x.1),
+    );
     world.over_mod_hud = over;
     blockers.extend(mod_hud);
     blockers.extend(timers::pointer(world, gu, input.pointer, input.clicked, &blockers));
