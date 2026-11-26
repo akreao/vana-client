@@ -5,6 +5,7 @@
 use super::game_ui::GameUi;
 use super::updater::newer;
 use crate::audio::Ui as Se;
+use crate::lock::Locked;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
@@ -118,7 +119,7 @@ pub fn fetch_since(seen: String) -> Fetch {
         let me = env!("CARGO_PKG_VERSION");
         let r =
             if seen.is_empty() { fetch("0", me).map(|n| n.into_iter().take(1).collect()) } else { fetch(&seen, me) };
-        *o.lock().unwrap() = match r {
+        *o.locked() = match r {
             Ok(notes) => Some((!notes.is_empty()).then(|| Saved { from: seen, to: me.into(), notes })),
             Err(e) => {
                 log::warn!("change notes: {e:#}");

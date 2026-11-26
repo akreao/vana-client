@@ -4,6 +4,7 @@
 //! size bucket and uploaded as a UI image; a frame only draws quads.
 
 use super::super::game_ui::GameUi;
+use crate::lock::Locked;
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont, point};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -127,7 +128,7 @@ pub fn draw(
     let key = format!("plate {px} {name}");
     gu.touch_image(&key);
     let raster = {
-        let mut m = metrics().lock().unwrap();
+        let mut m = metrics().locked();
         // Rasters gone (unseen a while) take their metrics with them: past a mark that doubles over what is still
         // live, so a crowd of more than 1024 live plates is not swept again on every plate drawn.
         static PRUNE_AT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1024);

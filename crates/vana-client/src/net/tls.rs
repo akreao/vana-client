@@ -2,6 +2,7 @@
 //! one (LSB's, X.509 v1) is pinned by its key the first time (known_servers.json). LSB's lobby data and view ports
 //! (TLS since xiloader 3.0) must hold the login port's key instead, as xiloader 3.0 checks them.
 
+use crate::lock::Locked;
 use anyhow::{Context, Result, bail};
 use rustls::client::WebPkiServerVerifier;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -170,7 +171,7 @@ impl ServerCertVerifier for Verifier {
             .ok_or(rustls::Error::InvalidCertificate(rustls::CertificateError::BadEncoding))?;
         let authority = self.authority.verify_server_cert(cert, intermediates, name, ocsp, now).is_ok();
         let seen = Seen { key, authority };
-        *self.seen.lock().unwrap() = Some(seen);
+        *self.seen.locked() = Some(seen);
         if accepts(self.pin.as_ref(), seen) {
             Ok(ServerCertVerified::assertion())
         } else {
@@ -304,10 +305,10 @@ fn handshake(host: &str, port: u16, pin: Option<Pin>) -> Result<(std::io::Result
     let mut conn = ClientConnection::new(client_config(pin, seen.clone())?, name)?;
     while conn.is_handshaking() {
         if let Err(e) = conn.complete_io(&mut tcp) {
-            return Ok((Err(e), *seen.lock().unwrap()));
+            return Ok((Err(e), *seen.locked()));
         }
     }
-    let got = *seen.lock().unwrap();
+    let got = *seen.locked();
     Ok((Ok(StreamOwned::new(conn, tcp)), got))
 }
 

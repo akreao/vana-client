@@ -2,6 +2,7 @@
 //! sent to everyone on the channel.
 
 use super::{FRAME, RATE, Shared, Talk};
+use crate::lock::Locked;
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample, StreamConfig};
@@ -326,7 +327,7 @@ fn run(shared: Arc<Shared>, stop: Arc<AtomicBool>, rx: Receiver<Vec<f32>>, rate:
                 continue;
             }
             let (talk, threshold, gain, muted, quiet) = {
-                let c = shared.cfg.lock().unwrap();
+                let c = shared.cfg.locked();
                 (c.talk, c.threshold_db as f32, c.mic_gain as f32 / 100.0, c.mic_muted, c.noise_suppression)
             };
             if quiet {

@@ -4,6 +4,7 @@
 //! Signatures from the 2019 base, checked against retail 30261006_0 (lab/current/signatures.py) and 30261102_0
 //! (every signature is found in both; the client supports the current retail build and the one before it).
 
+use crate::lock::Locked;
 use anyhow::{Result, anyhow, bail};
 use md5::{Digest, Md5};
 
@@ -255,11 +256,11 @@ pub fn of(dll: &[u8]) -> Result<Tables> {
         (0..61).fold(0u64, |h, i| h.wrapping_mul(1_000_003).wrapping_add(*dll.get(i * step).unwrap_or(&0) as u64)),
     );
     let cache = CACHE.get_or_init(Default::default);
-    if let Some(t) = cache.lock().unwrap().iter().find(|e| e.0 == key) {
+    if let Some(t) = cache.locked().iter().find(|e| e.0 == key) {
         return Ok(t.1.clone());
     }
     let t = Tables::find(dll)?;
-    cache.lock().unwrap().push((key, t.clone()));
+    cache.locked().push((key, t.clone()));
     Ok(t)
 }
 

@@ -4,6 +4,7 @@
 
 use super::game_ui::GameUi;
 use crate::audio::Ui as Se;
+use crate::lock::Locked;
 use anyhow::{Context, Result, bail};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -81,7 +82,7 @@ pub type Shared = Arc<Mutex<Status>>;
 /// The PlayOnline Viewer's check in the background, into `s` (a player who picks PlayOnline after start gets its
 /// row without the other checks running again).
 pub fn start_viewer(s: &Shared) {
-    s.lock().unwrap().viewer = Some(Game::Checking);
+    s.locked().viewer = Some(Game::Checking);
     let v = s.clone();
     std::thread::spawn(move || {
         let root = crate::config::viewer_dir();
@@ -89,7 +90,7 @@ pub fn start_viewer(s: &Shared) {
         // when every file is current).
         let viewer = match crate::patch::viewer_behind(&root) {
             Ok(Some(server)) => {
-                v.lock().unwrap().viewer = Some(Game::Behind(server.version.clone()));
+                v.locked().viewer = Some(Game::Behind(server.version.clone()));
                 match crate::patch::plan_viewer(&root, server) {
                     Ok(plan) => Game::Available(Box::new(plan)),
                     Err(e) => Game::Failed(format!("{e:#}")),
@@ -105,7 +106,7 @@ pub fn start_viewer(s: &Shared) {
             Game::Failed(e) => log::warn!("update check: PlayOnline Viewer: {e}"),
             _ => log::info!("update check: PlayOnline Viewer current"),
         }
-        v.lock().unwrap().viewer = Some(viewer);
+        v.locked().viewer = Some(viewer);
     });
 }
 
@@ -120,7 +121,7 @@ pub fn start(root: PathBuf, playonline: bool) -> Shared {
         // The button shows as soon as the version says so; the file check sizes it afterwards.
         let game = match crate::patch::behind(&root) {
             Ok(Some(server)) => {
-                g.lock().unwrap().game = Game::Behind(server.version.clone());
+                g.locked().game = Game::Behind(server.version.clone());
                 match crate::patch::plan_against(&root, server) {
                     Ok(plan) if !plan.todo.is_empty() => Game::Available(Box::new(plan)),
                     // Every file is current (a reinstall the Viewer then patched): the version is recorded, so the
@@ -149,7 +150,7 @@ pub fn start(root: PathBuf, playonline: bool) -> Shared {
                 Game::Checking | Game::Behind(_) => String::new(),
             }
         );
-        g.lock().unwrap().game = game;
+        g.locked().game = game;
     });
     let c = s.clone();
     std::thread::spawn(move || {
@@ -165,7 +166,7 @@ pub fn start(root: PathBuf, playonline: bool) -> Shared {
             Client::Unavailable(why) => log::warn!("update check: no client release: {why}"),
             _ => {}
         }
-        c.lock().unwrap().client = client;
+        c.locked().client = client;
     });
     s
 }
@@ -428,7 +429,7 @@ pub struct UpdateUi {
 impl UpdateUi {
     pub fn open(status: Shared, root: PathBuf) -> Self {
         let pick = {
-            let s = status.lock().unwrap();
+            let s = status.locked();
             [0, 1, 2].map(|r| offered(&s, r))
         };
         let cursor = if pick.iter().any(|&p| p) { UPDATE } else { CLOSE };
@@ -436,15 +437,15 @@ impl UpdateUi {
     }
 
     fn available(&self, row: usize) -> bool {
-        offered(&self.status.lock().unwrap(), row)
+        offered(&self.status.locked(), row)
     }
 
     fn running(&self) -> bool {
-        self.job.as_ref().is_some_and(|j| matches!(*j.lock().unwrap(), Job::Running(_)))
+        self.job.as_ref().is_some_and(|j| matches!(*j.locked(), Job::Running(_)))
     }
 
     fn start(&mut self) {
-        let s = self.status.lock().unwrap();
+        let s = self.status.locked();
         let game = self.pick[0] && s.game.offered();
         let viewer = self.pick[1] && offered(&s, 1);
         let release = match (&s.client, self.pick[2]) {
@@ -456,7 +457,7 @@ impl UpdateUi {
         self.job = Some(job.clone());
         let (root, status) = (self.root.clone(), self.status.clone());
         std::thread::spawn(move || {
-            let set = |p: Progress| *job.lock().unwrap() = Job::Running(p);
+            let set = |p: Progress| *job.locked() = Job::Running(p);
             let mut lines = Vec::new();
             let mut restart = false;
             let result = (|| -> Result<()> {
@@ -479,7 +480,7 @@ impl UpdateUi {
                             ),
                         });
                     })?;
-                    status.lock().unwrap().game = Game::Current;
+                    status.locked().game = Game::Current;
                     lines.push(format!("Game files updated to {version} ({total_files} files)."));
                 }
                 let plan = if viewer {
@@ -505,7 +506,7 @@ impl UpdateUi {
                             ),
                         });
                     })?;
-                    status.lock().unwrap().viewer = Some(Game::Current);
+                    status.locked().viewer = Some(Game::Current);
                     lines.push(format!("PlayOnline Viewer updated to {version} ({total_files} files)."));
                 }
                 if let Some(r) = release {
@@ -520,7 +521,7 @@ impl UpdateUi {
                     })?;
                     verify(&r, &dest)?;
                     replace_self(&dest)?;
-                    status.lock().unwrap().client = Client::Current;
+                    status.locked().client = Client::Current;
                     lines.push(format!("vana-client {} is installed; restart to use it.", r.tag));
                     restart = true;
                     // The notes since this version, for the restarted client to show (none if GitHub won't say).
@@ -539,7 +540,7 @@ impl UpdateUi {
                 }
                 Ok(())
             })();
-            *job.lock().unwrap() = match result {
+            *job.locked() = match result {
                 Ok(()) => Job::Done(lines, restart),
                 Err(e) => Job::Failed(format!("{e:#}")),
             };
@@ -549,7 +550,7 @@ impl UpdateUi {
     /// A key; Out says what the app should do.
     pub fn key(&mut self, key: egui::Key) -> Out {
         let mut out = Out::default();
-        let finished = self.job.as_ref().map(|j| match &*j.lock().unwrap() {
+        let finished = self.job.as_ref().map(|j| match &*j.locked() {
             Job::Running(_) => None,
             Job::Done(_, r) => Some(*r),
             Job::Failed(_) => Some(false),
@@ -616,7 +617,7 @@ impl UpdateUi {
     pub fn poll(&mut self) -> Out {
         let mut out = Out::default();
         if !self.reloaded
-            && let Some(Job::Done(lines, _)) = self.job.as_ref().map(|j| j.lock().unwrap()).as_deref()
+            && let Some(Job::Done(lines, _)) = self.job.as_ref().map(|j| j.locked()).as_deref()
         {
             self.reloaded = true;
             out.reload = lines.iter().any(|l| l.starts_with("Game files"));
@@ -695,7 +696,7 @@ impl UpdateUi {
                 v.buttons.push((Self::button_rect(x, y, h, i), label, cursor == UPDATE + i));
             }
         };
-        let job = self.job.as_ref().map(|j| match &*j.lock().unwrap() {
+        let job = self.job.as_ref().map(|j| match &*j.locked() {
             Job::Running(p) => Job::Running(p.clone()),
             Job::Done(l, r) => Job::Done(l.clone(), *r),
             Job::Failed(e) => Job::Failed(e.clone()),
@@ -727,7 +728,7 @@ impl UpdateUi {
                 buttons(&mut v, &["OK"], UPDATE);
             }
             None => {
-                let s = self.status.lock().unwrap();
+                let s = self.status.locked();
                 let rows: [(&str, String, bool); ROWS] = [
                     ("Game files", files_line(&s.game), s.game.offered()),
                     (
@@ -841,7 +842,7 @@ fn wait_plan(
     what: &str,
 ) -> Result<Option<crate::patch::Plan>> {
     loop {
-        let mut s = status.lock().unwrap();
+        let mut s = status.locked();
         let g = row(&mut s);
         match std::mem::replace(g, Game::Checking) {
             Game::Available(p) => return Ok(Some(*p)),
