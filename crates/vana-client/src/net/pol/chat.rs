@@ -432,16 +432,26 @@ pub struct Chat {
     pub skip_member_login: bool,
 }
 
+/// The longest line taken from the session (ours: polcore's own limit was not read). A notice is a few hundred
+/// bytes of base64; a server that never sends a newline is dropped here rather than fill memory.
+const LINE_CAP: usize = 64 << 10;
+
 impl Chat {
     /// The session's time: the greeting's clock plus whole seconds since.
     pub fn now(&self) -> u32 {
         self.clock.wrapping_add(self.clock_at.elapsed().as_secs() as u32)
     }
 
-    fn read_raw(sock: &mut TcpStream, buf: &mut Vec<u8>) -> Result<Vec<u8>> {
+    fn read_raw(sock: &mut (impl Read + ?Sized), buf: &mut Vec<u8>) -> Result<Vec<u8>> {
+        // Only the bytes read since the last look are scanned for the newline.
+        let mut seen = 0;
         loop {
-            if let Some(i) = buf.iter().position(|&c| c == b'\n') {
-                return Ok(buf.drain(..=i).collect());
+            if let Some(i) = buf[seen..].iter().position(|&c| c == b'\n') {
+                return Ok(buf.drain(..=seen + i).collect());
+            }
+            seen = buf.len();
+            if seen > LINE_CAP {
+                bail!("PlayOnline sent a line past {LINE_CAP} bytes");
             }
             let mut tmp = [0u8; 4096];
             let n = sock.read(&mut tmp).context("reading from PlayOnline")?;
@@ -632,6 +642,19 @@ impl Chat {
 
 #[cfg(test)]
 mod tests {
+
+    /// Lines split across reads come out whole; a stream with no newline stops at the cap instead of growing.
+    #[test]
+    fn raw_lines_are_capped() {
+        let mut buf = Vec::new();
+        let mut r = std::io::Cursor::new(b"PING a\r\nPI".to_vec()).chain(&b"NG b\r\n"[..]);
+        assert_eq!(Chat::read_raw(&mut r, &mut buf).unwrap(), b"PING a\r\n");
+        assert_eq!(Chat::read_raw(&mut r, &mut buf).unwrap(), b"PING b\r\n");
+        let mut endless = std::io::repeat(b'x');
+        let e = Chat::read_raw(&mut endless, &mut buf).unwrap_err().to_string();
+        assert!(e.contains("past"), "{e}");
+        assert!(buf.len() <= LINE_CAP + 4096);
+    }
     use super::*;
 
     fn h(s: &str) -> Vec<u8> {

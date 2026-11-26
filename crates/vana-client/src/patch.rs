@@ -56,6 +56,10 @@ pub const PATCH_VER: &str = "patch.ver";
 const MAGIC: &[u8; 4] = b"POLP";
 const HEADER: usize = 16;
 const CHUNK: u32 = 0x10000;
+/// The most a frame or a fetched file is given before its bytes arrive (each grows as they come).
+const START: usize = 1 << 20;
+/// The largest file a manifest may name (retail's largest is far under it); past it the server is not believed.
+const MAX_FILE: u64 = 1 << 30;
 const VERSION_BLOCK: usize = 0x40;
 /// Our record of the last manifest applied (not the Viewer's patch.cfg: code files may stay behind).
 pub const STAMP_FILE: &str = "vana-update.cfg";
@@ -239,9 +243,13 @@ impl Session {
         if !(HEADER..=1 << 30).contains(&total) {
             bail!("patch server announced a {total}-byte frame");
         }
-        let mut f = vec![0u8; total];
-        f[..4].copy_from_slice(&head);
-        self.s.read_exact(&mut f[4..])?;
+        // Grown as the bytes come, so a length the server only announces allocates nothing.
+        let mut f = Vec::with_capacity(total.min(START));
+        f.extend_from_slice(&head);
+        (&mut self.s).take((total - 4) as u64).read_to_end(&mut f)?;
+        if f.len() != total {
+            bail!("patch server sent {} of a {total}-byte frame", f.len());
+        }
         let (k, _) = open(&f)?;
         match k {
             k if k == want => Ok(f),
@@ -278,8 +286,11 @@ impl Session {
 
     /// `len` bytes of a server path in 64 KiB chunks (body: offset, len, extra, [extra bytes], data).
     pub fn fetch(&mut self, path: &str, len: u64) -> Result<Vec<u8>> {
+        if len > MAX_FILE {
+            bail!("{path}: the manifest gives it {len} bytes");
+        }
         self.keep_alive()?;
-        let mut out = Vec::with_capacity(len as usize);
+        let mut out = Vec::with_capacity(len.min(START as u64) as usize);
         while (out.len() as u64) < len {
             let offset = out.len() as u32;
             let want = ((len - out.len() as u64) as u32).min(CHUNK);
@@ -1113,6 +1124,31 @@ mod tests {
         );
         let paths: Vec<_> = parse_manifest(&text).unwrap().into_iter().map(|e| e.path).collect();
         assert_eq!(paths, ["y.bin", "a.txt"]);
+    }
+
+    /// A frame or file length the server only announces allocates nothing: a huge frame that never comes is an
+    /// error, and a manifest length past MAX_FILE is refused before any request.
+    #[test]
+    fn announced_sizes_are_not_trusted() {
+        use std::net::TcpListener;
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut c, _) = l.accept().unwrap();
+            let mut head = [0u8; 4];
+            c.read_exact(&mut head).unwrap();
+            let mut f = vec![0u8; u32::from_le_bytes(head) as usize - 4];
+            c.read_exact(&mut f).unwrap();
+            c.write_all(&((1u32 << 30) - 1).to_le_bytes()).unwrap();
+            c.write_all(&[0u8; 32]).unwrap();
+        });
+        let service = Service { host: "127.0.0.1", port, ..VIEWER };
+        let mut s = Session::open(service, None, None).unwrap();
+        let e = s.version(None).unwrap_err().to_string();
+        assert!(e.contains("sent 36 of"), "{e}");
+        server.join().unwrap();
+        let e = s.fetch("x", MAX_FILE + 1).unwrap_err().to_string();
+        assert!(e.contains("manifest gives it"), "{e}");
     }
 
     /// A Viewer update against a local patch server: version, manifest, files (code too; an absent option file left
