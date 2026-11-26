@@ -295,7 +295,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
 }
 
 /// The mouse: the generic window over the slots and View Wares (winhits.rs).
-pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool, right: bool) {
     // The modern layer draws it and takes its mouse; the bazaar list over it suspends it.
     if w.modern || super::shop::wares_open(w) {
         return;
@@ -308,7 +308,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
         cursor,
         1..=VIEW,
         p,
-        moved,
         clicked,
         right,
         |w, id| {

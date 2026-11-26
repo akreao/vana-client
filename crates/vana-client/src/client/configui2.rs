@@ -399,7 +399,13 @@ pub struct Extra {
     pub rgb_edit: Option<u16>,
     /// conf6win Default asked (the yes/no box is open).
     pub ask_keys: Option<bool>,
+    /// conf11s: the cursor's child as the last Down / Up left it (handler +0x4c; 1 at the open, FUN_1019b870), where
+    /// Left / Right put the cursor back.
+    pub key_row: u16,
 }
+
+/// conf11s's page arrows: children 15 (Left) and 16 (Right), mouse only (FUN_1019ba40 message 5).
+const LOG_ARROWS: std::ops::RangeInclusive<u16> = 15..=16;
 
 fn rows(ui: &ConfigUi, v: &Values, name: &str) -> usize {
     match name {
@@ -625,6 +631,29 @@ pub fn key(ui: &mut ConfigUi, _gu: &GameUi, v: &mut Values, key: egui::Key, out:
         }
         return true;
     }
+    // conf11s's handler (FUN_1019ba40): with the cursor on a page arrow (message 9 on 15 / 16 clears +0x62) Down and
+    // Up do nothing and Enter is the arrow's page turn (message 5: 15 = FUN_1019bc90, 16 = FUN_1019bc60); Left and
+    // Right (messages 4 / 3) first put the cursor back on +0x4c, the child the last Down / Up left it on.
+    if name == "conf11s" {
+        let set = |ui: &mut ConfigUi, c: u16| {
+            if let Some(w) = ui.stack.last_mut() {
+                w.cursor = c;
+            }
+        };
+        match key {
+            egui::Key::ArrowDown | egui::Key::ArrowUp if LOG_ARROWS.contains(&cursor) => return true,
+            egui::Key::Enter if LOG_ARROWS.contains(&cursor) => {
+                ui.extra.log_window ^= 1;
+                out.sounds.push(Se::Cursor);
+                return true;
+            }
+            egui::Key::ArrowRight | egui::Key::ArrowLeft => {
+                let back = ui.extra.key_row;
+                set(ui, back);
+            }
+            _ => {}
+        }
+    }
     if is_list(&name) || name == "textcol1" {
         let n = rows(ui, v, &name);
         // textcol1 shows 11 rows, the lists 14 (FUN_10198620 / FUN_10197b80); all scroll and page alike.
@@ -694,6 +723,9 @@ pub fn key(ui: &mut ConfigUi, _gu: &GameUi, v: &mut Values, key: egui::Key, out:
         if moved {
             out.sounds.push(Se::Cursor);
         }
+        if name == "conf11s" && matches!(key, egui::Key::ArrowDown | egui::Key::ArrowUp) {
+            ui.extra.key_row = ui.stack.last().map_or(1, |w| w.cursor);
+        }
         return true;
     }
     false
@@ -713,6 +745,7 @@ pub fn custom(ui: &mut ConfigUi, v: &mut Values, name: &str, k: u8, out: &mut Ou
         }
         ("conf11l", 1..=4) => {
             ui.extra.cat = k as usize - 1;
+            ui.extra.key_row = 1;
             ui.push("conf11s");
         }
         ("textcol3", 1..=3) => ui.extra.rgb_edit = Some(k as u16),
@@ -764,7 +797,6 @@ pub fn pointer(
     gu: &GameUi,
     v: &mut Values,
     p: (f32, f32),
-    moved: bool,
     clicked: bool,
     sw: f32,
     sh: f32,
@@ -775,33 +807,41 @@ pub fn pointer(
     if !(is_list(&name) || name == "textcol1") {
         return false;
     }
-    let Some((x, y)) = gu.window_xy(&w.full(), sw, sh) else { return true };
+    let full = w.full();
+    let Some((x, y)) = gu.window_xy(&full, sw, sh) else { return true };
     let n = rows(ui, v, &name);
+    // conf11s's page arrows take the mouse too (FUN_1019ba40 messages 9 / 5 on 15 / 16).
+    let arrows = |id: &u16| name == "conf11s" && LOG_ARROWS.contains(id);
     let kids: Vec<(u16, [f32; 4])> = gu
-        .menu_def(&w.full())
+        .menu_def(&full)
         .map(|m| {
             m.elements
                 .iter()
                 .skip(1)
-                .filter(|c| (1..=14).contains(&c.id))
+                .filter(|c| (1..=14).contains(&c.id) || arrows(&c.id))
                 .map(|c| (c.id, [x + c.x as f32, y + c.y as f32, c.w as f32, c.h as f32]))
                 .collect()
         })
         .unwrap_or_default();
     let Some((id, _)) = kids.iter().find(|(id, r)| {
-        p.0 >= r[0] && p.1 >= r[1] && p.0 < r[0] + r[2] && p.1 < r[1] + r[3] && ui.extra.scroll + *id as usize - 1 < n
+        p.0 >= r[0]
+            && p.1 >= r[1]
+            && p.0 < r[0] + r[2]
+            && p.1 < r[1] + r[3]
+            && (arrows(id) || ui.extra.scroll + *id as usize - 1 < n)
     }) else {
         return true;
     };
     let id = *id;
-    gu.hover.set(true);
-    if (moved || clicked) && w.cursor != id {
+    let in_frame = gu.window_rect(&full, sw, sh).is_some_and(|r| super::winhits::inside(r, p));
+    let at = w.cursor;
+    if super::winhits::takes(gu, &full, id, in_frame) && at != id {
         out.sounds.push(Se::Cursor);
         if let Some(w) = ui.stack.last_mut() {
             w.cursor = id;
         }
-    }
-    if clicked {
+    } else if clicked && at == id {
+        // The release on the cursor's child is Enter (FUN_1015f420).
         key(ui, gu, v, egui::Key::Enter, out);
     }
     true

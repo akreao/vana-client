@@ -576,7 +576,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     }
     let Some(s) = w.pupset.clone().filter(|s| s.sibo.is_none()) else { return };
     let Some(h) = hit(gu, sw, sh, p) else { return };
-    gu.hover.set(true);
     let on_grid = matches!(h, Hit::Grid(_));
     if on_grid != (s.focus == Focus::Grid) {
         // automato's frame hook (win_automato_v28 0x10209050): while the pointer drives the menus and rests on
@@ -593,12 +592,19 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         } else if moved {
             num_plus(w);
         }
+        gu.hover.set(true);
         return;
     }
-    set_cursor(w, h, moved, clicked, gu);
+    let (name, child) = match h {
+        Hit::Grid(c) => (AUTO, c),
+        Hit::List(k) => (INVEN, k as u16 + 1),
+    };
+    let takes = super::winhits::takes(gu, name, child, super::winhits::in_frame(gu, name, sw, sh, p));
+    set_cursor(w, h, takes, clicked, gu);
 }
 
-fn set_cursor(w: &mut World, h: Hit, moved: bool, clicked: bool, gu: &GameUi) {
+/// `takes`: the child takes the cursor (winhits::takes).
+fn set_cursor(w: &mut World, h: Hit, takes: bool, clicked: bool, gu: &GameUi) {
     let Some(s) = w.pupset.as_ref() else { return };
     let n = rows(w, s).len();
     let same = match h {
@@ -611,7 +617,7 @@ fn set_cursor(w: &mut World, h: Hit, moved: bool, clicked: bool, gu: &GameUi) {
         }
         return;
     }
-    if !(moved || clicked) {
+    if !takes {
         return;
     }
     let Some(s) = w.pupset.as_mut() else { return };

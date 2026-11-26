@@ -849,10 +849,10 @@ fn has_focus(l: &Linkshell, editing: bool, confirming: bool) -> bool {
     l.sub.is_none() && l.naming.is_none() && !editing && !confirming
 }
 
-/// Mouse (the per-frame hover in FUN_101267f0 and the release FUN_1015f420, over the hit test FUN_1011a140): hover
-/// moves the cursor, a click on the cursor row is Enter. A submenu's caption does not take it: it is in state 0x10
+/// Mouse (the per-frame hover in FUN_101267f0 and the release FUN_1015f420, over the hit test FUN_1011a140): a row
+/// takes the cursor by winhits::takes, a click on the cursor row is Enter. A submenu's caption does not take it: it is in state 0x10
 /// (`GameUi::hit`).
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool) {
     let Some(l) = w.linkshell.clone() else { return };
     let (name, sel) = match (&l.naming, &l.sub) {
         (Some(nm), _) if nm.edit == 0 => (NAMING, nm.sel),
@@ -865,8 +865,8 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     if name == LIST && l.top + id as usize > n {
         return;
     }
-    gu.hover.set(true);
-    if id != sel && (moved || clicked) {
+    let takes = super::winhits::takes(gu, name, id, super::winhits::in_frame(gu, name, sw, sh, p));
+    if id != sel && takes {
         if let Some(l) = w.linkshell.as_mut() {
             match (&mut l.naming, &mut l.sub) {
                 (Some(nm), _) => nm.sel = id,
@@ -875,7 +875,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
             }
         }
         w.sounds.push(Ui::Cursor as u32);
-    } else if clicked {
+    } else if clicked && id == sel {
         key(w, gu, egui::Key::Enter);
     }
 }

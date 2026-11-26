@@ -803,7 +803,7 @@ pub fn key(w: &mut World, key: egui::Key) {
 
 /// The mouse (winhits.rs): scoption as the generic window, else the results' rows (hover moves the cursor, a click on
 /// it is Enter, a right click Escape).
-pub fn pointer(w: &mut World, gu: &super::game_ui::GameUi, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &super::game_ui::GameUi, p: (f32, f32), clicked: bool, right: bool) {
     use super::winhits::generic;
     let Some(res) = w.search.as_ref() else { return };
     let keys = |w: &mut World, _: &super::game_ui::GameUi, k: egui::Key| key(w, k);
@@ -816,7 +816,6 @@ pub fn pointer(w: &mut World, gu: &super::game_ui::GameUi, p: (f32, f32), moved:
             c,
             1..=rows.len() as u16,
             p,
-            moved,
             clicked,
             right,
             |w, id| {
@@ -836,7 +835,6 @@ pub fn pointer(w: &mut World, gu: &super::game_ui::GameUi, p: (f32, f32), moved:
         (cursor - scroll + 1) as u16,
         1..=ROWS as u16,
         p,
-        moved,
         clicked,
         right,
         |w, id| {

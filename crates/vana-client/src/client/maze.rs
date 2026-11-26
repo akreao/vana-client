@@ -838,23 +838,25 @@ fn hit(gu: &GameUi, sw: f32, sh: f32, p: (f32, f32)) -> Option<Hit> {
 /// cursor, a click on the cursor's row is Enter, a right click Escape. A middle click turns the rune wherever the
 /// pointer is: the release is message 7 to the focused window (client/mod.rs `middle_release`).
 #[allow(clippy::too_many_arguments)]
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     let Some(s) = w.maze.screen.as_ref().filter(|_| !w.modern) else { return };
     let (sibo, focus, list) = (s.sibo, s.focus, s.list);
     let Some(h) = hit(gu, sw, sh, p) else { return };
-    gu.hover.set(true);
+    let takes =
+        |name: &str, child: u16| super::winhits::takes(gu, name, child, super::winhits::in_frame(gu, name, sw, sh, p));
     match (sibo, focus, h) {
         (Some(r), _, Hit::Sibo(c)) => {
-            if c != r && (moved || clicked) && (1..=11).contains(&c) {
+            let takes = takes(SIBO, c);
+            if c != r && takes && (1..=11).contains(&c) {
                 set_sibo(w, c);
                 w.sounds.push(Ui::Cursor as u32);
             }
-            if clicked {
+            if clicked && w.maze.screen.as_ref().and_then(|s| s.sibo) == Some(c) {
                 key(w, egui::Key::Enter);
             }
         }
         (None, Focus::Grid, Hit::Cell(c, r)) => {
-            if moved || clicked {
+            if takes(GRID, (r * 5 + c + 1) as u16) {
                 set_cell(w, c, r);
             }
             if clicked {
@@ -865,11 +867,16 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         }
         (None, Focus::List, Hit::Row(k)) => {
             let n = w.maze.screen.as_ref().map_or(0, |s| rows(w, s).len());
+            let off = gu.moved_off(INVEN, sw, sh, INVEN_AT.0, INVEN_AT.1);
+            let frame = gu
+                .window_rect(INVEN, sw, sh)
+                .is_some_and(|f| super::winhits::inside([f[0] + off.0, f[1] + off.1, f[2], f[3]], p));
+            let takes = super::winhits::takes(gu, INVEN, k as u16 + 1, frame);
             if list.1 + k == list.0 {
                 if clicked {
                     key(w, egui::Key::Enter);
                 }
-            } else if (moved || clicked) && list.1 + k < n {
+            } else if takes && list.1 + k < n {
                 set_row(w, list.1 + k);
                 w.sounds.push(Ui::Cursor as u32);
             }

@@ -210,7 +210,7 @@ pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
 
 /// The mouse (winhits.rs): a member window as the generic window, else link12's rows (hover moves the cursor, a click
 /// on it is Enter, a right click Escape).
-pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool, right: bool) {
     use super::winhits::generic;
     // The modern layer draws the list and takes its mouse.
     let Some(l) = w.linklist.as_ref().filter(|_| !w.modern) else { return };
@@ -223,7 +223,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
             sel,
             1..=4,
             p,
-            moved,
             clicked,
             right,
             |w, id| {
@@ -243,7 +242,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
         (cursor.saturating_sub(top) + 1) as u16,
         1..=ROWS as u16,
         p,
-        moved,
         clicked,
         right,
         |w, id| {

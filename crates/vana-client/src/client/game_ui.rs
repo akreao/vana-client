@@ -4,7 +4,7 @@
 use crate::dat::DatIndex;
 use crate::dat::font::{Font, Quality, encode_sjis};
 use crate::dat::msg::{Messages, group_file};
-use crate::dat::ui::{LOBBY_US, SpriteLib, UiFile, WINDOW_STYLE_BASE, companions};
+use crate::dat::ui::{SpriteLib, UiFile, WINDOW_STYLE_BASE, companions};
 use crate::render::Gpu;
 use crate::render::mtext::{self, Face};
 use crate::render::screens::{self, HudState, LOBBY_CLEAR, TextSlot, TitleState};
@@ -123,8 +123,9 @@ impl GameUiData {
     /// With the font quality of Config-tool 0036.
     pub fn load_with(index: &DatIndex, ffximain: &[u8], quality: Quality) -> Result<Self> {
         let parse = |id: u32| -> Result<UiFile> { UiFile::parse(&index.read(id)?) };
-        let mut lobby = parse(LOBBY_US)?;
-        for &c in companions(LOBBY_US) {
+        let lobby_file = crate::dat::ui::lobby_file();
+        let mut lobby = parse(lobby_file)?;
+        for &c in companions(lobby_file) {
             lobby.absorb(parse(c)?, true);
         }
         match parse(crate::dat::ui::MAP_BACKDROP) {
@@ -150,11 +151,12 @@ impl GameUiData {
         }
         let style =
             parse(WINDOW_STYLE_BASE)?.libs.into_iter().next().context("window style file has no sprite library")?;
-        let font = Font::load(index, ffximain, 1, quality)?;
+        let lang = crate::dat::lang::files() as u8;
+        let font = Font::load(index, ffximain, lang, quality)?;
         let t = crate::dat::tables::of(ffximain)?;
-        let menu_msgs = group_file(ffximain, 1, 0x0e)
+        let menu_msgs = group_file(ffximain, lang, 0x0e)
             .and_then(|f| Messages::load(index, f).map_err(|e| log::warn!("menu messages: {e:#}")).ok());
-        let title_msgs = group_file(ffximain, 1, 0x0d)
+        let title_msgs = group_file(ffximain, lang, 0x0d)
             .and_then(|f| Messages::load(index, f).map_err(|e| log::warn!("title messages: {e:#}")).ok());
         let cmd_help = crate::dat::battle::va_bytes(ffximain, t.cmd_help, 0x1c * 12)
             .map_or(Vec::new(), |b| b.chunks(12).map(|r| u16::from_le_bytes([r[0], r[1]])).collect());
@@ -163,7 +165,7 @@ impl GameUiData {
             .filter_map(|g| {
                 Some((
                     g,
-                    group_file(ffximain, 1, g).and_then(|f| {
+                    group_file(ffximain, lang, g).and_then(|f| {
                         Messages::load(index, f).map_err(|e| log::warn!("message group {g:#x}: {e:#}")).ok()
                     })?,
                 ))
@@ -172,14 +174,14 @@ impl GameUiData {
         let stats = crate::dat::battle::va_bytes(ffximain, t.stats, 8 * 6 * 7).map(<[u8]>::to_vec).unwrap_or_default();
         let map_regions = super::map::regions(ffximain);
         let region_groups = super::map::region_groups(ffximain);
-        let aug_text = crate::dat::msg::slot_file(ffximain, 1, 0x1b)
+        let aug_text = crate::dat::msg::slot_file(ffximain, lang, 0x1b)
             .and_then(|f| Messages::load(index, f).map_err(|e| log::warn!("augment texts: {e:#}")).ok());
-        let servers = crate::dat::msg::group_file(ffximain, 1, 0x16).and_then(|f| Messages::load(index, f).ok());
+        let servers = crate::dat::msg::group_file(ffximain, lang, 0x16).and_then(|f| Messages::load(index, f).ok());
         let aug_tables = super::augment::AugTables::find(ffximain);
         let f81 = index.read(81).ok();
         let mnc2 = f81.as_deref().and_then(super::augment::mnc2);
         let mon_order = f81.as_deref().map(super::monstrosity::order).unwrap_or_default();
-        let item_fmt = crate::dat::msg::slot_file(ffximain, 1, 0x1c)
+        let item_fmt = crate::dat::msg::slot_file(ffximain, lang, 0x1c)
             .and_then(|f| Messages::load(index, f).map_err(|e| log::warn!("item info formats: {e:#}")).ok());
         let area_names = Messages::load(index, 0xd8aa).map_err(|e| log::error!("area names (group 4): {e:#}")).ok();
         let errors = crate::dat::battle::va_bytes(ffximain, t.errors, 16 * 128)
@@ -196,7 +198,7 @@ impl GameUiData {
             .collect();
         let (registry, groups, layers) = menu_registry(ffximain);
         let status = [0x3a, 0x3b].map(|slot| {
-            crate::dat::msg::current_slot_file(ffximain, 1, slot)
+            crate::dat::msg::current_slot_file(ffximain, lang, slot)
                 .and_then(|f| index.read(f).map_err(|e| log::warn!("status info {f}: {e:#}")).ok())
                 .map(std::sync::Arc::new)
         });
@@ -370,6 +372,10 @@ pub struct GameUi {
     /// The pointer is over an enabled item (mouse cursor kind 1); set by the windows' hit tests, cleared when the
     /// pointer moves.
     pub hover: std::cell::Cell<bool>,
+    /// The children drawn in state 5 this frame by window (disabled_children), for the hand (winhits::takes).
+    off_parts: std::collections::HashMap<String, Vec<u16>>,
+    /// The window child under the pointer last frame and this frame, and the left button (winhits::takes).
+    pub ptr_hover: std::cell::RefCell<super::winhits::Hover>,
     /// Ours: the retail windows the modern layer draws as one column this frame, their children top to bottom.
     pub modern_order: std::cell::RefCell<std::collections::HashMap<String, Vec<u16>>>,
     /// The focused lists' bars drawn this frame, and a press held on one (client/scrollbar.rs).
@@ -505,6 +511,8 @@ impl GameUi {
             temp_swept: std::time::Instant::now(),
             style_saved: Default::default(),
             hover: Default::default(),
+            off_parts: Default::default(),
+            ptr_hover: Default::default(),
             modern_order: Default::default(),
             bars: Vec::new(),
             bar_hold: None,
@@ -695,6 +703,20 @@ impl GameUi {
     /// frame (what the generic draw records for the windows it draws with the hand).
     pub fn focus_child(&mut self, name: &str, child: u16, rect: [f32; 4]) {
         self.batch.set_hand(name, child, rect);
+    }
+
+    /// `focus_child` for layout child `child` of `name` laid out at (wx, wy), drawn or hidden: a window whose cursor
+    /// (+0x4c) rests on a child it does not draw still aims the focus warp at it (FUN_1011c080 takes any type-1 part).
+    pub fn focus_layout_child(&mut self, name: &str, child: u16, wx: f32, wy: f32) {
+        let rect = self
+            .data
+            .lobby
+            .menu(name)
+            .and_then(|m| m.elements.iter().skip(1).find(|e| e.id == child))
+            .map(|e| [wx + e.x as f32, wy + e.y as f32, e.w as f32, e.h as f32]);
+        if let Some(r) = rect {
+            self.focus_child(name, child, r);
+        }
     }
 
     /// Window code moved `name`'s cursor to `child` and puts the pointer on it: FUN_1011a240(child, 1) (the hand-over's
@@ -893,6 +915,13 @@ impl GameUi {
                     }
                 }
                 '\0' => break,
+                // The auto-translate brackets (EF 27 / EF 28, gaiji the TrueType face lacks): a green "{" and a red
+                // "}", as the modern chat log draws them.
+                '\u{E008}' | '\u{E009}' => {
+                    let (t, col) = if c == '\u{E008}' { ("{", [0x28, 0x68, 0x28]) } else { ("}", [0x28, 0x28, 0x70]) };
+                    out.push((t.to_string(), [col[0], col[1], col[2], base[3]]));
+                    out.push((String::new(), out[out.len() - 2].1));
+                }
                 // The same codes kept as one character (decode_sjis), as event item names.
                 c if (crate::dat::font::CODE_BASE..crate::dat::font::CODE_BASE + 0x200).contains(&(c as u32)) => {
                     let k = c as u32 - crate::dat::font::CODE_BASE;
@@ -1080,6 +1109,20 @@ impl GameUi {
         self.text(s, x, y, 0, tint.to_le_bytes());
     }
 
+    /// Game-font text cut to `max` px (FUN_10191c70 with its last argument 0): the last character goes while the
+    /// text (FUN_10191e00) is wider than `max - 14`; a cut text has "..." (DAT_1036d9dc) drawn right after it.
+    pub fn text_cut(&mut self, s: &str, x: f32, y: f32, max: f32, tint: u32) {
+        let mut t = s.to_string();
+        while !t.is_empty() && self.text_width(&t) > max - 14.0 {
+            t.pop();
+        }
+        self.text(&t, x, y, 0, tint.to_le_bytes());
+        if t.len() < s.len() {
+            let wd = self.text_width(&t);
+            self.text("...", x + wd, y, 0, tint.to_le_bytes());
+        }
+    }
+
     /// Sprite-font text fitted into `max` px (FUN_101c04c0).
     pub fn shape_fit(&mut self, s: &str, x: f32, y: f32, max: f32, tint: u32) -> f32 {
         screens::push_shape_fit(&mut self.batch, &self.data.lobby, &encode_sjis(s), x, y, max, tint)
@@ -1112,6 +1155,7 @@ impl GameUi {
     /// kind 0 or 4 wins; a kind-4 sprite at full tint (cursor 0x80805020 at +1 px), a kind-0 one dimmed to 0x30808080
     /// (cursor 0x40402810 at +1 px).
     pub fn disabled_children(&mut self, name: &str, x: f32, y: f32, off: &[u16], cursor: Option<u16>) {
+        self.off_parts.insert(name.to_string(), off.to_vec());
         let Some(l) = self.layout(name).cloned() else { return };
         for e in l.elements.iter().skip(1).filter(|e| off.contains(&e.id)) {
             let Some(r) = e.refs.iter().rfind(|r| r.kind == 0 || r.kind == 4) else { continue };
@@ -2450,6 +2494,16 @@ impl GameUi {
         self.data.lobby.menu(name).map_or(Vec::new(), |m| {
             m.elements.iter().skip(1).map(|e| [e.x as f32, e.y as f32, e.w as f32, e.h as f32]).collect()
         })
+    }
+
+    /// Child `id` of window `name` was drawn in state 5 (disabled_children): the pointer over it is no hand.
+    pub fn disabled_part(&self, name: &str, id: u16) -> bool {
+        self.off_parts.get(name).is_some_and(|off| off.contains(&id))
+    }
+
+    /// Before the windows draw: forget last frame's state-5 children.
+    pub fn clear_disabled_parts(&mut self) {
+        self.off_parts.clear();
     }
 
     pub fn window_rect(&self, name: &str, w: f32, h: f32) -> Option<[f32; 4]> {

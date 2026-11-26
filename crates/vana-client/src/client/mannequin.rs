@@ -468,7 +468,7 @@ pub fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
     super::scrollbar::rows(m, &mut d.scroll, &mut d.row, n, VISIBLE_ROWS)
 }
 
-/// The mouse: a grid child under it takes the cursor and a click on the cursor's child is Enter; the list's rows as
+/// The mouse: a grid child under it takes the cursor (winhits::takes) and a click on the cursor's child is Enter; the list's rows as
 /// the item list's; the pointer over the other window moves the focus there (message 8), as the Equipment screen.
 pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     // The modern layer draws them and takes their mouse.
@@ -491,8 +491,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                 return;
             }
             let Some(id) = super::trade::child_at(gu, GRID, sw, sh, p, 1..=REMOVE_ALL) else { return };
-            gu.hover.set(true);
-            if id != cursor && (moved || clicked) {
+            if super::winhits::takes(gu, GRID, id, in_grid) && id != cursor {
                 if let Some(d) = dress_mut(w) {
                     (d.cursor, d.prev) = (id, id);
                     if id != REMOVE_ALL {
@@ -500,7 +499,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                     }
                 }
                 w.sounds.push(Ui::Cursor as u32);
-            } else if clicked {
+            } else if clicked && id == cursor {
                 key(w, gu, egui::Key::Enter);
             }
         }
@@ -510,12 +509,11 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                 return;
             }
             let Some(r) = list_row.filter(|r| scroll + r < n) else { return };
-            gu.hover.set(true);
-            if r != row && (moved || clicked) {
+            if super::winhits::takes(gu, "menu    inventor", r as u16 + 1, true) && r != row {
                 if let Some(d) = dress_mut(w) {
                     d.row = r;
                 }
-            } else if clicked {
+            } else if clicked && r == row {
                 key(w, gu, egui::Key::Enter);
             }
         }

@@ -73,9 +73,10 @@ fn eligible(w: &World, id: u32, e: &Entity) -> bool {
 }
 
 /// One player step from `from` by `delta` (also a zero one: standing still clears the hold): true when it is held.
-/// Off at GM level 3 and up (0x037 @0x28 bits 29..31).
+/// Off at GM level 3 and up (FUN_10084600: our entity's +0x128 bits 11..13, from the 0x00A at the zone-in and 0x037
+/// @0x28 bits 29..31 after).
 pub fn blocks(w: &mut World, from: Vec3, delta: Vec3, ticks: f32) -> bool {
-    if (w.self_flags >> 29) & 7 >= 3 {
+    if w.my_plate.marks.gm >= 3 {
         return false;
     }
     let dest = from + delta;

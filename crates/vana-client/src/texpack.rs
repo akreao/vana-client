@@ -80,7 +80,7 @@ pub fn status_dump(out: &Path) -> Result<()> {
     let cfg = crate::config::Config::load();
     let index = dat::DatIndex::open_stock(&cfg.ffxi_dir())?;
     let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir()))?;
-    let file = dat::msg::current_slot_file(&dll, 1, 0x3a).context("status info slot")?;
+    let file = dat::msg::current_slot_file(&dll, dat::lang::files() as u8, 0x3a).context("status info slot")?;
     let bytes = index.read(file)?;
     let names = dat::battle::BattleText::load(&index, &dll)?;
     std::fs::create_dir_all(out)?;
@@ -110,7 +110,7 @@ pub fn action_icon_dump(out: &Path) -> Result<()> {
     let cfg = crate::config::Config::load();
     let index = dat::DatIndex::open_stock(&cfg.ffxi_dir())?;
     let acts = dat::actions::Actions::load(&index)?;
-    let names = dat::names::Names::load(&index, dat::items::Lang::En)?;
+    let names = dat::names::Names::load(&index, dat::lang::files())?;
     let mut ui = dat::ui::UiFile::parse(&index.read(dat::ui::ICONS)?)?;
     ui.absorb(dat::ui::UiFile::parse(&index.read(dat::ui::ICONS2)?)?, true);
     // magic.rs list_icon: HD from 1000 in magico2w, 0xffff none.

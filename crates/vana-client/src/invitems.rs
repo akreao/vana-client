@@ -1,6 +1,6 @@
 //! `ItemInfo` from the item DATs (dat/items.rs): names, stack, type, flags and the 32x32 icon.
 
-use crate::dat::items::{Items, Lang};
+use crate::dat::items::Items;
 use crate::inventory::ItemInfo;
 
 impl ItemInfo for Items {
@@ -22,7 +22,7 @@ impl ItemInfo for Items {
     }
 }
 
-/// English item data of the install, if its files are there.
+/// The item data of the install in the file language, if its files are there.
 pub fn load(index: &crate::dat::DatIndex) -> Option<Box<dyn ItemInfo>> {
-    Items::load(index, Lang::En).ok().map(|i| Box::new(i) as Box<dyn ItemInfo>)
+    Items::load(index, crate::dat::lang::files()).ok().map(|i| Box::new(i) as Box<dyn ItemInfo>)
 }

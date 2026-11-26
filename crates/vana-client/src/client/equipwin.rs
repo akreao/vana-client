@@ -646,7 +646,8 @@ pub fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
     super::scrollbar::rows(m, &mut e.scroll, &mut e.cursor, n, rows)
 }
 
-/// Mouse on the list while it has the focus: hover moves the cursor, a click on the highlighted row acts as Enter.
+/// Mouse on the list while it has the focus: a row takes the cursor by winhits::takes, a click on the highlighted row
+/// acts as Enter.
 pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
     let Some(e) = win(w) else { return };
     let Some(r) = gu.window_rect(LIST, sw, sh) else { return };
@@ -668,17 +669,17 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     let row = ((p.1 - r[1] - 4.0) / crate::inventory::ROW_PITCH).floor();
     let inside =
         p.0 >= x0 && p.0 < x0 + r[2] && p.1 >= r[1] && p.1 < r[1] + r[3] && row >= 0.0 && (row as usize) < VISIBLE_ROWS;
-    if inside {
-        gu.hover.set(true);
-    }
-    if !inside || !(moved || clicked) {
+    if !inside {
         return;
     }
+    let takes = super::winhits::takes(gu, LIST, row as u16 + 1, in_list);
     let n = n_rows(w, e);
     let Some(e) = win_mut(w) else { return };
     let row = (row as usize).min(n.saturating_sub(e.scroll + 1));
     let same = e.cursor == row;
-    e.cursor = row;
+    if takes {
+        e.cursor = row;
+    }
     if clicked && same {
         key(w, egui::Key::Enter);
     }
