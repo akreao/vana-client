@@ -4752,9 +4752,11 @@ pub(super) fn pointer_classic(
             let (hover, ev, se) = win.pointer_classic(gu, x, y, p, moved, clicked, right, held);
             (hover, ev, se, vm.manifest.id.clone())
         };
-        // A click on a window gives it the focus (not a HUD's).
+        // A click on a window gives it the focus (not a HUD's, nor a window under an open modal: the release of a press
+        // that began before the modal opened).
         let hud = w.lua.vms[v].st.borrow().windows.iter().any(|x| x.id == id && x.hud);
-        if clicked && !hud {
+        let under_modal = w.lua.modal().is_some_and(|(k, mid)| k != v || mid != id);
+        if clicked && !hud && !under_modal {
             let mut ended = Vec::new();
             for (j, vm) in w.lua.vms.iter().enumerate() {
                 for win in vm.st.borrow_mut().windows.iter_mut() {
