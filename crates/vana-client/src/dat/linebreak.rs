@@ -481,25 +481,47 @@ pub struct StrCut<'a> {
 
 /// FUN_1025ccf0 looped over a decoded text until it ends. The text goes back to the game's Shift-JIS (font::
 /// encode_sjis) one char at a time; a char that is no single game char (one Shift-JIS lacks, a colour code, an
-/// auto-translate block's) stands as a pair `FC xx` of its own width. Widths are in 1/16 px.
+/// auto-translate block's) stands as a pair `FA..FC xx` of its width. Widths are in 1/16 px.
 pub fn str_lines(text: &str, c: &StrCut) -> Vec<StrLine> {
     use super::font::{decode_sjis, encode_sjis};
     let mut bytes = Vec::with_capacity(text.len() * 2);
     let mut starts = Vec::new();
     let mut widths = std::collections::HashMap::new();
-    let mut spare = 0x40u8;
     let mut buf = [0u8; 4];
     let sixteenths = |w: f32| (w * 16.0).round() as i32;
-    for (si, ch) in text.char_indices() {
+    // Each char's game code, None when it has no single one.
+    let coded: Vec<(usize, char, Option<Vec<u8>>)> = text
+        .char_indices()
+        .map(|(si, ch)| {
+            let e = encode_sjis(ch.encode_utf8(&mut buf));
+            let single = !e.is_empty() && e.len() == clen(e[0]) && (e != b"?" || ch == '?');
+            (si, ch, single.then_some(e))
+        })
+        .collect();
+    // A stand-in only carries a width, so chars of one width share one, none a real char of this text uses: one per
+    // char ran out after 189 and reused a code, whose first char's width the later chars were then measured with.
+    let real: std::collections::HashSet<&[u8]> = coded.iter().filter_map(|(.., e)| e.as_deref()).collect();
+    let mut free = [0xFCu8, 0xFB, 0xFA]
+        .into_iter()
+        .flat_map(|lead| (0x40..=0xFCu8).map(move |t| [lead, t]))
+        .filter(|c| !real.contains(&c[..]));
+    let mut stand_ins: std::collections::HashMap<i32, [u8; 2]> = std::collections::HashMap::new();
+    for (si, ch, e) in &coded {
         let one: &str = ch.encode_utf8(&mut buf);
-        let mut e = encode_sjis(one);
-        let single = !e.is_empty() && e.len() == clen(e[0]) && (e != b"?" || ch == '?');
-        if !single {
-            e = vec![0xFC, spare];
-            spare = if spare == 0xFC { 0x40 } else { spare + 1 };
-        }
-        starts.push((bytes.len(), si));
-        widths.entry(e.clone()).or_insert_with(|| sixteenths((c.width)(one)));
+        let e = match e {
+            Some(e) => {
+                widths.entry(e.clone()).or_insert_with(|| sixteenths((c.width)(one)));
+                e.clone()
+            }
+            None => {
+                let w = sixteenths((c.width)(one));
+                // Past ~560 different widths in one text (never seen) the last code is shared.
+                let code = *stand_ins.entry(w).or_insert_with(|| free.next().unwrap_or([0xFA, 0xFC]));
+                widths.entry(code.to_vec()).or_insert(w);
+                code.to_vec()
+            }
+        };
+        starts.push((bytes.len(), *si));
         bytes.extend_from_slice(&e);
     }
     let cw = |s: &[u8]| widths.get(s).copied().unwrap_or_else(|| sixteenths((c.width)(&decode_sjis(s))));
@@ -633,6 +655,21 @@ mod tests {
         let ls = str_lines(s, &c);
         assert_eq!(ls.iter().map(|l| l.text(s)).collect::<Vec<_>>(), ["ab \u{2192}\u{2192} ", "cdefgh ij"]);
         assert_eq!(ls[1].start, s.find('c').unwrap());
+    }
+
+    /// Past 189 chars Shift-JIS lacks, each is still measured at its own width (their stand-in codes ran out and the
+    /// later chars took the width of the char first given theirs).
+    #[test]
+    fn many_stand_ins_keep_their_widths() {
+        let wide = |c: char| c as u32 >= 0x1F600 + 189;
+        let width = |s: &str| s.chars().map(|c| if wide(c) { 30.0 } else { 6.0 }).sum::<f32>();
+        let s: String = (0..300).map(|k| char::from_u32(0x1F600 + k).unwrap()).collect();
+        let c = StrCut { width: &width, max: &|_| 1200.0, tail: 0x18, cap: 0x400, hang: false, resume: true };
+        let ls = str_lines(&s, &c);
+        // 189 narrow chars (1134 px) and 2 wide ones fill the first line.
+        assert_eq!(s[ls[0].start..ls[0].end].chars().count(), 191, "{:?}", &ls[..2]);
+        let shown: usize = ls.iter().map(|l| s[l.start..l.end].chars().count()).sum();
+        assert_eq!(shown, 300);
     }
 
     /// Lines wider than 2048 px still wrap (1/16 px units past a short).
