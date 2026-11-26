@@ -4709,6 +4709,15 @@ pub(super) fn pointer_classic(
             return true;
         }
     }
+    // A window holding the pointer (a press or a canvas drag on it) is the only one it reaches until the button comes
+    // up: a window over it must not take the release.
+    let holder = places.iter().position(|(v, id, _, _)| {
+        w.lua.vms[*v].st.borrow().windows.iter().any(|x| x.id == *id && (x.drag.is_some() || x.press.is_some()))
+    });
+    if let Some(k) = holder {
+        let keep = places.swap_remove(k);
+        places = vec![keep];
+    }
     for (v, id, x, y) in places.into_iter().rev() {
         let (hover, ev, se, mod_id) = {
             let vm = &w.lua.vms[v];
