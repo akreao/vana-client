@@ -1504,19 +1504,7 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
         }
     }
     host.return_focus();
-    // A window opened this phase takes the focus from every other (not from an open modal one, unless modal itself).
-    let wanted: Option<(usize, String)> =
-        host.vms.iter().enumerate().find_map(|(k, v)| v.st.borrow_mut().focus_request.take().map(|id| (k, id)));
-    let held = host.modal().is_some();
-    let wanted =
-        wanted.filter(|(k, id)| !held || host.vms[*k].st.borrow().windows.iter().any(|w| w.id == *id && w.modal));
-    if let Some((k, id)) = wanted {
-        for (j, vm) in host.vms.iter().enumerate() {
-            for win in vm.st.borrow_mut().windows.iter_mut() {
-                win.focus = j == k && win.id == id && win.open;
-            }
-        }
-    }
+    host.grant_focus();
     let dirty = std::mem::take(&mut host.filters_dirty)
         | host.vms.iter().fold(false, |d, v| d | std::mem::take(&mut v.st.borrow_mut().filters_dirty));
     if dirty {
@@ -2556,6 +2544,46 @@ mod tests {
         assert!(p("{ name = \"a\", type = \"enum\", options = [\"b\"] }").is_ok());
         assert!(p("{ name = \"a\", type = \"enum\" }").is_err());
         assert!(p("{ name = \"a\", type = \"thing\" }").is_err());
+    }
+
+    /// A granted ui.open (or prompt) raises the window in the modern UI, a repeat open again; take_raise answers once
+    /// per grant. A focus change alone (a hover over a canvas, a click) raises nothing, nor does an open refused while
+    /// a modal prompt is up.
+    #[test]
+    fn ui_open_asks_for_raise() {
+        let vm = Vm::new(
+            manifest::Manifest { id: "m".into(), ..Default::default() },
+            PathBuf::from("."),
+            vm::Source::Dir(PathBuf::from(".")),
+        )
+        .unwrap();
+        api::install(&vm.lua, &vm, (serde_json::Value::Null, serde_json::Value::Null)).unwrap();
+        vm.lua
+            .load(r#"ui.window("a", { title = "A", elements = {} }); ui.window("h", { title = "H", hud = true, elements = {} })"#)
+            .exec()
+            .unwrap();
+        let mut host = Host::default();
+        host.vms.push(vm);
+        assert!(!host.take_raise("m", "a"));
+        host.vms[0].lua.load(r#"ui.open("h"); ui.open("a")"#).exec().unwrap();
+        assert!(!host.take_raise("m", "a"), "nothing before the focus is granted");
+        host.grant_focus();
+        assert!(host.take_raise("m", "a") && !host.take_raise("m", "a"), "once per grant");
+        assert!(!host.take_raise("m", "h"), "a HUD window takes no keys and is not raised");
+        // the focus moving to it (a hover, a click) is no ask
+        host.vms[0].st.borrow_mut().windows[0].focus = true;
+        assert!(!host.take_raise("m", "a"));
+        // a repeat open of an open window asks again
+        host.vms[0].lua.load(r#"ui.open("a")"#).exec().unwrap();
+        host.grant_focus();
+        assert!(host.take_raise("m", "a") && !host.take_raise("x", "a"));
+        // a modal prompt up: an open of another window is refused, and that window is not raised over it
+        host.vms[0].lua.load(r#"ui.prompt("Sure?", function() end)"#).exec().unwrap();
+        host.grant_focus();
+        assert!(host.take_raise("m", "__prompt"), "the prompt itself is raised");
+        host.vms[0].lua.load(r#"ui.open("a")"#).exec().unwrap();
+        host.grant_focus();
+        assert!(!host.take_raise("m", "a"), "refused: not raised over the prompt");
     }
 
     /// A wait_until test that never returns runs out of its budget instead of freezing the frame.
@@ -4479,6 +4507,38 @@ impl Host {
     }
 
     /// The windows `keep` takes, open or not (a closed animated window still folds away).
+    /// A window opened this phase (ui.open, a prompt, a menu) takes the focus from every other, not from an open modal
+    /// one unless modal itself. The window granted it is also raised in the modern UI (Window.raise): only here, so a
+    /// refused request (a modal prompt is up) does not bring a window over the prompt.
+    fn grant_focus(&self) {
+        let wanted: Option<(usize, String)> =
+            self.vms.iter().enumerate().find_map(|(k, v)| v.st.borrow_mut().focus_request.take().map(|id| (k, id)));
+        let held = self.modal().is_some();
+        let wanted =
+            wanted.filter(|(k, id)| !held || self.vms[*k].st.borrow().windows.iter().any(|w| w.id == *id && w.modal));
+        if let Some((k, id)) = wanted {
+            for (j, vm) in self.vms.iter().enumerate() {
+                for win in vm.st.borrow_mut().windows.iter_mut() {
+                    win.focus = j == k && win.id == id && win.open;
+                    if win.focus {
+                        win.raise = true;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether the focus grant raised this window since the last call, and clears the ask (the modern UI raises it).
+    pub(in crate::client) fn take_raise(&self, mod_id: &str, win_id: &str) -> bool {
+        for vm in self.vms.iter().filter(|v| v.manifest.id == mod_id) {
+            if let Some(w) = vm.st.borrow_mut().windows.iter_mut().find(|w| w.id == win_id && w.raise) {
+                w.raise = false;
+                return true;
+            }
+        }
+        false
+    }
+
     pub(super) fn windows_where(&self, keep: impl Fn(&window::Window) -> bool) -> Vec<(String, window::Window)> {
         let mut out = Vec::new();
         if self.all_hidden.get() {
