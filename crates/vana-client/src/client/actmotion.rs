@@ -197,6 +197,8 @@ pub struct Battle {
     pub out: Option<String>,
     /// Frames since the sheathe started (ours: the effect queue starts "out N" and its `waot` a frame later).
     pub frames: u32,
+    /// State 2: "in N" started this frame (vtable +0x31c(1, 0) and state 3 come with the next machine call).
+    pub drew: bool,
 }
 
 impl Battle {
@@ -204,6 +206,24 @@ impl Battle {
     pub fn held(&self) -> bool {
         !self.on.is_empty() && !self.wait && !self.leaving
     }
+}
+
+/// FUN_1008b3a0 for the battle states: our walk (FUN_100964f0) is refused while the machine draws or sheathes. State 1
+/// (engaged, waiting for the battle files, FUN_100d12d0) and 2 (the frame "in N" starts); 0x11 / 6 (the status left 1
+/// / 3, the sheathe starts next frame) and 5 (sheathing until no `waot` runs and the files go). State 3 (engaged,
+/// drawn) does not hold.
+pub fn battle_walk_held(w: &World, id: u32) -> bool {
+    let Some(a) = w.actors.get(&id) else { return false };
+    let engaged = status(w, id) == 1
+        && a.character
+            .as_ref()
+            .and_then(|c| c.pc.as_ref())
+            .is_some_and(|pc| !crate::dat::motionfile::battle_files(pc).is_empty());
+    battle_holds(&a.battle, engaged, a.extra.iter().any(|(k, _)| *k == Kind::Battle))
+}
+
+fn battle_holds(b: &Battle, engaged: bool, listed: bool) -> bool {
+    (engaged && (b.on.is_empty() || b.leaving)) || b.drew || b.wait || (b.leaving && listed)
 }
 
 /// The DAT 0 schedulers FUN_1008b460 starts by name around the sheathe, and the `waot` it waits on.
@@ -848,8 +868,14 @@ pub(super) fn update(w: &mut World, dt: f32) {
             add(&mut a.extra, Kind::Skill, files);
         }
         start_ready(w, id, &index, &ch, &base);
+        // FUN_1008e9a0 -> FUN_1008b460: while the entity's busy count is up (+0x11c, FUN_10083320) the machine returns
+        // 0 at its top, so no draw, sheathe or state change happens until every hold on the actor is over.
+        let busy = super::combat::held(w, id);
         let a = w.actors.get_mut(&id).unwrap();
-        if a.battle.wait {
+        a.battle.drew = false;
+        if busy {
+            // Paused: the machine keeps its state (a draw waiting in state 1 waits on).
+        } else if a.battle.wait {
             // States 0x11 / 6, the frame after the status left (they do not test it again): `klbt` (10 ticks on it
             // kills every `bntg` task, its hold with it), "out N", `hwat` on the actor itself (wep0 / wep1 shown,
             // wep2 hidden: a cast's `hwmg` or a shot may have left them otherwise), vtable +0x31c(0, 0), every glow
@@ -884,7 +910,7 @@ pub(super) fn update(w: &mut World, dt: f32) {
                 // The draw ("in N") plays when the actor becomes engaged, not when its files change mid-fight (a
                 // weapon change while engaged).
                 let drawing = a.battle.on.is_empty() || a.battle.leaving;
-                a.battle = Battle { on: want, ..Default::default() };
+                a.battle = Battle { on: want, drew: drawing, ..Default::default() };
                 if drawing && let Some(pc) = &ch.pc {
                     // State 2 after "in N": vtable +0x31c(1, 0), the weapon drawn; +0x7d8 = "    " restarts the status
                     // motion.
@@ -913,7 +939,7 @@ pub(super) fn update(w: &mut World, dt: f32) {
         // State 5 / 7 (the machine's second call of the sheathe's frame, FUN_1008e9a0): FUN_100d44b0(1) takes the
         // battle files off the list once no `waot` runs on the actor. A dual wield "out0" starts one at its first
         // step (op 0x03, 50 ticks), so its second hand's scheduler (op 0x84 at tick 36) is still found.
-        if a.battle.leaving && a.extra.iter().any(|(k, _)| *k == Kind::Battle) {
+        if !busy && a.battle.leaving && a.extra.iter().any(|(k, _)| *k == Kind::Battle) {
             a.battle.frames += 1;
             if a.battle.frames > 2 && !w.effects.actor_scheduler_running(id, WAOT) {
                 for e in a.extra.iter_mut().filter(|e| e.0 == Kind::Battle) {
@@ -960,7 +986,7 @@ pub(super) fn update(w: &mut World, dt: f32) {
             m.next -= ticks;
         }
         // FUN_100d2340(1) drops the battle files; the status motion restarts on foot (the battle "run" played on).
-        if a.battle.leaving && a.play.as_ref().is_none_or(|p| Some(&p.name) != a.battle.out.as_ref()) {
+        if !busy && a.battle.leaving && a.play.as_ref().is_none_or(|p| Some(&p.name) != a.battle.out.as_ref()) {
             drop_kind(&mut a.extra, Kind::Battle);
             drop_kind(&mut a.extra, Kind::Sheathed);
             a.battle = Battle::default();
@@ -1085,6 +1111,22 @@ mod tests {
         assert!(!Battle::default().held());
         assert!(!Battle { wait: true, ..on() }.held());
         assert!(!Battle { leaving: true, ..on() }.held());
+    }
+
+    /// FUN_1008b3a0's battle states hold our walk: engaged before the draw (1) and its frame (2), the frame after the
+    /// status left (0x11 / 6) and the sheathe while the files are still listed (5); not drawn and engaged (3), nor
+    /// after the files went.
+    #[test]
+    fn battle_states_hold_walk() {
+        let on = || Battle { on: vec![9672], ..Default::default() };
+        assert!(battle_holds(&Battle::default(), true, false));
+        assert!(!battle_holds(&Battle::default(), false, false));
+        assert!(battle_holds(&Battle { drew: true, ..on() }, true, true));
+        assert!(!battle_holds(&on(), true, true));
+        assert!(battle_holds(&Battle { wait: true, ..on() }, false, true));
+        assert!(battle_holds(&Battle { leaving: true, ..on() }, false, true));
+        assert!(!battle_holds(&Battle { leaving: true, ..on() }, false, false));
+        assert!(battle_holds(&Battle { leaving: true, ..on() }, true, false));
     }
 
     /// Event op 0x50: a scheduler stopped at tick 30 starts no later motion and is no longer busy; its looping motion

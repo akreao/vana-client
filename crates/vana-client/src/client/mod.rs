@@ -13232,11 +13232,10 @@ impl App {
                         world.ko_deadline = end.saturating_sub(360);
                     }
                     world.my_pet = pet;
-                    // Held mid-swing: applied when the hold ends (the disengage waits for the swing). Ours: our
-                    // engage is never held, so the draw comes before our first hits while a monster acts on us.
+                    // Held mid-swing or while a monster's action holds us (+0x11c): applied when the hold ends
+                    // (FUN_1008e9a0), our engage too.
                     let rising = chair::rise(world, world.my_id, status);
-                    let engage = status == 1 && world.my_motion.status == 0;
-                    let held = combat::held(world, world.my_id) && !engage;
+                    let held = combat::held(world, world.my_id);
                     if rising || held || fishrod::walking_hold(world, world.my_id, status) {
                         if world.my_motion.status != status {
                             log::info!(
@@ -14458,9 +14457,11 @@ impl App {
         }
         // Scheduler op 0x2e: the effect of our action holds the walk input (FUN_100a5ec0 skips FUN_100a6240).
         // `res2` (rest.rs) holds the walk the same way, from the frame it starts.
+        // FUN_1008b3a0 (the walk gate's machine test): no walk while our ride ends, nor while we draw or sheathe.
         let move_locked = (world.opts.move_lock
             && (world.effects.rooted.contains(&world.my_id) || rest::rising(world)))
-            || ride::dismounting(world);
+            || ride::dismounting(world)
+            || actmotion::battle_walk_held(world, world.my_id);
         if resting || move_locked {
             (ax, ay) = (0.0, 0.0);
         }
