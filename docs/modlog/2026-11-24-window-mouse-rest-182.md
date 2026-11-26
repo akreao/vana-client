@@ -33,7 +33,7 @@ and FUN_101199b0 checked in Rizin.
 Ours:
 - `winhits::release_off_child` is the release's test; world_hud plays SE 0004 on a left release in the classic UI
   unless an event message is open (rem4line) or mapv2's Place cursor is up (`MapWin::placing`), the release ended a
-  drag (ours' 65 px² / 25 ticks rule, `World::release_drag`), or the pointer is on one of ours' own windows (a mod's
+  drag (65 px² from the press as retail's mode-5 entry, or a camera look; `World::release_drag`), or the pointer is on one of ours' own windows (a mod's
   window, Timers, Regime, Skillchain: the hand over it). It takes any child a window's mouse took this frame
   (`winhits::takes`) as a hit as well, for the windows ours draws without a record.
 - itemctrl / moneyctr keep their cursor in `World::ctr_hold` (by window and open stamp, `GameUi::open_stamp`): the hand
@@ -42,7 +42,10 @@ Ours:
   Before, only the held button moved a stand-in child and the hand stayed on child 1.
 - iuse, sortyn (over the item list, Auto's in itmsort2 and the storage view's), bluesibo, map0, mapscan and mapv2 take
   the mouse by `winhits::generic`; their disabled children are hit at their layout places (`winhits::record_all`).
-  The item list takes no mouse while iuse, sortyn or itmsort2 is over it.
+  The item list takes no mouse while iuse, sortyn, itmsort2 or the yes / no prompt is over it. The map's windows take
+  no release that ends a drag (the map's pan, retail's mode 5).
+- Ours' own: a classic mod window owns the mouse over the game's windows under it (not over the game windows drawn
+  above the mods, not in cinema mode, not while a scroll bar holds a drag).
 
 Not built (new queue rows 192..195): jbpcat's page arrows 11 / 12; the mouse on mapv3 (rows and arrows 11 / 12),
 scanlist, maplist, itmsort2 and the storage view's lists; message 8 by the windows' +0x28 hooks (ours still moves the

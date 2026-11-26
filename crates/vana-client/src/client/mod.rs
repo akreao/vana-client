@@ -2874,9 +2874,13 @@ fn world_hud(
         }
         _ => input,
     };
-    // A mod window over the game's windows owns the mouse there (not in cinema mode, where none is drawn): the bars
-    // under it see neither the wheel nor the buttons.
-    let over_mod = !world.modern && !event::cinema(world) && input.pointer.is_some_and(|p| lua::over_classic(world, p));
+    // A mod window over the game's windows owns the mouse there: the bars under it see neither the wheel nor the
+    // buttons. Not in cinema mode (none is drawn), not where a game window drawn over the mods is (the event choice,
+    // the main menu, comyn ...), nor while a bar already holds the mouse (its drag goes on).
+    let over_mod = !world.modern
+        && !event::cinema(world)
+        && gu.bar_hold.is_none()
+        && input.pointer.is_some_and(|p| lua::over_classic(world, p) && !world.above_mods.iter().any(|r| inside(r, p)));
     let bar_input;
     let for_bars = if over_mod {
         bar_input = UiInput {
@@ -5177,6 +5181,8 @@ fn world_hud(
     if world.map.is_some() || world.cnq.is_some() {
         blockers.push([0.0, 0.0, sw, sh]);
     }
+    // The game's windows drawn from here on are over the mods' (World::above_mods).
+    let above_from = blockers.len();
     // The choice menu (FUN_100b0960).
     if let Some(c) = event::choice(world).filter(|_| !world.modern) {
         let options: Vec<String> = c.options.iter().map(|o| o.1.clone()).collect();
@@ -5663,6 +5669,7 @@ fn world_hud(
     }
     // The Timers window under every other window: its clicks only where none is over it.
     let ours_from = blockers.len();
+    world.above_mods = blockers[above_from..ours_from].to_vec();
     blockers.extend(timers::pointer(world, gu, input.pointer, input.clicked, &blockers));
     blockers.extend(regime::pointer(world, gu, input.pointer, input.clicked, &blockers));
     blockers.extend(skillchain::pointer(world, gu, input.pointer, input.clicked, &blockers));
@@ -8696,6 +8703,8 @@ struct World {
     /// The last left release ended a drag (65 UI px^2 from the press, or a camera look, as retail's mode-5 entry
     /// FUN_10126600): no window's release.
     release_drag: bool,
+    /// The game's windows drawn over the mods' last frame (their frames): the mouse there is theirs, not a mod's.
+    above_mods: Vec<[f32; 4]>,
     /// The ops' shared extdata buffer (DAT_104886bc).
     event_ext: [u8; 24],
     event_mem: crate::event_vm::Memory,
@@ -11335,6 +11344,7 @@ impl App {
                             ptr_button: (false, false),
                             ctr_hold: Default::default(),
                             release_drag: false,
+                            above_mods: Vec::new(),
                             event_ext: [0; 24],
                             event_mem: Default::default(),
                             event_end_at: None,
