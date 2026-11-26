@@ -73,8 +73,8 @@ pub fn prepare(gu: &GameUi, w: &mut World, sw: f32) {
         .lua
         .edge_panel("minimap")
         .and_then(|win| {
-            win.elems.into_iter().find_map(|e| match e {
-                super::lua::window::Elem::Map { dots, .. } => Some(dots),
+            win.elems.iter().find_map(|e| match e {
+                super::lua::window::Elem::Map { dots, .. } => Some(dots.clone()),
                 _ => None,
             })
         })
