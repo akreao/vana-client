@@ -3930,9 +3930,10 @@ fn world_hud(
         }
         world.sounds.extend(s.sounds.drain(..).map(|x| x as u32));
     }
-    // Mouse on the Lua mods' windows (the modern UI's panels take egui's).
+    // Mouse on the Lua mods' windows (the modern UI's panels take egui's); not where a game window drawn over them is.
     if !world.modern
         && let Some(p) = input.pointer
+        && !world.above_mods.iter().any(|r| inside(r, p))
         && lua::pointer_classic(
             world,
             gu,
@@ -5177,12 +5178,12 @@ fn world_hud(
         blockers.extend(lua::draw_classic(gu, world));
         blockers.extend(voicechat::draw_classic(gu, world, sw, sh));
     }
+    // The game's windows drawn from here on are over the mods' (World::above_mods).
+    let above_from = gu.drawn_count();
     // The map covers the screen (mapframe takes the mouse), as does cnqframe.
     if world.map.is_some() || world.cnq.is_some() {
         blockers.push([0.0, 0.0, sw, sh]);
     }
-    // The game's windows drawn from here on are over the mods' (World::above_mods).
-    let above_from = blockers.len();
     // The choice menu (FUN_100b0960).
     if let Some(c) = event::choice(world).filter(|_| !world.modern) {
         let options: Vec<String> = c.options.iter().map(|o| o.1.clone()).collect();
@@ -5669,7 +5670,7 @@ fn world_hud(
     }
     // The Timers window under every other window: its clicks only where none is over it.
     let ours_from = blockers.len();
-    world.above_mods = blockers[above_from..ours_from].to_vec();
+    world.above_mods = gu.drawn_since(above_from);
     blockers.extend(timers::pointer(world, gu, input.pointer, input.clicked, &blockers));
     blockers.extend(regime::pointer(world, gu, input.pointer, input.clicked, &blockers));
     blockers.extend(skillchain::pointer(world, gu, input.pointer, input.clicked, &blockers));
