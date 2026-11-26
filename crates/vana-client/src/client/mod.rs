@@ -3930,14 +3930,15 @@ fn world_hud(
         }
         world.sounds.extend(s.sounds.drain(..).map(|x| x as u32));
     }
-    // Mouse on the Lua mods' windows (the modern UI's panels take egui's); not where a game window drawn over them is.
+    // Mouse on the Lua mods' windows (the modern UI's panels take egui's). Where a game window drawn over them is, the
+    // pointer is nowhere for them: no control is hit, but a popup still closes on the click outside it and a drag a
+    // canvas holds ends off its slots.
     if !world.modern
         && let Some(p) = input.pointer
-        && !world.above_mods.iter().any(|r| inside(r, p))
         && lua::pointer_classic(
             world,
             gu,
-            p,
+            if world.above_mods.iter().any(|r| inside(r, p)) { (-1.0e6, -1.0e6) } else { p },
             input.moved,
             input.clicked,
             input.right_clicked,

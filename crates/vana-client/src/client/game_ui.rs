@@ -534,9 +534,6 @@ impl GameUi {
         if !self.want(name) {
             return false;
         }
-        if let Shape::Frame(r) = &shape {
-            self.drawn_frames.push(*r);
-        }
         let n = self.open_ticks;
         let animates = n > 0.0
             && self.data.registry.get(name.trim_end().to_ascii_lowercase().as_str()).copied().unwrap_or(0) & 8 == 0;
@@ -553,6 +550,10 @@ impl GameUi {
         }
         (a.seen, a.shape) = (frame, shape.clone());
         if a.open <= 0.0 {
+            // Only a window at its place counts as drawn there (an opening one zooms from its centre).
+            if let Shape::Frame(r) = shape {
+                self.drawn_frames.push(r);
+            }
             return true;
         }
         let f = ((n - a.open) / n).max(0.0);
