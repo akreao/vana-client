@@ -4502,7 +4502,9 @@ pub fn zone_text(w: &mut World, t: &ZoneText) {
         log::info!("zone text {lsb}: speaker {:#x} ({}) not here", t.actor, t.index);
         return;
     }
-    let speaker = if t.name.is_empty() { entity.clone().unwrap_or_default() } else { t.name.clone() };
+    // 0x02A's own name (Flag set) names it when it has no actor id or MesNum bit 15 is set; else the entity does.
+    let by_name = !t.name.is_empty() && (t.actor == 0 || !named);
+    let speaker = if by_name || entity.is_none() { t.name.clone() } else { entity.clone().unwrap_or_default() };
     let speaker_female = if t.actor == w.my_id {
         matches!(w.my_race, 2 | 4 | 6 | 7)
     } else {
@@ -4522,7 +4524,7 @@ pub fn zone_text(w: &mut World, t: &ZoneText) {
         }
         0x027 if named => t.strings.first().cloned().unwrap_or_default(),
         0x027 if !t.name2.is_empty() && t.flags & 2 != 0 => t.name2.clone(),
-        _ if named => speaker.clone(),
+        _ if named || by_name => speaker.clone(),
         _ => String::new(),
     };
     let g = w.event.as_ref().map_or(w.event_mem.g, |l| l.rt.mem.g).map(|v| v as i32);

@@ -1611,6 +1611,12 @@ Decompile: ~/ffxi/lab/creatorwork/ghidra/all.c.
 - 0x02A: UniqueNo @4, num[4] @8, ActIndex @0x18, MesNum @0x1a, Type @0x1c, Flag @0x1d, String[32] @0x1e.
 - Ids are mapped with MsgShift (only zones whose dialogue file matches). num[0..3] fill {num}; names come from
   dat/names.rs.
+- 0x02A's String (LAB_100a12a0, current build): with Flag @0x1d 0 and String set it is copied (0x20 bytes) to
+  0x10488d08, the line's string 0 (the 0x1c code; 0x043 fills the same buffer from sName), the buffer saved before
+  and put back after. With Flag set it names the speaker: always with MesNum bit 15 set, and with it clear only
+  when UniqueNo is 0; else the speaker is the entity at ActIndex. Ours took String as the speaker always, so retail's
+  Dynamis "{string0}'s attack staggers the fiend!" (Dynamis - Bastok 7355) lost the name. LSB sends Flag 0 with the
+  entity's own name in String (ShowName), so its lines read the same either way.
 - **Gaps in the bundled map.** Zone 230 LSB 6439 "Obtained: <item>." is DAT 6432, which is -7, the next
   segment's delta. 6433 and 6434 are both "Obtained {num0} gil", so the generator had no unique anchor. The
   client takes the next segment's delta within 8 ids (inferred rule; unit test text_gap).
@@ -23589,6 +23595,8 @@ still gave `cor`. Both now go through actmotion::sdep_stand.
   same bits as the classic sort window's Auto). Manual Sort clears those bits and starts storage's Manual Sort on that
   pane: a pick, then the row to put it at (FUN_101f0b30's rules), within one part. Num+ (FUN_101db690 case 8) focuses
   the pair: Left / Right between them, Enter takes one.
+- The pane titles ("Mog Wardrobe  232 / 640") sit on their own line, the sort buttons on the next (2026-11-24):
+  beside them the eight wardrobes' counts ran under Auto-sort.
 
 ## s2c 0x03B: an NPC line in the event message window (2026-11-08)
 
@@ -24983,3 +24991,72 @@ Settings > Graphics > Upscaling (config `upscaler` 0 off / 1 FSR / 2 external, `
 - Checked: GPU tests (all passes build; a flat frame stays flat through three dispatches; camera vectors against the
   pinhole shift). Live: a captured /wave emote, warping by the vectors leaves a third of the error of no warp, and the
   reversed sign is worse.
+
+## Gearshift: Rare pieces named once per pair, GM-only gear left out (2026-11-24)
+- Item flag 0x0002 marks GM-only gear *(inferred)*: in the current item data only the 19 Judge's pieces carry it
+  (shield, helm, cuirass, gauntlets, cuisses, greaves, gorget, belt, earring, ring, cape, the swords, bow, arrow, rod,
+  minnow, lure, fly), all described "GMs Only". Gearshift's whole-list candidates (references and worth getting) skip
+  it; held pieces are still picked.
+- Flag 0x8000 is Rare (one may be held). A pair's references (ears 11 / 12, rings 13 / 14) could name one Rare piece
+  twice: the curated list gave the left ear and the automatic pass, having put another piece left, gave the right.
+  The automatic one (else the second) now takes its slot's next best; worth getting skips a Rare piece the pair's
+  other slot already suggests.
+
+## Mod list cells name items; Gearshift's categories and set switch (2026-11-24)
+- A list row's `items` ({[column] = id} or {id, bag, index}) names the item in a cell. Modern UI: while the pointer
+  rests on that cell (0.35 s, as other tips), the item info panel's body is drawn by the pointer in the pack's
+  window_normal frame, 396 points wide (Modern::tip_framed; tip_at is its window_tooltip form). Classic UI: the cell
+  under the pointer (column from the classic columns' x) is an item_info_source, so the retail item window shows it
+  at mode 0. A bag and index give the extdata (augments) while that slot still holds the id. Seen live in both UIs.
+- A row's `tags` ({[column] = {"Rare", "Ex"}}) follow a cell's text: in the modern UI as the item info panel's
+  mark tags (items::tag: charcoal, bronze edge, gold text), in the classic UI as the item window's windowps marks
+  (293 Aug, 294 Rare, 295 Ex, 296 Temp, 842 Alt; another tag as [text]). Seen live in both UIs.
+- Item flag 0x4000 is Ex; Gearshift's Worth getting cells carry the Rare (0x8000) and Ex tags. Its window switch is
+  now Enable Gearshift.
+- Gearshift lists a job's sets by category (sets.group: weapon skill and ability sets by kind, the rest by name),
+  categories in the order of their first set, each keeping the set last picked in it. Wear This Set Off (saved per
+  character and job, builder.off) keeps a set from being worn: the status set, an action's precast or midcast set and
+  the Movement overlay are skipped with the gear left on, not replaced by another set.
+- Gearshift's Match column is now the worn piece's set score over the best in slot's (pick.score; may pass 100%),
+  coloured by the same bands, and the slot's alternatives menu shows and sorts by it. It was pick.share: the part of
+  the piece's value from stat kinds the best in slot also has, amounts ignored, so Heidrek Mask read 100% against
+  Skulker's Bonnet +3 in the TP set at about 40% of its score. The pick itself still goes by share.
+- Gearshift picks by score: a slot takes the held best in slot (worn even at a score of 0, as Toutatis's Cape in
+  the TP set, whose Sneak Attack and Triple Attack damage the weights do not count), else best_by_score's piece (the
+  next best unused when the pair's other slot took it). The old rule, the held piece most like the reference
+  (pick.share, at least 25% alike), put a STR+1 MND+1 San d'Orian Ring over Rajas Ring ("Store TP"+5) against Gere
+  Ring, whose stats have no Store TP; worth getting went by the same rule and is by score now too. The window's
+  Slot column has no icon.
+- Gearshift left slots empty when every held piece scored 0 for the set: Suppanomimi reads `AGI+2`, `Enhances
+  "Dual Wield" effect`, `Sword skill +5` (no Dual Wield amount in the text), Fugacity Mantle +1 only DEF / AGI /
+  Evasion / Magic Evasion, which the TP weights do not count. An unnumbered `Enhances "X" effect` line now counts as
+  X+1 *(inferred: the amount is not shown)*, outside a "Word:" context. In the Combat and Idle and Defence sets
+  (not Movement) a slot with no pick takes the held piece best by a general table (DEF, HP, MP, attributes,
+  accuracy, attack, evasion); not weapons, ammo or element gear (obis, gorgets, belts), and not in action sets, where
+  an empty slot keeps the piece on.
+- Gearshift 0.2.20, from review: each slot claims its held best in slot before any slot picks by score (the left
+  ring, its reference not held, took the right ring's Rajas Ring by score, and the right then had the next best); a
+  set's switch no longer forgets the worn signature (turning an unrelated set off and on wore the status set again,
+  over gear changed by hand); after a job change to a shorter category the Set dropdown's index goes back to the
+  first set, so the dropdown and Wear This Set name the same one. Wear Now wears a set even when it is off (a
+  manual press).
+- Classic mod windows: classic_places gives each window its room (screen height less its top and 8), and the first
+  list shows fewer rows (at least 3) when the page would run past it, the keys scrolling within those. Gearshift's
+  page (four dropdowns and choices over a 16-row list) is 600 tall: at a 600-line classic menu its buttons were below
+  the screen. The list cell under the pointer is forgotten every frame, not only while the pointer is in the client
+  (it stayed after the pointer left the window), and comes before the item lists' cursor as the item window's source.
+
+## Canvas drags say whether the HUD under them is covered (2026-11-25)
+- A canvas `drag` / `drag_end` event carries `covered`: whether a window or panel is under the pointer, over the HUD
+  there (ours, for mods dropping onto HUD elements). Modern UI: egui's layer under the pointer is above the background
+  (tooltips aside), the dragging window included. Classic UI: a mod window's classic rect (classic_places,
+  classic_reach) or a game window recorded in win_hits holds the pointer. Older clients leave it out. Hotbars' manager
+  drops a library tile on an overlay slot only where nothing covers it (before: only outside its tiles canvas and the
+  mod's other canvases, so a release over the manager's builder fell through to the slot under it).
+
+## Mod updates told at login (ours, 2026-11-25)
+- Once a login (World is new each one), when the world and the message tables are in (as the server message waits),
+  client/modupdates.rs reads both catalogue lists on a thread (catalogue::fetch: GitHub, else the last copy) and counts
+  the installed Lua mods and DAT packs offered an update (catalogue::offer Some(true)). Any found: one log line in
+  lua::ERROR red, "Updates are available for N mods (Settings > Mods)." (DAT packs: Settings > DAT Packs). Seen live
+  (modern UI) with a test list (VANA_MOD_CATALOGUE) one version ahead.

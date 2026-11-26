@@ -1499,8 +1499,29 @@ impl Modern {
 
     /// The tooltip by the pointer at `at`, once it has rested a moment (none while dragging).
     pub fn tip_at(&self, ctx: &Context, at: Pos2, title: &str, body: &str) {
+        if title.is_empty() && body.is_empty() {
+            return;
+        }
+        self.tip_framed(ctx, at, "window_tooltip", 300.0, |ui| {
+            if !title.is_empty() {
+                ui.label(
+                    egui::RichText::new(title)
+                        .size(self.theme.ui)
+                        .family(FontFamily::Name(STRONG.into()))
+                        .color(self.theme.color("gold")),
+                );
+            }
+            if !body.is_empty() {
+                gametext::label(ui, self, body, self.theme.small, self.theme.color("text"));
+            }
+        });
+    }
+
+    /// A tooltip in the pack's `frame`, at most `width` wide, by the pointer at `at` once it has rested a moment (none
+    /// while dragging).
+    pub fn tip_framed(&self, ctx: &Context, at: Pos2, frame: &str, width: f32, add: impl FnOnce(&mut Ui)) {
         const REST: f32 = 0.35;
-        if title.is_empty() && body.is_empty() || ctx.dragged_id().is_some() {
+        if ctx.dragged_id().is_some() {
             return;
         }
         let still = ctx.input(|i| i.pointer.time_since_last_movement());
@@ -1516,24 +1537,14 @@ impl Modern {
             .show(ctx, |ui| {
                 let bg = ui.painter().add(Shape::Noop);
                 // Clear room inside the frame's border art all the way round.
-                let inset = self.art.frame("window_tooltip").map_or(6.0, |f| f.inset);
+                let inset = self.art.frame(frame).map_or(6.0, |f| f.inset);
                 let margin = egui::Margin::symmetric((inset + 12.0).round() as i8, (inset + 10.0).round() as i8);
                 let inner = egui::Frame::NONE.inner_margin(margin).show(ui, |ui| {
-                    ui.set_max_width(300.0);
+                    ui.set_max_width(width);
                     ui.spacing_mut().item_spacing.y = 3.0;
-                    if !title.is_empty() {
-                        ui.label(
-                            egui::RichText::new(title)
-                                .size(self.theme.ui)
-                                .family(FontFamily::Name(STRONG.into()))
-                                .color(self.theme.color("gold")),
-                        );
-                    }
-                    if !body.is_empty() {
-                        gametext::label(ui, self, body, self.theme.small, self.theme.color("text"));
-                    }
+                    add(ui);
                 });
-                ui.painter().set(bg, borders::window(self, "window_tooltip", inner.response.rect));
+                ui.painter().set(bg, borders::window(self, frame, inner.response.rect));
             });
     }
 

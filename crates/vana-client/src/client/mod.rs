@@ -140,6 +140,7 @@ mod maze;
 mod merits;
 mod minimap;
 mod missions;
+mod modupdates;
 mod moogle;
 mod mousecur;
 mod party;
@@ -3935,7 +3936,9 @@ fn world_hud(
     }
     // Mouse on the Lua mods' windows (the modern UI's panels take egui's). Where a game window drawn over them is, the
     // pointer is nowhere for them (no control is hit, a popup still closes on the click outside it), unless a press or
-    // a drag on a mod window already holds it: that one keeps the real place until the button comes up.
+    // a drag on a mod window already holds it: that one keeps the real place until the button comes up. The cell under
+    // the pointer is forgotten first, so a pointer gone from the window (or the client) leaves no item showing.
+    lua::clear_pointed(world);
     if !world.modern
         && let Some(p) = input.pointer
         && lua::pointer_classic(
@@ -6993,6 +6996,10 @@ fn draw_event_input(gu: &mut GameUi, kind: i32, text: &str, caret: usize, sw: f3
 /// The item the info window describes now: the open list's cursor item, else a shop's, the auction's ..., else the
 /// event's; (item, extdata, container, equipped, mode, flags).
 fn item_info_source(world: &World) -> Option<(u16, Option<[u8; 24]>, Option<u8>, bool, u8, u32)> {
+    // A mod list cell under the pointer comes first: the pointer on it is the newer ask than a list's cursor.
+    if let Some((id, ext)) = lua::info_source(world) {
+        return Some((id, ext, None, false, 0, 0));
+    }
     let post_item = post::info_source(world).or_else(|| synth::info_source(world));
     Some(match (items::info_source(world), event::option_item(world)) {
         (Some((id, ext, c, _, eq, mode)), _) => (id, ext, Some(c), eq, mode, 0),
@@ -8897,6 +8904,8 @@ struct World {
     /// name for its header.
     servmes: Option<servmes::Transfer>,
     servmes_armed: bool,
+    /// The login's look for mod updates (the red log line).
+    mod_updates: modupdates::Check,
     /// The Fishing Ranking's request, transfer and window (op 0xb3).
     ranking: ranking::State,
     world_name: String,
@@ -11473,6 +11482,7 @@ impl App {
                             ambient: None,
                             servmes: None,
                             servmes_armed: true,
+                            mod_updates: Default::default(),
                             ranking: Default::default(),
                             world_name,
                             res_rdy: ResRdy::default(),
@@ -18855,6 +18865,7 @@ impl App {
             synth::update(w);
             resttick::update(w);
             servmes::frame(w);
+            modupdates::frame(w);
             ranking::frame(w);
             // A server's certificate pin that could not be saved: told once a run.
             if let Some(n) = crate::net::tls::take_notice() {

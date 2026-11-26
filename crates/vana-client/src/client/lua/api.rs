@@ -2289,7 +2289,8 @@ fn cmds(v: Option<Table>) -> mlua::Result<Vec<super::window::Cmd>> {
         .collect()
 }
 
-/// A list's rows: strings, or {cells..., icon = {kind = "item" | "status" | "spell" | "ability", id}, colour, colours}.
+/// A list's rows: strings, or {cells..., icon = {kind = "item" | "status" | "spell" | "ability", id}, colour, colours,
+/// items, tags}.
 fn rows(v: Option<Table>) -> mlua::Result<Vec<super::window::Row>> {
     use super::window::Row;
     let cell = |v: Value| -> String {
@@ -2331,12 +2332,59 @@ fn rows(v: Option<Table>) -> mlua::Result<Vec<super::window::Row>> {
                             cell_colours[k - 1] = super::hud::colour(v)?;
                         }
                     }
+                    // `items`: the item a cell names, by column ({[2] = id} or {[2] = {id, bag, index}}).
+                    let mut cell_items = Vec::new();
+                    if let Some(c) = t.get::<Option<Table>>("items")? {
+                        for pair in c.pairs::<usize, Value>() {
+                            let (k, v) = pair?;
+                            if k == 0 || k > 64 {
+                                return Err(mlua::Error::runtime("a row's items are keyed by column, 1 to 64"));
+                            }
+                            let item = match v {
+                                Value::Table(i) => super::window::ItemRef {
+                                    id: i.get("id")?,
+                                    at: match (i.get::<Option<u8>>("bag")?, i.get::<Option<u8>>("index")?) {
+                                        (Some(b), Some(x)) => Some((b, x)),
+                                        _ => None,
+                                    },
+                                },
+                                Value::Integer(n) => super::window::ItemRef { id: n as u16, at: None },
+                                Value::Number(n) => super::window::ItemRef { id: n as u16, at: None },
+                                _ => return Err(mlua::Error::runtime("a row's item is an id or {id, bag, index}")),
+                            };
+                            if cell_items.len() < k {
+                                cell_items.resize(k, None);
+                            }
+                            cell_items[k - 1] = Some(item);
+                        }
+                    }
+                    // `tags`: a cell's tags by column ({[5] = {"Rare", "Ex"}} or {[5] = "Rare"}).
+                    let mut cell_tags: Vec<Vec<String>> = Vec::new();
+                    if let Some(c) = t.get::<Option<Table>>("tags")? {
+                        for pair in c.pairs::<usize, Value>() {
+                            let (k, v) = pair?;
+                            if k == 0 || k > 64 {
+                                return Err(mlua::Error::runtime("a row's tags are keyed by column, 1 to 64"));
+                            }
+                            let list = match v {
+                                Value::Table(l) => l.sequence_values::<String>().collect::<mlua::Result<_>>()?,
+                                Value::String(s) => vec![s.to_string_lossy()],
+                                _ => return Err(mlua::Error::runtime("a cell's tags are a string or a list of them")),
+                            };
+                            if cell_tags.len() < k {
+                                cell_tags.resize(k, Vec::new());
+                            }
+                            cell_tags[k - 1] = list;
+                        }
+                    }
                     Row {
                         cells,
                         icon,
                         colour: super::hud::colour(t.get("colour")?)?,
                         cell_colours,
                         tip: t.get::<Option<String>>("tip")?.unwrap_or_default(),
+                        cell_items,
+                        cell_tags,
                     }
                 }
                 other => Row::text(&cell(other)),

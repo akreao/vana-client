@@ -115,6 +115,8 @@ A row is either a string (a number or a boolean is shown as text too), or a tabl
 | `icon` | `{kind, id}` | none | An icon before the first cell: `kind` is `"item"` (or none), `"status"`, `"spell"` or `"ability"`, as for [`hud.icon`](hud.md#hudicon); `id` is the item, status, spell or ability id (required in an `icon` table). |
 | `colour` | `{r, g, b, a}` | none | The row's text colour. |
 | `colours` | `table` | none | Single cells' colours by column, over `colour`: `{[3] = {120, 220, 120}}` colours the third cell. Clients released before it show those cells in the row's colour. |
+| `items` | `table` | none | The item a cell names, by column: `{[2] = 23425}`, or `{[2] = {id = 23425, bag = 8, index = 4}}` for a piece the player holds there (its augments are shown while that slot still holds it). While the pointer rests on that cell the modern UI shows the item's description by the pointer, and the classic UI shows it in the item window. Clients released before it ignore it. |
+| `tags` | `table` | none | Tags after a cell's text, by column: `{[5] = {"Rare", "Ex"}}` (or one string). The modern UI draws them as the item window's mark tags; the classic UI draws `Aug`, `Rare`, `Ex`, `Temp` and `Alt` as the item window's marks and any other tag as `[text]`. Clients released before it ignore it. |
 
 A column is a table:
 
@@ -427,6 +429,11 @@ the window has already changed: a list's cursor is on the chosen row, a closed w
 | `"drag_start"` | `id`, `x`, `y`, `dx`, `dy` | The pointer moves with the left button held down on a canvas: a drag starts. `x`, `y` are where the button went down. |
 | `"drag"` | `id`, `x`, `y`, `dx`, `dy` | The pointer moves during that drag. `dx`, `dy` are the move since the last report. The drag stays with the canvas, even when the pointer leaves it, until the button comes up. |
 | `"drag_end"` | `id`, `x`, `y`, `dx`, `dy` | The button comes up, ending the drag. |
+
+`drag` and `drag_end` also carry `covered`: `true` when a window or panel is under the pointer (your own windows
+included), so whatever HUD element is under it there is hidden. Use it to drop only onto HUD elements the player can
+see. In the modern UI it counts every window and panel; in the classic UI your mods' windows and the game windows the
+mouse works on. Clients released before it leave `covered` out (`nil`).
 | `"close"` | (none) | Escape closed the window, or a click outside a `popup` window closed it. `ui.close` does not send it. |
 
 Note that `change` comes from both inputs and colours: look at `e.id`, or at whether `e.text` or `e.value` is set.

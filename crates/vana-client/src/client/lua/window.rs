@@ -83,6 +83,37 @@ pub struct Row {
     pub cell_colours: Vec<Option<[u8; 4]>>,
     /// The help shown while the cursor or the pointer is on the row (a spell's description).
     pub tip: String,
+    /// The item a cell names, by its column: its description shows while the pointer is on the cell.
+    pub cell_items: Vec<Option<ItemRef>>,
+    /// Tags after a cell's text, by its column ("Rare", "Ex"): the item window's marks.
+    pub cell_tags: Vec<Vec<String>>,
+}
+
+/// A tag's classic sprite: the item window's windowps mark (293 Aug, 294 Rare, 295 Ex, 296 Temp, 842 Alt).
+pub fn mark_sprite(tag: &str) -> Option<usize> {
+    Some(match tag.to_ascii_lowercase().as_str() {
+        "aug" => 293,
+        "rare" => 294,
+        "ex" => 295,
+        "temp" | "tmp" => 296,
+        "alt" => 842,
+        _ => return None,
+    })
+}
+
+/// An item a list cell names: its id, and the (container, index) it is held at, for its augments.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ItemRef {
+    pub id: u16,
+    pub at: Option<(u8, u8)>,
+}
+
+impl ItemRef {
+    /// Its extdata, while that slot still holds it.
+    pub fn ext(&self, w: &super::World) -> Option<[u8; 24]> {
+        let at = self.at?;
+        (w.inv.slots.get(&at).map(|s| s.0) == Some(self.id)).then(|| w.inv.ext.get(&at).copied()).flatten()
+    }
 }
 
 impl Row {
@@ -519,6 +550,8 @@ pub struct Window {
     pub press: Option<(usize, f32, f32)>,
     /// The canvas the pointer was last over (classic UI), for its 'leave'.
     pub hovered: Option<usize>,
+    /// The item of the list cell under the pointer (classic UI): the item window describes it.
+    pub pointed: Option<ItemRef>,
     /// An edge window (drawn as the Timers and the training regime are): its header line, whether it can be made
     /// wider, and the built-in panel it stands in for (its place, fold, hiding).
     pub edge: bool,
@@ -534,6 +567,8 @@ pub struct Window {
     pub panel: Option<String>,
     /// The classic page's width its lists need, measured as it is drawn.
     pub fit_w: std::cell::Cell<f32>,
+    /// The classic page's height from its place to the screen's bottom (infinite until placed).
+    pub room: std::cell::Cell<f32>,
     /// What each part last scrolled into view (`moved`): the cursor's element, a list's row, an open dropdown's. Shared
     /// with the window's clones, which the modern UI draws.
     follows: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, usize>>>,
@@ -604,7 +639,8 @@ pub enum Event {
         y: f32,
     },
     /// A drag on a canvas: 0 start, 1 a move, 2 the release; where, and the move since the last report; where on
-    /// screen in window pixels and the mod's other window whose canvas is under the pointer (modern UI).
+    /// screen in window pixels and the mod's other window whose canvas is under the pointer (modern UI); whether a
+    /// window or panel is under the pointer, over the HUD there.
     Drag {
         id: String,
         phase: u8,
@@ -614,6 +650,7 @@ pub enum Event {
         dy: f32,
         screen: Option<(f32, f32)>,
         over: Option<String>,
+        covered: Option<bool>,
     },
     /// One of the mod's HUD elements (`from`) dragged and let go over a canvas, at (x, y) in it.
     Drop {
@@ -633,6 +670,15 @@ pub enum Event {
 }
 
 impl Event {
+    /// Marks the canvas drags among `ev` with whether a window or panel is under the pointer.
+    pub fn set_covered(ev: &mut [Event], on: bool) {
+        for e in ev {
+            if let Event::Drag { covered, .. } = e {
+                *covered = Some(on);
+            }
+        }
+    }
+
     pub fn json(&self) -> serde_json::Value {
         use serde_json::json;
         match self {
@@ -657,7 +703,7 @@ impl Event {
                 let kind = if *x < 0.0 { "leave" } else { "hover" };
                 json!({"kind": kind, "id": id, "x": x.round() as i64, "y": y.round() as i64})
             }
-            Event::Drag { id, phase, x, y, dx, dy, screen, over } => {
+            Event::Drag { id, phase, x, y, dx, dy, screen, over, covered } => {
                 let mut e = json!({"kind": (["drag_start", "drag", "drag_end"][*phase as usize % 3]), "id": id, "x": x.round() as i64, "y": y.round() as i64, "dx": dx.round() as i64, "dy": dy.round() as i64});
                 if let Some((sx, sy)) = screen {
                     e["sx"] = (sx.round() as i64).into();
@@ -665,6 +711,9 @@ impl Event {
                 }
                 if let Some(w) = over {
                     e["window"] = w.clone().into();
+                }
+                if let Some(c) = covered {
+                    e["covered"] = (*c).into();
                 }
                 e
             }
@@ -715,9 +764,17 @@ pub fn columns(cols: &[Col], w: f32) -> Vec<(f32, f32, bool)> {
 }
 
 /// A list's columns widened so every cell fits, and the width its rows need. `measure`: a text's width; `icon`: the
-/// room an icon takes in the first column; `pad`: the room each cell keeps beside its text. A list with no columns
+/// room an icon takes in the first column; `pad`: the room each cell keeps beside its text; `tags`: the room a
+/// cell's tags take after its text. A list with no columns
 /// holds free text (chat lines, URLs): it keeps the mod's width and needs none.
-pub fn fit_columns(cols: &[Col], rows: &[Row], icon: f32, pad: f32, measure: impl Fn(&str) -> f32) -> (Vec<Col>, f32) {
+pub fn fit_columns(
+    cols: &[Col],
+    rows: &[Row],
+    icon: f32,
+    pad: f32,
+    measure: impl Fn(&str) -> f32,
+    tags: impl Fn(&[String]) -> f32,
+) -> (Vec<Col>, f32) {
     let ic = |r: &Row| if r.icon.is_some() { icon } else { 0.0 };
     if cols.is_empty() {
         return (Vec::new(), 0.0);
@@ -727,7 +784,10 @@ pub fn fit_columns(cols: &[Col], rows: &[Row], icon: f32, pad: f32, measure: imp
     for (c, col) in out.iter_mut().enumerate() {
         let widest = rows
             .iter()
-            .filter_map(|r| r.cells.get(c).map(|t| measure(t) + pad + if c == 0 { ic(r) } else { 0.0 }))
+            .filter_map(|r| {
+                let tw = r.cell_tags.get(c).filter(|t| !t.is_empty()).map_or(0.0, |t| tags(t));
+                r.cells.get(c).map(|t| measure(t) + tw + pad + if c == 0 { ic(r) } else { 0.0 })
+            })
             .fold(measure(&col.title) + pad, f32::max);
         if col.width > 0.0 {
             col.width = col.width.max(widest);
@@ -770,8 +830,34 @@ pub fn fit_within(cols: &[Col], fit: &[Col], w: f32) -> Vec<Col> {
 
 /// A classic list's columns fitted to its cells and kept inside its text width `lw`.
 fn classic_columns(gu: &GameUi, cols: &[Col], rows: &[Row], lw: f32) -> Vec<Col> {
-    let (fit, _) = fit_columns(cols, rows, 18.0, CLASSIC_PAD, |t| gu.text_width(t));
+    let (fit, _) = fit_columns(cols, rows, 18.0, CLASSIC_PAD, |t| gu.text_width(t), |t| classic_tags_w(gu, t));
     fit_within(cols, &fit, lw)
+}
+
+/// A cell's tags on the classic page: a gap, then each mark's 16 px sprite, or its name in brackets.
+fn classic_tags_w(gu: &GameUi, tags: &[String]) -> f32 {
+    4.0 + tags
+        .iter()
+        .map(|t| if mark_sprite(t).is_some() { 16.0 } else { gu.text_width(&format!("[{t}]")) + 4.0 })
+        .sum::<f32>()
+}
+
+/// A cell's tags drawn from x on the classic page.
+fn classic_tags(gu: &mut GameUi, tags: &[String], mut x: f32, y: f32) {
+    x += 4.0;
+    for t in tags {
+        match mark_sprite(t) {
+            Some(k) => {
+                gu.sprite("menu    windowps", k, x, y, N);
+                x += 16.0;
+            }
+            None => {
+                let s = format!("[{t}]");
+                gu.text_fit(&s, x, y, gu.text_width(&s) + 4.0, DIM);
+                x += gu.text_width(&s) + 4.0;
+            }
+        }
+    }
 }
 
 pub fn has_header(cols: &[Col]) -> bool {
@@ -868,8 +954,10 @@ impl Window {
             dock: None,
             hovered: None,
             raise: false,
+            pointed: None,
             panel: None,
             fit_w: std::cell::Cell::new(0.0),
+            room: std::cell::Cell::new(f32::INFINITY),
             follows: Default::default(),
             back: None,
             drop_top: std::cell::Cell::new(0),
@@ -957,11 +1045,12 @@ impl Window {
             self.col = self.marked_col();
             (self.edit, self.undo) = (false, None);
         }
+        let shown = self.shown_at(self.at);
         match self.elems.get_mut(self.at) {
             Some(Elem::Buttons { items, .. }) => self.col = self.col.min(items.len().saturating_sub(1)),
-            Some(Elem::List { rows, at, top, height, .. }) => {
+            Some(Elem::List { rows, at, top, .. }) => {
                 *at = (*at).min(rows.len().saturating_sub(1));
-                *top = (*top).min(*at).max((*at + 1).saturating_sub(*height));
+                *top = (*top).min(*at).max((*at + 1).saturating_sub(shown));
             }
             Some(Elem::Input { text, .. }) => self.caret = self.caret.min(text.chars().count()),
             _ => {}
@@ -1226,11 +1315,12 @@ impl Window {
             K::ArrowUp | K::ArrowDown => {
                 let down = key == K::ArrowDown;
                 // A list moves its cursor until its end.
-                if let Some(Elem::List { rows, at, top, height, .. }) = self.elems.get_mut(self.at) {
+                let shown = self.shown_at(self.at);
+                if let Some(Elem::List { rows, at, top, .. }) = self.elems.get_mut(self.at) {
                     let inside = if down { *at + 1 < rows.len() } else { *at > 0 };
                     if inside {
                         *at = if down { *at + 1 } else { *at - 1 };
-                        *top = (*top).min(*at).max((*at + 1).saturating_sub(*height));
+                        *top = (*top).min(*at).max((*at + 1).saturating_sub(shown));
                         se.push(Se::Cursor);
                         return (ev, se);
                     }
@@ -1241,9 +1331,10 @@ impl Window {
                     let n = stops.len();
                     self.at = stops[if down { (p + 1) % n } else { (p + n - 1) % n }];
                     self.col = self.marked_col();
-                    if let Some(Elem::List { rows, at, top, height, .. }) = self.elems.get_mut(self.at) {
+                    let shown = self.shown_at(self.at);
+                    if let Some(Elem::List { rows, at, top, .. }) = self.elems.get_mut(self.at) {
                         *at = if down { 0 } else { rows.len().saturating_sub(1) };
-                        *top = (*top).min(*at).max((*at + 1).saturating_sub(*height));
+                        *top = (*top).min(*at).max((*at + 1).saturating_sub(shown));
                     }
                     se.push(Se::Cursor);
                 }
@@ -1555,7 +1646,10 @@ impl Window {
             return (Vec::new(), Vec::new());
         }
         self.drag = (phase != 2).then_some((i, x, y));
-        (vec![Event::Drag { id, phase, x, y, dx: x - lx, dy: y - ly, screen: None, over: None }], Vec::new())
+        (
+            vec![Event::Drag { id, phase, x, y, dx: x - lx, dy: y - ly, screen: None, over: None, covered: None }],
+            Vec::new(),
+        )
     }
 
     /// The classic page's width its lists need to show every cell whole (at most CLASSIC_FIT_MAX).
@@ -1563,10 +1657,12 @@ impl Window {
         let need = self
             .elems
             .iter()
-            .map(|e| match e {
+            .enumerate()
+            .map(|(i, e)| match e {
                 Elem::List { rows, columns, height, .. } => {
-                    let (_, need) = fit_columns(columns, rows, 18.0, CLASSIC_PAD, |t| gu.text_width(t));
-                    need + 64.0 + if rows.len() > *height { 12.0 } else { 0.0 }
+                    let (_, need) =
+                        fit_columns(columns, rows, 18.0, CLASSIC_PAD, |t| gu.text_width(t), |t| classic_tags_w(gu, t));
+                    need + 64.0 + if rows.len() > self.shown(i, *height) { 12.0 } else { 0.0 }
                 }
                 _ => 0.0,
             })
@@ -1608,6 +1704,7 @@ impl Window {
                     out.push((i, 0, [x + SLIDER_X, ey + 14.0, (w - SLIDER_X - 48.0).max(96.0), 16.0]))
                 }
                 Elem::List { rows, columns, top, height, .. } => {
+                    let height = &self.shown(i, *height);
                     let mut ry = ey;
                     if has_header(columns) {
                         let lw = self.classic_list_w(rows.len(), *height);
@@ -1771,6 +1868,17 @@ impl Window {
         {
             *at = k;
         }
+        if list
+            && k < 1000
+            && let Some(Elem::List { rows, columns, height, .. }) = self.elems.get(i)
+        {
+            let lw = self.classic_list_w(rows.len(), self.shown(i, *height));
+            let cols = self::columns(&classic_columns(gu, columns, rows, lw), lw);
+            let dx = p.0 - r[0];
+            let c =
+                if cols.is_empty() { Some(0) } else { cols.iter().position(|&(cx, cw, _)| dx >= cx && dx < cx + cw) };
+            self.pointed = c.and_then(|c| rows.get(k)?.cell_items.get(c).copied().flatten());
+        }
         if !clicked {
             return (true, ev, se);
         }
@@ -1795,8 +1903,38 @@ impl Window {
         (true, ev, se)
     }
 
-    /// Element `i`'s height on the classic page (0 hidden).
+    /// Element `i`'s height on the classic page (0 hidden), a list at the rows it shows.
     fn elem_h(&self, i: usize) -> f32 {
+        match &self.elems[i] {
+            Elem::List { height, columns, .. } if !self.hidden().get(i).copied().unwrap_or(false) => {
+                LINE * (self.shown(i, *height) + usize::from(has_header(columns))) as f32 + 6.0
+            }
+            _ => self.full_h(i),
+        }
+    }
+
+    /// The rows list `i` shows on the classic page: its height, less what the page would run past its room (the first
+    /// list gives them up; at least 3).
+    fn shown(&self, i: usize, height: usize) -> usize {
+        let room = self.room.get();
+        if !room.is_finite() || self.elems.iter().position(|e| matches!(e, Elem::List { .. })) != Some(i) {
+            return height;
+        }
+        let full = TOP + (0..self.elems.len()).map(|j| self.full_h(j)).sum::<f32>() + 12.0;
+        let cut = ((full - room) / LINE).ceil().max(0.0) as usize;
+        height.saturating_sub(cut).max(height.min(3))
+    }
+
+    /// `shown` for element `i` when it is a list (0 otherwise).
+    fn shown_at(&self, i: usize) -> usize {
+        match self.elems.get(i) {
+            Some(Elem::List { height, .. }) => self.shown(i, *height),
+            _ => 0,
+        }
+    }
+
+    /// Element `i`'s height on the classic page with every list at its full height (0 hidden).
+    fn full_h(&self, i: usize) -> f32 {
         if self.hidden().get(i).copied().unwrap_or(false) {
             return 0.0;
         }
@@ -1951,6 +2089,7 @@ impl Window {
                     }
                 }
                 Elem::List { rows, columns, at, top, height, .. } => {
+                    let height = &self.shown(i, *height);
                     let lw = self.classic_list_w(rows.len(), *height);
                     let fit = classic_columns(gu, columns, rows, lw);
                     let columns = &fit;
@@ -1983,11 +2122,20 @@ impl Window {
                                 let Some(cell) = row.cells.get(c) else { continue };
                                 let (cx, cw) = if c == 0 { (cx + ix, cw - ix) } else { (cx, cw) };
                                 let ink = row.cell_colours.get(c).copied().flatten().map_or(ink, tint);
+                                let tags = row.cell_tags.get(c).filter(|t| !t.is_empty());
+                                let tw = tags.map_or(0.0, |t| classic_tags_w(gu, t));
                                 if right {
-                                    let tx = (x + 32.0 + cx + cw - gu.text_width(cell) - 4.0).max(x + 32.0 + cx);
-                                    gu.text_fit(cell, tx, ry, x + 32.0 + cx + cw - tx + 16.0, ink);
+                                    let tx = (x + 32.0 + cx + cw - tw - gu.text_width(cell) - 4.0).max(x + 32.0 + cx);
+                                    gu.text_fit(cell, tx, ry, x + 32.0 + cx + cw - tw - tx + 16.0, ink);
+                                    if let Some(t) = tags {
+                                        classic_tags(gu, t, tx + gu.text_width(cell), ry);
+                                    }
                                 } else {
-                                    gu.text_fit(cell, x + 32.0 + cx, ry, cw - 4.0, ink);
+                                    gu.text_fit(cell, x + 32.0 + cx, ry, cw - 4.0 - tw, ink);
+                                    if let Some(t) = tags {
+                                        let end = x + 32.0 + cx + gu.text_width(cell).min(cw - 4.0 - tw);
+                                        classic_tags(gu, t, end, ry);
+                                    }
                                 }
                             }
                         }
@@ -2748,6 +2896,33 @@ mod tests {
         assert_eq!(super::super::input::combo_label("alt+f1"), "Alt+F1");
     }
 
+    /// A classic page taller than its room shows fewer list rows (scrolling to the cursor), so its last controls stay
+    /// on screen; with room to spare the list keeps its height.
+    #[test]
+    fn classic_list_fits_room() {
+        let mut w = Window::new("w");
+        let rows: Vec<Row> = (0..16).map(|k| Row { cells: vec![k.to_string()], ..Default::default() }).collect();
+        w.elems = vec![
+            Elem::List { id: "l".into(), rows, columns: Vec::new(), at: 0, top: 0, height: 16 },
+            Elem::Separator,
+            Elem::Separator,
+        ];
+        w.meta = vec![Meta::default(); 3];
+        (w.open, w.focus) = (true, true);
+        w.settle();
+        let (_, full) = w.classic_size();
+        w.room.set(full - 3.5 * LINE);
+        assert_eq!(w.shown(0, 16), 12);
+        assert!(w.classic_size().1 <= w.room.get(), "{} past {}", w.classic_size().1, w.room.get());
+        for _ in 0..15 {
+            w.key(K::ArrowDown);
+        }
+        let Elem::List { at, top, .. } = &w.elems[0] else { unreachable!() };
+        assert_eq!((*at, *top), (15, 4), "the cursor's row is out of view");
+        w.room.set(full + 100.0);
+        assert_eq!(w.shown(0, 16), 16);
+    }
+
     /// The help under the cursor is a list row's tip (a spell's description) as the cursor moves down the list; a
     /// row without one shows the list's tip.
     #[test]
@@ -2798,12 +2973,12 @@ mod tests {
         };
         let rows = [row("Thundaga III", "", true), row("Thunder", "1:05:00", false)];
         let measure = |t: &str| 10.0 * t.chars().count() as f32;
-        let (fit, need) = fit_columns(&cols, &rows, 24.0, 8.0, measure);
+        let (fit, need) = fit_columns(&cols, &rows, 24.0, 8.0, measure, |_| 0.0);
         assert_eq!(fit[1].width, 78.0, "7 chars + pad over 46");
         assert_eq!(fit[2].width, 28.0, "2 chars + pad over 20");
         assert_eq!(need, 24.0 + 120.0 + 8.0 + 78.0 + 28.0);
         // Free text (no columns) keeps the mod's width.
-        assert_eq!(fit_columns(&[], &rows, 24.0, 8.0, measure).1, 0.0);
+        assert_eq!(fit_columns(&[], &rows, 24.0, 8.0, measure, |_| 0.0).1, 0.0);
     }
 
     /// Widened columns stay inside the list: the widening gives way first, then the mod's widths shrink alike.
