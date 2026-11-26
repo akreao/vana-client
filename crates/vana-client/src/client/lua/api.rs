@@ -464,7 +464,7 @@ pub(super) fn install(
             let k = match s.windows.iter().position(|w| w.id == id) {
                 Some(k) => k,
                 None => {
-                    s.windows.push(super::window::Window::new(&id));
+                    s.windows.push(super::window::Window::new(&id).into());
                     s.windows.len() - 1
                 }
             };
@@ -529,6 +529,7 @@ pub(super) fn install(
                 .windows
                 .iter_mut()
                 .find(|w| w.id == id)
+                .map(|w| &mut **w)
                 .ok_or_else(|| mlua::Error::runtime(format!("no window {id:?}")))?;
             let k = w
                 .elems
@@ -2218,7 +2219,7 @@ fn popup(
     w.back = s.windows.iter().find(|x| x.focus && x.open).map(|x| x.id.clone());
     w.anchor = at_pointer.then_some(cursor);
     w.settle();
-    s.windows.push(w);
+    s.windows.push(w.into());
     s.focus_request = Some(id.to_string());
     let key = lua.create_registry_value(wrap)?;
     s.window_handlers.retain(|(w, _)| w != id);

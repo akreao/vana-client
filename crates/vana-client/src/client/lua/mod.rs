@@ -469,11 +469,13 @@ struct Snap {
     moon: Option<usize>,
     weather: u16,
     party: Vec<u32>,
-    items: Option<std::collections::BTreeMap<(u8, u8), (u16, u32)>>,
+    /// The bags at an inventory generation (Inventory::slots_gen), shared with the last snapshot while it holds.
+    items: Option<(u64, std::rc::Rc<std::collections::BTreeMap<(u8, u8), (u16, u32)>>)>,
 }
 
 impl Snap {
-    fn of(w: &World, items: bool) -> Self {
+    /// `prev`'s bags are kept while the inventory is unchanged (a clone of every bag each frame, before).
+    fn of(w: &World, items: bool, prev: Option<&Snap>) -> Self {
         let clock = w.clock.map(|_| crate::dat::msgfmt::VanaParts::of(super::vana_now(w)));
         let mut buffs: Vec<u16> = w.buffs.iter().copied().filter(|&b| b != 0xffff).collect();
         buffs.sort_unstable();
@@ -488,8 +490,19 @@ impl Snap {
             moon: clock.as_ref().map(|p| p.phase),
             weather: w.weather,
             party: w.party.slots().slots.iter().flatten().map(|m| m.id).collect(),
-            items: items.then(|| w.inv.slots.clone()),
+            items: items.then(|| bags(&w.inv, prev)),
         }
+    }
+}
+
+/// The bags for a snapshot: `prev`'s copy while the inventory's generation is the same.
+fn bags(
+    inv: &super::items::Inventory,
+    prev: Option<&Snap>,
+) -> (u64, std::rc::Rc<std::collections::BTreeMap<(u8, u8), (u16, u32)>>) {
+    match prev.and_then(|p| p.items.as_ref()) {
+        Some((g, m)) if *g == inv.slots_gen => (*g, m.clone()),
+        _ => (inv.slots_gen, std::rc::Rc::new(inv.slots.clone())),
     }
 }
 
@@ -559,8 +572,10 @@ fn changes(a: &Snap, b: &Snap) -> Vec<(&'static str, Vec<serde_json::Value>)> {
     if a.party != b.party {
         out.push(("party_change", vec![]));
     }
-    if let (Some(o), Some(n)) = (&a.items, &b.items) {
-        for (&(bag, slot), &(id, count)) in n {
+    if let (Some((og, o)), Some((ng, n))) = (&a.items, &b.items)
+        && og != ng
+    {
+        for (&(bag, slot), &(id, count)) in n.iter() {
             match o.get(&(bag, slot)) {
                 Some(&(oid, ocount)) if oid == id && ocount == count => {}
                 Some(&(oid, ocount)) if oid == id => {
@@ -573,7 +588,7 @@ fn changes(a: &Snap, b: &Snap) -> Vec<(&'static str, Vec<serde_json::Value>)> {
                 None => out.push(("item_add", vec![bag.into(), slot.into(), id.into(), count.into()])),
             }
         }
-        for (&(bag, slot), &(id, count)) in o {
+        for (&(bag, slot), &(id, count)) in o.iter() {
             if !n.contains_key(&(bag, slot)) {
                 out.push(("item_remove", vec![bag.into(), slot.into(), id.into(), count.into()]));
             }
@@ -1289,7 +1304,7 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
     }
     // The derived change events (items only while someone listens: the bags are big).
     let items = host.vms.iter().any(|v| ["item_add", "item_remove", "item_change"].iter().any(|e| v.has_handler(e)));
-    let snap = Snap::of(w, items);
+    let snap = Snap::of(w, items, host.prev.as_ref());
     if let Some(prev) = &host.prev {
         let found = changes(prev, &snap);
         host.events.extend(found);
@@ -1869,12 +1884,16 @@ impl Host {
     }
 
     /// The open edge window standing in for a built-in panel (the newest mod's).
-    pub(in crate::client) fn edge_panel(&self, panel: &str) -> Option<window::Window> {
+    pub(in crate::client) fn edge_panel(&self, panel: &str) -> Option<std::rc::Rc<window::Window>> {
         if self.all_hidden.get() {
             return None;
         }
         self.vms.iter().rev().filter(|v| v.suspended.is_none()).find_map(|v| {
-            v.st.borrow().windows.iter().find(|w| w.open && w.edge && w.panel.as_deref() == Some(panel)).cloned()
+            v.st.borrow()
+                .windows
+                .iter()
+                .find(|w| w.open && w.edge && w.panel.as_deref() == Some(panel))
+                .map(|w| w.snapshot())
         })
     }
 
@@ -2234,6 +2253,29 @@ fn install_stubs(root: PathBuf) {
 mod tests {
     use super::*;
 
+    /// The item events diff the bags only when the inventory changed; an unchanged inventory shares the last copy.
+    #[test]
+    fn item_events_copy_bags_only_on_change() {
+        let mut inv = crate::client::items::Inventory::default();
+        inv.set(0, 1, 4096, 3);
+        let snap = |inv: &crate::client::items::Inventory, prev: Option<&Snap>| Snap {
+            items: Some(bags(inv, prev)),
+            ..Default::default()
+        };
+        let a = snap(&inv, None);
+        let b = snap(&inv, Some(&a));
+        assert!(std::rc::Rc::ptr_eq(&a.items.as_ref().unwrap().1, &b.items.as_ref().unwrap().1));
+        assert!(changes(&a, &b).is_empty());
+        inv.count(0, 1, 5);
+        inv.set(0, 2, 4097, 1);
+        let c = snap(&inv, Some(&b));
+        let names: Vec<_> = changes(&b, &c).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["item_change", "item_add"]);
+        // A fresh inventory (a zone or a log-out) never reuses a generation.
+        let fresh = crate::client::items::Inventory::default();
+        assert_ne!(fresh.slots_gen, inv.slots_gen);
+    }
+
     /// The repository's mods (assets/mods), each a folder.
     fn repo_mods() -> Vec<PathBuf> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/mods");
@@ -2394,7 +2436,7 @@ mod tests {
         .unwrap();
         let mut win = window::Window::new("w");
         (win.open, win.focus) = (true, true);
-        vm.st.borrow_mut().windows.push(win);
+        vm.st.borrow_mut().windows.push(win.into());
         let mut slot = Host::default();
         slot.vms.push(vm);
         assert!(slot.focused());
@@ -4502,7 +4544,10 @@ impl Host {
     }
 
     /// The open windows `keep` takes (copied: the caller draws them while it changes the world).
-    pub(super) fn open_windows_where(&self, keep: impl Fn(&window::Window) -> bool) -> Vec<(String, window::Window)> {
+    pub(super) fn open_windows_where(
+        &self,
+        keep: impl Fn(&window::Window) -> bool,
+    ) -> Vec<(String, std::rc::Rc<window::Window>)> {
         self.windows_where(|w| w.open && keep(w))
     }
 
@@ -4519,9 +4564,10 @@ impl Host {
         if let Some((k, id)) = wanted {
             for (j, vm) in self.vms.iter().enumerate() {
                 for win in vm.st.borrow_mut().windows.iter_mut() {
-                    win.focus = j == k && win.id == id && win.open;
-                    if win.focus {
-                        win.raise = true;
+                    let focus = j == k && win.id == id && win.open;
+                    if win.focus != focus || (focus && !win.raise) {
+                        win.focus = focus;
+                        win.raise |= focus;
                     }
                 }
             }
@@ -4539,14 +4585,17 @@ impl Host {
         false
     }
 
-    pub(super) fn windows_where(&self, keep: impl Fn(&window::Window) -> bool) -> Vec<(String, window::Window)> {
+    pub(super) fn windows_where(
+        &self,
+        keep: impl Fn(&window::Window) -> bool,
+    ) -> Vec<(String, std::rc::Rc<window::Window>)> {
         let mut out = Vec::new();
         if self.all_hidden.get() {
             return out;
         }
         for vm in self.vms.iter().filter(|v| v.suspended.is_none()) {
             for win in vm.st.borrow().windows.iter().filter(|w| keep(w)) {
-                out.push((vm.manifest.id.clone(), win.clone()));
+                out.push((vm.manifest.id.clone(), win.snapshot()));
             }
         }
         out
@@ -4602,7 +4651,10 @@ pub(super) fn window_click(w: &mut World, mod_id: &str, win_id: &str, click: sup
                 if win.focus && !this {
                     ended.extend(win.end_edit().into_iter().map(|e| (vm.manifest.id.clone(), win.id.clone(), e)));
                 }
-                win.focus = this;
+                // Written only on a change: a write copies a window the UI still holds this frame (window::Shared).
+                if win.focus != this {
+                    win.focus = this;
+                }
             }
             if this {
                 out = Some(click.apply(win));

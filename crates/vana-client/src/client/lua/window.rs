@@ -442,6 +442,37 @@ pub fn from_step(s: usize) -> u8 {
     ((s.min(STEPS - 1) * 255 + (STEPS - 1) / 2) / (STEPS - 1)) as u8
 }
 
+/// A mod's window as the mod state keeps it: shared, so the UI's per-frame copies (Host::windows_where) are a count,
+/// not a deep clone of every element. A change copies it only while such a copy is still held.
+#[derive(Clone, Debug)]
+pub struct Shared(std::rc::Rc<Window>);
+
+impl From<Window> for Shared {
+    fn from(w: Window) -> Self {
+        Self(std::rc::Rc::new(w))
+    }
+}
+
+impl std::ops::Deref for Shared {
+    type Target = Window;
+    fn deref(&self) -> &Window {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Shared {
+    fn deref_mut(&mut self) -> &mut Window {
+        std::rc::Rc::make_mut(&mut self.0)
+    }
+}
+
+impl Shared {
+    /// The window as it is now, for the UI to draw while the world changes.
+    pub fn snapshot(&self) -> std::rc::Rc<Window> {
+        self.0.clone()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Window {
     pub id: String,
@@ -2290,6 +2321,22 @@ fn pack_icon(gu: &mut GameUi, id: &str, x: f32, y: f32, s: f32, mul: [f32; 4]) -
 mod tests {
     use super::*;
     use egui::Key as K;
+
+    /// A window's per-frame copy is shared, not cloned; a change after it copies the window and leaves the copy as
+    /// it was drawn.
+    #[test]
+    fn shared_window_copies_on_change_only() {
+        let mut w: Shared = Window::new("w").into();
+        let a = w.snapshot();
+        assert!(std::rc::Rc::ptr_eq(&a, &w.snapshot()));
+        w.title = "changed".into();
+        assert_eq!(a.title, "");
+        assert_eq!(w.title, "changed");
+        drop(a);
+        let before = std::rc::Rc::as_ptr(&w.snapshot());
+        w.title = "again".into();
+        assert_eq!(std::rc::Rc::as_ptr(&w.snapshot()), before, "no copy once nothing holds the old one");
+    }
 
     fn win() -> Window {
         let mut w = Window::new("w");

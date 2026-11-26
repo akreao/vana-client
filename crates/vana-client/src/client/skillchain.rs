@@ -40,7 +40,7 @@ fn panel_lines(w: &World) -> Option<(Vec<TextLine>, String)> {
         model::Elem::Lines { lines, .. } => Some(lines.clone()),
         _ => None,
     })?;
-    let title = if win.title.is_empty() { "Skillchains".to_string() } else { win.title };
+    let title = if win.title.is_empty() { "Skillchains".to_string() } else { win.title.clone() };
     (!lines.is_empty()).then_some((lines, title))
 }
 

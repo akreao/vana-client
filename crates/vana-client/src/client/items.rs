@@ -67,8 +67,11 @@ pub struct Inventory {
     pub sizes: [u8; 18],
     /// 0x01C ItemNum2 (u16 @0x24): the Locker's is 0 without a lease (FUN_101cc470).
     pub sizes2: [u16; 18],
-    /// (container, index) -> (item id, count).
+    /// (container, index) -> (item id, count). Changed only through `set` and `count`, which renew `slots_gen`.
     pub slots: BTreeMap<(u8, u8), (u16, u32)>,
+    /// Renewed (to a value never given before) by each change to `slots`: the mods' item events copy the bags only
+    /// when it moved.
+    pub slots_gen: u64,
     /// Equipment slot -> (container, index).
     pub equip: [Option<(u8, u8)>; 16],
     /// (container, index) -> LockFlg (s2c 0x01F / 0x020).
@@ -91,9 +94,16 @@ pub struct Inventory {
     pub view3: BTreeMap<u8, Vec<u8>>,
 }
 
+/// A `slots_gen` no inventory had before (a fresh Inventory is 0).
+fn next_gen() -> u64 {
+    static GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 impl Inventory {
     /// Returns true when the slot's row was (re)appended to the view: a new slot, or one whose item changed.
     pub fn set(&mut self, container: u8, index: u8, id: u16, count: u32) -> bool {
+        self.slots_gen = next_gen();
         if id == 0 {
             self.slots.remove(&(container, index));
             self.ext.remove(&(container, index));
@@ -194,6 +204,7 @@ impl Inventory {
     }
 
     pub fn count(&mut self, container: u8, index: u8, count: u32) {
+        self.slots_gen = next_gen();
         if count == 0 {
             self.slots.remove(&(container, index));
             self.unlist(container, index);
