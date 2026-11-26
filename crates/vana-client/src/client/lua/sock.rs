@@ -17,6 +17,8 @@ static NEXT: AtomicU64 = AtomicU64::new(1 << 40);
 /// What one socket's reader may hold read and not yet handed to the mod; past it the reader waits (for a stream, the
 /// peer then waits too). This memory is the client's, outside the mod's Lua limit.
 pub(super) const QUEUED_CAP: usize = 4 << 20;
+/// What each report counts on top of its bytes, so empty reads and datagrams fill the queue too.
+const REPORT_COST: usize = 64;
 
 /// A socket's queued bytes (see `QUEUED_CAP`).
 #[derive(Default)]
@@ -26,9 +28,10 @@ pub(super) struct Budget {
 }
 
 impl Budget {
-    /// Room for `n` bytes more, waiting while the queue is over the cap (one read always fits an empty queue);
+    /// Room for `n` bytes more (and the report's own cost), waiting while the queue is over the cap (one read always fits an empty queue);
     /// None once `stop` says the socket is closed.
     pub(super) fn take(self: &Arc<Self>, n: usize, stop: impl Fn() -> bool) -> Option<Credit> {
+        let n = n + REPORT_COST;
         let mut used = self.used.lock().unwrap_or_else(PoisonError::into_inner);
         while *used > 0 && *used + n > QUEUED_CAP {
             if stop() {
@@ -60,7 +63,7 @@ impl Drop for Credit {
 pub(super) enum Msg {
     Open(u64, Closer),
     Data(u64, Vec<u8>, Option<SocketAddr>, Credit),
-    Accept(u64, u64, SocketAddr, Sender<Vec<u8>>, Closer),
+    Accept(u64, u64, SocketAddr, Sender<Vec<u8>>, Closer, Arc<AtomicBool>),
     Closed(u64, Option<String>),
 }
 
@@ -121,8 +124,14 @@ fn tcp_closer(s: TcpStream) -> Closer {
 }
 
 /// A TCP stream's reader and writer threads.
-fn run_tcp(id: u64, s: &TcpStream, report: Sender<Msg>, out: Receiver<Vec<u8>>) -> std::io::Result<()> {
-    run_stream(id, s.try_clone()?, s.try_clone()?, report, out).map(|_| ())
+fn run_tcp(
+    id: u64,
+    s: &TcpStream,
+    report: Sender<Msg>,
+    out: Receiver<Vec<u8>>,
+    stop: Arc<AtomicBool>,
+) -> std::io::Result<()> {
+    run_stream(id, s.try_clone()?, s.try_clone()?, report, out, stop).map(|_| ())
 }
 
 /// Where a reader thread is put once it runs, for a closer made before it (see `reader_closer`).
@@ -147,6 +156,7 @@ fn run_stream<R: Read + Send + 'static, W: Write + Send + 'static>(
     mut w: W,
     report: Sender<Msg>,
     out: Receiver<Vec<u8>>,
+    stop: Arc<AtomicBool>,
 ) -> std::io::Result<std::thread::JoinHandle<()>> {
     std::thread::Builder::new().name("lua-tcp-w".into()).spawn(move || {
         for b in out {
@@ -158,16 +168,17 @@ fn run_stream<R: Read + Send + 'static, W: Write + Send + 'static>(
     std::thread::Builder::new().name("lua-tcp-r".into()).spawn(move || {
         let mut buf = vec![0u8; 65536];
         let budget = Arc::new(Budget::default());
-        loop {
+        let closed = || stop.load(Ordering::Relaxed);
+        // Closed (the socket's stop flag) ends it too: a Windows closer cancels only a read already running, not one
+        // started after a wait for queue room.
+        while !closed() {
             match r.read(&mut buf) {
                 Ok(0) => {
                     let _ = report.send(Msg::Closed(id, None));
                     return;
                 }
                 Ok(n) => {
-                    // Nothing stops this wait but the mod taking the data: a closed socket's data is still
-                    // drained (and dropped) by the mod phase, and an unloaded mod drops the whole queue.
-                    let Some(c) = budget.take(n, || false) else { return };
+                    let Some(c) = budget.take(n, closed) else { return };
                     if report.send(Msg::Data(id, buf[..n].to_vec(), None, c)).is_err() {
                         return;
                     }
@@ -286,7 +297,7 @@ pub(super) fn install(lua: &Lua, t: &Table) -> mlua::Result<()> {
                             // Open is reported before the reader starts, so no data comes ahead of it.
                             let r = s.try_clone().map(tcp_closer).and_then(|c| {
                                 let _ = report.send(Msg::Open(id, c));
-                                run_tcp(id, &s, report.clone(), rx)
+                                run_tcp(id, &s, report.clone(), rx, flag.clone())
                             });
                             if let Err(e) = r {
                                 let _ = report.send(Msg::Closed(id, Some(e.to_string())));
@@ -312,13 +323,14 @@ pub(super) fn install(lua: &Lua, t: &Table) -> mlua::Result<()> {
             let report = reports(lua);
             let (tx, rx) = channel::<Vec<u8>>();
             let stop = Arc::new(AtomicBool::new(false));
+            let flag = stop.clone();
             std::thread::Builder::new()
                 .name("lua-pipe".into())
                 .spawn(move || {
                     let slot = ReaderSlot::default();
                     let r = open_pipe(&name, slot.clone()).and_then(|(r, w, close)| {
                         let _ = report.send(Msg::Open(id, close));
-                        let h = run_stream(id, r, w, report.clone(), rx)?;
+                        let h = run_stream(id, r, w, report.clone(), rx, flag)?;
                         if let Ok(mut g) = slot.lock() {
                             *g = Some(h);
                         }
@@ -363,10 +375,11 @@ pub(super) fn install(lua: &Lua, t: &Table) -> mlua::Result<()> {
                                 let (tx, rx) = channel::<Vec<u8>>();
                                 // Accept is reported before the reader starts, so no data comes ahead of it.
                                 let Ok(c) = s.try_clone().map(tcp_closer) else { continue };
-                                if report.send(Msg::Accept(id, cid, peer, tx, c)).is_err() {
+                                let stop = Arc::new(AtomicBool::new(false));
+                                if report.send(Msg::Accept(id, cid, peer, tx, c, stop.clone())).is_err() {
                                     return;
                                 }
-                                if let Err(e) = run_tcp(cid, &s, report.clone(), rx) {
+                                if let Err(e) = run_tcp(cid, &s, report.clone(), rx, stop) {
                                     let _ = report.send(Msg::Closed(cid, Some(e.to_string())));
                                 }
                             }
@@ -512,7 +525,7 @@ pub(super) fn poll(vm: &super::vm::Vm) {
         let Some(h) = handlers else {
             // Closed before the thread's report came: its stream is shut here, or the connection and its reader
             // stay open until the peer hangs up.
-            if let Msg::Open(_, close) | Msg::Accept(.., close) = m {
+            if let Msg::Open(_, close) | Msg::Accept(.., close, _) = m {
                 close();
             }
             continue;
@@ -536,8 +549,10 @@ pub(super) fn poll(vm: &super::vm::Vm) {
                 match (b, from) {
                     (Ok(b), Some(a)) => vm.call(data, (id, b, a.ip().to_string(), a.port())),
                     (Ok(b), None) => vm.call(data, (id, b)),
-                    // Past the mod's memory limit: the stream would go on with a hole in it, so it is closed.
-                    (Err(e), _) => {
+                    // Past the mod's memory limit, a datagram is lost as UDP may lose one, the error reported.
+                    (Err(e), Some(_)) => vm.error(&mlua::Error::runtime(format!("socket {id}: datagram dropped: {e}"))),
+                    // A stream would go on with a hole in it, so it is closed.
+                    (Err(e), None) => {
                         let gone = take(vm, id);
                         drop_all(&vm.lua, gone);
                         if let Some(f) = f("close") {
@@ -547,12 +562,12 @@ pub(super) fn poll(vm: &super::vm::Vm) {
                     }
                 }
             }
-            Msg::Accept(lid, cid, peer, tx, stream) => {
+            Msg::Accept(lid, cid, peer, tx, stream, stop) => {
                 let Ok(key) = vm.lua.create_registry_value(h.clone()) else { continue };
                 vm.st.borrow_mut().socks.push(Sock {
                     id: cid,
                     handlers: Some(key),
-                    kind: Kind::Tcp { tx, stream: Some(stream), stop: Arc::new(AtomicBool::new(false)) },
+                    kind: Kind::Tcp { tx, stream: Some(stream), stop },
                 });
                 if let Some(f) = f("accept") {
                     vm.call(f, (lid, cid, peer.ip().to_string(), peer.port()));
@@ -624,7 +639,8 @@ mod tests {
         report.send(Msg::Open(7, close)).unwrap();
         let (accepted, close) = flag();
         let (tx, _rx) = channel();
-        report.send(Msg::Accept(8, 1 << 41, "127.0.0.1:1".parse().unwrap(), tx, close)).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        report.send(Msg::Accept(8, 1 << 41, "127.0.0.1:1".parse().unwrap(), tx, close, stop)).unwrap();
         poll(&vm);
         assert!(opened.load(Ordering::Relaxed), "late Open not shut");
         assert!(accepted.load(Ordering::Relaxed), "Accept on a closed listener not shut");
@@ -666,5 +682,22 @@ mod tests {
         assert!(err.is_some_and(|e| e.starts_with("data dropped")));
         assert!(vm.st.borrow().socks.is_empty());
         assert_eq!(b.used(), 0);
+    }
+
+    /// A datagram past the limit is lost alone (as UDP may lose one), the error reported; the socket stays.
+    #[test]
+    fn datagram_past_the_memory_limit_is_dropped() {
+        let vm = vm();
+        let report = reports(&vm.lua);
+        let h: Table =
+            vm.lua.load("got = {}; return {close = function() got.closed = true end, data = print}").eval().unwrap();
+        keep(&vm.lua, 6, h, Kind::Listen { stop: Arc::new(AtomicBool::new(false)) }).unwrap();
+        let c = Arc::new(Budget::default()).take(1, || false).unwrap();
+        report.send(Msg::Data(6, vec![b'x'; vm::MEMORY + 1], Some("127.0.0.1:9".parse().unwrap()), c)).unwrap();
+        poll(&vm);
+        let closed: Option<bool> = vm.lua.load("return got.closed").eval().unwrap();
+        assert_eq!(closed, None);
+        assert_eq!(vm.st.borrow().socks.len(), 1);
+        assert_eq!(vm.st.borrow().errors.len(), 1);
     }
 }

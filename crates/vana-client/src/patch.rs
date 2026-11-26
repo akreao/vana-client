@@ -243,7 +243,7 @@ impl Session {
         if !(HEADER..=1 << 30).contains(&total) {
             bail!("patch server announced a {total}-byte frame");
         }
-        // Grown as the bytes come, so a length the server only announces allocates nothing.
+        // Grown as the bytes come: a length the server only announces allocates at most START.
         let mut f = Vec::with_capacity(total.min(START));
         f.extend_from_slice(&head);
         (&mut self.s).take((total - 4) as u64).read_to_end(&mut f)?;
