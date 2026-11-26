@@ -619,13 +619,36 @@ impl Chat {
     /// Keeps the session up for the game: PING answered with PONG, the rest read and dropped. Ends when the server
     /// closes it.
     pub fn keep_alive(mut self) {
+        const LINK_WAIT: Duration = Duration::from_secs(120);
         std::thread::spawn(move || {
-            while let Ok(l) = self.read_line() {
-                if l.as_deref().is_some_and(|l| command(l) == b"PING") && self.send_line("PONG a").is_err() {
-                    break;
+            // A drop of this computer's link (Wi-Fi reconnecting) is waited out for a while, as the zone session does.
+            let mut down: Option<std::time::Instant> = None;
+            let why = loop {
+                match self.read_line() {
+                    Ok(l) => {
+                        if let Some(t) = down.take() {
+                            log::warn!("PlayOnline: the chat link is back after {:.1} s", t.elapsed().as_secs_f32());
+                        }
+                        if l.as_deref().is_some_and(|l| command(l) == b"PING")
+                            && let Err(e) = self.send_line("PONG a")
+                        {
+                            break e;
+                        }
+                    }
+                    Err(e)
+                        if e.downcast_ref::<std::io::Error>().is_some_and(crate::net::link_down)
+                            && down.is_none_or(|t| t.elapsed() < LINK_WAIT) =>
+                    {
+                        if down.is_none() {
+                            log::warn!("PlayOnline: the chat link is down ({e}); waiting for it");
+                            down = Some(std::time::Instant::now());
+                        }
+                        std::thread::sleep(Duration::from_secs(1));
+                    }
+                    Err(e) => break e,
                 }
-            }
-            log::info!("PlayOnline: the chat connection closed");
+            };
+            log::info!("PlayOnline: the chat connection closed ({why:#})");
         });
     }
 }

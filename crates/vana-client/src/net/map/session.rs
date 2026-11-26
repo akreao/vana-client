@@ -89,6 +89,8 @@ pub struct MapSession {
     /// Retail's simulated loss (DAT_104e1ca0 +0x184, FUN_100fa710 0x100fa7f1): the percentage of read datagrams thrown
     /// away, and the generator's state. Ours takes it from FFXI_NET_DROP, for testing the lag step.
     drop: (u32, u32),
+    /// Since when this computer's network has been down (sends failing as unreachable), for the log.
+    down_since: Option<std::time::Instant>,
 }
 
 const LOG_DATAGRAMS: u32 = 40;
@@ -174,6 +176,7 @@ impl MapSession {
             bad_run: 0,
             unacked: Vec::new(),
             drop: (std::env::var("FFXI_NET_DROP").ok().and_then(|v| v.parse().ok()).unwrap_or(0), now() | 1),
+            down_since: None,
             server_ack: 0,
             last_in: None,
             logged: (0, 0),
@@ -353,7 +356,21 @@ impl MapSession {
         body.extend_from_slice(&digest);
         self.cipher.encrypt(&mut body);
         dgram.extend_from_slice(&body);
-        self.sock.send(&dgram)?;
+        match self.sock.send(&dgram) {
+            Ok(_) => {
+                if let Some(t) = self.down_since.take() {
+                    log::warn!("map: the link is back after {:.1} s", t.elapsed().as_secs_f32());
+                }
+            }
+            Err(e) if crate::net::link_down(&e) => {
+                if self.down_since.is_none() {
+                    log::warn!("map: the link is down ({e}); the session waits for it");
+                    self.down_since = Some(std::time::Instant::now());
+                }
+                return Ok(());
+            }
+            Err(e) => return Err(e.into()),
+        }
         self.bytes_out += dgram.len() as u64;
         Ok(())
     }
@@ -410,6 +427,11 @@ impl MapSession {
             }
             // Windows fails the read of a datagram longer than the buffer (WSAEMSGSIZE), as retail's does.
             Err(e) if e.raw_os_error() == Some(10040) => return Ok(None),
+            // It fails at once rather than waiting: wait as a quiet read would.
+            Err(e) if crate::net::link_down(&e) => {
+                std::thread::sleep(timeout);
+                return Ok(None);
+            }
             Err(e) => return Err(e.into()),
         };
         // FUN_100dd6c0 reads 0x2d..=0x550 bytes; FUN_100dc670's read fails on more. LSB sends an empty datagram when
@@ -501,6 +523,21 @@ impl MapSession {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn link_down_errors() {
+        use std::io::Error;
+        // Linux: ENETUNREACH (the Wi-Fi drop seen), EHOSTUNREACH, ENETDOWN, EADDRNOTAVAIL, ENOBUFS.
+        #[cfg(target_os = "linux")]
+        for code in [101, 113, 100, 99, 105] {
+            assert!(crate::net::link_down(&Error::from_raw_os_error(code)), "{code}");
+        }
+        // Not a link drop: refused (the server gone), a reset, a plain I/O error.
+        #[cfg(target_os = "linux")]
+        for code in [111, 104, 5] {
+            assert!(!crate::net::link_down(&Error::from_raw_os_error(code)), "{code}");
+        }
+    }
+
     use super::*;
 
     /// The sequence steps over 0, and the lag is the next sequence less the server's ack.

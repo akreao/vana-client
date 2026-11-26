@@ -25060,3 +25060,13 @@ Settings > Graphics > Upscaling (config `upscaler` 0 off / 1 FSR / 2 external, `
   the installed Lua mods and DAT packs offered an update (catalogue::offer Some(true)). Any found: one log line in
   lua::ERROR red, "Updates are available for N mods (Settings > Mods)." (DAT packs: Settings > DAT Packs). Seen live
   (modern UI) with a test list (VANA_MOD_CATALOGUE) one version ahead.
+
+## Riding out a local link drop (ours, 2026-11-26)
+- Seen over Wi-Fi: a beacon loss, a failed roam, NetworkManager taking the address away for about 20 s
+  until DHCP gave the same one back. The zone session's send failed with ENETUNREACH (os error 101) and the client
+  went back to the login screen; the PlayOnline chat's keep-alive read failed 0.14 s before and closed it.
+- net::link_down: unreachable network or host, network down, address not available, ENOBUFS (Windows WSAENOBUFS).
+  The zone session counts such a send as a lost datagram (its unacked sub-packets go again in the next one, as after
+  any loss) and such a read as a quiet one (sleeping its timeout, as the failure comes at once); one log line when the
+  link goes, one when it is back. The chat's keep-alive waits up to 120 s for it, then closes as before. Any other
+  error ends them as before. Not seen live yet: whether the server keeps the session through the gap.
