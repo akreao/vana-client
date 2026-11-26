@@ -156,7 +156,9 @@ fn pick(w: &World, c: &mut Calc) -> u8 {
     let pet = our_pet(w);
     match p {
         // FUN_10159280: the prompt's pick (its party cursor's member, else the actor it points at).
-        0 if !c.pet || pet.is_some() => c.target = w.target.unwrap_or(0),
+        0 if !c.pet || pet.is_some() => {
+            c.target = if w.party_cursor.is_some() { super::target::cursor_pick(w) } else { w.target }.unwrap_or(0)
+        }
         1 if !c.pet || pet.is_some() => c.target = w.my_id,
         2 => c.target = pet.unwrap_or(0),
         // FUN_10087630: 0x068's target, unless that is the pet itself.
@@ -419,11 +421,31 @@ pub fn item(w: &World, id: u16) -> Out {
     pack(&c, 0)
 }
 
-/// The prompt opener's FUN_10158e30: the open prompt shows `of`'s area.
+/// The prompt opener's FUN_10158e30: the open 3D prompt shows `of`'s area. The target object has one slot (+0xd0):
+/// the last registration wins, so the party cursor's goes.
 pub fn register(w: &mut World, of: Of) {
     if let Some(s) = w.prompt.as_mut() {
         s.area = Some(of);
+        if let Some(pc) = w.party_cursor.as_mut() {
+            pc.area = None;
+        }
     }
+}
+
+/// FUN_10158e30 from the party cursor's dry run (0x10076ef0 / 0x10076f43): the cursor shows `of`'s area, and the
+/// 3D prompt's registration goes.
+pub fn register_cursor(w: &mut World, of: Of) {
+    if let Some(pc) = w.party_cursor.as_mut() {
+        pc.area = Some(of);
+        if let Some(s) = w.prompt.as_mut() {
+            s.area = None;
+        }
+    }
+}
+
+/// Target object +0xd0: the callback the 3D prompt or the party cursor registered (at most one holds one).
+fn registered(w: &World) -> Option<Of> {
+    w.prompt.as_ref().and_then(|s| s.area).or_else(|| w.party_cursor.as_ref().and_then(|pc| pc.area))
 }
 
 /// FUN_1009aec0: the radius in yalms, (scale + 0x100) x RADII[index] / 0x100, 0..40.
@@ -440,7 +462,7 @@ fn geo_radius(a: &Area) -> f32 {
 /// FUN_101598c0 / FUN_101599c0 then FUN_1009ade0 / FUN_1009af60: the callback's output onto our fields. A new shape
 /// and kind at once while on drop the ring (FUN_10092710), the next frame makes it again; so does a new geo flag.
 fn apply(w: &mut World, o: Out) {
-    let callback = w.prompt.as_ref().is_some_and(|s| s.area.is_some());
+    let callback = registered(w).is_some();
     let cfg = w.game.get(0xc0) == 1;
     let ground = w.ground_cursor.is_some();
     let on = callback && !ground && cfg && o.target != 0 && o.shape != 0 && o.kind != 0;
@@ -624,7 +646,7 @@ fn flash(w: &mut World, at: Vec3) {
 /// Per frame in the field (FUN_10158f90 -> FUN_101598c0 / FUN_101599c0, then our actor's FUN_1008f740 block): the
 /// callback, the rings made, `con0` once each is in, their places and the flash.
 pub fn update(w: &mut World) {
-    let o = match w.prompt.as_ref().and_then(|s| s.area) {
+    let o = match registered(w) {
         Some(Of::Spell(id)) => spell(w, id),
         Some(Of::Ability(id)) => ability(w, id),
         Some(Of::WeaponSkill(id)) => weapon_skill(w, id),
@@ -763,7 +785,8 @@ mod tests {
         assert_eq!(pack(&c, 0), Out { shape: 2, kind: 0, geo: true, geo_radius: 6, ..Default::default() });
     }
 
-    /// File 52743: `con0` loops the ring (`clp0`'s three generators, attached to the actor).
+    /// File 52743: `con0` loops the ring (`clp0`'s three generators, attached to the actor), and the file loads as the
+    /// actor's model.
     #[test]
     fn ring_file() {
         let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
@@ -779,6 +802,8 @@ mod tests {
         assert!(ops(b"con0").contains(&(0x73, "clp0".to_string())));
         assert!(ops(b"clp0").contains(&(0x02, "cc00".to_string())));
         assert!(lib.gens.iter().all(|g| g.attach_mode() == 1));
+        // The ring is made through Source::File: it needs its own skeleton, else `con0` never starts.
+        crate::dat::npc::load_file_model(&index, FILE).unwrap();
     }
 
     /// FUN_1022e980's and FUN_1022eb20's tables (0x1033d5e4, 0x1033d5ec, back to back) and the radius table

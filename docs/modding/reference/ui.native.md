@@ -37,6 +37,7 @@ end)
 | [`ui.native.slot(slot, value?)`](#uinativeslot) | Fills a built-in panel's slot: the clock line, the target's distance and HP %. |
 | [`ui.native.place(panel, place?)`](#uinativeplace) | Moves, scales or fades a modern panel. |
 | [`ui.native.rect(panel)`](#uinativerect) | Where a modern panel is on screen. |
+| [`ui.native.party_rows()`](#uinativeparty_rows) | Where each member's row of the modern party and alliance windows is. |
 | [`ui.native.panels()`](#uinativepanels) | Every modern panel a mod may name, with where it is. |
 | [`ui.native.item_colour(item, colour?)`](#uinativeitem_colour) | Colours an item's name in shop and auction house lists. |
 | [`ui.native.trim(list, ids?)`](#uinativetrim) | Leaves spells, abilities or mounts out of the game's lists. |
@@ -554,6 +555,45 @@ end)
 
 For text that only follows a panel, an element's `anchor` (see [hud](hud.md#places-sizes-and-layers)) does the
 same without a `frame` handler.
+
+## `ui.native.party_rows`
+
+```lua
+ui.native.party_rows() -> table[]
+```
+
+The member rows of the modern party and alliance windows as last drawn, top to bottom, so a mod can put something
+beside a member's row (a mark, a number). No permission is needed.
+
+**Returns** `table[]`: one table per row:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `panel` | `string` | `"party"`, `"alliance1"` or `"alliance2"`. |
+| `slot` | `integer` | The member's party slot, from 1: 1-6 your party, 7-12 and 13-18 the alliance's other parties. |
+| `name` | `string` | The member's name as the row shows it. |
+| `x`, `y`, `w`, `h` | `integer` | The row, in window pixels (what HUD elements take). |
+
+Empty in the classic UI and while those windows are hidden or not drawn.
+
+**Example**
+
+```lua
+-- A dot left of each party row; the dots of rows that are gone (a member left, the windows hidden) are removed.
+local dots = {}
+timer.every(0.2, function()
+  local now = {}
+  for _, r in ipairs(ui.native.party_rows()) do
+    local id = "dot" .. r.panel .. r.slot
+    hud.rect(id, { x = r.x - 12, y = r.y + r.h // 2 - 4, w = 8, h = 8, colour = { 120, 200, 255 } })
+    now[id] = true
+  end
+  for id in pairs(dots) do
+    if not now[id] then hud.remove(id) end
+  end
+  dots = now
+end)
+```
 
 ## `ui.native.panels`
 

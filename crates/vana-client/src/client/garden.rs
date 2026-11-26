@@ -824,9 +824,9 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
     out
 }
 
-/// The mouse: the plnt window and bankmenu as the generic window; the list's rows as the item list (hover moves the
-/// row, a click on it is Enter, a right click Escape).
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+/// The mouse: the plnt window and bankmenu as the generic window; the list's rows as the item list (a row takes the
+/// cursor by winhits::takes, a click on it is Enter, a right click Escape).
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     use super::winhits::generic;
     if w.modern {
         return;
@@ -841,7 +841,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
             row,
             1..=2,
             p,
-            moved,
             clicked,
             right,
             |w, id| {
@@ -868,13 +867,13 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         if !on || row < 0.0 || row as usize >= crate::inventory::VISIBLE_ROWS || top + row as usize >= n {
             return;
         }
-        gu.hover.set(true);
         let row = row as usize;
-        if row != cur && (moved || clicked) {
+        let takes = super::winhits::takes(gu, INVENTOR, row as u16 + 1, on);
+        if row != cur && takes {
             if let Some(g) = w.garden.as_mut() {
                 g.list = Some((src, top, row));
             }
-        } else if clicked {
+        } else if clicked && row == cur {
             key(w, egui::Key::Enter);
         }
     } else if let Some((win, row)) = g.win {
@@ -886,7 +885,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
             row,
             1..=n,
             p,
-            moved,
             clicked,
             right,
             |w, id| {

@@ -11,6 +11,7 @@ pub mod math;
 pub mod sched;
 pub mod sound;
 pub mod spline;
+mod tasklist;
 mod tasks;
 pub use tasks::is_skill_file;
 pub mod trail;
@@ -132,6 +133,14 @@ pub trait Actors {
     /// The actor's status (2 / 3 dead, scheduler ops 0xb1 / 0xb2).
     fn status(&self, _id: u32) -> u8 {
         0
+    }
+    /// The applied status (entity +0x170, FUN_10084390), not a bound actor's posed event status.
+    fn applied_status(&self, id: u32) -> u8 {
+        self.status(id)
+    }
+    /// InvisFlag (+0x128 bit 6).
+    fn invisible(&self, _id: u32) -> bool {
+        false
     }
     /// The wade point in the world (actor+0x64c, attach point 0x35): the position, y the water surface while wading.
     fn wade(&self, _id: u32) -> Option<Vec3> {
@@ -708,6 +717,8 @@ pub struct WeaponOp {
     pub n: u8,
     pub byte: u8,
     pub hide: bool,
+    /// The glow call is the client's to make; an op made it already (`Effects::glow_in_op`).
+    pub glow: bool,
 }
 
 pub use equip::{EquipCall, EquipState};
@@ -1040,6 +1051,8 @@ pub struct Effects {
     /// The tasks being run, outermost first (their slots are empty meanwhile; a task an op creates runs inside its
     /// creator's step).
     stepping: Vec<usize>,
+    /// Retail's task list: the walk's order of the tasks and where it goes next (tasklist.rs).
+    list: tasklist::TaskList,
     dolls: Vec<tasks::Doll>,
     pending: Vec<tasks::Pending>,
     /// Furniture actors whose model file is still to come (tasks.rs on_furniture): actor, file.
@@ -1304,6 +1317,7 @@ impl Effects {
             weather_serial: 0,
             tasks: Vec::new(),
             stepping: Vec::new(),
+            list: Default::default(),
             dolls: Vec::new(),
             pending: Vec::new(),
             furn_starts: Vec::new(),

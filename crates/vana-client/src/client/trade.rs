@@ -246,7 +246,9 @@ fn handover_key(w: &mut World, gu: &GameUi, key: egui::Key) {
     let mut close = false;
     match h.focus {
         // FUN_10139a40: Enter on a slot picks into it, OK sends and closes, Cancel closes, the gil child asks the
-        // amount; Escape puts the cursor on Cancel first.
+        // amount; Escape (message 6, also the right click) only puts the cursor and the pointer on Cancel
+        // (win_handover_onkey 0x1013ae40: FUN_1011a240(10, 1)); the window's registry flag 2 keeps the generic
+        // handler from closing it.
         Focus::Window => match key {
             K::ArrowUp | K::ArrowDown | K::ArrowRight | K::ArrowLeft => {
                 let to = if w.modern {
@@ -282,7 +284,10 @@ fn handover_key(w: &mut World, gu: &GameUi, key: egui::Key) {
             },
             K::Escape => {
                 w.sounds.push(Ui::Cancel as u32);
-                if h.cursor == 10 { close = true } else { h.cursor = 10 }
+                if h.cursor != 10 {
+                    h.cursor = 10;
+                    gu.warp_to_cursor(HANDOVER, 10);
+                }
             }
             _ => {}
         },
@@ -654,7 +659,7 @@ pub(super) fn over(gu: &GameUi, name: &str, sw: f32, sh: f32, p: (f32, f32)) -> 
 
 /// The mouse on the focused trade window: a child under it takes the cursor, a click on the cursor's child is Enter
 /// and a right click on the window Escape; the picker's rows as the item list's (items::pointer).
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     // The modern layer draws these and takes their mouse.
     if w.modern {
         return;
@@ -681,8 +686,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
             return;
         }
         let Some(id) = child_at(gu, name, sw, sh, p, ids) else { return };
-        gu.hover.set(true);
-        if id != cursor && (moved || clicked) {
+        if super::winhits::takes(gu, name, id, super::winhits::in_frame(gu, name, sw, sh, p)) && id != cursor {
             match (&mut w.handover, &mut w.p2p.ui) {
                 (Some(h), _) => h.cursor = id,
                 (None, Some(u)) if u.focus == PFocus::Gift => u.gift = id,
@@ -691,7 +695,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                 _ => return,
             }
             w.sounds.push(Ui::Cursor as u32);
-        } else if clicked {
+        } else if clicked && id == cursor {
             key(w, gu, egui::Key::Enter);
         }
     } else if let Some((sc, cu)) = picker {
@@ -703,14 +707,13 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         else {
             return;
         };
-        gu.hover.set(true);
-        if row != cu && (moved || clicked) {
+        if super::winhits::takes(gu, "menu    inventor", row as u16 + 1, true) && row != cu {
             match (&mut w.handover, &mut w.p2p.ui) {
                 (Some(h), _) => h.list.1 = row,
                 (None, Some(u)) => u.list.1 = row,
                 _ => {}
             }
-        } else if clicked {
+        } else if clicked && row == cu {
             key(w, gu, egui::Key::Enter);
         }
     } else if let Some(name) = ctr {
@@ -1031,9 +1034,16 @@ fn p2p_key(w: &mut World, gu: &GameUi, key: egui::Key) {
                 (u.focus, u.gift) = (PFocus::Gift, u.cursor - 3);
                 w.sounds.push(Ui::Cursor as u32);
             }
+            // After our OK the window takes no cursor moves (win_trade_v28 clears +0x61); win_trade_onkey 0x10152bb0
+            // steps Down (message 1) from OK to Cancel and Up (message 2) back, each with the pointer
+            // (FUN_1011a240(child, 1)) and 0001.
             K::ArrowDown | K::ArrowUp if locked => {
-                u.cursor = if key == K::ArrowDown { 10 } else { 9 };
-                w.sounds.push(Ui::Cursor as u32);
+                let to = if key == K::ArrowDown { (9, 10) } else { (10, 9) };
+                if u.cursor == to.0 {
+                    u.cursor = to.1;
+                    gu.warp_to_cursor(TRADE, to.1);
+                    w.sounds.push(Ui::Cursor as u32);
+                }
             }
             K::ArrowLeft | K::ArrowRight if locked && w.modern => {
                 u.cursor = if u.cursor == 9 { 10 } else { 9 };
@@ -1062,7 +1072,11 @@ fn p2p_key(w: &mut World, gu: &GameUi, key: egui::Key) {
                     w.sounds.push(Ui::Select as u32);
                 }
                 (9, true) => {}
-                (_, true) => u.cursor = 9,
+                // Enter on any other child after our OK: the cursor and the pointer to OK.
+                (_, true) => {
+                    u.cursor = 9;
+                    gu.warp_to_cursor(TRADE, 9);
+                }
                 (c @ 1..=8, false) => {
                     let e = w.p2p.mine[c as usize];
                     if offered(&e) {
@@ -1080,8 +1094,12 @@ fn p2p_key(w: &mut World, gu: &GameUi, key: egui::Key) {
                 }
                 _ => {}
             },
+            // Message 6: the cursor and the pointer to Cancel (FUN_1011a240(10, 1)).
             K::Escape => {
-                u.cursor = 10;
+                if u.cursor != 10 {
+                    u.cursor = 10;
+                    gu.warp_to_cursor(TRADE, 10);
+                }
                 w.sounds.push(Ui::Cancel as u32);
             }
             _ => {}

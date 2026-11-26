@@ -330,9 +330,10 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key, _page_mod: bool) {
     w.keyitems = Some(k);
 }
 
-/// Mouse *(inf: the paged lists' hover and click)*: hover moves the cursor to a row, a click on the cursor row is Enter;
+/// Mouse *(inf: the paged lists' hover and click)*: a row takes the cursor by winhits::takes, a click on the cursor row
+/// is Enter;
 /// on evitem01 the same over Yes / No.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool) {
     let Some(k) = w.keyitems.as_ref() else { return };
     let (state, cur) = (k.state, k.ask.map_or(k.cursor, |yes| if yes { 0 } else { 1 }));
     let inside = |r: [f32; 4]| p.0 >= r[0] && p.0 < r[0] + r[2] && p.1 >= r[1] && p.1 < r[1] + r[3];
@@ -364,7 +365,8 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                 let mut ry = y + 12.0;
                 (k.top..k.top + fit(h, k.top).min(k.items.len() - k.top.min(k.items.len())))
                     .map(|i| {
-                        let r = (i, [x + 40.0, ry, NAME_W + 36.0, h[i]]);
+                        // The row's child rect as win_evitem_v10 sets it (FUN_10119e10): the entry is 283 wide.
+                        let r = (i, [x + 40.0, ry, NAME_W, h[i]]);
                         ry += h[i] + GAP;
                         r
                     })
@@ -379,8 +381,9 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         }
         return;
     };
-    gu.hover.set(true);
-    if row != cur && (moved || clicked) {
+    let (name, top) = if k.ask.is_some() { (ASK, 0) } else { (WINDOW, k.top) };
+    let child = (row - top) as u16 + 1;
+    if super::winhits::takes(gu, name, child, super::winhits::in_frame(gu, name, sw, sh, p)) && row != cur {
         if let Some(kk) = w.keyitems.as_mut() {
             match kk.ask.as_mut() {
                 Some(yes) => *yes = row == 0,
@@ -388,7 +391,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
             }
         }
         w.sounds.push(Ui::Cursor as u32);
-    } else if clicked {
+    } else if clicked && row == cur {
         key(w, gu, egui::Key::Enter, false);
     }
 }
@@ -476,7 +479,12 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
                 }
                 super::missions::lines(gu, name, cx + 36.0, ry, NAME_W, if i == k.cursor { CURSOR } else { WHITE });
                 if on && focused {
-                    gu.cursor_on(WINDOW, 0, cx, ry, [cx, ry, 36.0 + NAME_W, 16.0]);
+                    // The list base puts the window's cursor on child 1 + (cursor - top) (FUN_102234e0 ->
+                    // FUN_1011a320, clamped to the 8 children), and win_evitem_v10 sets each shown row's child to the
+                    // row: (+0x7c, y, entry width 0x12d - 0x12, row height) (FUN_10119e10; the entry size from
+                    // FUN_10234990). That rect is the part the focus warp aims at.
+                    let child = (i - k.top + 1).min(8) as u16;
+                    gu.cursor_on(WINDOW, child, cx, ry, [cx, ry, NAME_W, h[i]]);
                 }
                 ry += h[i] + GAP;
             }

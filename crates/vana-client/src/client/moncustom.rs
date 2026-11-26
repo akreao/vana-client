@@ -1053,7 +1053,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
 
 /// The mouse: the generic handler on the focused window, list rows as the list's (a row moves the cursor, a click
 /// on it is Enter).
-pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool, right: bool) {
     let Some(s) = w.moncustom.clone() else { return };
     let enter = |w: &mut World, gu: &GameUi, k: egui::Key| key(w, gu, k);
     match s.focus {
@@ -1064,7 +1064,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
             s.mncst,
             1..=3,
             p,
-            moved,
             clicked,
             right,
             |w, id| set(w, |s| s.mncst = id),
@@ -1077,7 +1076,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
             s.cstm,
             1..=12,
             p,
-            moved,
             clicked,
             right,
             |w, id| set(w, |s| s.cstm = id),
@@ -1090,7 +1088,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
             s.mnnm.unwrap_or(1),
             1..=2,
             p,
-            moved,
             clicked,
             right,
             |w, id| set(w, |s| s.mnnm = Some(id)),
@@ -1103,7 +1100,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
             s.mntp2.unwrap_or(1),
             1..=20,
             p,
-            moved,
             clicked,
             right,
             |w, id| set(w, |s| s.mntp2 = Some(id)),
@@ -1116,7 +1112,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
             s.kncst.map_or(1, |k| k.child),
             1..=5,
             p,
-            moved,
             clicked,
             right,
             |w, id| {
@@ -1139,7 +1134,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), moved: bool, clicked: 
                 (c.0 - c.1 + 1) as u16,
                 1..=VISIBLE as u16,
                 p,
-                moved,
                 clicked,
                 right,
                 |w, id| {

@@ -152,14 +152,14 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         return;
     }
     match s.opt {
-        Some(o) => generic(w, gu, MENU, o, 1..=8, p, moved, clicked, right, |w, id| {
+        Some(o) => generic(w, gu, MENU, o, 1..=8, p, clicked, right, |w, id| {
             if let Some(s) = list_mut(w) {
                 s.opt = Some(id);
             }
         }),
         None => {
             let sel = s.sel;
-            generic(w, gu, LIST, sel, 1..=22, p, moved, clicked, right, |w, id| {
+            generic(w, gu, LIST, sel, 1..=22, p, clicked, right, |w, id| {
                 if let Some(s) = list_mut(w) {
                     s.sel = id;
                 }

@@ -933,41 +933,48 @@ impl SelectUi {
         deleting: bool,
         out: &mut Out,
     ) {
-        if !(input.moved || input.clicked) {
-            return;
-        }
+        // The cursor moves by the shared window steps (winhits::takes); a click acts on the cursor's row or child.
+        use crate::client::winhits::takes;
         match self.focus.clone() {
             Focus::List => {
                 let Some(i) = self.rects.list.iter().position(|r| inside(r, p)) else { return };
-                gu.hover.set(true);
-                out.input = true;
-                if input.moved || i != self.cursor {
-                    self.move_cursor(i, out);
+                if input.moved || input.clicked {
+                    out.input = true;
                 }
-                if input.clicked && !input.busy {
+                if takes(gu, "lobby list", i as u16 + 1, inside(&self.rects.list_area, p)) && i != self.cursor {
+                    out.input = true;
+                    self.move_cursor(i, out);
+                } else if input.clicked && i == self.cursor && !input.busy {
                     self.confirm(gu, list, chars, deleting, out);
                 }
             }
             focus => {
                 let Some(&(c, _)) = self.rects.children.iter().find(|(_, r)| inside(r, p)) else { return };
-                gu.hover.set(true);
                 let enter = || egui::Key::Enter;
+                let (name, on) = match focus {
+                    Focus::Options(k) => ("lobby options", c == k),
+                    Focus::Slots(_, k) => ("lobby slots", c == k),
+                    Focus::Prompt(_, yes) => ("lobby prompt", (c == 1) == yes),
+                    _ => ("lobby", true),
+                };
+                // The child boxes stand in for the window frame (ours keeps no frame for them).
+                let moves = takes(gu, name, c, true) && !on;
                 match focus {
-                    Focus::Options(k) if c != k => {
+                    Focus::Options(_) if moves => {
                         out.sounds.push(Se::Cursor);
                         self.focus = Focus::Options(c);
                     }
-                    Focus::Slots(m, k) if c != k => {
+                    Focus::Slots(m, _) if moves => {
                         out.sounds.push(Se::Cursor);
                         self.focus = Focus::Slots(m, c);
                     }
-                    Focus::Prompt(pr, yes) if (c == 1) != yes => {
+                    Focus::Prompt(pr, _) if moves => {
                         out.sounds.push(Se::Cursor);
                         self.focus = Focus::Prompt(pr, c == 1);
                     }
                     _ => {}
                 }
-                if input.clicked {
+                if input.clicked && on {
                     self.key(gu, enter(), egui::Modifiers::NONE, list, chars, deleting, input.busy, out);
                 }
             }

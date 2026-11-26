@@ -8,7 +8,7 @@ use crate::config::Config;
 use crate::dat::DatIndex;
 use crate::dat::battle::{BattleText, Ctx, Relation, Who};
 use crate::dat::font::{Font, Quality, encode_sjis};
-use crate::dat::ui::{MENU_US, UiFile, UiImage, WINDOW_STYLE_BASE, norm_name};
+use crate::dat::ui::{UiFile, UiImage, WINDOW_STYLE_BASE, norm_name};
 use crate::net::action::{self, Action, ActionResult, ActionTarget, Side, category};
 use crate::net::map::session::SubPacket;
 use crate::render::screens::{HudState, hud_screen, push_window, window_rect};
@@ -126,10 +126,10 @@ pub fn combat_shot(out: &Path, mob: &str, menu_layout: usize, width: u32, height
     let cfg = Config::load();
     let index = DatIndex::open(&cfg.ffxi_dir())?;
     let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir()))?;
-    let menu = load_ui_full(&index, MENU_US)?;
+    let menu = load_ui_full(&index, crate::dat::ui::menu_file())?;
     let style_file = load_ui(&index, WINDOW_STYLE_BASE)?;
     let style = style_file.libs.first().context("window style file has no sprite library")?;
-    let font = Font::load(&index, &dll, 1, Quality::Compressed)?;
+    let font = Font::load(&index, &dll, crate::dat::lang::files() as u8, Quality::Compressed)?;
     let bt = BattleText::load(&index, &dll)?;
     let (w, h) = (width as f32, height as f32);
     let st = HudState {

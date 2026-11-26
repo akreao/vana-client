@@ -1,5 +1,5 @@
 //! The mission and quest logs' name files (MODLOG "Missions"): d_msg entries {u32 number, name,
-//! description}, one file per mission log (15) and per quest area (11). English ids; ja = the table's ja column.
+//! description}, one file per mission log (15) and per quest area (11), in the file language.
 
 use super::DatIndex;
 use super::items::Field;
@@ -7,12 +7,40 @@ use super::names::DMsg;
 use anyhow::Result;
 
 /// Mission logs 0..14 (DAT_10667a90 + log * 0x94): San d'Oria, Bastok, Windurst, Zilart, CoP, Assault, ToAU, Campaign,
-/// WotG, SoA, RoV, TVR, ACP, AMK, ASA.
-pub const MISSION_FILES: [u32; 15] =
-    [55715, 55716, 55717, 55718, 55719, 55720, 55721, 55724, 55723, 55738, 55741, 55742, 55735, 55736, 55737];
+/// WotG, SoA, RoV, TVR, ACP, AMK, ASA. Language slots 0x49..0x4f, 0x50, 0x51, 0x55..0x57, 0x52..0x54; ja / en / de /
+/// fr as the slot tables hold them (30261102_0).
+pub const MISSION_FILES: [[u32; 4]; 15] = [
+    [55595, 55715, 55835, 56255],
+    [55596, 55716, 55836, 56256],
+    [55597, 55717, 55837, 56257],
+    [55598, 55718, 55838, 56258],
+    [55599, 55719, 55839, 56259],
+    [55600, 55720, 55840, 56260],
+    [55601, 55721, 55841, 56261],
+    [55604, 55724, 55844, 56264],
+    [55603, 55723, 55843, 56263],
+    [55618, 55738, 55858, 56278],
+    [55621, 55741, 55861, 56281],
+    [55622, 55742, 55862, 56282],
+    [55615, 55735, 55855, 56275],
+    [55616, 55736, 55856, 56276],
+    [55617, 55737, 55857, 56277],
+];
 /// Quest areas 0..10: San d'Oria, Bastok, Windurst, Jeuno, Other Areas, Outlands, Aht Urhgan, Crystal War, Abyssea,
-/// Adoulin, Coalition.
-pub const QUEST_FILES: [u32; 11] = [55706, 55707, 55708, 55709, 55710, 55711, 55712, 55722, 55713, 55739, 55740];
+/// Adoulin, Coalition. Language slots 0x40..0x46, 0x47, 0x48, 0x58, 0x59.
+pub const QUEST_FILES: [[u32; 4]; 11] = [
+    [55586, 55706, 55826, 56246],
+    [55587, 55707, 55827, 56247],
+    [55588, 55708, 55828, 56248],
+    [55589, 55709, 55829, 56249],
+    [55590, 55710, 55830, 56250],
+    [55591, 55711, 55831, 56251],
+    [55592, 55712, 55832, 56252],
+    [55602, 55722, 55842, 56262],
+    [55593, 55713, 55833, 56253],
+    [55619, 55739, 55859, 56279],
+    [55620, 55740, 55860, 56280],
+];
 
 #[derive(Clone, Debug, Default)]
 pub struct Entry {
@@ -51,12 +79,11 @@ pub struct Logs {
 
 impl Logs {
     pub fn load(index: &DatIndex) -> Logs {
-        let load = |files: &[u32]| {
+        let load = |files: &[[u32; 4]]| {
             files
                 .iter()
-                .map(|&f| {
-                    LogFile::load(index, f).map_err(|e| log::warn!("journal file {f}: {e:#}")).unwrap_or_default()
-                })
+                .map(super::lang::file)
+                .map(|f| LogFile::load(index, f).map_err(|e| log::warn!("journal file {f}: {e:#}")).unwrap_or_default())
                 .collect()
         };
         Logs { missions: load(&MISSION_FILES), quests: load(&QUEST_FILES) }

@@ -365,13 +365,15 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
             Ok(())
         })?,
     )?;
+    let me = vm.manifest.id.clone();
+    let caller = me.clone();
     mods.set(
         "call",
-        lua.create_function(|lua, (id, name, args): (String, String, mlua::Variadic<Value>)| {
-            call(lua, &id, &name, args)
+        lua.create_function(move |lua, (id, name, args): (String, String, mlua::Variadic<Value>)| {
+            call(lua, &caller, &id, &name, args)
         })?,
     )?;
-    let me = vm.manifest.id.clone();
+    mods.set("caller", lua.create_function(|lua, ()| Ok(lua.app_data_ref::<Caller>().map(|c| c.0.clone())))?)?;
     mods.set(
         "emit",
         lua.create_function(move |lua, (event, args): (String, mlua::Variadic<Value>)| {
@@ -667,7 +669,10 @@ fn copies(args: impl IntoIterator<Item = Value>, what: &str) -> mlua::Result<Vec
 }
 
 /// mods.call: the other mod's provided function with copies of the values (plain data), in its VM.
-fn call(lua: &Lua, id: &str, name: &str, args: mlua::Variadic<Value>) -> mlua::Result<MultiValue> {
+/// The mod whose mods.call is running a provided function, for mods.caller() in that function.
+struct Caller(String);
+
+fn call(lua: &Lua, caller: &str, id: &str, name: &str, args: mlua::Variadic<Value>) -> mlua::Result<MultiValue> {
     let dir = directory(lua);
     let (tl, st) = {
         let d = dir.borrow();
@@ -698,7 +703,13 @@ fn call(lua: &Lua, id: &str, name: &str, args: mlua::Variadic<Value>) -> mlua::R
         tl.set_app_data(super::api::WorldRef(p));
     }
     let deadline = st.borrow_mut().deadline.replace(std::time::Instant::now() + super::vm::FILTER_CAP);
+    let outer = tl.remove_app_data::<Caller>();
+    tl.set_app_data(Caller(caller.to_string()));
     let r = f.call::<MultiValue>(MultiValue::from_vec(targs));
+    tl.remove_app_data::<Caller>();
+    if let Some(c) = outer {
+        tl.set_app_data(c);
+    }
     st.borrow_mut().deadline = deadline;
     if !lent {
         tl.remove_app_data::<super::api::WorldRef>();
