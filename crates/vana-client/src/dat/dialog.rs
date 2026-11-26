@@ -41,10 +41,13 @@ impl Dialog {
         let count = u32_at(0).context("no offset table")? / 4;
         // Each entry has a 4-byte offset; a bad count must not reserve more than the body holds.
         let mut entries = Vec::with_capacity(count.min(body.len() / 4));
+        // FUN_10096220 (30261102) only adds the entry's offset to the file: no entry is checked against the
+        // file's end, so one bad offset costs that string alone. Some era DATs (XI: Forever Offline's 6660,
+        // Port Windurst) end their table with an offset past the end; that entry reads as empty here.
         for i in 0..count {
-            let start = u32_at(i * 4).context("offset table")?;
+            let start = u32_at(i * 4).context("offset table")?.min(body.len());
             let end = if i + 1 < count { u32_at(i * 4 + 4).context("offset table")? } else { body.len() };
-            entries.push(body.get(start..end.max(start)).context("string out of range")?.to_vec());
+            entries.push(body[start..end.clamp(start, body.len())].to_vec());
         }
         Ok(Dialog { entries })
     }
@@ -860,6 +863,38 @@ pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// One offset past the end of the file loses that string only (era DAT 6660 ends its table that way).
+    #[test]
+    fn offset_past_end_loses_one_string() {
+        let mut body = Vec::new();
+        for o in [12u32, 15, 40] {
+            body.extend_from_slice(&o.to_le_bytes());
+        }
+        body.extend_from_slice(b"abc");
+        // Byte 3 = 0: no XOR.
+        let mut file = (body.len() as u32).to_le_bytes().to_vec();
+        file.extend_from_slice(&body);
+        let d = Dialog::parse(&file).unwrap();
+        assert_eq!(d.len(), 3);
+        assert_eq!(d.raw(0).unwrap(), b"abc");
+        assert_eq!(d.raw(1).unwrap(), b"");
+        assert_eq!(d.raw(2).unwrap(), b"");
+    }
+
+    /// Every zone's dialogue loads from the installed game (with XI: Forever Offline's era DATs, zones 11, 100,
+    /// 115, 123 and 240 each carry one offset past the end of the file).
+    #[test]
+    fn installed_zone_dialogues_load() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        for zone in 0..300u16 {
+            // Zones without dialogue have a 4-byte placeholder file.
+            if index.read(file_id(zone)).is_ok_and(|f| f.len() >= 8) {
+                Dialog::load(&index, zone).unwrap();
+            }
+        }
+    }
 
     /// Zone 5 7410: `7f ac 0` the Vana'diel date and time of num[0], `7f ab 0` the long Earth date (group 10 rows).
     #[test]
