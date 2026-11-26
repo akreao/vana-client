@@ -87,6 +87,8 @@ pub(super) struct Sock {
     pub id: u64,
     pub handlers: Option<RegistryKey>,
     pub kind: Kind,
+    /// A datagram was dropped past the mod's memory limit (said once per socket).
+    pub dropped: bool,
 }
 
 impl Drop for Sock {
@@ -202,7 +204,7 @@ fn addr(host: &str, port: u16) -> mlua::Result<SocketAddr> {
 
 pub(super) fn keep(lua: &Lua, id: u64, handlers: Table, kind: Kind) -> mlua::Result<()> {
     let key = lua.create_registry_value(handlers)?;
-    state(lua).borrow_mut().socks.push(Sock { id, handlers: Some(key), kind });
+    state(lua).borrow_mut().socks.push(Sock { id, handlers: Some(key), kind, dropped: false });
     Ok(())
 }
 
@@ -549,14 +551,15 @@ pub(super) fn poll(vm: &super::vm::Vm) {
                 match (b, from) {
                     (Ok(b), Some(a)) => vm.call(data, (id, b, a.ip().to_string(), a.port())),
                     (Ok(b), None) => vm.call(data, (id, b)),
-                    // Past the mod's memory limit, a datagram is lost as UDP may lose one: said once, not counted as
-                    // the mod's error (a run of them would suspend it).
+                    // Past the mod's memory limit, a datagram is lost as UDP may lose one: said (and logged) once per
+                    // socket, not counted as the mod's error (a run of them would suspend it).
                     (Err(e), Some(_)) => {
-                        log::warn!("{}: socket {id}: datagram dropped: {e}", vm.manifest.id);
-                        let text = format!("socket {id}: datagrams dropped past the memory limit");
                         let mut st = vm.st.borrow_mut();
-                        if st.reported.insert(text.clone()) {
-                            let note = format!("{}: {text}", vm.manifest.id);
+                        if let Some(s) = st.socks.iter_mut().find(|s| s.id == id && !s.dropped) {
+                            s.dropped = true;
+                            log::warn!("{}: socket {id}: datagram dropped: {e}", vm.manifest.id);
+                            let note =
+                                format!("{}: socket {id}: datagrams dropped past the memory limit", vm.manifest.id);
                             st.notices.push(note);
                         }
                     }
@@ -577,6 +580,7 @@ pub(super) fn poll(vm: &super::vm::Vm) {
                     id: cid,
                     handlers: Some(key),
                     kind: Kind::Tcp { tx, stream: Some(stream), stop },
+                    dropped: false,
                 });
                 if let Some(f) = f("accept") {
                     vm.call(f, (lid, cid, peer.ip().to_string(), peer.port()));
@@ -682,9 +686,11 @@ mod tests {
             .eval()
             .unwrap();
         keep(&vm.lua, 5, h, Kind::Listen { stop: Arc::new(AtomicBool::new(false)) }).unwrap();
+        // A test-sized limit: a real read is at most 64 KiB.
+        vm.lua.set_memory_limit(vm.lua.used_memory() + (32 << 10)).unwrap();
         let b = Arc::new(Budget::default());
         let c = b.take(1, || false).unwrap();
-        report.send(Msg::Data(5, vec![b'x'; vm::MEMORY + 1], None, c)).unwrap();
+        report.send(Msg::Data(5, vec![b'x'; 65536], None, c)).unwrap();
         poll(&vm);
         let (data, err): (Option<bool>, Option<String>) = vm.lua.load("return got.data, got.err").eval().unwrap();
         assert_eq!(data, None);
@@ -701,10 +707,11 @@ mod tests {
         let h: Table =
             vm.lua.load("got = {}; return {close = function() got.closed = true end, data = print}").eval().unwrap();
         keep(&vm.lua, 6, h, Kind::Listen { stop: Arc::new(AtomicBool::new(false)) }).unwrap();
+        vm.lua.set_memory_limit(vm.lua.used_memory() + (32 << 10)).unwrap();
         // More than the error limit's worth: not one counts toward suspending the mod.
         for _ in 0..30 {
             let c = Arc::new(Budget::default()).take(1, || false).unwrap();
-            report.send(Msg::Data(6, vec![b'x'; vm::MEMORY + 1], Some("127.0.0.1:9".parse().unwrap()), c)).unwrap();
+            report.send(Msg::Data(6, vec![b'x'; 65536], Some("127.0.0.1:9".parse().unwrap()), c)).unwrap();
         }
         poll(&vm);
         let closed: Option<bool> = vm.lua.load("return got.closed").eval().unwrap();
