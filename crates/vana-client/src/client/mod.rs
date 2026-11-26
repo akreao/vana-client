@@ -4629,6 +4629,9 @@ fn world_hud(
         regime::draw(gu, &mut world.regime, sw);
     }
     skillchain::draw(gu, &mut world.skillchain, sw);
+    // The mods' HUD and edge windows stand with the Timers' dock, under the HUD and every window (World::over_mod_hud).
+    let mod_hud = if world.modern { Vec::new() } else { lua::draw_classic(gu, world, true) };
+    let mod_hud_from = gu.drawn_count();
     let slots = gu.hud(sw, sh, &st);
 
     // Target cursor (FUN_10149900): anc_l at the target's point, 6 frames of 4 ticks, tint 0xe0808080;
@@ -5194,9 +5197,9 @@ fn world_hud(
     if let Some(s) = world.settings.as_ref().filter(|_| !world.modern) {
         blockers.push(s.draw(gu, sw, sh));
     }
-    // The Lua mods' windows (the modern UI draws them as panels).
+    // The Lua mods' other windows (the modern UI draws them as panels): their managers, popups and modal ones.
     if !world.modern {
-        blockers.extend(lua::draw_classic(gu, world));
+        blockers.extend(lua::draw_classic(gu, world, false));
         blockers.extend(voicechat::draw_classic(gu, world, sw, sh));
     }
     // The game's windows drawn from here on are over the mods' (World::above_mods).
@@ -5692,6 +5695,11 @@ fn world_hud(
     // The Timers window under every other window: its clicks only where none is over it.
     let ours_from = blockers.len();
     world.above_mods = gu.drawn_since(above_from);
+    // All drawn after the mods' HUD layer (the minimap is under it), then the layer itself under Timers' clicks.
+    let mut over = gu.drawn_since(mod_hud_from);
+    over.extend(blockers.iter().filter(|r| world.minimap_rect != Some(**r)));
+    world.over_mod_hud = over;
+    blockers.extend(mod_hud);
     blockers.extend(timers::pointer(world, gu, input.pointer, input.clicked, &blockers));
     blockers.extend(regime::pointer(world, gu, input.pointer, input.clicked, &blockers));
     blockers.extend(skillchain::pointer(world, gu, input.pointer, input.clicked, &blockers));
@@ -8731,6 +8739,9 @@ struct World {
     release_drag: bool,
     /// The game's windows drawn over the mods' last frame (their frames): the mouse there is theirs, not a mod's.
     above_mods: Vec<[f32; 4]>,
+    /// The game's windows and the HUD drawn over the mods' HUD layer last frame (lua::hud_layer, drawn with the Timers'
+    /// dock): the mouse there is theirs, not those windows'.
+    over_mod_hud: Vec<[f32; 4]>,
     /// The ops' shared extdata buffer (DAT_104886bc).
     event_ext: [u8; 24],
     event_mem: crate::event_vm::Memory,
@@ -11373,6 +11384,7 @@ impl App {
                             ctr_hold: Default::default(),
                             release_drag: false,
                             above_mods: Vec::new(),
+                            over_mod_hud: Vec::new(),
                             event_ext: [0; 24],
                             event_mem: Default::default(),
                             event_end_at: None,
