@@ -70,7 +70,11 @@ end)
 
 commands.register("aliases", function()
   local out = {}
-  for k, v in pairs(saved().aliases) do out[#out + 1] = "/" .. k .. ": " .. v end
+  for k, v in pairs(saved().aliases) do
+    -- A name that became a game or client command is that command's now: the alias no longer runs.
+    local off = commands.is_game(k) and " (off: /" .. k .. " is a game or client command)" or ""
+    out[#out + 1] = "/" .. k .. ": " .. v .. off
+  end
   table.sort(out)
   chat.add("Key Commands: " .. (#out > 0 and table.concat(out, "; ") or "no aliases"))
 end)
