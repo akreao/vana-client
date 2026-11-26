@@ -161,7 +161,7 @@ Built (client/lua/, modern/modwin.rs), each checked live:
     pass with depth outlines; an error reported)
   - `client.process` / `set_affinity` / `set_priority` (`process`): the cores every thread may run on and the
     scheduling priority; checked live on Linux (cores 0-3, low, back to normal).
-  - Rules as switches too: `move_lock` (our abilities' and the weapon draw's move lock, scheduler op 0x2e), `all_maps`
+  - Rules as switches too: `move_lock` (our abilities' move lock, scheduler op 0x2e, and the engage / sheathe lock of the walk gate), `all_maps`
     (every map without its key item), `dead_commands`, `compass_monsters` (monster dots for every job),
     `player_collision`, `occlusion` (characters behind scenery), `menu_reach` (the AH and the nomad moogle menu
     closing 6 away), `send_interval` (ms between our datagrams, retail 400; checked live: 10 in 4 s at 400, 38 at
