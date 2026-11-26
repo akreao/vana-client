@@ -15434,11 +15434,12 @@ impl App {
         garden::update(world, dt);
         // The map window's keys and animations (FUN_101ef0a0); it goes once its fade-out ends, reopening the main menu
         // it came from (LAB_101faff0).
+        // Not a press a classic mod window holds (a hotbar slot dragged over the map).
         let k = self.ui_k;
         let drag = self
             .press_at
             .zip(self.last_cursor)
-            .filter(|_| self.left_down)
+            .filter(|_| self.left_down && !(!world.modern && lua::holds_pointer(world)))
             .map(|(a, b)| ((b.0 - a.0) as f32 * k.0, (b.1 - a.1) as f32 * k.1));
         // Cursor mode's mouse (FUN_101ef0a0): the pointer while shown (mouse +0x4e) and the window active. After a
         // cursor move hid it, it shows again once it is more than 2 px from where it was hidden in all (CursorMoved
