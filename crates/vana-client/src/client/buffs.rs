@@ -143,7 +143,7 @@ pub fn draw_party(gu: &mut GameUi, w: &World, sw: f32, sh: f32, log: [f32; 4]) {
         Some(f) => (f, true),
         None => {
             let t = if w.party_cursor.is_some() {
-                super::target::party_hand(w).and_then(|(_, _, id)| id)
+                super::target::party_cursor_member(w)
             } else {
                 w.target
             };

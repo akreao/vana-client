@@ -16,7 +16,7 @@ pub struct Info {
     /// The current target's distance (flat, as the prompt's arrow measures it) when the action may take it.
     pub distance: Option<f32>,
     /// The prompt's arrow would be red on the current target (target::reach_tint with the action's range checks:
-    /// both radii, Blood Pacts and Ready moves from the pet too).
+    /// both radii, sub-list 6 / 10 moves from the pet too).
     pub out: bool,
     /// Why the action can't be used now: retail's refusal line, or the effect that stops it.
     pub why: Option<String>,

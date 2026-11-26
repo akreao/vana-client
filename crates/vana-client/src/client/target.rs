@@ -365,14 +365,11 @@ pub fn party_hand(w: &World) -> Option<(usize, u32, Option<u32>)> {
         // Row -1 hides all three windows' hands (each window's vtbl+0x48); see fellow_hand.
         Some(pc) if pc.fellow => None,
         Some(pc) => {
-            let id = match pc.index {
-                0 => Some(w.my_id),
-                // FUN_102033c0: an away member keeps the base tint and flashes nothing.
-                i => match slots.here(i, w.pos_zone) {
-                    Some(m) => w.entity_at(m.index).map(|(id, _)| id),
-                    None => return slots.slots.get(i).cloned().flatten().map(|_| (pc.index, 0xa040_40d0, None)),
-                },
-            };
+            // FUN_102033c0: an away member keeps the base tint and flashes nothing.
+            if pc.index != 0 && slots.here(pc.index, w.pos_zone).is_none() {
+                return slots.slots.get(pc.index).cloned().flatten().map(|_| (pc.index, 0xa040_40d0, None));
+            }
+            let id = party_cursor_member(w);
             let tint = hand_tint(w, id, &pc.range);
             Some((pc.index, tint, id.filter(|_| tint != 0xe0d0_4040)))
         }
@@ -385,6 +382,16 @@ pub fn party_hand(w: &World) -> Option<(usize, u32, Option<u32>)> {
             };
             Some((i, 0x8080_8080, None))
         }
+    }
+}
+
+/// The party cursor's member, here in our zone, whatever its hand's tint (FUN_10157cb0's pick while the cursor is
+/// up); none on the fellow row or an away member's slot.
+pub fn party_cursor_member(w: &World) -> Option<u32> {
+    let pc = w.party_cursor.as_ref().filter(|pc| !pc.fellow)?;
+    match pc.index {
+        0 => Some(w.my_id),
+        i => w.party.slots().here(i, w.pos_zone).and_then(|m| w.entity_at(m.index)).map(|(id, _)| id),
     }
 }
 
