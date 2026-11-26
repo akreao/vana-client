@@ -347,12 +347,12 @@ function events.off(id) end
 ---@return string[]
 function commands.usage(name) end
 
---- Adds a command: typed as //name or /name, it calls `handler` with the words after it. Declare it in mod.toml ([commands.<name>] help and usage) so the chat line's hint, //mods and the Mods page show it.
+--- Adds a command: typed as //name or /name (//name only when a game or client command has the name), it calls `handler` with the words after it. Declare it in mod.toml ([commands.<name>] help and usage) so the chat line's hint, //mods and the Mods page show it.
 ---@param name string without the slash
 ---@param handler fun(...: string) 
 function commands.register(name, handler) end
 
---- Whether /name is one of the game's text commands (a mod's command may not take such a name; a typed-line filter can leave them alone).
+--- Whether /name is one of the game's (or the client's own) text commands (a mod's command of that name is //name only; a typed-line filter can leave them alone).
 ---@param name string with or without the slash
 ---@return boolean
 function commands.is_game(name) end

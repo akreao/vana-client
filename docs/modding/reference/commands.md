@@ -18,7 +18,7 @@ end)
 | Function | What it does |
 | --- | --- |
 | [`commands.register(name, handler)`](#commandsregister) | Adds a command `//name` / `/name` that calls `handler` with the words typed after it. |
-| [`commands.is_game(name)`](#commandsis_game) | Whether `/name` is one of the game's text commands. |
+| [`commands.is_game(name)`](#commandsis_game) | Whether `/name` is one of the game's (or the client's own) text commands. |
 | [`commands.usage(name)`](#commandsusage) | The command's forms as your mod.toml declares them, as lines to print. |
 | [`commands.run(line)`](#commandsrun) | Runs a line as if the player had typed it. |
 
@@ -36,12 +36,12 @@ hint, `//mods` and the Mods page show what it takes; see the guide's "Commands a
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `name` | `string` | yes | The command's name. Leading slashes are dropped and case does not matter (`"Hello"`, `"/hello"` and `"hello"` are the same command). It must not be empty, contain spaces, be `lua` or be the name of one of the game's commands (`sit`, `ma`, `equip`, ...). |
+| `name` | `string` | yes | The command's name. Leading slashes are dropped and case does not matter (`"Hello"`, `"/hello"` and `"hello"` are the same command). It must not be empty, contain spaces, or be `lua` or `mods`. The name of one of the game's commands (`sit`, `ma`, `recast`, ...) or of the client's own (`favs`, `timers`, ...) is allowed, but then the command answers to `//name` only: `/name` stays the game's or the client's. |
 | `handler` | `function` | yes | Called as `handler(word1, word2, ...)` with the words after the name, all strings. With no words it gets no arguments. |
 
 **Returns** nothing.
 
-**Errors** `command name "<name>"` when the name is empty or contains whitespace; `/<name> is a game command: give yours another name` for `lua` or a game command's name.
+**Errors** `command name "<name>"` when the name is empty or contains whitespace; `/lua is the client's: give yours another name` for `lua`; `//mods is the client's: give yours another name` for `mods`.
 
 **Example**
 
@@ -62,7 +62,9 @@ How a typed line reaches the mod:
   "No mod command <name>." in red, with the command it most likely meant. `//mods`
   lists the running mods' commands (a mod cannot register `mods`).
 - A line starting with one `/` goes to the mods when its first word is a command a running mod registered (or
-  `/lua`). Since a mod cannot take a game command's name, the game's commands always work as before.
+  `/lua`), unless a game command or one of the client's own commands has that name. The game's and the client's
+  commands always work as before, and a mod's command of the same name is typed `//name`. When a game update adds a
+  command with your command's name, your mod keeps loading and its `//name` keeps working.
 - The words are split at spaces. Quotes do not group words: `//note "a b"` gives `"a` and `b"`. Join them again with
   `table.concat({ ... }, " ")`.
 - Registering a name again replaces the handler. When two mods register the same name, the one loaded first gets
@@ -109,8 +111,9 @@ end)
 commands.is_game(name) -> boolean
 ```
 
-Whether `/name` is one of the game's text commands (`/ma`, `/tell`, `/away`...). A mod's command may not take such a
-name; a filter on typed lines can use this to leave the game's commands alone.
+Whether `/name` is one of the game's text commands (`/ma`, `/tell`, `/away`...) or one of the client's own one-slash
+commands (`/favs`, `/timers`...). A mod's command of such a name answers to `//name` only; a filter on typed lines can
+use this to leave those commands alone.
 
 **Parameters**
 

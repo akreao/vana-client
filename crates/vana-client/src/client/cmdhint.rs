@@ -110,6 +110,10 @@ fn rows(w: &World) -> Option<(String, Vec<(String, String, String)>)> {
     }
     let mut out = Vec::new();
     for c in w.lua.command_list() {
+        // A mod command named as a game or client command is //name only.
+        if slashes == "/" && super::textcmd::is_reserved(&c.name) {
+            continue;
+        }
         for (a, h) in &c.forms {
             let form = if a.is_empty() { c.name.clone() } else { format!("{} {a}", c.name) };
             if let Some(met) = fits(typed, &form) {
