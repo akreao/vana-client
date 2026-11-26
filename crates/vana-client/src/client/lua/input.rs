@@ -329,6 +329,9 @@ pub(super) struct State {
     hud_press: Option<HudPress>,
     /// The pointer is over a window or panel (egui's, last frame): HUD elements under it take no press or hover.
     pub over_ui: bool,
+    /// A game window or a classic mod window drawn over the HUD under the pointer (last frame): a HUD drag released
+    /// there drops on nothing under it.
+    pub hud_covered: bool,
     /// The HUD element under the pointer (one with a handler or a tip) and since when.
     pub hud_hover: Option<(String, String, std::time::Instant)>,
     /// The game controller: buttons held (bits by PAD_BUTTONS' order), those a mod took, sticks and triggers
@@ -557,7 +560,9 @@ pub(super) fn hud_release(host: &mut super::Host, button: MouseButton) {
         return;
     }
     let canvas = host.drag_release(&m, &id, at.0, at.1, None);
-    let over = if canvas.is_none() { super::hud::drop_target(host, &m, &id, at.0, at.1) } else { None };
+    // A window over the HUD there (a modern panel, a game window, another mod's window) hides the elements under it.
+    let hidden = st.borrow().over_ui || st.borrow().hud_covered;
+    let over = if canvas.is_none() && !hidden { super::hud::drop_target(host, &m, &id, at.0, at.1) } else { None };
     let mut e = hud_event("drag_end", button, at, start);
     e["over"] = over.clone().into();
     host.hud_events.push((m.clone(), id.clone(), e));

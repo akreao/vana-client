@@ -481,6 +481,7 @@ fn titles_sample(p: &mut Panels) {
 
 fn sample(m: &Modern, ctx: &egui::Context, layout: &mut Layout, opts: &Opts) {
     let top = crate::client::hudtop::TopView {
+        visible: true,
         title: "Status".into(),
         help: "View status.".into(),
         alpha: 1.0,
