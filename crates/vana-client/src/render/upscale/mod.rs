@@ -494,16 +494,17 @@ impl Upscale {
             self.engine(gpu, kind)?;
             Some(self.engine.take()?)
         } else {
-            // Upscaling off: the upscaler goes, with the textures it holds (made anew when turned on again).
+            // Upscaling off: the upscaler goes, with the textures it holds (made anew when turned on again), and an
+            // upscaler's failure stays with its own kind.
             if kind == 0 {
-                (self.engine, self.kind) = (None, 0);
+                (self.engine, self.kind, self.failed) = (None, 0, None);
             }
             None
         };
         let nr = if neural && debug == 0 { self.lib(gpu).filter(|l| l.nr.is_some()) } else { None };
         if nr.is_none() {
-            // Its views would hold the targets they were made for past a resize.
-            self.nr_views = None;
+            // Its output and views would hold their sizes' targets past a resize.
+            (self.nr_views, self.nr_out) = (None, None);
         }
         let mut nr_out = self.nr_out.take();
         let now = std::time::Instant::now();
