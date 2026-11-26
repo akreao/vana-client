@@ -13,10 +13,13 @@ use std::path::{Path, PathBuf};
 const MERGED: [u8; 3] = [0x20, 0x31, 0x5d];
 /// File 81's spell records (mgc_, see `actions`): merged record by record, the index being the spell id. Retail reads
 /// a spell's jobs and levels from here alone (FUN_1022cde0), so a server that changes them ships this file (XIPivot
-/// replaces it whole); a record is taken where the mod's differs from stock, so the spells SE adds or changes since
-/// stay stock.
+/// replaces it whole); a record is taken where the mod's differs from stock and holds that spell, so the spells SE
+/// adds since stay stock. A full table copied from an older stock still pins its copy of a spell SE changed since,
+/// as XIPivot pins the whole file.
 const SPELLS: u8 = 0x49;
 const SPELL_SIZE: usize = 100;
+/// Hashed into a merged build's cache key: bump it when `merge` takes something new, so builds made before go.
+const MERGE_VERSION: u32 = 2;
 
 pub struct Overlays {
     /// File id -> the mods' copies, highest priority first.
@@ -77,6 +80,7 @@ impl Overlays {
     pub fn resolve(&self, id: u32, stock: &Path) -> Option<PathBuf> {
         let mods = self.by_id.get(&id)?;
         let mut h = std::collections::hash_map::DefaultHasher::new();
+        MERGE_VERSION.hash(&mut h);
         for p in std::iter::once(stock).chain(mods.iter().map(PathBuf::as_path)) {
             p.hash(&mut h);
             let m = std::fs::metadata(p).ok()?;
@@ -210,15 +214,17 @@ pub fn merge(stock: &[u8], mods: &[Vec<u8>]) -> Option<Vec<u8>> {
 }
 
 /// A stock spell chunk (header included) with each record that a mod's chunk changes taken from it; `mods` lowest
-/// priority first, so the highest one's change wins. Records past either chunk's end stay as they are.
+/// priority first, so the highest one's change wins. A mod's record is taken only when it holds the spell of its
+/// index: an empty one (a slot SE filled since, or one `slim` cleared) leaves stock's. Records past either chunk's end
+/// stay as they are.
 fn spell_records(stock: &[u8], mods: &[&[u8]]) -> Vec<u8> {
     let mut out = stock.to_vec();
     let n = (stock.len() - 16) / SPELL_SIZE;
     for m in mods {
-        for k in 0..n.min((m.len() - 16) / SPELL_SIZE) {
+        for k in 1..n.min((m.len() - 16) / SPELL_SIZE) {
             let at = 16 + k * SPELL_SIZE;
             let r = &m[at..at + SPELL_SIZE];
-            if r != &stock[at..at + SPELL_SIZE] {
+            if r != &stock[at..at + SPELL_SIZE] && spell_id(r) == k {
                 out[at..at + SPELL_SIZE].copy_from_slice(r);
             }
         }
@@ -226,20 +232,51 @@ fn spell_records(stock: &[u8], mods: &[&[u8]]) -> Vec<u8> {
     out
 }
 
-/// A pack's `full` copy of a stock file cut to what `merge` takes from it: the D3s and spell chunks that differ from
-/// stock's of the same key, inside the folder markers that key them. Also the number of those chunks kept.
+/// A masked spell record's id (+0).
+fn spell_id(r: &[u8]) -> usize {
+    let mut r = r.to_vec();
+    super::actions::unmask(&mut r);
+    u16::from_le_bytes([r[0], r[1]]) as usize
+}
+
+/// A pack's spell chunk with every record stock has the same (and the padding) zeroed, so no stock data goes out with
+/// it; `merge` passes the empty records over. None when no record differs.
+fn slim_spells(stock: &[u8], full: &[u8]) -> Option<Vec<u8>> {
+    let mut out = full.to_vec();
+    out[16..].fill(0);
+    let mut changed = false;
+    for k in 0..(full.len() - 16) / SPELL_SIZE {
+        let at = 16 + k * SPELL_SIZE;
+        let r = &full[at..at + SPELL_SIZE];
+        if stock.get(at..at + SPELL_SIZE).is_none_or(|b| b != r) {
+            out[at..at + SPELL_SIZE].copy_from_slice(r);
+            changed = true;
+        }
+    }
+    changed.then_some(out)
+}
+
+/// A pack's `full` copy of a stock file cut to what `merge` takes from it: the D3s chunks that differ from stock's of
+/// the same key and the spell chunk's changed records (`slim_spells`), inside the folder markers that key them. Also
+/// the number of those chunks kept.
 pub fn slim(stock: &[u8], full: &[u8]) -> Option<(Vec<u8>, usize)> {
     let base: HashMap<_, &[u8]> = raw(stock)?.into_iter().map(|c| (c.key, c.bytes)).collect();
     let (mut out, mut kept) = (Vec::new(), 0);
     for c in raw(full)? {
+        if c.kind == SPELLS {
+            if let Some(s) = base.get(&c.key).and_then(|b| slim_spells(b, c.bytes)) {
+                kept += 1;
+                out.extend_from_slice(&s);
+            }
+            continue;
+        }
         let keep = match c.kind {
             0 | 1 => true,
             0x20 => image_ok(c.bytes) && base.get(&c.key).is_some_and(|b| *b != c.bytes),
-            SPELLS => base.get(&c.key).is_some_and(|b| *b != c.bytes),
             _ => false,
         };
         if keep {
-            kept += matches!(c.kind, 0x20 | SPELLS) as usize;
+            kept += (c.kind == 0x20) as usize;
             out.extend_from_slice(c.bytes);
         }
     }
@@ -394,23 +431,67 @@ mod tests {
         assert_eq!(merge(&stock, &[s]).unwrap(), merge(&stock, &[full]).unwrap());
     }
 
+    /// A masked spell record for slot `id` (bytes 2, 11 and 12 zero: every other byte rotated right by one), `mark`
+    /// at +0x20; id 0 is an empty slot.
+    fn spell(id: u16, mark: u8) -> Vec<u8> {
+        let mut r = [0u8; 100];
+        r[0..2].copy_from_slice(&id.to_le_bytes());
+        r[0x20] = mark;
+        r.iter().map(|b| b.rotate_right(1)).collect()
+    }
+
+    /// A spell chunk + a model chunk; `marks[k]` is slot k's record (None empty), slot 0 always empty.
+    fn spell_file(marks: &[Option<u8>], model: u8) -> Vec<u8> {
+        let rs: Vec<u8> = std::iter::once(spell(0, 0))
+            .chain(marks.iter().enumerate().map(|(k, m)| m.map_or(spell(0, 0), |m| spell(k as u16 + 1, m))))
+            .flatten()
+            .collect();
+        [chunk(b"mgc_", 0x49, &rs), chunk(b"mdl1", 0x2e, &[model; 16]), chunk(b"end\0", 0, &[])].concat()
+    }
+
     /// Spell records (chunk 0x49, 100 bytes each) are taken one by one where a mod changed them: the higher mod wins
-    /// a record both change, a record no mod changes stays stock (SE's later change kept), a mod's short chunk (made
-    /// before SE added spells) leaves the new ones stock, and the rest of the file stays stock.
+    /// a record both change, a record no mod changes stays stock, a mod's short chunk (made before SE added spells)
+    /// leaves the new ones stock, an empty slot in a mod (filled by SE since) leaves stock's, and the rest of the file
+    /// stays stock. A slim copy holds only the changed records and merges the same.
     #[test]
     fn spell_records_merged_one_by_one() {
-        let spells = |rs: &[u8]| rs.iter().flat_map(|&r| [r; 100]).collect::<Vec<u8>>();
-        let file = |rs: &[u8], model: u8| {
-            [chunk(b"mgc_", 0x49, &spells(rs)), chunk(b"mdl1", 0x2e, &[model; 16]), chunk(b"end\0", 0, &[])].concat()
-        };
-        let stock = file(&[1, 2, 3, 4], 1);
-        let low = file(&[7, 2, 8, 4], 9);
-        let high = file(&[1, 2, 9], 9);
-        assert_eq!(merge(&stock, &[high.clone(), low]).unwrap(), file(&[7, 2, 9, 4], 1));
-        assert_eq!(merge(&stock, std::slice::from_ref(&high)).unwrap(), file(&[1, 2, 9, 4], 1));
-        let (s, kept) = slim(&stock, &high).unwrap();
+        let (a, b, c, d) = (Some(1), Some(2), Some(3), Some(4));
+        let stock = spell_file(&[a, b, c, d, a], 1);
+        let low = spell_file(&[Some(7), b, Some(8), d, None], 9);
+        let high = spell_file(&[a, b, Some(9)], 9);
+        let both = spell_file(&[Some(7), b, Some(9), d, a], 1);
+        assert_eq!(merge(&stock, &[high.clone(), low.clone()]).unwrap(), both);
+        assert_eq!(merge(&stock, std::slice::from_ref(&high)).unwrap(), spell_file(&[a, b, Some(9), d, a], 1));
+        let (s, kept) = slim(&stock, &low).unwrap();
         assert_eq!(kept, 1);
-        assert_eq!(merge(&stock, &[s]).unwrap(), merge(&stock, &[high]).unwrap());
+        let stock_rec = &stock[16 + 100..16 + 200];
+        assert!(!s.windows(100).any(|w| w == stock_rec), "slim copy holds no stock record");
+        assert_eq!(merge(&stock, &[s]).unwrap(), merge(&stock, &[low]).unwrap());
         assert_eq!(slim(&stock, &stock).unwrap().1, 0);
+    }
+
+    /// A merged build cached before the merge took spell records (a key without MERGE_VERSION) is not read again.
+    #[test]
+    fn older_merge_builds_not_reused() {
+        use std::hash::{Hash, Hasher};
+        let dir = std::env::temp_dir().join(format!("vana-overlay-ver-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("cache")).unwrap();
+        let (stock, pack) = (dir.join("stock.DAT"), dir.join("pack.DAT"));
+        std::fs::write(&stock, spell_file(&[Some(1), Some(2)], 1)).unwrap();
+        std::fs::write(&pack, spell_file(&[Some(5), Some(2)], 1)).unwrap();
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for p in [&stock, &pack] {
+            p.as_path().hash(&mut h);
+            let m = std::fs::metadata(p).unwrap();
+            (m.len(), m.modified().ok()).hash(&mut h);
+        }
+        let old = dir.join("cache").join(format!("7-{:016x}.DAT", h.finish()));
+        std::fs::write(&old, std::fs::read(&stock).unwrap()).unwrap();
+        let o = Overlays { by_id: [(7, vec![pack.clone()])].into(), dirs: Vec::new(), cache: dir.join("cache") };
+        let p = o.resolve(7, &stock).unwrap();
+        assert_ne!(p, old);
+        assert_eq!(std::fs::read(&p).unwrap(), spell_file(&[Some(5), Some(2)], 1));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
