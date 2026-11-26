@@ -2139,6 +2139,11 @@ impl Host {
     pub(in crate::client) fn set_over_ui(&self, over: bool) {
         self.input.borrow_mut().over_ui = over;
     }
+
+    /// Whether a game window or a classic mod window covers the HUD under the pointer (the classic UI).
+    pub(in crate::client) fn set_hud_covered(&self, on: bool) {
+        self.input.borrow_mut().hud_covered = on;
+    }
 }
 
 /// A running mod's text command as the chat line's hint and /lua help show it.
@@ -2972,6 +2977,18 @@ mod tests {
             (ev[1].1["dx"].as_i64(), ev[2].1["over"].as_str(), ev[3].1["from"].as_str()),
             (Some(18), Some("b"), Some("a"))
         );
+        // Released where a window covers the HUD: the drag ends on nothing, and nothing under it gets a drop.
+        host.set_hud_covered(true);
+        at(&mut host, 5.0);
+        assert!(input::hud_press(&mut host, Left));
+        for x in [12.0, 18.0, 25.0] {
+            at(&mut host, x);
+        }
+        input::hud_release(&mut host, Left);
+        let ev = take(&mut host);
+        assert_eq!(kinds(&ev), ["a drag_start", "a drag", "a drag_end"]);
+        assert!(ev[2].1["over"].is_null());
+        host.set_hud_covered(false);
         // Nothing under the pointer is pressed there.
         at(&mut host, 15.0);
         assert!(!input::hud_press(&mut host, Left));
@@ -4904,6 +4921,15 @@ pub(super) fn holds_pointer(w: &World) -> bool {
         .vms
         .iter()
         .any(|vm| vm.st.borrow().windows.iter().any(|win| win.open && (win.drag.is_some() || win.press.is_some())))
+}
+
+/// A classic mod window or a recorded game window under the pointer, drawn over the HUD there.
+pub(super) fn covers_hud(w: &World, p: (f32, f32)) -> bool {
+    over_classic(w, p)
+        || w.win_hits.borrow().iter().any(|h| {
+            let r = h.1;
+            p.0 >= r[0] && p.1 >= r[1] && p.0 <= r[0] + r[2] && p.1 <= r[1] + r[3]
+        })
 }
 
 /// The item of the classic mod list cell under the pointer, for the item window: (id, extdata).

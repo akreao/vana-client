@@ -216,7 +216,9 @@ local function slot(seen, id, cell, o)
       if to and not o.same(cell, to) then o.swap(cell, to) end
     elseif e.kind == "drop" then
       local pal = palette()
-      local lib = pal.dragged_id(e.from) or pal.last
+      -- A palette tile's id; the manager's tiles canvas (whose drag ends with drop_at) keeps it in `last`. Another
+      -- slot dragged here is a swap, done at its drag_end.
+      local lib = pal.dragged_id(e.from) or (e.from == "tiles" and pal.last)
       if lib then o.drop(cell, lib) end
     end
   end)
@@ -300,8 +302,9 @@ function M.bars(p)
   local seen = {}
   local function id_of(b, i) return "ovb_" .. b .. "_" .. i end
   local function parse(id)
-    local b, i = id and id:match("^ovb_(%d+)_(%d+)$")
-    if b then return { b = tonumber(b), i = tonumber(i) } end
+    if not id then return nil end
+    local b, i = id:match("^ovb_(%d+)_(%d+)$")
+    if b and i then return { b = tonumber(b), i = tonumber(i) } end
   end
   for b = 1, rows do
     if b > math.ceil(rev) then break end
@@ -380,6 +383,9 @@ end
 -- Crossbar slots already laid out in canvas units. Scaled and set on the bottom centre.
 function M.crossbars(p)
   local scr, u = screen()
+  -- Narrower than the block (every trigger set while the manager is open): scaled down to fit, so no slot is off
+  -- screen where a drop cannot reach it.
+  if p.width * u > scr.width then u = scr.width / p.width end
   local x0 = math.floor((scr.width - p.width * u) / 2)
   local y0 = math.floor(scr.height - p.height * u - 36 * u)
   local seen = {}
@@ -390,8 +396,9 @@ function M.crossbars(p)
   local active = p.held
   local function id_of(sl) return "ovp_" .. sl.side .. "_" .. sl.button end
   local function parse(id)
-    local side, button = id and id:match("^ovp_([^_]+)_(.+)$")
-    if side and button ~= "idle" then return { side = side, button = button } end
+    if not id then return nil end
+    local side, button = id:match("^ovp_([^_]+)_(.+)$")
+    if side and button and button ~= "idle" then return { side = side, button = button } end
   end
   for _, side in ipairs(p.sides) do
     local lit = active == nil or active == side

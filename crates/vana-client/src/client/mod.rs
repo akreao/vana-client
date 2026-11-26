@@ -3939,6 +3939,7 @@ fn world_hud(
     // a drag on a mod window already holds it: that one keeps the real place until the button comes up. The cell under
     // the pointer is forgotten first, so a pointer gone from the window (or the client) leaves no item showing.
     lua::clear_pointed(world);
+    world.lua.set_hud_covered(!world.modern && input.pointer.is_some_and(|p| lua::covers_hud(world, p)));
     if !world.modern
         && let Some(p) = input.pointer
         && lua::pointer_classic(
