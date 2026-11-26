@@ -873,6 +873,8 @@ const WARNING: &str = "Real shadows affected. Performance will be affected.";
 const H: f32 = 296.0;
 /// A row's pitch: its heading, then its buttons or slider under it.
 const PITCH: f32 = 34.0;
+/// The rows a page shows at once (as the Mods page's list); a longer page scrolls, with the Config pages' bar.
+const ROWS: usize = super::modsui::VISIBLE;
 /// Button columns as conf2win (two 88-px) and conf3win (three 64-px) place them; a slider at the buttons' left.
 const WIDE: [f32; 2] = [78.0, 190.0];
 const NARROW: [f32; 3] = [78.0, 174.0, 270.0];
@@ -909,6 +911,8 @@ pub struct SettingsUi {
     /// The cursor's row: 0 the page name (paged pages), then the rows from 1; the column within it.
     row: usize,
     col: usize,
+    /// The first row shown (0-based) on a page longer than ROWS: it follows the cursor (view_top) and the bar.
+    top: std::cell::Cell<usize>,
     /// A slider being edited (Enter, then Left / Right, as the Config pages' sliders).
     edit: bool,
     pub sounds: Vec<Se>,
@@ -964,6 +968,7 @@ impl SettingsUi {
             tab: 0,
             row: 0,
             col: 0,
+            top: std::cell::Cell::new(0),
             edit: false,
             sounds: Vec::new(),
             dirty: false,
@@ -1417,6 +1422,7 @@ impl SettingsUi {
         }
         self.row = self.row.min(self.row_count());
         self.col = self.marked_col();
+        self.top.set(0);
         self.sounds.push(Se::Cursor);
     }
 
@@ -1532,8 +1538,9 @@ impl SettingsUi {
             return self.mods_controls();
         }
         let mut out = Vec::new();
-        for (i, r) in self.rows().iter().enumerate() {
-            let y = Self::TOP + PITCH * i as f32 + 14.0;
+        let top = self.view_top();
+        for (i, r) in self.rows().iter().enumerate().skip(top).take(ROWS) {
+            let y = Self::TOP + PITCH * (i - top) as f32 + 14.0;
             // conf2win's two 88-px and conf3win's three 64-px columns; a caption that does not fit (12 px of the
             // button are its ends) widens every button of the row, from the bullets' column.
             let need =
@@ -1631,8 +1638,10 @@ impl SettingsUi {
         let ctls = self.controls();
         let focus = |row: usize, col: usize| self.row == row && self.col == col;
         let mut hand = None;
-        for (i, r) in self.rows().iter().enumerate() {
-            let hy = y + Self::TOP + PITCH * i as f32;
+        let rows = self.rows();
+        let top = self.view_top();
+        for (i, r) in rows.iter().enumerate().skip(top).take(ROWS) {
+            let hy = y + Self::TOP + PITCH * (i - top) as f32;
             // The bullet (465 cell 2, drawn at its place (20, 27) on the page) moved to the heading.
             if let Some(b) = gu.cell_bounds("menu    windowps", 465, 2) {
                 gu.sprite_cells("menu    windowps", 465, 2..3, x + 20.0 - b[0], hy + 2.0 - b[1], N);
@@ -1693,7 +1702,42 @@ impl SettingsUi {
         if let Some((hx, hy)) = hand {
             gu.cursor(hx, hy);
         }
+        // A page longer than ROWS: the Config pages' bar at the right edge, for the mouse and the wheel too.
+        if rows.len() > ROWS {
+            let (bx, by, bh) = (x + W - 12.0, y + Self::TOP, PITCH * ROWS as f32);
+            gu.scroll_bar(bx, by, bh, rows.len(), ROWS, top);
+            gu.bar_site(super::scrollbar::Owner::Settings, bx, by, bh, rows.len(), ROWS, top);
+        }
         [x, y, W, H]
+    }
+
+    /// The first row shown, moved as little as it takes for the cursor's row to show (the page name keeps it).
+    fn view_top(&self) -> usize {
+        let n = self.rows().len();
+        let mut top = self.top.get().min(n.saturating_sub(ROWS));
+        if let Some(i) = self.row.checked_sub(1) {
+            super::scrollbar::keep_in_view(&mut top, i, ROWS);
+        }
+        self.top.set(top);
+        top
+    }
+
+    /// The bar's message (a row, a page, the thumb's place) on a long page: the rows scroll and the hand stays on its
+    /// line, as the Config pages' lists do. True when the page moved.
+    pub fn bar(&mut self, m: super::scrollbar::Msg) -> bool {
+        if self.on_mods() || self.edit {
+            return false;
+        }
+        let n = self.rows().len();
+        let mut top = self.view_top();
+        let mut at = self.row.checked_sub(1).unwrap_or(top);
+        let moved = super::scrollbar::rows_abs(m, &mut top, &mut at, n, ROWS);
+        self.top.set(top);
+        if moved && self.row != 0 {
+            self.row = at + 1;
+            self.col = self.marked_col().min(self.cols(self.row).saturating_sub(1));
+        }
+        moved
     }
 
     /// Puts the cursor on a page and row (offscreen shots; 0 the page name).
@@ -1706,6 +1750,7 @@ impl SettingsUi {
         }
         self.row = row.min(self.row_count());
         self.col = self.marked_col();
+        self.top.set(0);
         if let Some(m) = self.mods_ui.as_mut().filter(|_| self.kind == Kind::Settings && self.tab >= PACKS) {
             m.follow(self.row);
         }
@@ -2608,6 +2653,58 @@ mod tests {
         ui.set(shown[0].val, 1);
         assert_eq!(ui.mod_changes, [("m".to_string(), "first".to_string(), serde_json::Value::from(3))]);
         assert_eq!(ui.get(shown[0].val), 1);
+    }
+
+    /// A mod page longer than ROWS: the rows shown follow the cursor, only they have controls (at the shown lines),
+    /// and the bar's messages scroll it with the hand on its line.
+    #[test]
+    fn long_pages_scroll() {
+        use super::super::scrollbar::Msg;
+        let mut ui = SettingsUi::open_kind(&Config::default(), [1280, 800], Kind::Extras);
+        let row = |k: usize| ModRow {
+            preview: None,
+            key: format!("k{k}"),
+            label: format!("Row {k}"),
+            help: String::new(),
+            choices: vec![("ON".into(), true.into()), ("OFF".into(), false.into())],
+            at: 0,
+            tab: String::new(),
+            place: None,
+            place_modern: None,
+            edit: Edit::Choice,
+        };
+        ui.set_mod_pages(vec![ModPage { id: "m".into(), name: "M".into(), rows: (0..20).map(row).collect() }]);
+        ui.tab = ui.tabs().len() - 1;
+        assert_eq!(ui.rows().len(), 20);
+        let shown = |ui: &SettingsUi| {
+            let c = ui.controls();
+            (c.iter().map(|c| c.0).min().unwrap(), c.iter().map(|c| c.0).max().unwrap())
+        };
+        // At the top: rows 1..=7, the last at the frame's last line.
+        ui.row = 1;
+        assert_eq!((ui.view_top(), shown(&ui)), (0, (1, ROWS)));
+        assert!(ui.controls().iter().all(|c| c.2[1] + c.2[3] <= H));
+        // Down past the last line scrolls one row.
+        for _ in 0..ROWS {
+            ui.key(egui::Key::ArrowDown);
+        }
+        assert_eq!((ui.row, ui.view_top(), shown(&ui)), (ROWS + 1, 1, (2, ROWS + 1)));
+        // Up from the page name wraps to the last row, the page's end in view.
+        ui.row = 0;
+        ui.key(egui::Key::ArrowUp);
+        assert_eq!((ui.row, ui.view_top()), (20, 20 - ROWS));
+        // The bar: a page up moves the rows and the hand stays on its line; the thumb's place sets the top.
+        ui.row = 20;
+        assert!(ui.bar(Msg::PageUp));
+        assert_eq!(ui.view_top(), 20 - 2 * ROWS);
+        assert_eq!(ui.row - ui.view_top(), ROWS);
+        assert!(ui.bar(Msg::Set(0)));
+        assert_eq!(ui.view_top(), 0);
+        assert!(!ui.bar(Msg::Up));
+        // Turning the page starts the next at its top.
+        ui.top.set(5);
+        ui.key(egui::Key::Tab);
+        assert_eq!(ui.top.get(), 0);
     }
 
     #[test]

@@ -51,6 +51,8 @@ pub enum Owner {
     Primer,
     /// The GM call form (faqmain), scrolled in pixels.
     Faq,
+    /// The settings screen's long pages (Extras, a mod's settings).
+    Settings,
 }
 
 /// A focused list's bar as drawn this frame: x, y, height (8 wide), and its (total, visible, top).
@@ -225,6 +227,7 @@ fn dispatch(w: &mut World, owner: Owner, m: Msg, bar: (usize, usize, usize)) -> 
             Some(c) => super::configui2::bar(c, &w.game, m),
             None => false,
         },
+        Owner::Settings => w.settings.as_mut().is_some_and(|s| s.bar(m)),
     }
 }
 
