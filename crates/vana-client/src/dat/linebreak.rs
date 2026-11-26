@@ -515,8 +515,14 @@ pub fn str_lines(text: &str, c: &StrCut) -> Vec<StrLine> {
             }
             None => {
                 let w = sixteenths((c.width)(one));
-                // Past ~560 different widths in one text (never seen) the last code is shared.
-                let code = *stand_ins.entry(w).or_insert_with(|| free.next().unwrap_or([0xFA, 0xFC]));
+                // Past ~560 different widths in one text (never seen) the stand-in of the nearest width is shared.
+                let code = match stand_ins.get(&w) {
+                    Some(&code) => code,
+                    None => match free.next() {
+                        Some(code) => *stand_ins.entry(w).or_insert(code),
+                        None => stand_ins.iter().min_by_key(|(sw, _)| sw.abs_diff(w)).map_or([0xFC, 0x40], |(_, c)| *c),
+                    },
+                };
                 widths.entry(code.to_vec()).or_insert(w);
                 code.to_vec()
             }
@@ -670,6 +676,21 @@ mod tests {
         assert_eq!(s[ls[0].start..ls[0].end].chars().count(), 191, "{:?}", &ls[..2]);
         let shown: usize = ls.iter().map(|l| s[l.start..l.end].chars().count()).sum();
         assert_eq!(shown, 300);
+    }
+
+    /// A stand-in never takes a code a real char of the same text has: a real `FC 40` keeps its width beside a char
+    /// Shift-JIS lacks.
+    #[test]
+    fn stand_ins_skip_real_codes() {
+        use super::super::font::{decode_sjis, encode_sjis};
+        let real = decode_sjis(&[0xFC, 0x40]);
+        assert_eq!(encode_sjis(&real), [0xFC, 0x40], "{real:?}");
+        let width = |s: &str| s.chars().map(|c| if c == '\u{1F600}' { 30.0 } else { 6.0 }).sum::<f32>();
+        let s = format!("{real}\u{1F600}{}", real.repeat(8));
+        let c = StrCut { width: &width, max: &|_| 60.0, tail: 0x18, cap: 0x400, hang: false, resume: true };
+        let ls = str_lines(&s, &c);
+        // 6 + 30 + 4 * 6 = 60 px: the first line holds 6 chars; with the stand-in on FC 40 all would be 6 px wide.
+        assert_eq!(s[ls[0].start..ls[0].end].chars().count(), 6, "{ls:?}");
     }
 
     /// Lines wider than 2048 px still wrap (1/16 px units past a short).
