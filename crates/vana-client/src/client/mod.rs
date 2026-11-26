@@ -2874,8 +2874,27 @@ fn world_hud(
         }
         _ => input,
     };
-    let taken = scrollbar::frame(gu, world, input);
-    let input = taken.as_ref().unwrap_or(input);
+    // A mod window over the game's windows owns the mouse there (not in cinema mode, where none is drawn): the bars
+    // under it see neither the wheel nor the buttons.
+    let over_mod = !world.modern && !event::cinema(world) && input.pointer.is_some_and(|p| lua::over_classic(world, p));
+    let bar_input;
+    let for_bars = if over_mod {
+        bar_input = UiInput {
+            pointer: None,
+            clicked: false,
+            pressed: false,
+            released: false,
+            right_clicked: false,
+            wheel: 0,
+            events: input.events.clone(),
+            ..*input
+        };
+        &bar_input
+    } else {
+        input
+    };
+    let taken = scrollbar::frame(gu, world, for_bars);
+    let input = if over_mod { input } else { taken.as_ref().unwrap_or(input) };
     // Enter on itemctrl / moneyctr is message 5 on the cursor child the mouse left there (winhits::ctr_enter).
     let ctr_keys;
     let input = if !world.typing
@@ -3924,7 +3943,7 @@ fn world_hud(
     }
     // A mod window over the game's windows owns the mouse there: nothing under it sees the pointer or its buttons.
     let mod_owned;
-    let input = if !world.modern && input.pointer.is_some_and(|p| lua::over_classic(world, p)) {
+    let input = if over_mod {
         mod_owned = UiInput {
             pointer: None,
             clicked: false,
@@ -8674,7 +8693,7 @@ struct World {
     ptr_button: (bool, bool),
     /// The held button's count on the cursor's child (window +0xb0, FUN_1015f360; winhits::ctr).
     ctr_hold: winhits::Held,
-    /// The last left release ended a drag (65 UI px^2 from the press or 25 ticks held, as retail's mode-5 entry
+    /// The last left release ended a drag (65 UI px^2 from the press, or a camera look, as retail's mode-5 entry
     /// FUN_10126600): no window's release.
     release_drag: bool,
     /// The ops' shared extdata buffer (DAT_104886bc).
@@ -15948,12 +15967,19 @@ impl App {
                     self.press_at = self.last_cursor;
                     self.press_time = Some(Instant::now());
                     self.left_look = false;
-                } else if let Some((b, drag)) =
-                    release(self.press_at.take().zip(self.press_time.take()), self.last_cursor, self.ui_k)
-                {
+                } else if let Some((b, drag)) = {
+                    let from = self.press_at.take().zip(self.press_time.take());
+                    // The windows' drag (retail's mode 5, FUN_10126600) is the distance alone (0x41 px^2), or a look
+                    // that turned the camera: a long still press is still a click on them.
+                    let moved = from.zip(self.last_cursor).is_some_and(|((a, _), c)| {
+                        let (dx, dy) = ((c.0 - a.0) as f32 * self.ui_k.0, (c.1 - a.1) as f32 * self.ui_k.1);
+                        looked || dx * dx + dy * dy >= 65.0
+                    });
                     if let Phase::World(w) = &mut self.phase {
-                        w.release_drag = drag;
+                        w.release_drag = moved;
                     }
+                    release(from, self.last_cursor, self.ui_k)
+                } {
                     self.swallow_click |= world_click(&mut self.phase, b, true, drag);
                 }
                 self.left_down = pressed;
