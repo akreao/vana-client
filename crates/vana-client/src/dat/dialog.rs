@@ -19,7 +19,10 @@ pub fn file_id(zone: u16) -> u32 {
 
 #[derive(Default)]
 pub struct Dialog {
-    entries: Vec<Vec<u8>>,
+    /// The file after the size word, decoded.
+    body: Vec<u8>,
+    /// Each string's byte range in `body`.
+    entries: Vec<std::ops::Range<usize>>,
 }
 
 impl Dialog {
@@ -36,17 +39,21 @@ impl Dialog {
         if d[3] == 0x10 {
             d[4..].iter_mut().for_each(|b| *b ^= 0x80);
         }
-        let body = &d[4..];
+        let body = d.split_off(4);
         let u32_at = |o: usize| body.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
         let count = u32_at(0).context("no offset table")? / 4;
         // Each entry has a 4-byte offset; a bad count must not reserve more than the body holds.
         let mut entries = Vec::with_capacity(count.min(body.len() / 4));
+        // FUN_10096220 (30261102) only adds the entry's offset to the file: no entry is checked against the
+        // file's end, so one bad offset costs that string alone. Some era DATs (XI: Forever Offline's 6660,
+        // Port Windurst) end their table with an offset past the end; that entry reads as empty here, and
+        // the entry before it runs to the end of the file. Ranges, not copies: bad offsets cost no memory.
         for i in 0..count {
-            let start = u32_at(i * 4).context("offset table")?;
+            let start = u32_at(i * 4).context("offset table")?.min(body.len());
             let end = if i + 1 < count { u32_at(i * 4 + 4).context("offset table")? } else { body.len() };
-            entries.push(body.get(start..end.max(start)).context("string out of range")?.to_vec());
+            entries.push(start..end.clamp(start, body.len()));
         }
-        Ok(Dialog { entries })
+        Ok(Dialog { body, entries })
     }
 
     pub fn len(&self) -> usize {
@@ -54,12 +61,12 @@ impl Dialog {
     }
 
     pub fn raw(&self, id: u32) -> Option<Vec<u8>> {
-        self.entries.get(id as usize).cloned()
+        Some(self.body[self.entries.get(id as usize)?.clone()].to_vec())
     }
 
     /// The text with control codes shown as `{tags}`; `[a/b]` alternatives are kept as written.
     pub fn get(&self, id: u32) -> Option<String> {
-        Some(readable(self.entries.get(id as usize)?))
+        Some(readable(&self.body[self.entries.get(id as usize)?.clone()]))
     }
 }
 
@@ -552,6 +559,8 @@ pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
     let mut i = 0;
     let push = |lines: &mut Vec<Vec<u8>>, b: &[u8]| lines.last_mut().unwrap().extend_from_slice(b);
     let alt = |from: usize, k: usize| -> (Vec<u8>, usize) {
+        // A string cut off after the code: no alternatives.
+        let from = from.min(s.len());
         let end = bracket_end(s, from);
         let open = s[from..end].iter().position(|&c| c == b'[').map_or(end, |p| from + p + 1);
         let inner = &s[open..end.saturating_sub(1).max(open)];
@@ -860,6 +869,60 @@ pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// One offset past the end of the file loses that string only (era DAT 6660 ends its table that way).
+    #[test]
+    fn offset_past_end_loses_one_string() {
+        let mut body = Vec::new();
+        for o in [16u32, 19, 99, 22] {
+            body.extend_from_slice(&o.to_le_bytes());
+        }
+        body.extend_from_slice(b"abcdefgh");
+        // Byte 3 = 0: no XOR.
+        let mut file = (body.len() as u32).to_le_bytes().to_vec();
+        file.extend_from_slice(&body);
+        let d = Dialog::parse(&file).unwrap();
+        assert_eq!(d.len(), 4);
+        assert_eq!(d.raw(0).unwrap(), b"abc");
+        assert_eq!(d.raw(1).unwrap(), b"defgh");
+        assert_eq!(d.raw(2).unwrap(), b"");
+        assert_eq!(d.raw(3).unwrap(), b"gh");
+
+        // As in 6660: the last offset is past the end, the one before it is fine.
+        let mut body = Vec::new();
+        for o in [12u32, 15, 40] {
+            body.extend_from_slice(&o.to_le_bytes());
+        }
+        body.extend_from_slice(b"abcde");
+        let mut file = (body.len() as u32).to_le_bytes().to_vec();
+        file.extend_from_slice(&body);
+        let d = Dialog::parse(&file).unwrap();
+        assert_eq!(d.len(), 3);
+        assert_eq!(d.raw(1).unwrap(), b"de");
+        assert_eq!(d.raw(2).unwrap(), b"");
+    }
+
+    /// A string cut off right after a `0c` alternatives code expands without its alternatives.
+    #[test]
+    fn alternatives_code_at_end() {
+        let ctx = Ctx::default();
+        expand(b"ab\x0c", &ctx);
+        expand(b"ab\x0c\x00", &ctx);
+    }
+
+    /// Every zone's dialogue loads from the installed game (with XI: Forever Offline's era DATs, zones 11, 100,
+    /// 115, 123 and 240 each carry one offset past the end of the file).
+    #[test]
+    fn installed_zone_dialogues_load() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        for zone in 0..300u16 {
+            // Zones without dialogue have a 4-byte placeholder file.
+            if index.read(file_id(zone)).is_ok_and(|f| f.len() >= 8) {
+                Dialog::load(&index, zone).unwrap();
+            }
+        }
+    }
 
     /// Zone 5 7410: `7f ac 0` the Vana'diel date and time of num[0], `7f ab 0` the long Earth date (group 10 rows).
     #[test]
