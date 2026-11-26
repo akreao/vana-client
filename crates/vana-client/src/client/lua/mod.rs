@@ -4952,10 +4952,12 @@ fn under_any(w: &World, places: &[(usize, String, f32, f32)], p: (f32, f32)) -> 
 /// A classic mod window holds the pointer: a press or a canvas drag on it goes on until the button comes up, wherever
 /// the pointer is.
 pub(super) fn holds_pointer(w: &World) -> bool {
-    w.lua
-        .vms
-        .iter()
-        .any(|vm| vm.st.borrow().windows.iter().any(|win| win.open && (win.drag.is_some() || win.press.is_some())))
+    // Not while the mods' windows are hidden (/lua hide): none is drawn or routed, a press under way left behind.
+    !w.lua.all_hidden.get()
+        && w.lua
+            .vms
+            .iter()
+            .any(|vm| vm.st.borrow().windows.iter().any(|win| win.open && (win.drag.is_some() || win.press.is_some())))
 }
 
 /// A classic mod window or a recorded game window under the pointer, drawn over the HUD there (a HUD-layer window a
