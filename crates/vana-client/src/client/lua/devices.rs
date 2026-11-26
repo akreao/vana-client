@@ -160,6 +160,7 @@ fn run(
     })?;
     std::thread::Builder::new().name("lua-hid-r".into()).spawn(move || {
         let mut buf = vec![0u8; 4096];
+        let budget = Arc::new(super::sock::Budget::default());
         while !stop.load(Ordering::Relaxed) {
             if !ready(&f) {
                 continue;
@@ -167,7 +168,8 @@ fn run(
             match f.read(&mut buf) {
                 Ok(0) => {}
                 Ok(n) => {
-                    if report.send(Msg::Data(id, buf[..n].to_vec(), None)).is_err() {
+                    let Some(c) = budget.take(n, || stop.load(Ordering::Relaxed)) else { return };
+                    if report.send(Msg::Data(id, buf[..n].to_vec(), None, c)).is_err() {
                         return;
                     }
                 }
