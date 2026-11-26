@@ -182,4 +182,14 @@ for id, el in pairs(HUD.elems) do
   end
 end
 assert(n > 0, "no crossbar slots drawn on the narrow screen")
+-- Their text scales with them: the key hints are smaller than at full size.
+local HINT = require("src.slotview").HINT_SIZE
+local hints = 0
+for id, el in pairs(HUD.elems) do
+  if el.kind == "text" and id:match("^ovp_[^_]+_[^_]+_k$") then
+    hints = hints + 1
+    assert(el.spec.size < HINT, ("%s hint size %s, not scaled below %s"):format(id, el.spec.size, HINT))
+  end
+end
+assert(hints > 0, "no crossbar key hints drawn on the narrow screen")
 hud.screen = wide
