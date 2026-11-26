@@ -386,6 +386,14 @@ fn world_window_open(w: &World) -> bool {
     w.action_menu.is_some() || window_over_actions(w)
 }
 
+/// FUN_101585f0's window test (30261102_0: FUN_10159bc0) before the field command table: the sub-target prompt lets
+/// it run; else no window may hold the keys (the input lock count, DAT_1057876c +0x6a). The status icon list focused by
+/// key function 0x78 (Num+ / Ctrl+F, the pad's top button) holds them as any window does: there the d-pad's 0x27..0x2a
+/// move its cursor (buffs::key) and not the target (retail, as seen).
+fn field_table_open(prompt: bool, window: bool, buff_focus: bool) -> bool {
+    prompt || !(window || buff_focus)
+}
+
 /// FUN_101a33e0's tests, in its order.
 #[derive(Clone, Copy, Default)]
 struct GateState {
@@ -15636,7 +15644,7 @@ impl App {
             && !world.ko_open
             && world.ko_offer != 2
             && !locked_only
-            && (world.prompt.is_some() || !world_window_open(world))
+            && field_table_open(world.prompt.is_some(), world_window_open(world), world.log_focus == 2)
             && world.palette.0 == 0
         {
             let rep = |input: &mut input::Input, k: usize| input.test(k, input::mode::REPEAT);
@@ -22655,6 +22663,18 @@ mod tests {
             close(&mut s);
             assert!(!gate_open(s), "test {k}");
         }
+    }
+
+    /// With the status icons focused, the d-pad's Left / Right stepped the target as well as the icon cursor. The field command table now waits while the list holds the keys, as for any window; the sub-target
+    /// prompt still runs it.
+    #[test]
+    fn field_table_waits_while_buffs_focused() {
+        use super::field_table_open as open;
+        assert!(open(false, false, false));
+        assert!(!open(false, false, true), "status icons focused");
+        assert!(!open(false, true, false), "a window");
+        assert!(open(true, true, false), "the sub-target prompt over its list");
+        assert!(open(true, false, true));
     }
 
     #[test]
