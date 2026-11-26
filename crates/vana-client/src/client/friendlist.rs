@@ -494,8 +494,11 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         if let Some(r) = win.children.iter().find(|c| c.0 == now).map(|c| c.1) {
             gu.sprite("menu    keytops3", 101, r[0] + 8.0, r[1] + 24.0, WHITE);
         }
+        // The cursor is the window's own (+0x4c = c, moved by the generic keys; win_friend_onkey_2 reads it): its
+        // child is the part the focus warp aims at (FUN_1011c080).
         if free && let Some(r) = win.children.iter().find(|ch| ch.0 == c).map(|ch| ch.1) {
             gu.cursor_scaled("anc     anc2s", r[0], r[1], 1.0);
+            gu.focus_child(STAT, c, r);
         }
         rects.push(win.frame);
     }

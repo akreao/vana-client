@@ -365,7 +365,8 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clic
                 let mut ry = y + 12.0;
                 (k.top..k.top + fit(h, k.top).min(k.items.len() - k.top.min(k.items.len())))
                     .map(|i| {
-                        let r = (i, [x + 40.0, ry, NAME_W + 36.0, h[i]]);
+                        // The row's child rect as win_evitem_v10 sets it (FUN_10119e10): the entry is 283 wide.
+                        let r = (i, [x + 40.0, ry, NAME_W, h[i]]);
                         ry += h[i] + GAP;
                         r
                     })
@@ -478,7 +479,12 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
                 }
                 super::missions::lines(gu, name, cx + 36.0, ry, NAME_W, if i == k.cursor { CURSOR } else { WHITE });
                 if on && focused {
-                    gu.cursor_on(WINDOW, 0, cx, ry, [cx, ry, 36.0 + NAME_W, 16.0]);
+                    // The list base puts the window's cursor on child 1 + (cursor - top) (FUN_102234e0 ->
+                    // FUN_1011a320, clamped to the 8 children), and win_evitem_v10 sets each shown row's child to the
+                    // row: (+0x7c, y, entry width 0x12d - 0x12, row height) (FUN_10119e10; the entry size from
+                    // FUN_10234990). That rect is the part the focus warp aims at.
+                    let child = (i - k.top + 1).min(8) as u16;
+                    gu.cursor_on(WINDOW, child, cx, ry, [cx, ry, NAME_W, h[i]]);
                 }
                 ry += h[i] + GAP;
             }

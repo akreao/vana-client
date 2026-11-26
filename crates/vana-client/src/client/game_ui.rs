@@ -684,6 +684,20 @@ impl GameUi {
         self.batch.set_hand(name, child, rect);
     }
 
+    /// `focus_child` for layout child `child` of `name` laid out at (wx, wy), drawn or hidden: a window whose cursor
+    /// (+0x4c) rests on a child it does not draw still aims the focus warp at it (FUN_1011c080 takes any type-1 part).
+    pub fn focus_layout_child(&mut self, name: &str, child: u16, wx: f32, wy: f32) {
+        let rect = self
+            .data
+            .lobby
+            .menu(name)
+            .and_then(|m| m.elements.iter().skip(1).find(|e| e.id == child))
+            .map(|e| [wx + e.x as f32, wy + e.y as f32, e.w as f32, e.h as f32]);
+        if let Some(r) = rect {
+            self.focus_child(name, child, r);
+        }
+    }
+
     /// Window code moved `name`'s cursor to `child` and puts the pointer on it: FUN_1011a240(child, 1) (the hand-over's
     /// and the player trade's Escape and OK / Cancel steps) and the title's Escape (cursor set, then FUN_10126000).
     /// Both give +0x48 = 18, the glide of a focus change; the pointer goes to the child's centre as soon as the window
