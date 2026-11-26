@@ -22,11 +22,7 @@ pub fn set_code_tables(ids: [[u8; 4]; 256], modes: [[u8; 4]; 256]) {
 /// An entry of those tables: `k` 0 the colour ids (`1e` from 0x11), 1 the modes (`1f xx`); 0x80808080 before they
 /// are set.
 pub fn code_table(k: usize, xx: usize) -> [u8; 4] {
-    CODE_TABLES
-        .read()
-        .ok()
-        .and_then(|t| t.as_ref().map(|t| if k == 0 { t.0[xx & 0xff] } else { t.1[xx & 0xff] }))
-        .unwrap_or([0x80; 4])
+    CODE_TABLES.read_locked().as_ref().map_or([0x80; 4], |t| if k == 0 { t.0[xx & 0xff] } else { t.1[xx & 0xff] })
 }
 
 /// Glyph cell size in screen pixels (and in atlas texels for the 1024x2048 atlases).
@@ -368,7 +364,7 @@ impl Font {
 
     /// The colour a `1e xx` (kind 0) or `1f xx` (kind 1) code sets, keeping `base`'s alpha (layout_line's rule).
     pub fn code_colour(&self, kind: u8, xx: u8, base: [u8; 4]) -> [u8; 4] {
-        let tables = CODE_TABLES.read().ok();
+        let tables = Some(CODE_TABLES.read_locked());
         let table = |k: usize, xx: usize| {
             tables.as_ref().and_then(|t| t.as_ref()).map_or([0x80; 4], |t| if k == 0 { t.0[xx] } else { t.1[xx] })
         };
@@ -395,7 +391,7 @@ impl Font {
         let mut pen = x;
         let mut color = color;
         let base = color;
-        let tables = CODE_TABLES.read().ok();
+        let tables = Some(CODE_TABLES.read_locked());
         let table = |k: usize, xx: usize| {
             tables.as_ref().and_then(|t| t.as_ref()).map_or([0x80; 4], |t| if k == 0 { t.0[xx] } else { t.1[xx] })
         };

@@ -63,6 +63,12 @@ impl DatIndex {
         Ok(Self { root: ffxi_dir.to_path_buf(), entries, overlays })
     }
 
+    /// An index of no files and no mods (tests that never read a file).
+    #[cfg(test)]
+    pub fn empty() -> Self {
+        Self { root: PathBuf::new(), entries: Vec::new(), overlays: None }
+    }
+
     fn overlays(entries: &[(u8, u16)]) -> Option<std::sync::Arc<overlay::Overlays>> {
         use std::sync::{Arc, Mutex, OnceLock};
         let dirs = crate::config::enabled_mod_dirs();

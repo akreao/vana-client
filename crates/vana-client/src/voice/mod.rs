@@ -159,13 +159,7 @@ impl Shared {
     fn send_audio(&self, seq: u32, pcm: Vec<i16>) {
         let to: Vec<SocketAddrV4> = {
             let chan = self.cfg.locked().channel.clone();
-            self.peers
-                .lock()
-                .unwrap()
-                .values()
-                .filter(|p| p.channel.eq_ignore_ascii_case(&chan))
-                .map(|p| p.addr)
-                .collect()
+            self.peers.locked().values().filter(|p| p.channel.eq_ignore_ascii_case(&chan)).map(|p| p.addr).collect()
         };
         if to.is_empty() {
             return;
@@ -239,8 +233,7 @@ impl Shared {
             Some(Packet::Audio { session, seq, pcm }) => {
                 let Some((name, channel)) = self
                     .peers
-                    .lock()
-                    .unwrap()
+                    .locked()
                     .get(&session)
                     .filter(|p| p.addr == from)
                     .map(|p| (p.name.to_lowercase(), p.channel.clone()))
@@ -485,8 +478,7 @@ impl Engine {
         let mut peers: Vec<PeerView> = self
             .shared
             .peers
-            .lock()
-            .unwrap()
+            .locked()
             .values()
             .map(|p| PeerView {
                 name: p.name.clone(),

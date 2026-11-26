@@ -1137,21 +1137,16 @@ mod tests {
     use super::*;
 
     /// A load that panics still answers (None), so `all` completes and the engaged walk is not held for good; the
-    /// files load on the shared workers, many at once.
+    /// files load on the shared workers, many at once, and a worker goes on after a panic (8 panics, 4 workers).
     #[test]
     fn panicking_load_still_answers() {
         fn load(_: &DatIndex, id: u32) -> Loaded {
-            if id == 13 {
+            if id % 5 == 3 {
                 panic!("malformed");
             }
             None
         }
-        let dir = std::env::temp_dir().join(format!("vana-motion-loader-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("VTABLE.DAT"), [1u8; 64]).unwrap();
-        std::fs::write(dir.join("FTABLE.DAT"), [0u8; 128]).unwrap();
-        let index = Arc::new(DatIndex::open(&dir).unwrap());
-        let _ = std::fs::remove_dir_all(&dir);
+        let index = Arc::new(DatIndex::empty());
         let mut l = Loader::with(load);
         let ids: Vec<u32> = (0..40).collect();
         assert!(l.all(&index, &ids).is_none());
