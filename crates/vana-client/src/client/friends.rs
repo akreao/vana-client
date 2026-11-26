@@ -83,8 +83,8 @@ impl PolSide {
 enum Done {
     /// LoadFriendList (at the start, apart from the IRC sign-on).
     List(anyhow::Result<Vec<FriendInfo>>),
-    /// The handle and character lists (at the start).
-    Tables(anyhow::Result<Tables>),
+    /// The handle and character lists (at the start), with the session (`tables_session`) that asked them.
+    Tables(u32, anyhow::Result<Tables>),
     /// LoadMyStatus's reply (after the sign-on).
     MyStatus(anyhow::Result<Vec<u8>>),
     /// ChangeMyStatus answered: the open status it set (None: only the in-game flag).
@@ -147,6 +147,8 @@ pub struct Friends {
     tables_at: Option<Instant>,
     /// A handle / character list load is out.
     tables_loading: bool,
+    /// Counts IRC sessions: a list answer from a session that has ended is dropped.
+    tables_session: u32,
     /// The friends' characters asked of xi_search (2.3): the queries out, the chunks left of a round, the next round.
     lookups: Vec<(mpsc::Receiver<anyhow::Result<crate::net::search::Reply>>, Vec<u32>)>,
     round: Vec<Vec<u32>>,
@@ -326,11 +328,49 @@ pub fn start(w: &mut World) {
     load_tables(w);
 }
 
+impl Friends {
+    /// A handle / character list load answered. One asked by a session that has ended is dropped: the reconnect
+    /// loads the lists itself, so a late failure must not set a retry over that load.
+    fn tables_answered(&mut self, session: u32, r: anyhow::Result<Tables>) {
+        if session != self.tables_session {
+            return;
+        }
+        self.tables_loading = false;
+        match r {
+            Ok(t) => {
+                {
+                    let mut p = self.pol.lock().unwrap();
+                    p.tables.load_handles(&t.handles);
+                    p.tables.load_characters(&t.chars);
+                }
+                self.handle = t.handles.first().map(profile::handle_name);
+                self.chars = t.chars.iter().map(profile::character_row).collect();
+                self.tables = true;
+                log::info!("friends: handle {:?}, {} characters", self.handle, self.chars.len());
+            }
+            Err(e) => {
+                log::warn!("friends: loading the handle and character lists: {e:#}");
+                self.tables_at = Some(Instant::now() + Duration::from_secs(30));
+            }
+        }
+    }
+
+    /// The IRC session dropped: list loads it asked no longer count.
+    fn tables_session_ended(&mut self) {
+        (self.tables_at, self.tables_loading) = (None, false);
+        self.tables_session = self.tables_session.wrapping_add(1);
+    }
+}
+
 /// The handle and character lists (LoadHandleNameList, LoadCharacterList); a failed load is asked again 30 s later.
 fn load_tables(w: &mut World) {
     w.friends.tables_loading = true;
-    spawn(w, |c| {
-        Done::Tables((|| Ok(Tables { handles: profile::load_handles(c)?, chars: profile::load_characters(c)? }))())
+    let session = w.friends.tables_session;
+    spawn(w, move |c| {
+        Done::Tables(
+            session,
+            (|| Ok(Tables { handles: profile::load_handles(c)?, chars: profile::load_characters(c)? }))(),
+        )
     });
 }
 
@@ -470,19 +510,7 @@ pub fn poll(w: &mut World) {
                 f.lists = true;
                 log::info!("friends: {} entries", f.list.len());
             }
-            Done::Tables(Ok(t)) => {
-                w.friends.tables_loading = false;
-                let f = &mut w.friends;
-                {
-                    let mut p = f.pol.lock().unwrap();
-                    p.tables.load_handles(&t.handles);
-                    p.tables.load_characters(&t.chars);
-                }
-                f.handle = t.handles.first().map(profile::handle_name);
-                f.chars = t.chars.iter().map(profile::character_row).collect();
-                f.tables = true;
-                log::info!("friends: handle {:?}, {} characters", f.handle, f.chars.len());
-            }
+            Done::Tables(session, r) => w.friends.tables_answered(session, r),
             Done::MyStatus(Ok(s)) => {
                 let f = &mut w.friends;
                 {
@@ -496,11 +524,6 @@ pub fn poll(w: &mut World) {
                 log::info!("friends: status {}", f.my_status);
             }
             Done::List(Err(e)) => log::warn!("friends: loading the friend list: {e:#}"),
-            Done::Tables(Err(e)) => {
-                w.friends.tables_loading = false;
-                log::warn!("friends: loading the handle and character lists: {e:#}");
-                w.friends.tables_at = Some(Instant::now() + Duration::from_secs(30));
-            }
             Done::MyStatus(Err(e)) => {
                 w.friends.loading = false;
                 log::warn!("friends: loading our status: {e:#}");
@@ -541,7 +564,8 @@ pub fn poll(w: &mut World) {
             Irc::Closed(why) => {
                 log::warn!("friends: IRC closed: {why}");
                 let f = &mut w.friends;
-                (f.irc, f.signed_on, f.announced, f.tables_at) = (None, false, false, None);
+                (f.irc, f.signed_on, f.announced) = (None, false, false);
+                f.tables_session_ended();
                 f.retry_at = Some(Instant::now() + Duration::from_secs(30));
                 // The session's status jobs end with it (as at a logout), so none builds a request from the tables
                 // cleared below.
@@ -1101,6 +1125,22 @@ mod tests {
         stop.store(true, Ordering::Relaxed);
         assert!(answered(&stop, &pol, set).is_err());
         assert_eq!(pol.lock().unwrap().status, polpro::Status::start());
+    }
+
+    /// A list load asked by a session that has ended changes nothing: a late failure sets no retry over the
+    /// reconnect's own load, and a late answer does not count as the reconnect's.
+    #[test]
+    fn a_late_list_answer_is_dropped() {
+        let mut f = Friends { tables_loading: true, ..Default::default() };
+        let old = f.tables_session;
+        f.tables_session_ended();
+        f.tables_loading = true; // the reconnect's load
+        f.tables_answered(old, Err(anyhow::anyhow!("dropped")));
+        assert!(f.tables_at.is_none() && f.tables_loading);
+        f.tables_answered(old, Ok(Tables { handles: vec![[0; 0x88]], chars: vec![] }));
+        assert!(!f.tables && f.tables_loading);
+        f.tables_answered(f.tables_session, Err(anyhow::anyhow!("failed")));
+        assert!(f.tables_at.is_some() && !f.tables_loading);
     }
 
     /// A stopped session sends nothing more.
