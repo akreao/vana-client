@@ -433,6 +433,11 @@ impl Upscale {
         }
     }
 
+    /// Neural rendering is off: its output and views would hold their sizes' targets past a resize.
+    pub fn drop_neural(&mut self) {
+        (self.nr_views, self.nr_out) = (None, None);
+    }
+
     /// The engine library, loaded once.
     fn lib(&mut self, gpu: &Gpu) -> Option<std::sync::Arc<external::Engine>> {
         let lib = self.lib.get_or_insert_with(|| {
@@ -489,6 +494,10 @@ impl Upscale {
     ) -> Option<(wgpu::TextureView, [u32; 2])> {
         let depth_tex = depth.texture();
         let fc = self.frame_camera?;
+        let nr = if neural && debug == 0 { self.lib(gpu).filter(|l| l.nr.is_some()) } else { None };
+        if nr.is_none() {
+            self.drop_neural();
+        }
         // The upscaler is made first: one that cannot run leaves the frame to the scaling pass.
         let mut engine = if debug == 0 && kind != 0 {
             self.engine(gpu, kind)?;
@@ -501,11 +510,6 @@ impl Upscale {
             }
             None
         };
-        let nr = if neural && debug == 0 { self.lib(gpu).filter(|l| l.nr.is_some()) } else { None };
-        if nr.is_none() {
-            // Its output and views would hold their sizes' targets past a resize.
-            (self.nr_views, self.nr_out) = (None, None);
-        }
         let mut nr_out = self.nr_out.take();
         let now = std::time::Instant::now();
         let dt_ms = (now - self.last).as_secs_f32() * 1000.0;

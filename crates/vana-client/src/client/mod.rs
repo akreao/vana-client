@@ -19427,6 +19427,9 @@ impl App {
                 || crate::render::upscale::dlss::usable(size, self.cfg.upscale_quality));
         if !crate::render::upscale::temporal(self.cfg.upscaler) && !neural {
             self.upscale = None;
+        } else if !neural && let Some(u) = self.upscale.as_mut() {
+            // Even on a frame it does not run (its upscaler failed to start).
+            u.drop_neural();
         }
         let (mut target_size, mut jitter, mut snaps, mut motion) = (bg, glam::Vec2::ZERO, None, None);
         if upscaling {
