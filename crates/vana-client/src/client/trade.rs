@@ -47,12 +47,13 @@ pub fn active(w: &World) -> bool {
 
 /// FUN_1013fe70 (the main menu's Trade): a waiting request or a target that is not us goes to FUN_1013fd30; else the
 /// target prompt (filter 0x5c: PCs, party, alliance, NPCs; title 0xd 10, help 0xe 0x2d), with no candidate group 7
-/// 0x7f "No trade targets in range.".
+/// 0x7f "No trade targets in range.". The arrow's range: 5 flat, less the radii (30261102_0 FUN_10141270 ->
+/// FUN_10141c50(1)).
 pub(super) fn open(w: &mut World, title: String) -> bool {
     if w.p2p.incoming.is_some() || w.target.is_some_and(|t| t != w.my_id) {
         return start(w);
     }
-    if super::target::open_sub(w, 0x5c, super::target::SubThen::Trade, None, title, 0x2d) {
+    if super::target::open_sub(w, 0x5c, super::target::SubThen::Trade, super::target::TRADE_REACH, title, 0x2d) {
         return true;
     }
     super::textcmd::refuse(w, 0x7f);
