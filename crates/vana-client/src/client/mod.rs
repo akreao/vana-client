@@ -4845,11 +4845,17 @@ fn world_hud(
     winhits::clear(world);
     // The map's windows were drawn above (MapWin::draw).
     if let Some(m) = &world.map {
-        for (name, frame, kids) in m.drawn.borrow().iter() {
+        for (name, frame, kids, _) in m.drawn.borrow().iter() {
             winhits::record_all(world, gu, name, *frame, kids);
         }
     }
     gu.clear_disabled_parts();
+    // The map's disabled children (map0's Wide Scan, mapscan's Track, mapv2's View) are drawn by hand: no hand there.
+    if let Some(m) = &world.map {
+        for (name, _, _, off) in m.drawn.borrow().iter() {
+            gu.mark_disabled(name, off);
+        }
+    }
     for (k, n) in ["menu    raid1", "menu    raid2"].iter().enumerate() {
         if st.alliance[k].is_some() {
             blockers.extend(gu.window_rect(n, sw, sh));

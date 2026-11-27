@@ -8,7 +8,7 @@ use super::net::NetCommand;
 use super::scrollbar::{Msg, Owner, rows};
 use crate::audio::Ui;
 use crate::dat::items::Item;
-use crate::inventory::{ItemInfo, ItemList, Persona, ROW_PITCH, Slot, Stats, VISIBLE_ROWS, build_rows};
+use crate::inventory::{ItemInfo, ItemList, Persona, Slot, Stats, VISIBLE_ROWS, build_rows};
 use crate::render::invwin::{icon_texture, push_inventory, push_item_list};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -380,6 +380,13 @@ pub struct SortWin {
     pub ask: Option<bool>,
 }
 
+/// itmsort2 / itmsortw's frame hook (vtable +0x28 FUN_101f4ca0, every frame): Manual (child 2) in state 5 while the
+/// item list's cursor entry (FUN_101f26f0) is in the temporary items (container 3, FUN_100eb630), back to state 0xb on
+/// another container; with no entry under the cursor (0x12) the state stays (ours: enabled).
+pub(super) fn manual_off(shown: &[(u8, Slot)], at: usize) -> bool {
+    shown.get(at).is_some_and(|(c, _)| *c == TEMP)
+}
+
 /// The storage view (FUN_101dc880 / FUN_101dc700): "menu    bank" on a container at (16, 48) beside the inventory list
 /// at (200, 48), itmsortw at (384, 48) but for the recycle bin; or, `read_only`, the container alone in the item list
 /// with every row grey (FUN_101dae10 away from the moogle). The inventory side keeps the list's scroll / cursor.
@@ -684,6 +691,8 @@ pub fn key(w: &mut World, key: egui::Key, page: bool, alt: bool, shift: bool) ->
     }
     let mut close = false;
     let mut open_recycle = false;
+    let manual_disabled =
+        matches!(&w.win, Some(Win::Items { scroll, cursor, .. }) if manual_off(&shown, *scroll + *cursor));
     match &mut w.win {
         None => return false,
         // iuse (FUN_101f33a0): Up / Down between Use and Drop, Enter on a disabled child SE 0004, Escape back to the
@@ -771,6 +780,8 @@ pub fn key(w: &mut World, key: egui::Key, page: bool, alt: bool, shift: bool) ->
                     s.ask = Some(false);
                     w.sounds.push(Ui::Select as u32);
                 }
+                // Manual in state 5: the window's handler plays SE 0004 (+0x86) and passes nothing on.
+                (None, egui::Key::Enter) if s.cursor == 2 && manual_disabled => w.sounds.push(Ui::Error as u32),
                 (None, egui::Key::Enter) if s.cursor == 2 => {
                     // keep_sorted off, by field (w.win is borrowed).
                     if w.auto_sort & 1 << INVENTORY != 0 {
@@ -1418,13 +1429,24 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
                 gu.bar_site(Owner::Items, x, y, h, list.rows.len(), VISIBLE_ROWS, list.scroll);
             }
             rects.extend(gu.window_rect("menu    inventor", sw, sh));
-            // itmsort2 beside the list (FUN_101f0600), focused or not; iuse sits on top of it.
+            if open
+                && let (Some(at), Some(r)) =
+                    (gu.window_xy("menu    inventor", sw, sh), gu.window_rect("menu    inventor", sw, sh))
+            {
+                super::winhits::record_layout(w, gu, "menu    inventor", at, r);
+            }
+            // itmsort2 beside the list (FUN_101f0600), focused or not; iuse sits on top of it. Manual in state 5 on a
+            // temporary item (manual_off) takes its state-4 sprite.
             if !*direct && sub.is_none() {
                 let sel = sort.map(|s| s.cursor);
-                rects.extend(
-                    gu.lobby_window_off("menu    itmsort2", sw, sh, (0.0, 0.0), sel, sel.is_some(), &[])
-                        .map(|w| w.frame),
-                );
+                let off: &[u16] = if manual_off(&shown, *scroll + *cursor) { &[2] } else { &[] };
+                if let Some(win) = gu.lobby_window_off("menu    itmsort2", sw, sh, (0.0, 0.0), sel, sel.is_some(), off)
+                {
+                    let [x, y, ..] = win.frame;
+                    gu.disabled_children("menu    itmsort2", x, y, off, sel);
+                    super::winhits::record_all(w, gu, "menu    itmsort2", win.frame, &win.children);
+                    rects.push(win.frame);
+                }
                 if let Some(yes) = sort.and_then(|s| s.ask)
                     && let Some(win) = gu.lobby_window_off(
                         "menu    sortyn",
@@ -1811,7 +1833,9 @@ fn store_key(w: &mut World, info: &ItemCache, key: egui::Key, page: bool, alt: b
                 w.sounds.push(Ui::Cursor as u32);
             }
             K::Enter if off.contains(&row) => w.sounds.push(Ui::Error as u32),
+            // The window's handler plays SE 0002 (+0x86) before menu_itmstora_fn_2 switches.
             K::Enter => {
+                w.sounds.push(Ui::Select as u32);
                 let c = stora_container(row);
                 if sw.bank_side {
                     (b.bank, b.scroll, b.cursor) = (c, 0, 0);
@@ -2156,6 +2180,11 @@ fn draw_storage(
             gu.bar_site(Owner::Bank, x, y, h, list.rows.len(), VISIBLE_ROWS, list.scroll);
         }
         rects.extend(gu.window_rect("menu    inventor", sw, sh));
+        if let (Some(at), Some(r)) =
+            (gu.window_xy("menu    inventor", sw, sh), gu.window_rect("menu    inventor", sw, sh))
+        {
+            super::winhits::record_layout(w, gu, "menu    inventor", at, r);
+        }
         return rects;
     }
     let inv = store_rows(w, b.side);
@@ -2228,9 +2257,16 @@ fn draw_storage(
         }
     }
     rects.extend(gu.window_rect("menu    bank", sw, sh));
+    if let (Some(at), Some(r)) = (gu.window_xy("menu    bank", sw, sh), gu.window_rect("menu    bank", sw, sh)) {
+        super::winhits::record_layout(w, gu, "menu    bank", at, r);
+    }
     if let Some(mut r) = gu.window_rect("menu    inventor", sw, sh) {
-        r[0] += BIN_LIST_X as f32 - gu.window_rect_x("menu    inventor");
+        let dx = BIN_LIST_X as f32 - gu.window_rect_x("menu    inventor");
+        r[0] += dx;
         rects.push(r);
+        if let Some((x, y)) = gu.window_xy("menu    inventor", sw, sh) {
+            super::winhits::record_layout(w, gu, "menu    inventor", (x + dx, y), r);
+        }
     }
     if b.bank != BIN {
         // itmsortw hides while itmstora is up (FUN_1015e6e0); itmstora's disabled rows take their dim sprites (kind 4).
@@ -2239,13 +2275,15 @@ fn draw_storage(
             if let Some(win) = gu.lobby_window_off("menu    itmstora", sw, sh, (0.0, 0.0), Some(row), true, &off) {
                 let [x, y, ..] = win.frame;
                 gu.disabled_children("menu    itmstora", x, y, &off, Some(row));
+                super::winhits::record_all(w, gu, "menu    itmstora", win.frame, &win.children);
                 rects.push(win.frame);
             }
         } else {
             let sel = b.sortw.map(|s| s.cursor);
-            rects.extend(
-                gu.lobby_window_off("menu    itmsortw", sw, sh, (0.0, 0.0), sel, sel.is_some(), &[]).map(|x| x.frame),
-            );
+            if let Some(win) = gu.lobby_window_off("menu    itmsortw", sw, sh, (0.0, 0.0), sel, sel.is_some(), &[]) {
+                super::winhits::record(w, "menu    itmsortw", &win);
+                rects.push(win.frame);
+            }
             if let Some(yes) = b.sortw.and_then(|s| s.ask)
                 && let Some(win) =
                     gu.lobby_window_off("menu    sortyn", sw, sh, (0.0, 0.0), Some(if yes { 1 } else { 2 }), true, &[])
@@ -2304,7 +2342,9 @@ fn draw_count(gu: &mut GameUi, n: usize, size: u8, sw: f32, sh: f32) {
     gu.shape_text(&(size.saturating_sub(1)).to_string(), x1 - 1.0, y1 - 16.0, white, true);
 }
 
-/// Mouse on the item list: a row takes the cursor by winhits::takes, a click on the highlighted row acts as Enter.
+/// Mouse on the item windows. Only the focused window takes it (FUN_101267f0 hit-tests the active window alone): the
+/// item list and the storage view's lists by the list base (winhits::list), the windows over them (iuse, sortyn,
+/// itmsort2, itmsortw, itmstora) as generic windows, itemctrl by winhits::ctr.
 pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
     // The yes / no prompt (comyn) over the list has the focus, so the mouse (FUN_101267f0 tests the focused window only).
     if w.confirm.is_some() {
@@ -2314,37 +2354,17 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         super::equipwin::pointer(w, gu, sw, sh, p, moved, clicked);
         return;
     }
-    // The bin view's count (itemctrl) by winhits::ctr.
-    if matches!(&w.win, Some(Win::Items { store: Some(b), .. }) if b.qty.is_some()) {
-        super::winhits::ctr(w, gu, "menu    itemctrl", p, clicked, right, |w, _, k| {
-            key(w, k, false, false, false);
-        });
-        return;
-    }
-    // The storage view's sortyn (Auto's "Sort items?") as a generic window: Enter answers, Escape is No.
-    let yn_key = |w: &mut World, _: &GameUi, k: egui::Key| {
+    let keys = |w: &mut World, _: &GameUi, k: egui::Key| {
         key(w, k, false, false, false);
     };
-    if let Some(Win::Items { store: Some(b), .. }) = &w.win
-        && let Some(yes) = b.sortw.and_then(|s| s.ask)
-    {
-        let set = |w: &mut World, id: u16| {
-            if let Some(Win::Items { store: Some(b), .. }) = &mut w.win
-                && let Some(s) = b.sortw.as_mut()
-            {
-                s.ask = Some(id == 1);
-            }
-        };
-        super::winhits::generic(w, gu, "menu    sortyn", 2 - yes as u16, 1..=2, p, clicked, right, set, yn_key);
+    if let Some(Win::Items { store: Some(b), scroll, cursor, .. }) = &w.win {
+        let (b, scroll, cursor) = (*b, *scroll, *cursor);
+        store_pointer(w, gu, b, (scroll, cursor), p, clicked, right);
         return;
     }
-    // The bin view moves the list; its mouse handling (hover messages 3 / 4) is not done.
-    if matches!(w.win, Some(Win::Items { store: Some(_), .. })) {
-        return;
-    }
-    // The windows over the list have the mouse, the list none (only the focused window takes it, FUN_101267f0):
-    // iuse (FUN_101f4970: messages 5 / 6 only) and sortyn (FUN_10223ec0: Enter on child 1 Yes, 2 No; Escape No) as
-    // generic windows. itmsort2's own mouse is not done.
+    // The windows over the list have the mouse, the list none: iuse (FUN_101f4970: messages 5 / 6 only), sortyn
+    // (FUN_10223ec0: Enter on child 1 Yes, 2 No; Escape No) and itmsort2 (FUN_101f5020: message 5 on 1 Auto, 2 Manual,
+    // 3 the bin; 6 / 8 close) as generic windows.
     match &w.win {
         Some(Win::Items { sub: Some(Sub::Use { child, .. }), .. }) => {
             let set = |w: &mut World, id: u16| {
@@ -2352,7 +2372,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                     *child = id;
                 }
             };
-            super::winhits::generic(w, gu, "menu    iuse", *child, 1..=2, p, clicked, right, set, yn_key);
+            super::winhits::generic(w, gu, "menu    iuse", *child, 1..=2, p, clicked, right, set, keys);
             return;
         }
         Some(Win::Items { sub: Some(Sub::Drop { yes, .. }), .. }) => {
@@ -2361,7 +2381,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                     *yes = id == 1;
                 }
             };
-            super::winhits::generic(w, gu, "menu    sortyn", 2 - *yes as u16, 1..=2, p, clicked, right, set, yn_key);
+            super::winhits::generic(w, gu, "menu    sortyn", 2 - *yes as u16, 1..=2, p, clicked, right, set, keys);
             return;
         }
         Some(Win::Items { sort: Some(SortWin { ask: Some(yes), .. }), .. }) => {
@@ -2370,35 +2390,98 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                     s.ask = Some(id == 1);
                 }
             };
-            super::winhits::generic(w, gu, "menu    sortyn", 2 - *yes as u16, 1..=2, p, clicked, right, set, yn_key);
+            super::winhits::generic(w, gu, "menu    sortyn", 2 - *yes as u16, 1..=2, p, clicked, right, set, keys);
             return;
         }
-        Some(Win::Items { sort: Some(_), .. }) => return,
+        Some(Win::Items { sort: Some(SortWin { cursor, .. }), .. }) => {
+            let set = |w: &mut World, id: u16| {
+                if let Some(Win::Items { sort: Some(s), .. }) = &mut w.win {
+                    s.cursor = id;
+                }
+            };
+            super::winhits::generic(w, gu, "menu    itmsort2", *cursor, 1..=3, p, clicked, right, set, keys);
+            return;
+        }
         _ => {}
     }
-    let Some(r) = gu.window_rect("menu    inventor", sw, sh) else { return };
-    let row = ((p.1 - r[1] - 4.0) / ROW_PITCH).floor();
-    let inside = p.0 >= r[0]
-        && p.0 < r[0] + r[2]
-        && p.1 >= r[1]
-        && p.1 < r[1] + r[3]
-        && row >= 0.0
-        && (row as usize) < VISIBLE_ROWS;
-    if !inside || !matches!(w.win, Some(Win::Items { .. })) {
+    let Some(Win::Items { scroll, cursor, direct, .. }) = &w.win else { return };
+    let (count, top, child) = (listed(w, *direct).len(), *scroll, *cursor as u16 + 1);
+    let set = |w: &mut World, id: u16| {
+        if let Some(Win::Items { cursor, .. }) = &mut w.win {
+            *cursor = id as usize - 1;
+        }
+    };
+    let rows = 1..=VISIBLE_ROWS as u16;
+    super::winhits::list(w, gu, "menu    inventor", child, (count, top), rows, p, clicked, right, set, keys);
+}
+
+/// The mouse on the storage view's focused window: itemctrl (winhits::ctr), sortyn, itmstora and itmsortw (generic
+/// windows; itmstora's rows in state 5 take the cursor too, without the hand), or the focused list, "menu    bank" or
+/// the inventory side's "menu    inventor" (the list base; win_bank_v58 0x101de150 / FUN_101f4180 pass message 9 to
+/// the view's handlers FUN_101dcc60 / FUN_101dd4a0, which do nothing with it).
+fn store_pointer(
+    w: &mut World,
+    gu: &GameUi,
+    b: Storage,
+    (scroll, cursor): (usize, usize),
+    p: (f32, f32),
+    clicked: bool,
+    right: bool,
+) {
+    let keys = |w: &mut World, _: &GameUi, k: egui::Key| {
+        key(w, k, false, false, false);
+    };
+    let with = |f: fn(&mut Storage, u16)| {
+        move |w: &mut World, id: u16| {
+            if let Some(Win::Items { store: Some(b), .. }) = &mut w.win {
+                f(b, id);
+            }
+        }
+    };
+    if b.qty.is_some() {
+        super::winhits::ctr(w, gu, "menu    itemctrl", p, clicked, right, keys);
         return;
     }
-    let row = row as usize;
-    let takes = super::winhits::takes(gu, "menu    inventor", row as u16 + 1, super::winhits::inside(r, p));
-    let (cur, enter) = match &mut w.win {
-        Some(Win::Items { cursor, .. }) => (cursor, true),
-        _ => return,
-    };
-    let same = *cur == row;
-    if takes {
-        *cur = row;
+    if let Some(row) = b.stora {
+        let set = with(|b, id| b.stora = Some(id));
+        super::winhits::generic(w, gu, "menu    itmstora", row, 1..=16, p, clicked, right, set, keys);
+        return;
     }
-    if clicked && same && enter {
-        key(w, egui::Key::Enter, false, false, false);
+    if let Some(sw) = b.sortw {
+        if let Some(yes) = sw.ask {
+            let set = with(|b, id| {
+                if let Some(s) = b.sortw.as_mut() {
+                    s.ask = Some(id == 1);
+                }
+            });
+            super::winhits::generic(w, gu, "menu    sortyn", 2 - yes as u16, 1..=2, p, clicked, right, set, keys);
+        } else {
+            let set = with(|b, id| {
+                if let Some(s) = b.sortw.as_mut() {
+                    s.cursor = id;
+                }
+            });
+            super::winhits::generic(w, gu, "menu    itmsortw", sw.cursor, 1..=3, p, clicked, right, set, keys);
+        }
+        return;
+    }
+    let rows = 1..=VISIBLE_ROWS as u16;
+    if b.on_bank || b.read_only {
+        // The container's side ("menu    bank"; read-only, the container alone in the item list).
+        let name = if b.read_only { "menu    inventor" } else { "menu    bank" };
+        let count = store_rows(w, b.bank).len();
+        let set = with(|b, id| b.cursor = id as usize - 1);
+        let at = (count, b.scroll);
+        super::winhits::list(w, gu, name, b.cursor as u16 + 1, at, rows, p, clicked, right, set, keys);
+    } else {
+        let count = store_rows(w, b.side).len();
+        let set = |w: &mut World, id: u16| {
+            if let Some(Win::Items { cursor, .. }) = &mut w.win {
+                *cursor = id as usize - 1;
+            }
+        };
+        let at = (count, scroll);
+        super::winhits::list(w, gu, "menu    inventor", cursor as u16 + 1, at, rows, p, clicked, right, set, keys);
     }
 }
 
