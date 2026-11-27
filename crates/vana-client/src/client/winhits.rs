@@ -42,6 +42,22 @@ pub fn record_rects(w: &World, name: &str, frame: [f32; 4], children: Vec<(u16, 
     w.win_hits.borrow_mut().push((name.to_string(), frame, children));
 }
 
+/// Window `name`'s children as laid out, moved to the window's place `at` (a window drawn by hand from its layout).
+pub fn layout_at(gu: &GameUi, name: &str, at: (f32, f32)) -> Vec<(u16, [f32; 4])> {
+    gu.menu_def(name).map_or(Vec::new(), |m| {
+        m.elements
+            .iter()
+            .skip(1)
+            .map(|e| (e.id, [at.0 + e.x as f32, at.1 + e.y as f32, e.w as f32, e.h as f32]))
+            .collect()
+    })
+}
+
+/// `record_rects` for a window drawn by hand at `at` (its layout's children there), its frame `frame`.
+pub fn record_layout(w: &World, gu: &GameUi, name: &str, at: (f32, f32), frame: [f32; 4]) {
+    record_rects(w, name, frame, layout_at(gu, name, at));
+}
+
 /// Both ends of a box take the mouse (FUN_1011a140: `jg` / `jl` around each bound).
 pub(super) fn inside(r: [f32; 4], p: (f32, f32)) -> bool {
     p.0 >= r[0] && p.0 <= r[0] + r[2] && p.1 >= r[1] && p.1 <= r[1] + r[3]
@@ -224,6 +240,77 @@ pub fn generic(
     } else if clicked && id == cursor {
         key(w, gu, egui::Key::Enter);
     }
+}
+
+/// A list window of the list base (win_common_onkey_3 0x101f8280, its frame hook FUN_101f7fe0) on the focused window:
+/// `count` entries from entry `top` on children 1.., the cursor on child `cursor`.
+/// - The hover's or the held button's cursor move (FUN_1011a240, message 9; the list base keeps no SE on the window,
+///   +0x85 clear): onto a child with an entry, SE 0001 when it is not the last cursor (case 9 at 0x101f82d5); onto a
+///   child past the count, no SE, and the tail's clamp (0x101f855b: entry index at or past the count) puts the cursor
+///   on the count's child (FUN_1011a240(count - top)).
+/// - The frame hook clears the hand (mouse +0x4c) every frame while the hit child is past the count.
+/// - The release on the cursor's child is message 5, the list's Enter; a right click on the window Escape (ours only
+///   over it, as `generic`).
+#[allow(clippy::too_many_arguments)]
+pub fn list(
+    w: &mut World,
+    gu: &GameUi,
+    name: &str,
+    cursor: u16,
+    (count, top): (usize, usize),
+    ids: std::ops::RangeInclusive<u16>,
+    p: (f32, f32),
+    clicked: bool,
+    right: bool,
+    set: impl FnOnce(&mut World, u16),
+    key: impl FnOnce(&mut World, &GameUi, egui::Key),
+) {
+    let (child, on) = child_under(w, name, p, ids, parts(gu, name));
+    if right && on {
+        key(w, gu, egui::Key::Escape);
+        return;
+    }
+    let Some(id) = child else { return };
+    // Retail's frame hook tests the child against the count; ours tests the entry, as ours may keep a top the count
+    // no longer reaches (retail's refresh FUN_101f8630 moves it), which comes to the same while the top is in range.
+    let entry = top + id as usize <= count;
+    let takes = if entry { takes(gu, name, id, on) } else { takes_no_hand(gu, name, id, on) };
+    if !entry {
+        // FUN_101f7fe0 clears the hand every frame over a child past the count, whatever showed it before.
+        gu.hover.set(false);
+    }
+    if id != cursor && takes {
+        match list_move(id, cursor, count, top) {
+            ListMove::Row => {
+                set(w, id);
+                w.sounds.push(Ui::Cursor as u32);
+            }
+            ListMove::Clamp(c) => set(w, c),
+            ListMove::Stay => {}
+        }
+    } else if clicked && id == cursor {
+        key(w, gu, egui::Key::Enter);
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum ListMove {
+    /// The cursor onto the hit row, SE 0001.
+    Row,
+    /// The hit child is past the count: the cursor on this child, no SE.
+    Clamp(u16),
+    Stay,
+}
+
+/// The list base's cursor move onto child `id` (not the cursor's): case 9 tests the child against the count (mouse
+/// +0x52 above +0x20), the tail's clamp the entry index (top + child - 1) against it.
+fn list_move(id: u16, cursor: u16, count: usize, top: usize) -> ListMove {
+    if top + id as usize > count {
+        // FUN_1011a240(count - top): at least child 1.
+        let c = count.saturating_sub(top).max(1) as u16;
+        return if c == cursor { ListMove::Stay } else { ListMove::Clamp(c) };
+    }
+    ListMove::Row
 }
 
 /// What a click on an itemctrl / moneyctr child re-sends (message 5, FUN_1013a6c0 / FUN_10140bc0's tables): 1 the
@@ -487,6 +574,18 @@ mod tests {
         assert_eq!(pick(&all, (310.0, 110.0), 1..=2, |_| Some((0.0, 0.0))), Some(1));
         // Nothing drawn that the layout knows: the drawn ones as they are.
         assert_eq!(put_back(&layout, &[(9, [0.0; 4])]), vec![(9, [0.0; 4])]);
+    }
+
+    /// win_common_onkey_3 message 9 and the tail's clamp: a child with an entry takes the cursor; one past the count
+    /// puts it on the count's child (at least child 1), unless it is there already.
+    #[test]
+    fn list_moves_and_clamps() {
+        assert_eq!(list_move(3, 1, 5, 0), ListMove::Row);
+        assert_eq!(list_move(8, 2, 5, 0), ListMove::Clamp(5));
+        assert_eq!(list_move(8, 5, 5, 0), ListMove::Stay);
+        assert_eq!(list_move(2, 3, 0, 0), ListMove::Clamp(1));
+        // Scrolled: every child holds an entry (the top is at most count - 10).
+        assert_eq!(list_move(10, 1, 25, 15), ListMove::Row);
     }
 
     #[test]

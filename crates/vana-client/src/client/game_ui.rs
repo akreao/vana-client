@@ -2641,6 +2641,14 @@ impl GameUi {
         })
     }
 
+    /// Children of window `name` in state 5 that the window draws by hand (not through `disabled_children`): the
+    /// pointer over them is no hand all the same (FUN_1011a140's out flag).
+    pub fn mark_disabled(&mut self, name: &str, off: &[u16]) {
+        if !off.is_empty() {
+            self.off_parts.entry(name.to_string()).or_default().extend_from_slice(off);
+        }
+    }
+
     /// Child `id` of window `name` was drawn in state 5 (disabled_children): the pointer over it is no hand.
     pub fn disabled_part(&self, name: &str, id: u16) -> bool {
         self.off_parts.get(name).is_some_and(|off| off.contains(&id))
