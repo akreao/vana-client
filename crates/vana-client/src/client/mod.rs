@@ -9400,8 +9400,10 @@ pub struct App {
     monitors: Vec<(String, String)>,
     gpus: Vec<String>,
     index: Option<Arc<DatIndex>>,
-    /// Installed-content mask (ROM2..): title music and lobycwin's tracks (FUN_1023ae80).
+    /// Installed-content mask (ROM2..) of the game files in use (Config::ffxi_dir): logos, the creator, the world.
     installed: u32,
+    /// The same of game_dir's files, which sound plays from: title music and lobycwin's tracks (FUN_1023ae80).
+    music_installed: u32,
     keys_table: Option<Arc<zone::Keys>>,
     knock_table: Option<[[f32; 3]; 8]>,
     search_words: Option<Arc<crate::dat::tables::SearchWords>>,
@@ -9798,6 +9800,7 @@ impl App {
             nation: NationShow::default(),
             index: None,
             installed,
+            music_installed: installed,
             keys_table: None,
             knock_table: None,
             search_words: None,
@@ -10322,7 +10325,8 @@ impl App {
             // FFXI_AUDIO_DEVICE overrides the config's device (test runs into a null sink).
             let device = std::env::var("FFXI_AUDIO_DEVICE").unwrap_or_else(|_| self.cfg.audio_device.clone());
             let (m, e) = self.volume_factors();
-            self.audio = crate::audio::Audio::open(self.cfg.ffxi_dir(), Some(&device), m, e);
+            // game_dir's sound files whatever the login (music_installed is their mask).
+            self.audio = crate::audio::Audio::open(self.cfg.main_ffxi_dir(), Some(&device), m, e);
             self.applied_volumes = Some(self.volume_sliders());
             if let Some(a) = self.audio.as_mut() {
                 a.max_se = self.cfg.tool("0029").clamp(1, 20);
@@ -10353,7 +10357,7 @@ impl App {
         if scene != self.music_scene {
             match scene {
                 MusicScene::Opening => a.play_music_now(opening::MUSIC),
-                MusicScene::Title => a.title_music(self.cfg.game.global.get(0xaf), self.installed),
+                MusicScene::Title => a.title_music(self.cfg.game.global.get(0xaf), self.music_installed),
                 // LAB_1022fedb: reaching the nation step plays 0x78 through the fade task; back on the dancer steps
                 // the race BGM returns when the performance wraps (FUN_10036a90).
                 MusicScene::Created => a.change_music(0x78, 0x7f, 0x7f, 0, 0, false),
@@ -10464,7 +10468,16 @@ impl App {
     }
 
     fn game_data(&mut self) -> Result<(Arc<DatIndex>, Arc<zone::Keys>)> {
+        // A login into a server with its own game folder (Config::login_game_dir), or out of one: those files from here
+        // on, everything read from them opened again as after a patch.
+        if self.index.as_ref().is_some_and(|i| i.root() != self.cfg.ffxi_dir()) {
+            log::info!("game files: {}", self.cfg.ffxi_dir().display());
+            self.index = None;
+            self.name_tables = None;
+        }
         if self.index.is_none() {
+            // The expansions these files hold (character select, the creator, the world).
+            self.installed = crate::dat::installed(&self.cfg.ffxi_dir());
             self.index = Some(Arc::new(DatIndex::open(&self.cfg.ffxi_dir())?));
             let dll = std::fs::read(crate::dat::ffximain(&self.cfg.ffxi_dir()))?;
             self.keys_table = Some(Arc::new(zone::Keys::from_ffximain(&dll)?));
@@ -10505,6 +10518,8 @@ impl App {
             self.status = p.into();
             return;
         }
+        // PlayOnline's game files are game_dir's.
+        self.cfg.login_game_dir = None;
         let cfg = self.cfg.clone();
         if self.drive.login.is_none() {
             let _ = self.cfg.save();
@@ -10564,6 +10579,11 @@ impl App {
             } else {
                 "Passwords must be 1-32 plain ASCII characters (no accents or symbols outside ASCII).".into()
             };
+            return;
+        }
+        // The server's own game folder, if it has one: the lobby's FFXiMain and expansions, then the world's files.
+        if !create && let Err(e) = self.cfg.enter_server_game_dir() {
+            self.status = e;
             return;
         }
         let cfg = self.cfg.clone();
@@ -10870,6 +10890,10 @@ impl App {
             }
             Task::LoggedIn(Ok((lobby, chars)), _) | Task::Lobby(Ok((lobby, chars))) => {
                 self.status.clear();
+                // The login's game files from character select on: its expansions, models and text.
+                if let Err(e) = self.game_data() {
+                    log::warn!("game files: {e:#}");
+                }
                 // A login that worked: the password is remembered (sealed) or forgotten as the box says.
                 if let Phase::Login { password, pol_password, .. } = &self.phase
                     && !password.is_empty()
@@ -10934,6 +10958,11 @@ impl App {
             }
             Task::Selected(Ok(login)) => {
                 self.backdrop = None;
+                // The login's game files before anything of the world is read from them (a lobby mod may play from the
+                // title, where nothing has opened them yet).
+                if let Err(e) = self.game_data() {
+                    log::warn!("game files: {e:#}");
+                }
                 match crate::net::map::compress::Codec::from_ffximain(
                     &std::fs::read(crate::dat::ffximain(&self.cfg.ffxi_dir())).unwrap_or_default(),
                 ) {
@@ -16277,6 +16306,7 @@ impl App {
                     // Audio opened on the empty folder (and the title music failed): open it on the new files.
                     self.audio = None;
                     self.audio_tried = false;
+                    self.music_installed = crate::dat::installed(&self.cfg.main_ffxi_dir());
                     self.index = None;
                     self.keys_table = None;
                     self.game_ui_state = LoadState::Idle;
@@ -16287,7 +16317,7 @@ impl App {
                     if let Err(e) = self.cfg.save() {
                         log::warn!("saving the config: {e:#}");
                     }
-                    self.updates = Some(updater::start(self.cfg.ffxi_dir(), uses_playonline(&self.cfg)));
+                    self.updates = Some(updater::start(self.cfg.main_ffxi_dir(), uses_playonline(&self.cfg)));
                 }
                 firstrun::Action::Begin(dir) => {
                     self.cfg.game_dir = dir;
@@ -16525,6 +16555,16 @@ impl App {
                     }
                     // The two-factor window over the form (client/twofa.rs).
                     if let Some(t) = self.twofa.as_mut() {
+                        // Game files: a folder picked is the server's once it holds the game files.
+                        if let Some(dir) = t.take_picked() {
+                            let r = firstrun::existing(&dir).map_err(|e| format!("{e:#}"));
+                            if let Ok(g) = &r {
+                                let server = self.cfg.server.trim().to_string();
+                                self.cfg.set_server_game_dir(&server, Some(g.clone()));
+                                save |= self.drive.login.is_none() || crate::config::is_copy();
+                            }
+                            t.folder_set(r.map(Some));
+                        }
                         let mut tv = None;
                         let act = twofa::window(lu, &input, size, t, busy, &mut sounds, modern_ui.then_some(&mut tv));
                         if let Some(v) = &tv {
@@ -16538,6 +16578,12 @@ impl App {
                         }
                         match act {
                             Some(twofa::Act::Close) => self.twofa = None,
+                            Some(twofa::Act::DefaultFolder) => {
+                                let server = self.cfg.server.trim().to_string();
+                                self.cfg.set_server_game_dir(&server, None);
+                                save |= self.drive.login.is_none() || crate::config::is_copy();
+                                t.folder_set(Ok(None));
+                            }
                             Some(twofa::Act::Copy(code)) => {
                                 log::info!("clipboard: copied {} chars", code.chars().count());
                                 ctx.copy_text(code);
@@ -16594,6 +16640,7 @@ impl App {
                             // New and changed DATs: the next login opens the index again.
                             if out.reload {
                                 self.index = None;
+                                self.music_installed = crate::dat::installed(&self.cfg.main_ffxi_dir());
                                 // The next login sends the patched files' version.
                                 // At once: the restart below starts a client that reads it.
                                 if self.cfg.follow_applied_version()
@@ -16766,14 +16813,17 @@ impl App {
                         && let Some(s) = self.updates.clone()
                     {
                         self.viewer_asked = true;
-                        self.update_ui = Some(updater::UpdateUi::open(s, self.cfg.ffxi_dir()));
+                        self.update_ui = Some(updater::UpdateUi::open(s, self.cfg.main_ffxi_dir()));
                     }
                     match chosen.filter(|_| self.login_error.is_none()) {
                         Some(LoginChoice::Exit) => self.exit_requested = true,
-                        Some(LoginChoice::TwoFa) => self.twofa = Some(twofa::TwoFa::new()),
+                        Some(LoginChoice::TwoFa) => {
+                            let own = self.cfg.server_game_dir(&self.cfg.server);
+                            self.twofa = Some(twofa::TwoFa::new().folders(own, &self.cfg.game_dir));
+                        }
                         Some(LoginChoice::Update) => {
                             if let Some(s) = self.updates.clone() {
-                                self.update_ui = Some(updater::UpdateUi::open(s, self.cfg.ffxi_dir()));
+                                self.update_ui = Some(updater::UpdateUi::open(s, self.cfg.main_ffxi_dir()));
                             }
                         }
                         Some(LoginChoice::Picked(_) | LoginChoice::Forget(..)) => {}
@@ -16984,7 +17034,7 @@ impl App {
                             }
                             // lobycwin and our settings screen over the title; modern: both pages of one Config panel.
                             if let Some(c) = self.lobby_cfg.as_mut().filter(|_| modern_title) {
-                                c.owned = self.installed;
+                                c.owned = self.music_installed;
                                 if modern::lobby_config_settings(c) && self.lobby_settings.is_none() {
                                     let mut s = settings::SettingsUi::open(&self.cfg, window);
                                     s.monitors = self.monitors.clone();
@@ -17034,7 +17084,7 @@ impl App {
                                     save = true;
                                 }
                             } else if let Some(c) = self.lobby_cfg.as_mut() {
-                                c.owned = self.installed;
+                                c.owned = self.music_installed;
                                 if self.lobby_settings.is_none() {
                                     let mut outs = Vec::new();
                                     for ev in &input.events {
@@ -18189,7 +18239,7 @@ impl App {
             && let (Some(a), Phase::Characters { .. }) = (self.audio.as_mut(), &self.phase)
         {
             // FUN_1023ae50: a new title music choice starts at once.
-            a.title_music(self.lobby_values.get(0xaf), self.installed);
+            a.title_music(self.lobby_values.get(0xaf), self.music_installed);
         }
         if lobby_apply.volume {
             self.cfg.game.store(None, &self.lobby_values);
@@ -18389,7 +18439,7 @@ impl App {
     /// Parses the lobby DATs and font on a worker thread.
     fn load_game_ui(&mut self) {
         self.game_ui_state = LoadState::Loading;
-        if firstrun::needed(&self.cfg.ffxi_dir()) {
+        if firstrun::needed(&self.cfg.main_ffxi_dir()) {
             self.first_run = Some(firstrun::FirstRun::new(self.cfg.game_dir.clone()));
             self.game_ui_state = LoadState::Failed;
             return;
