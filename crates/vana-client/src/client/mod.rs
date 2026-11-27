@@ -2148,22 +2148,70 @@ fn reply(world: &mut World) {
     world.typing = true;
 }
 
-/// Channel prefixes of key functions 0x3c, 0x38, 0x3a, 0x3e, 0xad, 0xae.
-fn chat_shortcut(k: egui::Key) -> Option<&'static str> {
-    Some(match k {
-        egui::Key::S => "/say ",
-        egui::Key::T => "/tell ",
-        egui::Key::P => "/party ",
-        egui::Key::L => "/linkshell ",
-        egui::Key::U => "/unity ",
-        egui::Key::X => "/linkshell2 ",
+/// The chat line's key functions in FUN_101af9b0's order: /say 0x3c, /linkshell 0x3e, /tell 0x38, /party 0x3a,
+/// /unity 0xad, /linkshell2 0xae, assist 0xb4. Each that fires writes the line, so the last one wins.
+const CHAT_KEYS: [u8; 7] = [0x3c, 0x3e, 0x38, 0x3a, 0xad, 0xae, 0xb4];
+
+/// A channel key function's text (FUN_101af710's table); 0xb4 has two (`assist_texts`).
+fn chat_text(id: u8) -> Option<&'static str> {
+    Some(match id {
+        0x3c => "/say ",
+        0x38 => "/tell ",
+        0x3a => "/party ",
+        0x3e => "/linkshell ",
+        0xad => "/unity ",
+        0xae => "/linkshell2 ",
         _ => return None,
     })
 }
 
+/// The channel key function `k` fires with Ctrl / Alt: its key as Key Assignment set it (World.chat_keys; S, L, T,
+/// P, U, X, Q by default), none while Key Assignment is open (flag 0x10).
+fn chat_key(w: &World, k: egui::Key) -> Option<u8> {
+    if w.config.as_ref().is_some_and(key_assigning) {
+        return None;
+    }
+    chat_key_of(w.chat_keys, input::egui_dik(k)?)
+}
+
+/// The channel key function a DIK code fires, given each one's key (CHAT_KEYS order): the last that matches.
+fn chat_key_of(keys: [u8; 7], dik: u8) -> Option<u8> {
+    CHAT_KEYS.iter().zip(keys).filter(|&(_, key)| key != 0 && key == dik).map(|(&id, _)| id).next_back()
+}
+
+/// A channel key function fired: its text before the line's body (FUN_101afb40), or the assist key's step.
+fn chat_key_fire(w: &mut World, id: u8) {
+    match chat_text(id) {
+        Some(p) => chat_prefix(w, p),
+        None => assist_key(w),
+    }
+}
+
+/// Key function 0xb4 (config 0x86, Q; entry +0x1ffc of FUN_101af710's table): two texts, "/assiste " then
+/// "/assistj " (Japanese the other way round; German and French as English only with the European flag, lang::files).
+fn assist_texts(l: crate::dat::items::Lang) -> [&'static str; 2] {
+    match l {
+        crate::dat::items::Lang::Ja => ["/assistj ", "/assiste "],
+        _ => ["/assiste ", "/assistj "],
+    }
+}
+
+/// FUN_101af4f0 with FUN_101af5b0: the text key function 0xb4 takes next. Typing in an assist mode (FUN_101b9c10:
+/// the line's mode 0xe / 0xf) steps to the other one, wrapping after the second; otherwise the last one stays.
+fn assist_step(last: u8, typing: bool, mode: u8) -> u8 {
+    if typing && matches!(mode, 0xe | 0xf) { (last + 1) % 2 } else { last }
+}
+
+/// Key function 0xb4: its text before the line's body, as FUN_101afb40 puts the other channel keys'.
+fn assist_key(world: &mut World) {
+    let mode = chatctrl::line_mode(&world.chat_input, world.chat_mode);
+    world.assist_key = assist_step(world.assist_key, world.typing, mode);
+    chat_prefix(world, assist_texts(crate::dat::lang::files())[world.assist_key as usize]);
+}
+
 fn swallow_shortcut_text(pending: &mut Option<egui::Key>, event: &egui::Event) -> bool {
     match event {
-        egui::Event::Text(text) => pending.take().is_some_and(|key| text.eq_ignore_ascii_case(key.name())),
+        egui::Event::Text(text) => pending.take().is_some_and(|key| text.eq_ignore_ascii_case(key.symbol_or_name())),
         egui::Event::Key { pressed: true, .. } => {
             *pending = None;
             false
@@ -3141,7 +3189,7 @@ fn world_hud(
                 fep::insert(world, &t);
             }
             // egui turns Ctrl+C / Ctrl+X into Copy / Cut instead of key events. In the chat line they copy / cut the
-            // selection (ours; Ctrl+V pastes through egui-winit's clipboard), else /check and the /linkshell2 line.
+            // selection (ours; Ctrl+V pastes through egui-winit's clipboard), else /check and X's channel key.
             // The chat line's selection first, then the modern chat window's selected lines (chatsel.rs).
             egui::Event::Copy if world.typing && fep::selection(world).is_some() => {
                 world.copied = fep::selected_text(world)
@@ -3153,7 +3201,13 @@ fn world_hud(
                 world.copied = fep::selected_text(world);
                 fep::delete_selection(world);
             }
-            egui::Event::Cut if !event::cinema(world) => chat_prefix(world, "/linkshell2 "),
+            // Ctrl+X without a selection: whatever channel key X is assigned to (/linkshell2 by default).
+            egui::Event::Cut
+                if !event::cinema(world)
+                    && let Some(id) = chat_key(world, egui::Key::X) =>
+            {
+                chat_key_fire(world, id)
+            }
             egui::Event::Key { key, physical_key, pressed: true, modifiers, .. } => match key {
                 // Ours: an open modern right-click menu has its keys (modern/ctxmenu.rs reads them from egui), so they
                 // reach nothing under it (Enter would target the nearest, Escape the target, the chat line send).
@@ -3211,9 +3265,10 @@ fn world_hud(
                 k if (modifiers.ctrl || modifiers.alt)
                     && !opened
                     && !event::cinema(world)
-                    && let Some(p) = chat_shortcut(*k) =>
+                    && !numpad
+                    && let Some(id) = chat_key(world, *k) =>
                 {
-                    chat_prefix(world, p);
+                    chat_key_fire(world, id);
                     swallow_text = modifiers.alt.then_some(*k);
                     keys.clear();
                 }
@@ -8269,6 +8324,10 @@ struct World {
     hud_top: hudtop::HudTop,
     /// Who sent us tells, most recent first (Ctrl+R).
     tells: Vec<String>,
+    /// Key function 0xb4's text (its entry +0x104, FUN_101af4f0): 0 or 1 of `assist_texts`.
+    assist_key: u8,
+    /// The channel keys' Ctrl / Alt DIK codes (CHAT_KEYS order; Input::ctrl_key after Key Assignment), 0 for none.
+    chat_keys: [u8; 7],
     /// Battle message table, names and colours (loaded in the background).
     battle: Option<Arc<crate::dat::battle::BattleText>>,
     /// Melee results waiting for the attacker's hit.
@@ -11124,6 +11183,8 @@ impl App {
                             log2_up: false,
                             hud_top: Default::default(),
                             tells: Vec::new(),
+                            assist_key: 0,
+                            chat_keys: [0; 7],
                             battle: None,
                             pending: Vec::new(),
                             rounds: HashMap::new(),
@@ -15521,6 +15582,12 @@ impl App {
         });
         if let Phase::World(w) = &self.phase {
             self.input.assign(&w.game);
+        }
+        let chat_keys = CHAT_KEYS.map(|id| self.input.ctrl_key(id as usize));
+        if let Phase::World(w) = &mut self.phase {
+            w.chat_keys = chat_keys;
+        }
+        if let Phase::World(w) = &self.phase {
             self.input.context = key_context(w);
             // Not with the UI hidden: the search gets no events then. Ours: the Settings window's search opens the same way.
             f.typing = text_field_open(w)
@@ -23208,7 +23275,8 @@ mod tests {
         ] {
             let mut pending = None;
             assert!(!swallow_shortcut_text(&mut pending, &shortcut_key(key, egui::Modifiers::ALT)));
-            let mut line = format!("{}{}", chat_shortcut(key).unwrap(), strip_channel(typed));
+            let id = if key == egui::Key::L { 0x3e } else { 0x3c };
+            let mut line = format!("{}{}", chat_text(id).unwrap(), strip_channel(typed));
             pending = Some(key);
             if !swallow_shortcut_text(&mut pending, &egui::Event::Text(text.into())) {
                 line.push_str(text);
@@ -23216,6 +23284,38 @@ mod tests {
             assert_eq!(line, expected);
             assert_eq!(pending, None);
         }
+    }
+
+    /// Key function 0xb4 (FUN_101af4f0 / FUN_101af5b0): English "/assiste " first, Japanese "/assistj "; pressed again
+    /// on an assist line the other one, then back; not typing (or on another channel) the last one stays.
+    #[test]
+    fn assist_key_texts() {
+        use crate::dat::items::Lang;
+        assert_eq!(assist_texts(Lang::En), ["/assiste ", "/assistj "]);
+        assert_eq!(assist_texts(Lang::Ja), ["/assistj ", "/assiste "]);
+        assert_eq!(assist_texts(Lang::De)[0], "/assiste ");
+        let mode = |l: &str| chatctrl::line_mode(l, 2);
+        assert_eq!(assist_step(0, false, mode("")), 0);
+        assert_eq!(assist_step(0, true, mode("/assiste hi")), 1);
+        assert_eq!(assist_step(1, true, mode("/assistj hi")), 0);
+        assert_eq!(assist_step(1, true, mode("/say hi")), 1);
+        assert_eq!(assist_step(1, false, mode("/assistj hi")), 1);
+        assert_eq!(strip_channel("/assiste hello"), "hello");
+    }
+
+    /// Channel keys by their assigned keys (CHAT_KEYS order): the defaults, a key moved to another channel, a cleared
+    /// one; an Alt + comma binding swallows its ",".
+    #[test]
+    fn chat_keys_by_binding() {
+        let defaults = [0x1f, 0x26, 0x14, 0x19, 0x16, 0x2d, 0x10];
+        assert_eq!(chat_key_of(defaults, 0x1f), Some(0x3c));
+        assert_eq!(chat_key_of(defaults, 0x10), Some(0xb4));
+        let moved = [0, 0x26, 0x14, 0x19, 0x16, 0x2d, 0x1f];
+        assert_eq!(chat_key_of(moved, 0x1f), Some(0xb4));
+        assert_eq!(chat_key_of(moved, 0x10), None);
+        assert_eq!(chat_key_of(moved, 0), None);
+        let mut pending = Some(egui::Key::Comma);
+        assert!(swallow_shortcut_text(&mut pending, &egui::Event::Text(",".into())));
     }
 
     #[test]

@@ -287,6 +287,15 @@ impl Input {
         self.set(k, pressed);
     }
 
+    /// Key function `id`'s Ctrl / Alt key (slot 0 with flag 0x10, as Input::assign writes Key Assignment's k2 rows),
+    /// 0 when it has none.
+    pub fn ctrl_key(&self, id: usize) -> u8 {
+        match self.bindings.get(id).map(|b| b[0]) {
+            Some(b) if (b >> 8) & 0x10 != 0 => b as u8,
+            _ => 0,
+        }
+    }
+
     /// A key going down or up by DIK code (the window, and test drives act:down / act:up).
     pub fn set(&mut self, k: u8, pressed: bool) {
         self.down[k as usize] = pressed;
@@ -753,7 +762,7 @@ pub fn dik(code: KeyCode) -> Option<u8> {
 }
 
 /// The DirectInput code of an egui key (test drives; egui does not tell the numpad apart).
-fn egui_dik(key: egui::Key) -> Option<u8> {
+pub(super) fn egui_dik(key: egui::Key) -> Option<u8> {
     use egui::Key as E;
     Some(match key {
         E::Escape => 0x01,
@@ -986,5 +995,19 @@ mod tests {
         v.set(0x42, 0);
         i.assign(&v);
         assert_eq!(i.bindings[0xaa][0], i.base_bindings[0xaa][0]);
+    }
+
+    /// The chat line's channel keys by default (config 0x6a.. rows): S, L, T, P, U, X and Q (0xb4, config 0x86);
+    /// a cleared row leaves its key function none.
+    #[test]
+    fn channel_keys() {
+        let Some(mut i) = real() else { return };
+        let mut v = crate::gamecfg::Values::default();
+        i.assign(&v);
+        let ids = [0x3c, 0x3e, 0x38, 0x3a, 0xad, 0xae, 0xb4];
+        assert_eq!(ids.map(|id| i.ctrl_key(id)), [0x1f, 0x26, 0x14, 0x19, 0x16, 0x2d, 0x10]);
+        v.set(0x86, 0);
+        i.assign(&v);
+        assert_eq!(i.ctrl_key(0xb4), 0);
     }
 }

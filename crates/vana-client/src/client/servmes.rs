@@ -12,9 +12,14 @@ const BUFFER: usize = 0x400;
 const PIECE: i32 = 0xec;
 /// Pieces asked at once after the first reply (FUN_100a2b20).
 const SLOTS: usize = 4;
-/// Kind 1 the server message; language 2 English (FUN_100a30e0).
+/// Kind 1 the server message.
 const KIND: u8 = 1;
-const LANG: u8 = 2;
+
+/// FUN_100a30e0: the language asked for, 1 Japanese, 2 English, 3 German, 4 French (German and French as English with
+/// the European flag).
+fn lang() -> u8 {
+    crate::dat::lang::files() as u8 + 1
+}
 
 #[derive(Clone, Copy, Debug)]
 struct Slot {
@@ -55,7 +60,7 @@ impl Transfer {
 /// c2s 0x04B (FUN_100a2aa0): Command (1 the first piece, 2 the rest), Result 0, kind, language, timestamp, size_total,
 /// offset, data_size.
 fn ask(w: &World, cmd: u8, t: &Transfer, offset: i32) {
-    let mut b = vec![cmd, 0, KIND, LANG];
+    let mut b = vec![cmd, 0, KIND, lang()];
     let len = if t.total > 0 { PIECE.min(t.total - offset) } else { PIECE };
     for v in [t.timestamp, t.total, offset, len] {
         b.extend_from_slice(&v.to_le_bytes());
@@ -120,7 +125,7 @@ pub(super) fn on_fragment(w: &mut World, p: &[u8]) {
     let (stamp, total, offset, size) = (i32_at(8), i32_at(0xc), i32_at(0x10), i32_at(0x14));
     if !matches!(cmd, 1 | 2)
         || kind != KIND
-        || lang != LANG
+        || lang != self::lang()
         || stamp <= 0
         || total <= 0
         || total as usize > BUFFER
