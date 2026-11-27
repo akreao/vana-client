@@ -54,5 +54,5 @@ screen's error ok windows) and lobycwin's release; where retail takes the title 
 from (ours draws and hits them 100 layout px right; FUN_10241640 draws at the child boxes, so the shift would have to
 move them: not traced).
 
-Tests: `client::winhits::tests::lobby_release_buzzes_off_the_children`, `title_boxes_scale_the_layout`. Not checked
+Tests: `client::winhits::tests::lobby_release_buzzes_off_the_children`, `title_boxes_scale_the_layout`, `creator_rows_are_the_first_children`. Not checked
 on screen or live.
