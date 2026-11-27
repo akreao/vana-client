@@ -2148,17 +2148,31 @@ fn reply(world: &mut World) {
     world.typing = true;
 }
 
-/// Channel prefixes of key functions 0x3c, 0x38, 0x3a, 0x3e, 0xad, 0xae.
-fn chat_shortcut(k: egui::Key) -> Option<&'static str> {
-    Some(match k {
-        egui::Key::S => "/say ",
-        egui::Key::T => "/tell ",
-        egui::Key::P => "/party ",
-        egui::Key::L => "/linkshell ",
-        egui::Key::U => "/unity ",
-        egui::Key::X => "/linkshell2 ",
+/// The chat line's key functions in FUN_101af9b0's order: /say 0x3c, /linkshell 0x3e, /tell 0x38, /party 0x3a,
+/// /unity 0xad, /linkshell2 0xae, assist 0xb4. Each that fires writes the line, so the last one wins.
+const CHAT_KEYS: [u8; 7] = [0x3c, 0x3e, 0x38, 0x3a, 0xad, 0xae, 0xb4];
+
+/// A channel key function's text (FUN_101af710's table); 0xb4 has two (`assist_texts`).
+fn chat_text(id: u8) -> Option<&'static str> {
+    Some(match id {
+        0x3c => "/say ",
+        0x38 => "/tell ",
+        0x3a => "/party ",
+        0x3e => "/linkshell ",
+        0xad => "/unity ",
+        0xae => "/linkshell2 ",
         _ => return None,
     })
+}
+
+/// The channel key function `k` fires with Ctrl / Alt: its key as Key Assignment set it (World.chat_keys; S, L, T,
+/// P, U, X, Q by default), none while Key Assignment is open (flag 0x10).
+fn chat_key(w: &World, k: egui::Key) -> Option<u8> {
+    let dik = input::egui_dik(k)?;
+    if w.config.as_ref().is_some_and(key_assigning) {
+        return None;
+    }
+    CHAT_KEYS.iter().zip(w.chat_keys).filter(|&(_, key)| key == dik).map(|(&id, _)| id).next_back()
 }
 
 /// Key function 0xb4 (config 0x86, Q; entry +0x1ffc of FUN_101af710's table): two texts, "/assiste " then
@@ -2174,13 +2188,6 @@ fn assist_texts(l: crate::dat::items::Lang) -> [&'static str; 2] {
 /// the line's mode 0xe / 0xf) steps to the other one, wrapping after the second; otherwise the last one stays.
 fn assist_step(last: u8, typing: bool, mode: u8) -> u8 {
     if typing && matches!(mode, 0xe | 0xf) { (last + 1) % 2 } else { last }
-}
-
-/// Whether `k` is key function 0xb4's key: config 0x86's DIK code with Ctrl / Alt (Input::assign's slot 0, flag
-/// 0x10; Q by default), none when cleared or while Key Assignment is open.
-fn assist_bound(w: &World, k: egui::Key) -> bool {
-    let dik = (w.game.get(0x86) & 0xff) as u8;
-    dik != 0 && input::egui_dik(k) == Some(dik) && !w.config.as_ref().is_some_and(key_assigning)
 }
 
 /// Key function 0xb4: its text before the line's body, as FUN_101afb40 puts the other channel keys'.
@@ -3239,18 +3246,12 @@ fn world_hud(
                 k if (modifiers.ctrl || modifiers.alt)
                     && !opened
                     && !event::cinema(world)
-                    && let Some(p) = chat_shortcut(*k) =>
+                    && let Some(id) = chat_key(world, *k) =>
                 {
-                    chat_prefix(world, p);
-                    swallow_text = modifiers.alt.then_some(*k);
-                    keys.clear();
-                }
-                k if (modifiers.ctrl || modifiers.alt)
-                    && !opened
-                    && !event::cinema(world)
-                    && assist_bound(world, *k) =>
-                {
-                    assist_key(world);
+                    match chat_text(id) {
+                        Some(p) => chat_prefix(world, p),
+                        None => assist_key(world),
+                    }
                     swallow_text = modifiers.alt.then_some(*k);
                     keys.clear();
                 }
@@ -8300,6 +8301,8 @@ struct World {
     tells: Vec<String>,
     /// Key function 0xb4's text (its entry +0x104, FUN_101af4f0): 0 or 1 of `assist_texts`.
     assist_key: u8,
+    /// The channel keys' Ctrl / Alt DIK codes (CHAT_KEYS order; Input::ctrl_key after Key Assignment), 0 for none.
+    chat_keys: [u8; 7],
     /// Battle message table, names and colours (loaded in the background).
     battle: Option<Arc<crate::dat::battle::BattleText>>,
     /// Melee results waiting for the attacker's hit.
@@ -11156,6 +11159,7 @@ impl App {
                             hud_top: Default::default(),
                             tells: Vec::new(),
                             assist_key: 0,
+                            chat_keys: [0; 7],
                             battle: None,
                             pending: Vec::new(),
                             rounds: HashMap::new(),
@@ -15542,6 +15546,12 @@ impl App {
         });
         if let Phase::World(w) = &self.phase {
             self.input.assign(&w.game);
+        }
+        let chat_keys = CHAT_KEYS.map(|id| self.input.ctrl_key(id as usize));
+        if let Phase::World(w) = &mut self.phase {
+            w.chat_keys = chat_keys;
+        }
+        if let Phase::World(w) = &self.phase {
             self.input.context = key_context(w);
             // Not with the UI hidden: the search gets no events then. Ours: the Settings window's search opens the same way.
             f.typing = text_field_open(w)
@@ -23176,7 +23186,8 @@ mod tests {
         ] {
             let mut pending = None;
             assert!(!swallow_shortcut_text(&mut pending, &shortcut_key(key, egui::Modifiers::ALT)));
-            let mut line = format!("{}{}", chat_shortcut(key).unwrap(), strip_channel(typed));
+            let id = if key == egui::Key::L { 0x3e } else { 0x3c };
+            let mut line = format!("{}{}", chat_text(id).unwrap(), strip_channel(typed));
             pending = Some(key);
             if !swallow_shortcut_text(&mut pending, &egui::Event::Text(text.into())) {
                 line.push_str(text);

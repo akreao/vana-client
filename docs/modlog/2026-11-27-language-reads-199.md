@@ -7,8 +7,10 @@
     (+0x1ffc of FUN_101af710's table, made by FUN_101af490) holds two texts, "/assiste " then "/assistj " (Japanese
     the other way round). FUN_101af4f0 with FUN_101af5b0 steps to the other text when the key is pressed while the
     line is in an assist mode (FUN_101b9c10: fep +0x2c is 0xe / 0xf), wrapping after the second; any other time the
-    last text stays. FUN_101afb40 puts it before the line's body as the other channel keys do. Ours: Ctrl / Alt +
-    config 0x86's key (none while it is cleared or Key Assignment is open), World.assist_key.
+    last text stays. FUN_101afb40 puts it before the line's body as the other channel keys do. Ours: the channel keys
+    (0x3c, 0x3e, 0x38, 0x3a, 0xad, 0xae, 0xb4 in FUN_101af9b0's order, the last that fires wins) now take their Ctrl /
+    Alt keys from the bindings Key Assignment writes (Input::ctrl_key, World.chat_keys; S, L, T, P, U, X, Q by
+    default; none while a row is cleared or Key Assignment is open), where ours had fixed letters; World.assist_key.
   - The "New Challenge" scheduler (FUN_10087230): file 0xaf0 + table 0x1035c53c by language, 0x396 Japanese and
     English, 0x398 German, 0x397 French (roe.rs NEW_CHALLENGE; ours took 0x396 in every language).
   - /translate (FUN_10079b30, argument count _DAT_1047e640): no letters, from and to the client language; one letter,
