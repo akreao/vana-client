@@ -192,9 +192,9 @@ pub fn update(w: &mut World) {
                 w.event_looks.push((chair, src));
             }
         }
-        // State 0x17: `chi0` once the chair files are in.
+        // State 0x17 of FUN_1008b460: `chi0` once the chair files are in, inside the entity loop (Effects::in_loop).
         if seat.phase == Phase::Down && files_in {
-            w.effects.on_scheduler(id, id, u32::from_le_bytes(*b"chi0"));
+            w.effects.in_loop(|fx| fx.on_scheduler(id, id, u32::from_le_bytes(*b"chi0")));
             seat.phase = Phase::Seated;
         }
         let chair_in = w.actors.get(&chair).is_some_and(|a| a.character.is_some());

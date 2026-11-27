@@ -45,7 +45,7 @@ starts is linked beside it and takes its first update there. Ours started all of
   walk follows its next as before, so the node is reached again after a start whose first update made a task
   (`Effects::loop_runs`, a debug line). The client marks: `init`, `inte` and `ini<n>` (update_movement), the status
   change's schedulers (`combat::status_schedulers`), the machine's `klbt` / `bntg` / `hwat`, draw and sheathe
-  (`actmotion`), `res0` / `res2` (`rest`), `chi2` (`chair`), `coff` (`ride`) and a model actor's sequence (`ships`).
+  (`actmotion`), `res0` / `res2` (`rest`), `chi0` / `chi2` (`chair`), `coff` (`ride`) and a model actor's sequence (`ships`).
 
 Not built (new queue rows):
 

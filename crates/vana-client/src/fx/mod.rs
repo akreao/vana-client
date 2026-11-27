@@ -1084,6 +1084,8 @@ pub struct Effects {
     walk_serial: u32,
     /// How often the entity loop's task ran in this tick's walk (`loop_runs`).
     loop_runs: u32,
+    /// Inside `in_loop`: the starts asked now are the entity loop's (`Pending::looped`).
+    asking: bool,
     vana_seen: bool,
     /// The zone object's fixed sky time and sun tilt (W+0x1c8 / +0x1cc): cleared at every scene load, set by
     /// scheduler ops 0xc0 / 0xc3 (the zone's `@ini`).
@@ -1340,6 +1342,7 @@ impl Effects {
             walk_owed: 0.0,
             walk_serial: 0,
             loop_runs: 0,
+            asking: false,
             vana_seen: false,
             leaked: Vec::new(),
             models: HashMap::new(),

@@ -335,7 +335,7 @@ impl Effects {
                 seq: None,
                 event: false,
                 init_sub: None,
-                looped: false,
+                looped: self.asking,
             }),
             3..=6 | 0xb | 0xd..=0xf => {
                 let anim = a.targets.first().and_then(|t| t.results.first()).map_or(0, |r| r.animation as u32);
@@ -365,7 +365,7 @@ impl Effects {
                     seq: None,
                     event: false,
                     init_sub: None,
-                    looped: false,
+                    looped: self.asking,
                 });
             }
             7..=0xa | 0xc => {
@@ -392,7 +392,7 @@ impl Effects {
                     seq: None,
                     event: false,
                     init_sub: None,
-                    looped: false,
+                    looped: self.asking,
                 });
             }
             _ => {}
@@ -428,7 +428,7 @@ impl Effects {
                 seq: None,
                 event: false,
                 init_sub: None,
-                looped: false,
+                looped: self.asking,
             });
         }
         if arg != 0 {
@@ -459,7 +459,7 @@ impl Effects {
             seq: None,
             event: true,
             init_sub: None,
-            looped: false,
+            looped: self.asking,
         });
     }
 
@@ -519,7 +519,7 @@ impl Effects {
             seq: None,
             event: false,
             init_sub: None,
-            looped: false,
+            looped: self.asking,
         });
     }
 
@@ -549,7 +549,7 @@ impl Effects {
             seq: None,
             event: false,
             init_sub: None,
-            looped: false,
+            looped: self.asking,
         });
     }
 
@@ -742,7 +742,7 @@ impl Effects {
             seq: None,
             event: false,
             init_sub: None,
-            looped: false,
+            looped: self.asking,
         });
     }
 
@@ -780,11 +780,9 @@ impl Effects {
     ///
     /// A packet's start is not: FUN_100daf30 dispatches them after the walk (FUN_10001b50), with no task running.
     pub fn in_loop<R>(&mut self, ask: impl FnOnce(&mut Self) -> R) -> R {
-        let from = self.pending.len();
+        let was = std::mem::replace(&mut self.asking, true);
         let r = ask(self);
-        for p in self.pending.iter_mut().skip(from) {
-            p.looped = true;
-        }
+        self.asking = was;
         r
     }
 
@@ -2019,7 +2017,7 @@ impl Effects {
                     seq: None,
                     event: false,
                     init_sub: None,
-                    looped: false,
+                    looped: self.asking,
                 });
                 Flow::Next
             }
@@ -2869,7 +2867,7 @@ impl Effects {
                     seq: None,
                     event: false,
                     init_sub: None,
-                    looped: false,
+                    looped: self.asking,
                 });
                 Flow::Next
             }
@@ -3045,7 +3043,7 @@ impl Effects {
             seq: Some(skip),
             event: false,
             init_sub: None,
-            looped: false,
+            looped: self.asking,
         });
     }
 
@@ -4530,6 +4528,13 @@ mod tests {
         assert_eq!(run(&[plain, makes], true), ([2, 1], true, left));
         // Outside the walk: before bucket 9, and nothing for the loop's task to run again for.
         assert_eq!(run(&[makes], false), ([1, 1], false, left));
+        // A sequence that replaces one still waiting for its file (start_sequence drops the old request first) is
+        // the loop's too.
+        let mut fx = Effects::new();
+        for n in [makes, plain] {
+            fx.in_loop(|fx| fx.start_sequence(HUME, 1, n, 0.0));
+        }
+        assert_eq!(fx.pending.iter().map(|p| (p.name, p.looped)).collect::<Vec<_>>(), [(plain, true)]);
         // A tick of ours with no walk (half a retail frame): the loop's task did not run.
         let mut fx = Effects::new();
         fx.tick(&ticks_frame(1.0), &Two);
