@@ -518,6 +518,13 @@ impl Screen {
         }
         let tick = self.tick;
         self.scheds.retain(|s| s.len.is_none_or(|l| tick - s.start <= l + 1.0));
+        // The runner's scheduler has run its time: its camera task goes with it (FUN_10074ad0 -> FUN_10074890).
+        let ended = self.shot.as_ref().is_some_and(|s| {
+            s.owner.is_none() && !self.scheds.iter().any(|x| x.file == s.file_id && x.tag == s.tag && x.who == s.who)
+        });
+        if ended {
+            self.end_shot(|s| s.owner.is_none());
+        }
     }
 }
 
@@ -3796,14 +3803,12 @@ fn framed(p: &crate::dat::title::CameraPath) -> bool {
 /// afresh (FUN_1003c970); more move it toward the actors by flags byte 1 / 255 a frame (retail's frame taken as
 /// 1/30 s *(inf)*).
 pub fn camera_frame(screen: &mut Screen, effects: &crate::fx::Effects, actors: &dyn crate::fx::Actors, ticks: f32) {
-    // The scheduler task it is a child of has ended (its last op, or a kill): the camera task goes with it. The
-    // runner's own shots have the event's scheduler, which the effects run as well.
-    let gone = screen.shot.as_ref().is_some_and(|s| match s.owner {
-        Some(o) => !effects.task_live(o),
-        None => !effects.runner_live(s.file_id, crate::dat::generator::fourcc(&s.tag)),
-    });
-    if gone {
-        screen.end_shot(|_| true);
+    // The scheduler task it is a child of has ended (its last op, or a kill): the camera task goes with it (the
+    // runner's own shots end with its scheduler in advance).
+    if let Some(o) = screen.shot.as_ref().and_then(|s| s.owner)
+        && !effects.task_live(o)
+    {
+        screen.end_shot(|s| s.owner == Some(o));
     }
     let Some(s) = screen.shot.as_mut() else { return };
     let Some(path) = s.file.title.as_ref().and_then(|t| t.paths.get(s.path)).filter(|p| framed(p)) else { return };
