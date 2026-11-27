@@ -10464,6 +10464,13 @@ impl App {
     }
 
     fn game_data(&mut self) -> Result<(Arc<DatIndex>, Arc<zone::Keys>)> {
+        // A login into a server with its own game folder (Config::login_game_dir), or out of one: those files from here
+        // on, everything read from them opened again as after a patch.
+        if self.index.as_ref().is_some_and(|i| i.root() != self.cfg.ffxi_dir()) {
+            log::info!("game files: {}", self.cfg.ffxi_dir().display());
+            self.index = None;
+            self.name_tables = None;
+        }
         if self.index.is_none() {
             self.index = Some(Arc::new(DatIndex::open(&self.cfg.ffxi_dir())?));
             let dll = std::fs::read(crate::dat::ffximain(&self.cfg.ffxi_dir()))?;
@@ -10505,6 +10512,8 @@ impl App {
             self.status = p.into();
             return;
         }
+        // PlayOnline's game files are game_dir's.
+        self.cfg.login_game_dir = None;
         let cfg = self.cfg.clone();
         if self.drive.login.is_none() {
             let _ = self.cfg.save();
@@ -10564,6 +10573,11 @@ impl App {
             } else {
                 "Passwords must be 1-32 plain ASCII characters (no accents or symbols outside ASCII).".into()
             };
+            return;
+        }
+        // The server's own game folder, if it has one: the lobby's FFXiMain and expansions, then the world's files.
+        if !create && let Err(e) = self.cfg.enter_server_game_dir() {
+            self.status = e;
             return;
         }
         let cfg = self.cfg.clone();
@@ -16287,7 +16301,7 @@ impl App {
                     if let Err(e) = self.cfg.save() {
                         log::warn!("saving the config: {e:#}");
                     }
-                    self.updates = Some(updater::start(self.cfg.ffxi_dir(), uses_playonline(&self.cfg)));
+                    self.updates = Some(updater::start(self.cfg.main_ffxi_dir(), uses_playonline(&self.cfg)));
                 }
                 firstrun::Action::Begin(dir) => {
                     self.cfg.game_dir = dir;
@@ -16525,6 +16539,16 @@ impl App {
                     }
                     // The two-factor window over the form (client/twofa.rs).
                     if let Some(t) = self.twofa.as_mut() {
+                        // Game files: a folder picked is the server's once it holds the game files.
+                        if let Some(dir) = t.take_picked() {
+                            let r = firstrun::existing(&dir).map_err(|e| format!("{e:#}"));
+                            if let Ok(g) = &r {
+                                let server = self.cfg.server.trim().to_string();
+                                self.cfg.set_server_game_dir(&server, Some(g.clone()));
+                                save |= self.drive.login.is_none() || crate::config::is_copy();
+                            }
+                            t.folder_set(r.map(Some));
+                        }
                         let mut tv = None;
                         let act = twofa::window(lu, &input, size, t, busy, &mut sounds, modern_ui.then_some(&mut tv));
                         if let Some(v) = &tv {
@@ -16538,6 +16562,12 @@ impl App {
                         }
                         match act {
                             Some(twofa::Act::Close) => self.twofa = None,
+                            Some(twofa::Act::DefaultFolder) => {
+                                let server = self.cfg.server.trim().to_string();
+                                self.cfg.set_server_game_dir(&server, None);
+                                save |= self.drive.login.is_none() || crate::config::is_copy();
+                                t.folder_set(Ok(None));
+                            }
                             Some(twofa::Act::Copy(code)) => {
                                 log::info!("clipboard: copied {} chars", code.chars().count());
                                 ctx.copy_text(code);
@@ -16766,14 +16796,17 @@ impl App {
                         && let Some(s) = self.updates.clone()
                     {
                         self.viewer_asked = true;
-                        self.update_ui = Some(updater::UpdateUi::open(s, self.cfg.ffxi_dir()));
+                        self.update_ui = Some(updater::UpdateUi::open(s, self.cfg.main_ffxi_dir()));
                     }
                     match chosen.filter(|_| self.login_error.is_none()) {
                         Some(LoginChoice::Exit) => self.exit_requested = true,
-                        Some(LoginChoice::TwoFa) => self.twofa = Some(twofa::TwoFa::new()),
+                        Some(LoginChoice::TwoFa) => {
+                            let own = self.cfg.server_game_dir(&self.cfg.server);
+                            self.twofa = Some(twofa::TwoFa::new().folders(own, &self.cfg.game_dir));
+                        }
                         Some(LoginChoice::Update) => {
                             if let Some(s) = self.updates.clone() {
-                                self.update_ui = Some(updater::UpdateUi::open(s, self.cfg.ffxi_dir()));
+                                self.update_ui = Some(updater::UpdateUi::open(s, self.cfg.main_ffxi_dir()));
                             }
                         }
                         Some(LoginChoice::Picked(_) | LoginChoice::Forget(..)) => {}
@@ -18389,7 +18422,7 @@ impl App {
     /// Parses the lobby DATs and font on a worker thread.
     fn load_game_ui(&mut self) {
         self.game_ui_state = LoadState::Loading;
-        if firstrun::needed(&self.cfg.ffxi_dir()) {
+        if firstrun::needed(&self.cfg.main_ffxi_dir()) {
             self.first_run = Some(firstrun::FirstRun::new(self.cfg.game_dir.clone()));
             self.game_ui_state = LoadState::Failed;
             return;

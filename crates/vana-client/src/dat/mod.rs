@@ -96,6 +96,11 @@ impl DatIndex {
         Ok(index)
     }
 
+    /// The "FINAL FANTASY XI" folder it was opened on.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     /// The folder that holds "FINAL FANTASY XI" (the PlayOnline Viewer's files sit beside it).
     pub fn game_dir(&self) -> &Path {
         self.root.parent().unwrap_or(&self.root)
