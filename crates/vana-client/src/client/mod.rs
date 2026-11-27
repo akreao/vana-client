@@ -693,6 +693,10 @@ struct Entity {
     floor_noted: bool,
     /// +0x2a4: the master's ActIndex (s2c 0x067 kind 3 @0x0C; LSB sends it for our trusts), 0 none.
     master: u16,
+    /// +0x200 / +0x201 (s2c 0x067, FUN_1009cee0: kind 2 u32 @0x10 bits 21..24 / 25..28, kind 3 u8 @0x13 low nibble /
+    /// u32 @0x10 bits 28..31; 0 at the entity's start, FUN_1008a350): FUN_1009e370 keeps the battle lines and numbers
+    /// of two actors of one +0x200 group, both with +0x201 clear, from us when our +0x200 is another.
+    group: (u8, u8),
     /// +0x128 bit 29: the model's "init" ran (FUN_1008c480).
     init_done: bool,
     /// The idle / run / walk names ops 0x8c / 0xa4 / 0xa5 set (bases +0x190 / +0x19c / +0x198): a new model and a
@@ -1636,6 +1640,7 @@ fn new_entity(e: &net::EntityUpdate) -> Entity {
         raw_y: 0.0,
         floor_noted: false,
         master: 0,
+        group: (0, 0),
         init_done: false,
         motion_bases: Vec::new(),
         reset_bases: false,
@@ -2399,6 +2404,7 @@ fn self_entity(w: &World) -> Entity {
         raw_y: 0.0,
         floor_noted: false,
         master: 0,
+        group: (0, 0),
         init_done: false,
         motion_bases: Vec::new(),
         reset_bases: false,
@@ -6237,6 +6243,7 @@ fn place_mogdoor(w: &mut World) {
             raw_y: 0.0,
             floor_noted: false,
             master: 0,
+            group: (0, 0),
             init_done: false,
             motion_bases: Vec::new(),
             reset_bases: false,
@@ -7461,6 +7468,8 @@ struct FxActors<'a> {
     wades: &'a HashMap<u32, Vec3>,
     /// Door entities' parts in the world (XiDoorActor's attach points, FUN_100acab0 / FUN_100acb50).
     doors: &'a HashMap<u32, Vec<glam::Mat4>>,
+    /// What FUN_1009e090 reads for a record's number and line.
+    prints: combat::PrintView<'a>,
 }
 
 impl FxActors<'_> {
@@ -7572,6 +7581,10 @@ impl crate::fx::Actors for FxActors<'_> {
 
     fn player(&self) -> Option<u32> {
         Some(self.me)
+    }
+
+    fn record_print(&self, a: &crate::net::action::Action, k: usize, which: u32) -> crate::fx::RecordPrint {
+        self.prints.record(a, k, which)
     }
 
     fn swings(&self, id: u32, moving: bool) -> Option<Vec<String>> {
@@ -8268,6 +8281,11 @@ struct World {
     /// Our plate's fields from 0x037 and our 0x067 @0x10.
     my_plate: net::SelfPlate,
     my_sync: u8,
+    /// Our +0x200 / +0x201 (Entity::group), from our s2c 0x067 kind 2.
+    my_group: (u8, u8),
+    /// Our +0x130 bit 25: a 0x00D about us, u8 @0x33 bit 0 (0x10099ae0; clear on our new entity). FUN_100ad950 reads
+    /// it with the zone's treasure pool flag (combat::PrintView::filter_relation).
+    my_pool_off: bool,
     /// FUN_101347b0's repeat guard: the last check's id and time (DAT_105781c4).
     last_check: Option<(u32, Instant)>,
     /// S+0x40daa: the index of the NPC we last talked to, tried first as the moogle actor (batch 6 item 17). Cleared
@@ -11082,6 +11100,8 @@ impl App {
                             my_team: 0,
                             my_plate: net::SelfPlate::default(),
                             my_sync: 0,
+                            my_group: (0, 0),
+                            my_pool_off: false,
                             last_check: None,
                             talked_index: 0,
                             block_help: false,
@@ -12386,6 +12406,9 @@ impl App {
                     world.my_pull = 0;
                     // 0x10094e12: the new entity's team byte (+0x1ff) starts at 0; 0x037 sets it.
                     world.my_team = 0;
+                    // FUN_1008a350 zeroes the new entity's +0x200 / +0x201; our next 0x067 sets them.
+                    world.my_group = (0, 0);
+                    world.my_pool_off = false;
                     world.conf_sys = zone_conf(conf);
                     config_anon(world.config.as_mut(), &world.conf_sys);
                     // FUN_100fa000 (the map session's setup, run for every zone) zero-fills the whole character data
@@ -12677,6 +12700,10 @@ impl App {
                     if e.id == world.my_id {
                         if let Some(f) = e.mon_form {
                             world.my_form = f;
+                        }
+                        // FUN_10099ae0 on any 0x00D but a despawn: u8 @0x33 bit 0 -> +0x130 bit 25.
+                        if let Some(p) = e.plate {
+                            world.my_pool_off = p.bit0;
                         }
                         // 0x100982f6: a full update about us ends the post-event wait (+0x1fa = 0).
                         if e.complete() && world.self_lock.take().is_some() {
@@ -13130,15 +13157,20 @@ impl App {
                     world.mount_recast = (s > 0).then(|| Instant::now() + std::time::Duration::from_secs(s as u64))
                 }
                 // LAB_1009b6xx: the entity at ActIndex `index` with server id `id` takes its master.
-                NetEvent::EntityMaster { index, id, master } => {
+                NetEvent::EntityMaster { index, id, master, group } => {
                     if let Some(e) = world.entities.get_mut(&id).filter(|e| e.index == index) {
                         e.master = master;
+                        e.group = group;
                     }
                 }
-                NetEvent::CharSync { id, owner, floors, open, level, sync, custom, fellow } => {
-                    // FUN_1009cee0: +0x2a0, the character's fellow.
+                NetEvent::CharSync { id, owner, floors, open, level, sync, custom, fellow, group } => {
+                    // FUN_1009cee0: +0x2a0, the character's fellow; +0x200 / +0x201.
                     if let Some(e) = world.entities.get_mut(&id) {
                         e.fellow = fellow;
+                        e.group = group;
+                    }
+                    if id == world.my_id {
+                        world.my_group = group;
                     }
                     if id == world.my_id {
                         world.my_ride.custom = custom;
@@ -14225,8 +14257,8 @@ impl App {
         for k in std::mem::take(&mut world.effects.knocks) {
             combat::knock(world, &k);
         }
-        for (a, k, which) in std::mem::take(&mut world.effects.action_prints) {
-            combat::print_record(world, &a, k, which);
+        for (a, k, which, line) in std::mem::take(&mut world.effects.action_prints) {
+            combat::print_record(world, &a, k, which, line);
         }
         for (id, m) in std::mem::take(&mut world.effects.motions) {
             actmotion::play_op(world, id, m);
@@ -21855,6 +21887,19 @@ fn draw_effects(
             drops,
             wades: &w.wades,
             doors: &door_fx,
+            prints: combat::PrintView {
+                me: w.my_id,
+                my_pet: w.my_pet,
+                my_group: w.my_group.0,
+                zone_pool: w.my_plate.zone_pool,
+                pool_off: w.my_pool_off,
+                field: w.zoning_since.is_none() && w.loading.is_none(),
+                entities: &w.entities,
+                model: combat::model_test(&w.actors),
+                party: &w.party,
+                battle: w.battle.as_deref(),
+                game: &w.game,
+            },
         };
         if let Some(g) = &w.ground {
             w.effects.set_covered(g.covered(camera.eye));

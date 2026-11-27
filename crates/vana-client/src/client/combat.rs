@@ -9,6 +9,7 @@ use crate::dat::character::Character;
 use crate::dat::sched;
 use crate::net::action::{Action, category};
 use glam::Vec3;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 /// Chat log lines with their colour (BGRA, 0x80 = 1.0).
@@ -518,45 +519,195 @@ fn relation_in(
     }
 }
 
-/// FUN_100abf20's relation table for the chat filter: [1] target us or our pet, [0] caster us or our pet, [2] / [3]
-/// caster / target in our party, [4] / [5] in the alliance, [6] / [7] a mob our party claimed, [8] / [9] a PC, [10]
-/// otherwise or a missing actor. Other members' pets are not modelled (entity +0x1f6).
-fn filter_relation(w: &World, actor: u32, target: u32) -> usize {
-    let present = |id: u32| id == w.my_id || w.entities.contains_key(&id);
-    let ours = |id: u32| {
-        w.entities
-            .get(&id)
-            .is_some_and(|e| e.mob && e.claim != 0 && (e.claim == w.my_id || w.party.party().any(|m| m.id == e.claim)))
-    };
-    let pc = |id: u32| id < 0x0100_0000;
-    let me = |id: u32| id == w.my_id || (w.my_pet != 0 && w.entities.get(&id).is_some_and(|e| e.index == w.my_pet));
-    let party = |id: u32| id != w.my_id && w.party.party().any(|m| m.id == id);
-    let alliance = |id: u32| id != w.my_id && w.party.members().any(|m| m.id == id);
-    if !present(actor) || !present(target) {
-        10
-    } else if me(target) {
-        1
-    } else if me(actor) {
-        0
-    } else if party(actor) {
-        2
-    } else if party(target) {
-        3
-    } else if alliance(actor) {
-        4
-    } else if alliance(target) {
-        5
-    } else if ours(actor) {
-        6
-    } else if ours(target) {
-        7
-    } else if pc(actor) {
-        8
-    } else if pc(target) {
-        9
-    } else {
-        10
+/// What FUN_1009e090 reads to decide a record's number and line, apart from the action itself.
+pub(super) struct PrintView<'a> {
+    pub me: u32,
+    /// Our pet's ActIndex (our +0x1fa).
+    pub my_pet: u16,
+    /// Our +0x200 (Entity::group).
+    pub my_group: u8,
+    /// Our +0x18c (the zone's treasure pool flag) and +0x130 bit 25 (a 0x00D about us, u8 @0x33 bit 0).
+    pub zone_pool: bool,
+    pub pool_off: bool,
+    /// Game state 0x60 (*DAT_10457bd8): in the field, not zoning.
+    pub field: bool,
+    pub entities: &'a HashMap<u32, super::Entity>,
+    /// FUN_1018df10 / FUN_1018df50: the entity has its model (+0x120 bit 9, +0xa0).
+    pub model: Box<dyn Fn(u32) -> bool + 'a>,
+    pub party: &'a super::party::Roster,
+    pub battle: Option<&'a battle::BattleText>,
+    pub game: &'a crate::gamecfg::Values,
+}
+
+impl<'a> PrintView<'a> {
+    pub(super) fn of(w: &'a World) -> PrintView<'a> {
+        PrintView {
+            me: w.my_id,
+            my_pet: w.my_pet,
+            my_group: w.my_group.0,
+            zone_pool: w.my_plate.zone_pool,
+            pool_off: w.my_pool_off,
+            field: w.zoning_since.is_none() && w.loading.is_none(),
+            entities: &w.entities,
+            model: model_test(&w.actors),
+            party: &w.party,
+            battle: w.battle.as_deref(),
+            game: &w.game,
+        }
     }
+
+    fn present(&self, id: u32) -> bool {
+        id == self.me || self.entities.contains_key(&id)
+    }
+
+    /// FUN_1009e370 (us, caster, target), with all three there: the caster and the target are of one +0x200 group,
+    /// neither with +0x201 set, and our +0x200 is another.
+    fn other_group(&self, actor: u32, target: u32) -> bool {
+        let group = |id: u32| {
+            if id == self.me {
+                // Our +0x201 never passes the test below when set; ours is not kept apart from +0x200.
+                Some((self.my_group, 0))
+            } else {
+                self.entities.get(&id).map(|e| e.group)
+            }
+        };
+        let (Some(a), Some(t)) = (group(actor), group(target)) else { return false };
+        a.0 != 0 && a.1 == 0 && t.0 == a.0 && t.1 == 0 && t.0 != self.my_group
+    }
+
+    /// FUN_100ad950's relation table for the chat filter (FUN_100ade80 on DAT_1048aacc's entries): [1] target us or
+    /// our pet, [0] caster us or our pet, [2] / [3] caster / target in our party or a member's pet (the member's
+    /// entity at its listed index, +0x1fa, with +0x12c bit 22 clear), [4] / [5] the alliance likewise, [6] / [7] a
+    /// claimed monster (+0x120 bit 13, +0x188) when the zone pools treasure (our +0x18c set, +0x130 bit 25 clear) or
+    /// a member of our party claimed it, [8] / [9] a PC (id class 0), [10] otherwise or a missing actor.
+    fn filter_relation(&self, actor: u32, target: u32) -> usize {
+        if !self.present(actor) || !self.present(target) {
+            return 10;
+        }
+        let npc = |id: u32| id >> 24 == 1;
+        let index = |id: u32| self.entities.get(&id).map_or(0, |e| e.index);
+        let pet_of = |id: u32, pet: u16| npc(id) && index(id) == pet;
+        if target == self.me || pet_of(target, self.my_pet) {
+            return 1;
+        }
+        if actor == self.me || pet_of(actor, self.my_pet) {
+            return 0;
+        }
+        let pass = |members: &mut dyn Iterator<Item = &super::party::Member>| {
+            let mut r = 0;
+            for m in members.filter(|m| m.id != self.me) {
+                let pet = self
+                    .entities
+                    .get(&m.id)
+                    .filter(|e| m.index != 0 && e.index == m.index && e.pet != 0 && !e.marks.trust)
+                    .map(|e| e.pet);
+                if let Some(pet) = pet {
+                    if pet_of(actor, pet) {
+                        r = 1;
+                    }
+                    if pet_of(target, pet) && r == 0 {
+                        r = 2;
+                    }
+                }
+                if m.id == actor {
+                    r = 1;
+                }
+                if m.id == target && r == 0 {
+                    r = 2;
+                }
+            }
+            r
+        };
+        match pass(&mut self.party.party()) {
+            0 => {}
+            r => return 1 + r,
+        }
+        match pass(&mut self.party.members()) {
+            0 => {}
+            r => return 3 + r,
+        }
+        let ours = |id: u32| {
+            npc(id)
+                && self.entities.get(&id).is_some_and(|e| {
+                    e.mob
+                        && e.claim != 0
+                        && ((self.zone_pool && !self.pool_off) || self.party.party().any(|m| m.id == e.claim))
+                })
+        };
+        if ours(actor) {
+            6
+        } else if ours(target) {
+            7
+        } else if actor >> 24 == 0 {
+            8
+        } else if target >> 24 == 0 {
+            9
+        } else {
+            10
+        }
+    }
+
+    /// FUN_100ad950: the message is kept off channel 0 (the log) or 1 (the screen) by the Chat Filters or the
+    /// damage display setting (FUN_100ad8f0, config 0x13).
+    fn off(&self, bt: &battle::BattleText, id: u16, actor: u32, target: u32, channel: u8) -> bool {
+        bt.filtered(id, self.filter_relation(actor, target), self.game) || bt.off_channel(id, channel, self.game)
+    }
+
+    /// FUN_1009e090 for message `id` of a record (`which` 0 main, 1 proc, 2 react; `value` that message's):
+    /// - the caster and the target exist still (FUN_1018de60 / FUN_1018de90), the game is in state 0x60
+    ///   (0x1009e0d5) and FUN_1009e370 does not hide the pair (0x1009e126); else nothing;
+    /// - the message is not 0 and is in the table (FUN_100964a0(5, id), 0x1009e1e0); else nothing;
+    /// - not off the screen (FUN_100ad950 channel 1) and both have a model (FUN_1018df10 / FUN_1018df50): the number,
+    ///   on (caster, target), (target, caster) for a reaction, in the colour of the line's mode for the relation
+    ///   (FUN_1012b100 of FUN_1009e700's byte: 0x808080 for a mode with no colour, a hidden one too);
+    /// - not off the log (channel 0): the line.
+    pub(super) fn message(&self, actor: u32, target: u32, id: u16, which: u32, value: i32) -> crate::fx::RecordPrint {
+        let none = crate::fx::RecordPrint::default();
+        if !self.present(actor) || !self.present(target) || !self.field || self.other_group(actor, target) {
+            return none;
+        }
+        let Some(bt) = self.battle else { return none };
+        if which > 2 || id == 0 || bt.raw(id).is_none() {
+            return none;
+        }
+        let mut number = None;
+        if !self.off(bt, id, actor, target, 1) && (self.model)(actor) && (self.model)(target) {
+            let rel = relation_in(self.me, |id| self.entities.contains_key(&id), self.party, actor, target);
+            let [b, g, r, _] = bt.colour_in(bt.mode(id, rel), self.game);
+            let (a1, a2) = if which == 2 { (target, actor) } else { (actor, target) };
+            number = Some(crate::fx::RecordNumber {
+                kind: bt.screen_kind(id),
+                a1,
+                a2,
+                value,
+                rgb: u32::from_le_bytes([b, g, r, 0]),
+            });
+        }
+        crate::fx::RecordPrint { number, line: !self.off(bt, id, actor, target, 0) }
+    }
+
+    /// FUN_1009e090(action, k, which): record `k`'s main (+0x18, value +0x14), proc (+0x28, +0x24) or react (+0x30,
+    /// +0x2e) message.
+    pub(super) fn record(&self, a: &Action, k: usize, which: u32) -> crate::fx::RecordPrint {
+        let recs = a.records();
+        let Some((target, r)) = recs.get(k) else { return Default::default() };
+        let (id, value) = match which {
+            0 => (r.message, r.value),
+            1 => r.proc.as_ref().map_or((0, 0), |p| (p.message, p.value)),
+            2 => r.react.as_ref().map_or((0, 0), |p| (p.message, p.value)),
+            _ => (0, 0),
+        };
+        self.message(a.actor, *target, id, which, value as i32)
+    }
+}
+
+/// PrintView::model over the client's actors: the model is in (as FxActors::face_target reads +0x120 bit 9).
+pub(super) fn model_test<'a>(actors: &'a HashMap<u32, Actor>) -> Box<dyn Fn(u32) -> bool + 'a> {
+    Box::new(move |id| actors.get(&id).is_some_and(|a| a.character.is_some()))
+}
+
+fn filter_relation(w: &World, actor: u32, target: u32) -> usize {
+    PrintView::of(w).filter_relation(actor, target)
 }
 
 /// Chat lines of a message: hidden modes print nothing; a `1f` code overrides the mode's colour (with the
@@ -787,6 +938,12 @@ fn condense(w: &mut World, bt: &battle::BattleText, m: &Msg, which: u8, line: &s
 }
 
 fn print(w: &mut World, m: Msg) {
+    print_decided(w, m, None);
+}
+
+/// A message's line. `decided`: FUN_1009e090's answer for a record's message taken where it ran (an effect op, the
+/// action's end: its number has started there); a record's message printed by the client itself takes it here.
+fn print_decided(w: &mut World, m: Msg, decided: Option<bool>) {
     let Some(bt) = w.battle.clone() else {
         log::info!("battle message {} before the message tables loaded", m.id);
         return;
@@ -799,22 +956,30 @@ fn print(w: &mut World, m: Msg) {
         let value = m.work[1 + which as usize];
         w.lua.raise("damage", vec![m.actor.into(), m.target.into(), value.into(), m.id.into()]);
     }
-    // Chat Filters (0x32 / 0x33) hide battle messages on the client, number and line.
-    if bt.filtered(m.id, filter_relation(w, m.actor, m.target), &w.game) {
-        return;
-    }
-    // FUN_1009e090: a record's line (and number) needs its caster and target to exist still.
-    if m.which.is_some() && (who(w, m.actor).is_none() || who(w, m.target).is_none()) {
-        return;
-    }
-    if let Some(which) = m.which
-        && !bt.off_channel(m.id, 1, &w.game)
-    {
-        damage_number(w, &bt, &m, which);
-    }
-    // Screen mode (config 0x13 = 2): lines with an on-screen kind leave the log, 0x029 / 0x02D ones too.
-    if bt.off_channel(m.id, 0, &w.game) {
-        return;
+    match (m.which, decided) {
+        (Some(_), Some(line)) => {
+            if !line {
+                return;
+            }
+        }
+        // FUN_1009e090 for a line of ours (a melee hit's, a fileless action's): the number starts at the effects'
+        // next update.
+        (Some(which), None) => {
+            let p = PrintView::of(w).message(m.actor, m.target, m.id, which as u32, m.work[1 + which.min(2) as usize]);
+            if let Some(n) = p.number {
+                w.effects.on_damage_number(n.kind, n.a1, n.a2, n.value, n.rgb);
+            }
+            if !p.line {
+                return;
+            }
+        }
+        (None, _) => {
+            // Chat Filters (0x32 / 0x33) hide battle messages on the client.
+            // Screen mode (config 0x13 = 2): lines with an on-screen kind leave the log, 0x029 / 0x02D ones too.
+            if bt.filtered(m.id, filter_relation(w, m.actor, m.target), &w.game) || bt.off_channel(m.id, 0, &w.game) {
+                return;
+            }
+        }
     }
     let mut ctx = Ctx { actor: who(w, m.actor), target: who(w, m.target), work: m.work, ..ctx(w) };
     let rel = relation(w, m.actor, m.target);
@@ -866,21 +1031,6 @@ fn print(w: &mut World, m: Msg) {
     for (l, c) in lines {
         w.chat.push_battle(l, c, mode);
     }
-}
-
-/// FUN_1009e090's number: DAT 27's scheduler for the message's kind on (caster, target), (target, caster) for a
-/// reaction (spikes, counters show over the attacker), with the record's value of that message and the colour its
-/// log line has for this relation.
-fn damage_number(w: &mut World, bt: &battle::BattleText, m: &Msg, which: u8) {
-    let kind = bt.screen_kind(m.id);
-    let mode = bt.mode(m.id, relation(w, m.actor, m.target));
-    if kind == 0 || mode == battle::HIDDEN {
-        return;
-    }
-    let [b, g, r, _] = bt.colour_in(mode, &w.game);
-    let rgb = u32::from_le_bytes([b, g, r, 0]);
-    let (a1, a2) = if which == 2 { (m.target, m.actor) } else { (m.actor, m.target) };
-    w.effects.on_damage_number(kind, a1, a2, m.work[1 + which.min(2) as usize], rgb);
 }
 
 /// A 0x028 action's messages in the client's record order: main, proc, react per record.
@@ -1292,8 +1442,9 @@ fn one_action(w: &mut World, a: &Action) {
     }
 }
 
-/// FUN_1009e090: record `k`'s message `which` (0 main from op 0x2b / the action's end, 1 proc / 2 react from op 0x71).
-pub(super) fn print_record(w: &mut World, a: &Action, k: usize, which: u8) {
+/// FUN_1009e090's line for record `k`'s message `which` (0 main from op 0x2b / the action's end, 1 proc / 2 react from
+/// op 0x71), `line` its answer where it ran (fx/tasks.rs print_record; the number started there).
+pub(super) fn print_record(w: &mut World, a: &Action, k: usize, which: u32, line: bool) {
     let Some((target, r)) = a.records().get(k).map(|(id, r)| (*id, (*r).clone())) else { return };
     let work = [
         a.arg as i32,
@@ -1305,21 +1456,23 @@ pub(super) fn print_record(w: &mut World, a: &Action, k: usize, which: u8) {
     let id = match which {
         0 => Some(r.message),
         1 => r.proc.as_ref().map(|p| p.message),
-        _ => r.react.as_ref().map(|p| p.message),
+        2 => r.react.as_ref().map(|p| p.message),
+        _ => None,
     };
     if let Some(id) = id.filter(|&id| id != 0) {
-        print(
+        print_decided(
             w,
             Msg {
                 id,
                 actor: a.actor,
                 target,
                 work,
-                which: Some(which),
+                which: Some(which as u8),
                 seq: a.seq,
                 multi: a.targets.len() > 1,
                 category: Some(a.category),
             },
+            Some(line),
         );
     }
 }
@@ -2526,6 +2679,211 @@ mod tests {
     fn death_schedulers() {
         assert_eq!([0, 1, 2, 3, 5].map(|p| death_scheduler(p, false)), ["dead", "1ead", "2ead", "3ead", "1ead"]);
         assert_eq!((death_scheduler(0, true), death_scheduler(1, true)), ("sdep", "sdep"));
+    }
+
+    /// A character (below 0x01000000) or an NPC slot at ActIndex `index`.
+    fn slot(id: u32, index: u16) -> super::super::Entity {
+        use super::super::net::{self, EntityKind};
+        let (packet, len, kind) =
+            if id >> 24 == 0 { (0x00D, 0x60, EntityKind::Player) } else { (0x00E, 0x48, EntityKind::Npc) };
+        super::super::new_entity(&net::test_entity(
+            packet,
+            len,
+            &[(4, &id.to_le_bytes()), (8, &index.to_le_bytes())],
+            kind,
+        ))
+    }
+
+    /// Row 189, FUN_100ad950's tables: a party member's pet counts as the member (its entity at the listed index,
+    /// +0x1fa, +0x12c bit 22 clear), ours as us; a claimed monster is "ours" by its claimer, or by the zone's treasure
+    /// pool (our +0x18c with +0x130 bit 25 clear).
+    #[test]
+    fn filter_relations() {
+        use super::super::party::{ListUpdate, Roster};
+        const MATE: u32 = 0x200;
+        const ALLY: u32 = 0x300;
+        const LONER: u32 = 0x400;
+        const PET: u32 = 0x0100_0700;
+        const MATE_PET: u32 = 0x0100_0701;
+        const ALLY_PET: u32 = 0x0100_0702;
+        let mut r = Roster::default();
+        r.refresh_self(ME, 0x400, "Me", 230);
+        r.table(&[(ME, 0x400, 4, 230), (MATE, 0x401, 0, 230), (ALLY, 0x402, 0, 230)]);
+        let list =
+            |id, index, flags| ListUpdate { id, index, flags, zone: 230, name: "X".into(), ..Default::default() };
+        r.list(&list(ME, 0x400, 4), ME, false);
+        r.list(&list(MATE, 0x401, 0), ME, false);
+        r.list(&list(ALLY, 0x402, 1), ME, false);
+        let mut entities: HashMap<u32, super::super::Entity> = [
+            (MATE, slot(MATE, 0x401)),
+            (ALLY, slot(ALLY, 0x402)),
+            (LONER, slot(LONER, 0x403)),
+            (PET, slot(PET, 0x700)),
+            (MATE_PET, slot(MATE_PET, 0x701)),
+            (ALLY_PET, slot(ALLY_PET, 0x702)),
+            (RABBIT, slot(RABBIT, 0x11)),
+        ]
+        .into();
+        entities.get_mut(&MATE).unwrap().pet = 0x701;
+        entities.get_mut(&ALLY).unwrap().pet = 0x702;
+        entities.get_mut(&RABBIT).unwrap().mob = true;
+        let game = crate::gamecfg::Values::default();
+        let view = |entities: &HashMap<u32, super::super::Entity>, zone_pool: bool, pool_off: bool, a: u32, t: u32| {
+            let v = PrintView {
+                me: ME,
+                my_pet: 0x700,
+                my_group: 0,
+                zone_pool,
+                pool_off,
+                field: true,
+                entities,
+                model: Box::new(|_| true),
+                party: &r,
+                battle: None,
+                game: &game,
+            };
+            v.filter_relation(a, t)
+        };
+        let rel = |a, t| view(&entities, false, false, a, t);
+        assert_eq!(rel(RABBIT, ME), 1);
+        assert_eq!(rel(RABBIT, PET), 1);
+        assert_eq!(rel(PET, RABBIT), 0);
+        assert_eq!(rel(MATE, RABBIT), 2);
+        assert_eq!(rel(MATE_PET, RABBIT), 2);
+        assert_eq!(rel(RABBIT, MATE_PET), 3);
+        // The caster's side wins over the target's, whatever the list's order.
+        assert_eq!(rel(MATE_PET, MATE), 2);
+        assert_eq!(rel(ALLY, RABBIT), 4);
+        assert_eq!(rel(ALLY_PET, RABBIT), 4);
+        assert_eq!(rel(RABBIT, ALLY_PET), 5);
+        assert_eq!(rel(LONER, RABBIT), 8);
+        assert_eq!(rel(RABBIT, LONER), 9);
+        assert_eq!(rel(RABBIT, RABBIT), 10);
+        assert_eq!(rel(RABBIT, 0x0100_0999), 10);
+        // A member's pet with the member's +0x12c bit 22 set is nobody's.
+        entities.get_mut(&MATE).unwrap().marks.trust = true;
+        assert_eq!(view(&entities, false, false, MATE_PET, RABBIT), 10);
+        entities.get_mut(&MATE).unwrap().marks.trust = false;
+        // Claimed: by a member of our party (us too), not by the alliance; any claim where the zone pools.
+        for (claim, want) in [(0, 8), (MATE, 7), (ME, 7), (ALLY, 8), (LONER, 8)] {
+            entities.get_mut(&RABBIT).unwrap().claim = claim;
+            assert_eq!(view(&entities, false, false, LONER, RABBIT), want, "{claim:#x}");
+        }
+        assert_eq!(view(&entities, false, false, RABBIT, RABBIT), 10);
+        assert_eq!(view(&entities, true, false, RABBIT, LONER), 6);
+        assert_eq!(view(&entities, true, true, RABBIT, LONER), 9);
+        entities.get_mut(&RABBIT).unwrap().claim = 0;
+        assert_eq!(view(&entities, true, false, RABBIT, LONER), 9);
+    }
+
+    /// Row 189, FUN_1009e090's tests in its order (PrintView::message).
+    #[test]
+    fn record_print_tests() {
+        use super::super::party::Roster;
+        use crate::fx::{RecordNumber, RecordPrint};
+        let Some(bt) = load() else { return };
+        const OTHER: u32 = 0x400;
+        let mut r = Roster::default();
+        r.refresh_self(ME, 0x400, "Me", 230);
+        let mut entities: HashMap<u32, super::super::Entity> =
+            [(OTHER, slot(OTHER, 0x403)), (RABBIT, slot(RABBIT, 0x11))].into();
+        let mut game = crate::gamecfg::Values::default();
+        // Message 1 ("hits for N"): a damage number. Both the log and the screen.
+        assert_eq!(bt.screen_kind(1), 1);
+        game.set(0x13, 1);
+        struct Case {
+            field: bool,
+            my_group: u8,
+            no_model: Option<u32>,
+        }
+        let ask = |entities: &HashMap<u32, super::super::Entity>,
+                   game: &crate::gamecfg::Values,
+                   c: Case,
+                   (actor, target, id, which): (u32, u32, u16, u32)| {
+            PrintView {
+                me: ME,
+                my_pet: 0,
+                my_group: c.my_group,
+                zone_pool: false,
+                pool_off: false,
+                field: c.field,
+                entities,
+                model: Box::new(move |id| Some(id) != c.no_model),
+                party: &r,
+                battle: Some(&bt),
+                game,
+            }
+            .message(actor, target, id, which, 57)
+        };
+        let plain = || Case { field: true, my_group: 0, no_model: None };
+        let colour = |rel| {
+            let [b, g, r, _] = bt.colour_in(bt.mode(1, rel), &game);
+            u32::from_le_bytes([b, g, r, 0])
+        };
+        let number = |a1, a2, rel| Some(RecordNumber { kind: 1, a1, a2, value: 57, rgb: colour(rel) });
+        let none = RecordPrint::default();
+        // The number on (caster, target), on (target, caster) for a reaction, in the relation's colour.
+        assert_eq!(
+            ask(&entities, &game, plain(), (ME, RABBIT, 1, 0)),
+            RecordPrint { number: number(ME, RABBIT, Relation::CasterIsMe), line: true }
+        );
+        assert_eq!(
+            ask(&entities, &game, plain(), (RABBIT, ME, 1, 2)),
+            RecordPrint { number: number(ME, RABBIT, Relation::TargetIsMe), line: true }
+        );
+        assert_eq!(
+            ask(&entities, &game, plain(), (OTHER, RABBIT, 1, 1)),
+            RecordPrint { number: number(OTHER, RABBIT, Relation::Other), line: true }
+        );
+        // A missing actor, another game state, no message, a message not in the table, a message number past 2.
+        assert_eq!(ask(&entities, &game, plain(), (0x0100_0999, ME, 1, 0)), none);
+        assert_eq!(ask(&entities, &game, plain(), (ME, 0x0100_0999, 1, 0)), none);
+        assert_eq!(ask(&entities, &game, Case { field: false, ..plain() }, (ME, RABBIT, 1, 0)), none);
+        assert_eq!(ask(&entities, &game, plain(), (ME, RABBIT, 0, 0)), none);
+        assert_eq!(ask(&entities, &game, plain(), (ME, RABBIT, 5000, 0)), none);
+        assert_eq!(ask(&entities, &game, plain(), (ME, RABBIT, 1, 3)), none);
+        // Without either model the line alone.
+        for gone in [ME, RABBIT] {
+            assert_eq!(
+                ask(&entities, &game, Case { no_model: Some(gone), ..plain() }, (ME, RABBIT, 1, 0)),
+                RecordPrint { number: None, line: true }
+            );
+        }
+        // A message with no on-screen kind: the line alone.
+        let kindless = (1..1024u16).find(|&id| bt.screen_kind(id) == 0 && bt.raw(id).is_some()).unwrap();
+        assert_eq!(ask(&entities, &game, plain(), (ME, RABBIT, kindless, 0)), RecordPrint { number: None, line: true });
+        // A mode the log hides still has its number, in the colour FUN_1012b100 gives the mode.
+        if let Some(id) =
+            (1..1024u16).find(|&id| bt.screen_kind(id) != 0 && bt.mode(id, Relation::Other) == battle::HIDDEN)
+        {
+            let p = ask(&entities, &game, plain(), (OTHER, RABBIT, id, 0));
+            let [b, g, r, _] = bt.colour_in(battle::HIDDEN, &game);
+            assert_eq!(p.number.map(|n| n.rgb), Some(u32::from_le_bytes([b, g, r, 0])), "{id}");
+        }
+        // FUN_1009e370: caster and target of one +0x200 group, +0x201 clear on both, and ours another: nothing.
+        for (a, t, mine, hidden) in [
+            ((3, 0), (3, 0), 0, true),
+            ((3, 0), (3, 0), 2, true),
+            ((3, 0), (3, 0), 3, false),
+            ((3, 1), (3, 0), 0, false),
+            ((3, 0), (3, 1), 0, false),
+            ((3, 0), (2, 0), 0, false),
+            ((0, 0), (3, 0), 0, false),
+            ((3, 0), (0, 0), 0, false),
+        ] {
+            entities.get_mut(&OTHER).unwrap().group = a;
+            entities.get_mut(&RABBIT).unwrap().group = t;
+            let p = ask(&entities, &game, Case { my_group: mine, ..plain() }, (OTHER, RABBIT, 1, 0));
+            assert_eq!(p == none, hidden, "{a:?} {t:?} {mine}");
+        }
+        (entities.get_mut(&OTHER).unwrap().group, entities.get_mut(&RABBIT).unwrap().group) = ((0, 0), (0, 0));
+        // Config 0x13: Log keeps the number off, Screen the line.
+        game.set(0x13, 0);
+        assert_eq!(ask(&entities, &game, plain(), (ME, RABBIT, 1, 0)), RecordPrint { number: None, line: true });
+        game.set(0x13, 2);
+        let p = ask(&entities, &game, plain(), (ME, RABBIT, 1, 0));
+        assert!(p.number.is_some() && !p.line);
+        assert_eq!(ask(&entities, &game, plain(), (ME, RABBIT, kindless, 0)), RecordPrint { number: None, line: true });
     }
 
     /// FUN_1009e700: us before the party, the party (same party number) before the alliance, the caster first.
