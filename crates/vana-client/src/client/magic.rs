@@ -1404,22 +1404,33 @@ fn hover(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: b
     }
     let Some(win) = w.ability.as_ref().or(w.magic.as_ref()).filter(|x| !x.hidden) else { return };
     // The sort window with the focus takes the mouse as the generic window (rows as its keys count them).
+    // Auto-sort's sortyn over it the same: Yes 1, No 2.
+    if let Some(yes) = win.ask.filter(|_| win.sort.is_some()) {
+        let set = |w: &mut World, id: u16| {
+            if let Some(x) = w.ability.as_mut().or(w.magic.as_mut()) {
+                x.ask = Some(id == 1);
+            }
+        };
+        let c = if yes { 1 } else { 2 };
+        super::winhits::generic(w, gu, "menu    sortyn", c, 1..=2, p, clicked, false, set, |w, _, k| {
+            key(w, k);
+        });
+        return;
+    }
     if let (Some(sort), Some(c)) = (win.sort, win.sort_focus) {
-        if win.ask.is_none() {
-            let n = match sort {
-                "menu    blusortw" => 3,
-                "menu    mgcsortw" => 2,
-                _ => 1,
-            };
-            let set = |w: &mut World, id: u16| {
-                if let Some(x) = w.ability.as_mut().or(w.magic.as_mut()) {
-                    x.sort_focus = Some(id);
-                }
-            };
-            super::winhits::generic(w, gu, sort, c, 1..=n, p, clicked, false, set, |w, _, k| {
-                key(w, k);
-            });
-        }
+        let n = match sort {
+            "menu    blusortw" => 3,
+            "menu    mgcsortw" => 2,
+            _ => 1,
+        };
+        let set = |w: &mut World, id: u16| {
+            if let Some(x) = w.ability.as_mut().or(w.magic.as_mut()) {
+                x.sort_focus = Some(id);
+            }
+        };
+        super::winhits::generic(w, gu, sort, c, 1..=n, p, clicked, false, set, |w, _, k| {
+            key(w, k);
+        });
         return;
     }
     let menu = win.menu();
@@ -1555,10 +1566,12 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         // sortyn 16 px lower under blusortw (FUN_102227d0, inferred from its child count).
         if let Some(yes) = win.ask {
             let dy = if sort == "menu    blusortw" { 16.0 } else { 0.0 };
-            rects.extend(
+            if let Some(yn) =
                 gu.lobby_window_off("menu    sortyn", sw, sh, (0.0, dy), Some(if yes { 1 } else { 2 }), true, &[])
-                    .map(|x| x.frame),
-            );
+            {
+                super::winhits::record(w, "menu    sortyn", &yn);
+                rects.push(yn.frame);
+            }
         }
     }
     // subwindo for the cursor row: magic "MP Cost" (9 0xe6) and "Next" (9 0xe7); abilities by their kind.
