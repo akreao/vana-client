@@ -392,7 +392,15 @@ pub fn parse(r: &[u8], kind: Kind, lang: Lang, wide: bool) -> Item {
 /// (FUN_101ca190).
 pub fn named(lang: Lang, typed: &str, it: &Item) -> bool {
     use super::font::encode_sjis;
-    let t = encode_sjis(typed);
+    // A letter typed as Unicode Latin-1 (U+00C0..U+00FF: a keyboard's or a paste's accents) is the game's 0x85 row
+    // (0x85 0x9F..0xDE, the letter - 0x21), the bytes the game's own text and keyboard hold.
+    let t: Vec<u8> = typed
+        .chars()
+        .flat_map(|c| match c as u32 {
+            l @ 0xc0..=0xff => vec![0x85, (l - 0x21) as u8],
+            _ => encode_sjis(c.encode_utf8(&mut [0; 4])),
+        })
+        .collect();
     let (short, log) = (encode_sjis(&it.name), encode_sjis(&it.singular));
     match lang {
         Lang::Ja => t == short,
@@ -656,6 +664,24 @@ impl Items {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// DAT_10664118's rules: Japanese exact, English any case on either name, German and French through
+    /// FUN_101c9d00 with accents typed as Unicode taken as the game's 0x85 row.
+    #[test]
+    fn typed_names() {
+        use crate::dat::font::decode_sjis;
+        let it = Item {
+            name: "Ep. bronze".into(),
+            singular: decode_sjis(b"\x85\xc8p\x85\xc8e de bronze"),
+            ..Default::default()
+        };
+        assert!(named(Lang::Fr, "épée de bronze", &it));
+        assert!(named(Lang::Fr, "ÉPÉE DE BRONZE", &it));
+        assert!(named(Lang::Fr, "ep. BRONZE", &it));
+        assert!(!named(Lang::Fr, "epee de bronze", &it));
+        assert!(named(Lang::En, "EP. BRONZE", &it));
+        assert!(named(Lang::Ja, "Ep. bronze", &it) && !named(Lang::Ja, "ep. bronze", &it));
+    }
 
     /// FUN_1015b5c0: a new id takes the next slot round robin, from slot 1; a held id takes none; names stop at 30
     /// bytes.

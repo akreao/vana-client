@@ -38,12 +38,12 @@
   rest of a 200-byte line) our actor's flags (German FUN_1008aab0 bits 4..5, French FUN_1008ab00 bit 6, which
   FUN_1009afe0 sets female for races 2, 4, 6, 7); s2c 0x0CA's title line (FUN_10158940, 0x80 bytes) the race at
   @0x7f >> 2 the same way. Ours: Names::title_of(id, female, size); the plain `title` (message text, mods, the GM
-  list) is the male form.
+  list) is the male form; the modern status page takes the profile's rule.
 - Item names typed in /equip and /item (FUN_1007b276, FUN_101f12d0, FUN_101f1630 through DAT_10664118, set by
   FUN_101c9f20): Japanese the short name byte for byte (FUN_101ca100), English the short or the log name in any case
   (FUN_101ca150, _stricmp), German and French the short or the log name through FUN_101c9d00(.., 0) (table
   DAT_1037e358: case off, accented letters apart). Ours matched the short name in any case in every language:
-  dat::items::named now.
+  dat::items::named now. Accents typed as Unicode (U+00C0..U+00FF) are the game's 0x85 row there (the letter - 0x21).
 - Tests: dat::grammar::tests (the tables, the classes, the marks, the item templates), dat::names::tests::
   european_names (the installed German and French files).
 - Left (queue rows 235, 236): the German and French message grammar (articles and cases in text) and the actors'
