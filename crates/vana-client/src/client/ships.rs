@@ -285,7 +285,10 @@ pub fn apply(w: &mut World, ticks: f32, hidden: &std::collections::HashSet<u32>)
     let mut out = Vec::new();
     let mut inits = Vec::new();
     for (id, a) in w.ships.actors.iter_mut() {
-        let visible = w.entities.get(id).is_some_and(|e| e.flags & 2 == 0) && !hidden.contains(id);
+        // `hidden` is the whole rule (event::hide, FUN_1008e4d0): the server's hide unless a running event has the
+        // actor bound, then the script's alone, so a model the server sent hidden draws once the script shows it (the
+        // Mog Garden's plants).
+        let visible = w.entities.contains_key(id) && !hidden.contains(id);
         if let Some(&(at, yaw)) = placed.get(id) {
             if (a.pos - at).length() > 0.01 {
                 log::debug!("ship {id:#x}: the event places it at {at} yaw {yaw:.3}");
