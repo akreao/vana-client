@@ -1698,7 +1698,9 @@ impl Host for LiveHost<'_> {
                     // FUN_100940b0: the weather's effects switch at once too.
                     if wt != 0xff {
                         self.st.weather = Some(wt as u16);
-                        self.w.effects.set_weather(crate::dat::weather::weather_tag(wt as u16), 0.0);
+                        let tag = self.w.effects.weather_tag(wt as u16);
+                        self.w.effects.set_weather(tag, 0.0);
+                        self.w.weather_off = false;
                     }
                 }
             }
@@ -1722,13 +1724,16 @@ impl Host for LiveHost<'_> {
             Effect::Op { op: op @ (0x78 | 0xc9), .. } => {
                 self.st.clock = None;
                 if op == 0x78 {
-                    let wt = self.w.weather;
-                    let off = self.w.weather_chain.last().is_some_and(|c| c.0 != wt);
+                    // FUN_100940b0 -> FUN_1018d0e0: the server's number through the tag table in force.
+                    let tag = self.w.effects.weather_tag(self.w.weather);
+                    let tag4 = crate::dat::generator::fourcc(tag);
+                    let off = self.w.weather_chain.last().is_none_or(|c| c.0 != tag4);
                     if off {
-                        self.w.weather_chain = vec![(wt, Instant::now(), 0.0)];
+                        self.w.weather_chain = vec![(tag4, Instant::now(), 0.0)];
                     }
                     if self.st.weather.take().is_some() || off {
-                        self.w.effects.set_weather(crate::dat::weather::weather_tag(wt), 0.0);
+                        self.w.effects.set_weather(tag, 0.0);
+                        self.w.weather_off = false;
                     }
                 }
             }
@@ -1738,13 +1743,9 @@ impl Host for LiveHost<'_> {
             Effect::Op { op: 0xae, sub: Some(0), args, .. } => {
                 if let (Some(wt), Some(t)) = (Self::arg_int(&args, 0), Self::arg_int(&args, 1)) {
                     let (wt, secs) = (wt as u16, t.max(0) as f32 / 25.0);
-                    if self.w.weather_chain.last().is_none_or(|c| c.0 != wt) {
-                        if secs <= 0.0 {
-                            self.w.weather_chain.clear();
-                        }
-                        self.w.weather_chain.push((wt, Instant::now(), secs));
-                    }
-                    self.w.effects.set_weather(crate::dat::weather::weather_tag(wt), secs);
+                    let tag = self.w.effects.weather_tag(wt);
+                    weather_object(self.w, crate::dat::generator::fourcc(tag), secs);
+                    self.w.effects.set_weather(tag, secs);
                 }
             }
             // FUN_100b6950 / 6a00 / 69b0 / 6980 / 6a30: the event's door state (+0x174) for the bound actor.
@@ -3075,8 +3076,13 @@ fn finish(w: &mut World, live: Box<Live>) {
     w.buffs_hidden = false;
     // Op 0x77's weather without its 0x78: the lighting goes back with the event, so the effects do too.
     if live.st.weather.is_some() {
-        let wt = w.weather;
-        w.effects.set_weather(crate::dat::weather::weather_tag(wt), 0.0);
+        let tag = w.effects.weather_tag(w.weather);
+        w.effects.set_weather(tag, 0.0);
+        // A weather object stands again where op 0x7e deleted them all during the hold.
+        if w.weather_chain.is_empty() {
+            w.weather_chain.push((crate::dat::generator::fourcc(tag), Instant::now(), 0.0));
+        }
+        w.weather_off = false;
     }
     // FUN_100ae3f0 (0x100ae452) with flag 0x8000 (LSB GROUND_SNAP_ON_END): an actor's place (+4 and the server's
     // +0x24) becomes where its model is (+0x44) with the height put back on the floor: a player character's by
@@ -3567,10 +3573,39 @@ pub fn weather(w: &World) -> u16 {
     w.event.as_ref().and_then(|l| l.st.weather).unwrap_or(w.weather)
 }
 
-/// Scheduler ops 0x7c / 0x7d (fx::EnvOp) on the clock and weather op 0x77 holds.
+/// FUN_10188ac0 on the client's copy of the weather objects (`World::weather_chain`, the env's side of them): a new
+/// one for `tag` unless the newest has it, blended in over `secs`; with no blend time the older ones go at once.
+pub fn weather_object(w: &mut World, tag: [u8; 4], secs: f32) {
+    if w.weather_chain.last().is_none_or(|c| c.0 != tag) {
+        if secs <= 0.0 {
+            w.weather_chain.clear();
+        }
+        w.weather_chain.push((tag, Instant::now(), secs));
+    }
+    w.weather_off = false;
+}
+
+/// An event's scene load (ops 0x34 / 0x35, FUN_1018c970) on the client's copy of the weather objects: the tag table
+/// is back at 0, so a second-table tag goes back to the first table's, and a weather object stands again (`tag`'s)
+/// where op 0x7e had deleted them all.
+pub fn weather_reloaded(w: &mut World, tag: &str) {
+    use crate::dat::weather::{WEATHER_TAGS, table_find};
+    for c in w.weather_chain.iter_mut() {
+        if let Some(n) = table_find(1, c.0) {
+            c.0 = crate::dat::generator::fourcc(WEATHER_TAGS[n as usize]);
+        }
+    }
+    if w.weather_chain.is_empty() {
+        w.weather_chain.push((crate::dat::generator::fourcc(tag), Instant::now(), 0.0));
+    }
+    w.weather_off = false;
+}
+
+/// The client's side of scheduler ops 0x7c / 0x7d / 0x7e / 0xae (fx::EnvOp): the clock, the env's weather objects and
+/// the static env. The weather's generators and schedulers changed inside the op (Effects::change_weather).
 pub fn env_op(w: &mut World, op: crate::fx::EnvOp) {
     match op {
-        // FUN_1018c210: hour, minute and second of `v`, the day kept. Outside an event ours runs on the server's.
+        // FUN_1018d7e0: hour, minute and second of `v`, the day kept. Outside an event ours runs on the server's.
         crate::fx::EnvOp::Clock(v) => match w.event.as_mut() {
             Some(l) => {
                 let held = l.st.clock;
@@ -3580,31 +3615,28 @@ pub fn env_op(w: &mut World, op: crate::fx::EnvOp) {
             }
             None => log::debug!("scheduler op 0x7d (time {v}) outside an event: not applied"),
         },
-        // FUN_101874f0 with keep 0: a new tag kills the old weather's effects at once; the env blends over `blend`
-        // clock units (1500 a second).
-        crate::fx::EnvOp::Weather { tag, blend } => {
-            let name = String::from_utf8_lossy(&tag.to_le_bytes()).trim_end_matches('\0').to_string();
-            let secs = blend.max(0) as f32 / 1500.0;
-            match crate::dat::weather::WEATHER_TAGS.iter().position(|t| *t == name) {
-                Some(n) => {
-                    let n = n as u16;
-                    match w.event.as_mut().filter(|l| l.st.weather.is_some()) {
-                        Some(l) => l.st.weather = Some(n),
-                        None if w.weather_chain.last().is_none_or(|c| c.0 != n) => {
-                            if secs <= 0.0 {
-                                w.weather_chain.clear();
-                            }
-                            w.weather_chain.push((n, Instant::now(), secs));
-                        }
-                        None => {}
-                    }
-                }
-                None => log::debug!("scheduler op 0x7c: weather {name:?} has no number"),
+        // FUN_10188ac0 made a weather object for `tag`. While op 0x77 holds a weather the hold takes it, as a number
+        // of the tag table in force (a tag the table lacks is left to the hold's number).
+        crate::fx::EnvOp::Weather { tag, seconds } => {
+            let table = w.effects.weather_table();
+            match w.event.as_mut().filter(|l| l.st.weather.is_some()) {
+                Some(l) => match crate::dat::weather::table_find(table, tag) {
+                    Some(n) => l.st.weather = Some(n),
+                    None => log::debug!(
+                        "scheduler weather {:?} under op 0x77's hold is not in tag table {table}",
+                        String::from_utf8_lossy(&tag)
+                    ),
+                },
+                None => weather_object(w, tag, seconds),
             }
-            w.effects.set_weather(&name, 0.0);
-            w.static_env = None;
+            w.weather_off = false;
         }
-        crate::fx::EnvOp::Static(e) => w.static_env = Some(e),
+        // FUN_1018c5e0: the block is the static env from now on, and no weather object is left.
+        crate::fx::EnvOp::Static(e) => {
+            w.static_env = Some(e);
+            w.weather_chain.clear();
+            w.weather_off = true;
+        }
     }
 }
 

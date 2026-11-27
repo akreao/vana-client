@@ -102,10 +102,12 @@ pub struct Flyover {
     fade: ([f32; 3], [f32; 3], f32, f32),
     /// Crossfade: the outgoing camera, start tick, length.
     cross: Option<(Camera, f32, f32)>,
-    /// Lighting state: clock (minutes), weather tag, and an op 0x7e override.
+    /// Lighting state: clock (minutes), weather tag, op 0x7e's static env, and whether that op deleted the weather
+    /// objects with none made since (the static env alone lights the scene).
     minute: f32,
     weather: String,
     env: Option<Env>,
+    weather_off: bool,
     /// Op 0x0e's blur (r, g, b, a, zoom: from, to, start tick, length), its restarts, and its pass.
     blur: ([f32; 5], [f32; 5], f32, f32),
     blur_starts: u32,
@@ -139,6 +141,7 @@ impl Flyover {
             minute,
             weather: "suny".into(),
             env: None,
+            weather_off: false,
             blur: ([0.0; 5], [0.0; 5], 0.0, 0.0),
             blur_starts: 0,
             screen_fx: None,
@@ -209,13 +212,24 @@ impl Flyover {
                         fx.set_minute(self.minute);
                     }
                 }
-                Op::Env(name) => self.env = self.data.envs.iter().find(|e| e.0 == name).map(|e| e.1),
+                // FUN_1018c5e0: the block becomes the static env and every weather object is deleted (FUN_10189fe0),
+                // its generators with it; a block the file lacks changes nothing.
+                Op::Env(name) => {
+                    if let Some(e) = self.data.envs.iter().find(|e| e.0 == name).map(|e| e.1) {
+                        self.env = Some(e);
+                        self.weather_off = true;
+                        if let Some(fx) = &mut self.effects {
+                            fx.end_weather();
+                        }
+                    }
+                }
+                // FUN_10188ac0: a weather object again; the static env stays for a weather the zone has no env for.
                 Op::Weather { tag, .. } => {
                     if let Some(fx) = &mut self.effects {
                         fx.set_weather(&tag);
                     }
                     self.weather = tag;
-                    self.env = None;
+                    self.weather_off = false;
                 }
                 Op::Other(0) if self.cursor > 1 => self.done = true,
                 _ => {}
@@ -294,7 +308,9 @@ impl Flyover {
         let f = self.fade_colour();
         let b = self.blur_now();
         let tick = self.tick;
-        let env = self.env.or_else(|| self.data.weather.as_ref().and_then(|w| w.at(&self.weather, self.minute)));
+        // FUN_10188a70: the weather object's env, else the static one (op 0x7e's block).
+        let zone_env = || self.data.weather.as_ref().and_then(|w| w.at(&self.weather, self.minute));
+        let env = if self.weather_off { self.env } else { zone_env().or(self.env) };
         // Op 0x7b (FUN_1018b3a0, as the 0x00A zone-in): the zone's fog and draw constants under the Clipping factor.
         let zone_id = self.data.zone as u16;
         let lighting = env.map(|e| {

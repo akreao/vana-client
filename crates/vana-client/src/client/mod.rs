@@ -8564,14 +8564,17 @@ struct World {
     /// The chat line's history (kept on the App between logins).
     line_hist: linehist::LineHistory,
     weather: u16,
-    /// The weather objects, oldest first (FUN_1018a7a0 links the previous newest as the child): weather, when it came
-    /// and its blend time (0x057 @0x0a Vana minutes x 2.4 s; 0 for the base).
-    weather_chain: Vec<(u16, Instant, f32)>,
+    /// The weather objects, oldest first (FUN_1018bd70 links the previous newest as the child): the weather's tag,
+    /// when it came and its blend time (0x057 @0x0a Vana minutes x 2.4 s; 0 for the base).
+    weather_chain: Vec<([u8; 4], Instant, f32)>,
+    /// Scheduler op 0x7e deleted every weather object (FUN_1018c5e0 -> FUN_10189fe0) and none was made since: the
+    /// scene is lit by the static env alone.
+    weather_off: bool,
     /// The ground's wetness in the rain (render/rain.rs), followed whether Wet Ground is on or not; a new login starts
     /// it afresh.
     wetness: crate::render::rain::Wetness,
-    /// Scheduler op 0x7e's env (fx::EnvOp::Static), used where the zone has no env for the weather; a 0x7c or a
-    /// zone change drops it.
+    /// Scheduler op 0x7e's env (fx::EnvOp::Static), retail's static env DAT_1065dc10: what the scene is lit by with
+    /// no weather object (`weather_off`) or where the zone has no env for the weather. A zone change drops it.
     static_env: Option<crate::dat::weather::Env>,
     zone_weather: Option<crate::dat::weather::ZoneWeather>,
     /// FUN_10187720's eased lights: the zone's, each area's (by sub-area or zone, 4cc), and the time not yet stepped
@@ -11257,6 +11260,7 @@ impl App {
                             client_version: self.cfg.client_version.clone(),
                             weather: 1,
                             weather_chain: Vec::new(),
+                            weather_off: false,
                             wetness: Default::default(),
                             static_env: None,
                             zone_weather: None,
@@ -11743,7 +11747,9 @@ impl App {
                         world.lamps = Default::default();
                         if let Some(l) = fx {
                             world.effects.load_area(l);
-                            world.effects.set_weather(crate::dat::weather::weather_tag(event::weather(world)), 0.0);
+                            let tag = world.effects.weather_tag(event::weather(world));
+                            world.effects.set_weather(tag, 0.0);
+                            event::weather_reloaded(world, tag);
                         }
                         if let Some(gfx) = &self.gfx {
                             world.effects.reg.light_keys = geometry.light_keys.clone();
@@ -12016,7 +12022,8 @@ impl App {
                         world.effects.set_index(index);
                     }
                     world.effects.load_zone(z);
-                    world.effects.set_weather(crate::dat::weather::weather_tag(world.weather), 0.0);
+                    let tag = world.effects.weather_tag(world.weather);
+                    world.effects.set_weather(tag, 0.0);
                 }
                 world.lamps = Default::default();
                 world.zone_lines = scene
@@ -12236,7 +12243,9 @@ impl App {
             w.area_ease.clear();
             if let Some(l) = fx {
                 w.effects.switch_zone(l, true);
-                w.effects.set_weather(crate::dat::weather::weather_tag(event::weather(w)), 0.0);
+                let tag = w.effects.weather_tag(event::weather(w));
+                w.effects.set_weather(tag, 0.0);
+                event::weather_reloaded(w, tag);
             }
             if let Some(r) = &w.renderer {
                 w.effects.reg.light_keys = r.light_keys.clone();
@@ -12571,7 +12580,10 @@ impl App {
                         world.ko_deadline = (game_time as u64 + (dead_counter / 60) as u64).saturating_sub(360);
                     }
                     world.weather = weather;
-                    world.weather_chain = vec![(weather, Instant::now(), 0.0)];
+                    // The zone-in's scene load (FUN_1018c970) puts the tag table back to 0 first.
+                    let tag = crate::dat::generator::fourcc(crate::dat::weather::weather_tag(weather));
+                    world.weather_chain = vec![(tag, Instant::now(), 0.0)];
+                    world.weather_off = false;
                     world.static_env = None;
                     // The zone teardown closes the credits roll too.
                     world.credits = None;
@@ -13324,18 +13336,14 @@ impl App {
                     entry_name,
                 ),
                 NetEvent::Weather(w, minutes) => {
-                    // FUN_101874f0: a new weather object only for a new number; it blends from the current mix over
-                    // the change's time, at once with none (the chain goes).
+                    // FUN_1009f2f0 -> FUN_10188ac0: a new weather object only for a new tag (the number through the
+                    // tag table in force, FUN_1018d0e0); it blends from the current mix over the change's time, at
+                    // once with none (the chain goes). One Vana'diel minute is 2.4 s (u16 @0x0a x 3600 units).
                     let secs = minutes as f32 * 2.4;
-                    if world.weather_chain.last().is_none_or(|c| c.0 != w) {
-                        if secs <= 0.0 {
-                            world.weather_chain.clear();
-                        }
-                        world.weather_chain.push((w, Instant::now(), secs));
-                    }
+                    let tag = world.effects.weather_tag(w);
+                    event::weather_object(world, crate::dat::generator::fourcc(tag), secs);
                     world.weather = w;
-                    // One Vana'diel minute is 2.4 s (FUN_101804d0's duration is u16 @0x0a x 3600 units).
-                    world.effects.set_weather(crate::dat::weather::weather_tag(w), minutes as f32 * 2.4);
+                    world.effects.set_weather(tag, secs);
                 }
                 NetEvent::Assist { player, target: t } => target::assist(world, player, t),
                 // FUN_10098710: tables 0..7 only; the owned bits, then the seen bits (keyitems::Seen).
@@ -20556,29 +20564,30 @@ fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &Worl
         if let Some(k) = w.weather_chain.iter().rposition(|c| c.2 <= 0.0 || c.1.elapsed().as_secs_f32() >= c.2) {
             w.weather_chain.drain(..k);
         }
-        let chain: Vec<(&str, f32)> = match ev_weather {
-            Some(x) => vec![(crate::dat::weather::weather_tag(x), 1.0)],
-            None if w.weather_chain.is_empty() => vec![(crate::dat::weather::weather_tag(w.weather), 1.0)],
+        let tag_of = |t: &[u8; 4]| String::from_utf8_lossy(t).trim_end_matches('\0').to_string();
+        let chain: Vec<(String, f32)> = match ev_weather {
+            // No weather object since op 0x7e (FUN_10188a70 finds none at the zone object's +0x10): the env pointer
+            // stays on the static block.
+            _ if w.weather_off => Vec::new(),
+            Some(x) => vec![(w.effects.weather_tag(x).to_string(), 1.0)],
+            None if w.weather_chain.is_empty() => vec![(w.effects.weather_tag(w.weather).to_string(), 1.0)],
             None => w
                 .weather_chain
                 .iter()
-                .map(|c| {
-                    (
-                        crate::dat::weather::weather_tag(c.0),
-                        if c.2 <= 0.0 { 1.0 } else { (c.1.elapsed().as_secs_f32() / c.2).min(1.0) },
-                    )
-                })
+                .map(|c| (tag_of(&c.0), if c.2 <= 0.0 { 1.0 } else { (c.1.elapsed().as_secs_f32() / c.2).min(1.0) }))
                 .collect(),
         };
         let mix = |a: &dyn Fn(&str) -> Option<crate::dat::weather::Env>| -> Option<crate::dat::weather::Env> {
-            let mut env = a(chain[0].0)?;
-            for &(tag, t) in &chain[1..] {
+            let mut env = a(&chain.first()?.0)?;
+            for (tag, t) in chain.iter().skip(1) {
                 if let Some(e) = a(tag) {
-                    env = crate::dat::weather::Env::lerp(&env, &e, t);
+                    env = crate::dat::weather::Env::lerp(&env, &e, *t);
                 }
             }
             Some(env)
         };
+        // FUN_1018c5e0 (0x1018c65e) points every area object's env at the static block too.
+        let off = w.weather_off.then(|| crate::dat::weather::Env::scene(None, w.static_env));
         // FUN_10187720 once a 2-tick retail frame (stock 30 fps), held between them.
         w.light_acc += dt * 60.0;
         let mut steps = 0;
@@ -20629,7 +20638,7 @@ fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &Worl
             .into_iter()
             .flat_map(|zw| zw.areas.iter())
             .chain(sub_areas)
-            .filter_map(|(&id, a)| Some((id, mix(&|t| a.at(t, minute))?.area_light())))
+            .filter_map(|(&id, a)| Some((id, off.or_else(|| mix(&|t| a.at(t, minute)))?.area_light())))
             .collect();
         // Scenery areas (FUN_101889c0 finds the area object by 4cc, the sub-area's after the zone's), each
         // with its eased light.
@@ -20637,7 +20646,9 @@ fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &Worl
         let mut lights = Vec::with_capacity(keys.len());
         for k in keys {
             let sub = w.sub.weather.as_ref().and_then(|s| s.areas.get(&k));
-            let e = sub.or_else(|| zw.and_then(|zw| zw.areas.get(&k))).and_then(|a| mix(&|t| a.at(t, minute)));
+            let e = sub
+                .or_else(|| zw.and_then(|zw| zw.areas.get(&k)))
+                .and_then(|a| off.or_else(|| mix(&|t| a.at(t, minute))));
             lights.push(e.map(|e| step(w.area_ease.entry((sub.is_some(), k)).or_default(), &e)));
         }
         r.set_area_lights(lights);

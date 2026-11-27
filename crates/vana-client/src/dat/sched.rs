@@ -543,4 +543,67 @@ mod census {
             println!("op {code:02x}: {n} in {} files ({lo}..{hi})", files.len());
         }
     }
+
+    /// The weather ops across every DAT (row 188): 0x7b (the scene, FUN_1018c970), 0x7c (the weather, FUN_10188ac0),
+    /// 0x7e (a fixed env, FUN_1018c5e0) and 0xae (the weather tag table, FUN_1018d0b0), with their file, folder path
+    /// and bytes (by hand: `cargo test --release weather_op_census -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn weather_op_census() {
+        let Ok(index) = crate::dat::DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let trim = |n: [u8; 4]| String::from_utf8_lossy(&n).trim_end_matches(['\0', ' ']).to_string();
+        let mut hist: std::collections::BTreeMap<u8, (usize, std::collections::BTreeSet<u32>)> = Default::default();
+        for id in 0..index.len() as u32 {
+            let Ok(file) = index.read(id) else { continue };
+            let Ok(tree) = Tree::build(&file) else { continue };
+            for node in tree.of_kind(kind::SCHEDULER).collect::<Vec<_>>() {
+                let data = &file[tree.nodes[node].data.clone()];
+                for o in ops(data) {
+                    if !matches!(o.code, 0x7b | 0x7c | 0x7e | 0xae) {
+                        continue;
+                    }
+                    let e = hist.entry(o.code).or_default();
+                    e.0 += 1;
+                    e.1.insert(id);
+                    let path: Vec<String> = tree.path(node).into_iter().map(trim).collect();
+                    let hex: Vec<String> = o.raw.iter().map(|b| format!("{b:02x}")).collect();
+                    println!(
+                        "{id} {}/{} auto {} op {:02x}: {}",
+                        path.join("/"),
+                        trim(tree.nodes[node].name),
+                        auto_start(data),
+                        o.code,
+                        hex.join("")
+                    );
+                }
+            }
+            // The second tag table's folders (0x10378cd0: "fin1" ... "dar1") under a `weat`.
+            for (n, x) in tree.nodes.iter().enumerate() {
+                if x.kind == kind::FOLDER
+                    && x.name[3] == b'1'
+                    && x.parent.is_some_and(|p| &tree.nodes[p].name == b"weat")
+                {
+                    let (g, s) = (0..tree.nodes.len()).fold((0, 0), |(g, s), k| {
+                        let mut i = k;
+                        let inside = loop {
+                            match tree.nodes[i].parent {
+                                Some(p) if p == n => break true,
+                                Some(p) => i = p,
+                                None => break false,
+                            }
+                        };
+                        match tree.nodes[k].kind {
+                            kind::GENERATOR if inside => (g + 1, s),
+                            kind::SCHEDULER if inside => (g, s + 1),
+                            _ => (g, s),
+                        }
+                    });
+                    println!("{id} weat/{}: {g} generators, {s} schedulers", trim(x.name));
+                }
+            }
+        }
+        for (code, (n, files)) in &hist {
+            println!("op {code:02x}: {n} in {} files: {:?}", files.len(), files);
+        }
+    }
 }

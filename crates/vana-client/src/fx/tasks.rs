@@ -2449,19 +2449,56 @@ impl Effects {
                 }
                 Flow::Next
             }
+            // 0x10057fdf: FUN_1018c970(u32 @8) loads scene u32 @8 as a zone-in does (the tag table back to 0, the old
+            // scene's weather objects deleted, FUN_1018cad0). Only the title's and the character creator's movies hold
+            // it (files 23..26, census `weather_op_census`), which client/flyover.rs plays; no file the game loads
+            // into this list does.
+            0x7b => Flow::Next,
+            // 0x1005801e: FUN_10188ac0(4cc @8, the op's duration, 0), with a zone object (DAT_1065dcbc). The duration
+            // (i16 @6) is the second argument, which FUN_10188ac0 hands to the linked object's call and never reads;
+            // the third, the blend time, is 0, so the older weather objects go at once. All inside the op: the old
+            // generators and schedulers end, the new folder's schedulers start with their first update, its
+            // generators start.
             0x7c => {
-                self.env_ops.push(super::EnvOp::Weather { tag: op.u32_at(8), blend: op.u16_at(6) as i16 });
+                let tag = op.u32_at(8).to_le_bytes();
+                if self.change_weather(tag, 0.0, Some(actors)) {
+                    self.env_ops.push(super::EnvOp::Weather { tag, seconds: 0.0 });
+                }
                 Flow::Next
             }
             0x7d => {
                 self.env_ops.push(super::EnvOp::Clock(op.u32_at(8)));
                 Flow::Next
             }
+            // 0x10058469: the scoped 0x2f block (FUN_10072290) + 0x30 to FUN_1018c5e0: copied over the static env,
+            // then FUN_10189fe0 deletes every weather object (their generators and schedulers end inside the op) and
+            // each zone object's env pointer goes to the static block (FUN_10189690). No block: nothing.
             0x7e => {
                 if let Some(r) = scope(self, 0x2f)
                     && let Some(e) = crate::dat::weather::Env::parse(self.reg.libs[r.0].data(r.1))
                 {
+                    self.end_weathers();
                     self.env_ops.push(super::EnvOp::Static(e));
+                }
+                Flow::Next
+            }
+            // 0x1005d01f: the weather tag table. i = the newest weather object's tag in the table in force
+            // (FUN_10189680, FUN_1018d0f0: 0 when it is not there or there is no object); the table becomes u32 @8
+            // (FUN_1018d0b0: above 1 is 0); then FUN_10188ac0(the new table's tag i, 0, trunc(f32 @0xc x 3600)): the
+            // same weather under the other table's folder, blended in over f32 @0xc Vana'diel minutes (3600 clock
+            // units each, 1500 a second), at once with 0. The doors of the Silver Sea ferries (158 / 159) and of the
+            // Remnants (173..177) hold it.
+            0xae => {
+                let i = self.weather_now().map_or(0, |t| crate::dat::weather::table_index(self.weather_table, t));
+                self.weather_table = if op.u32_at(8) <= 1 { op.u32_at(8) as u8 } else { 0 };
+                let tag = crate::dat::generator::fourcc(self.weather_tag(i));
+                // FUN_1018d210: a time above 0x6f3c9000 (360 days) wraps into 1..=0x6f3c9000.
+                const YEAR: i32 = 0x6f3c_9000;
+                let units = (f32::from_bits(op.u32_at(0xc)) * 3600.0) as i32;
+                let units = if units > YEAR { (units - 1) % YEAR + 1 } else { units };
+                let seconds = units as f32 / 1500.0;
+                if self.change_weather(tag, seconds, Some(actors)) {
+                    self.env_ops.push(super::EnvOp::Weather { tag, seconds });
                 }
                 Flow::Next
             }
@@ -4558,6 +4595,185 @@ mod tests {
         assert_eq!((counts.as_slice(), names), (&[8.0, 6.0, 4.0, 2.0, 98.0, 96.0][..], vec!["!w02".to_string()]));
     }
 
+    /// A resource of a made-up scene file: a folder, a scheduler (looping: self-starting) or a 0x2f env block.
+    enum Res {
+        Folder(&'static [u8; 4], Vec<Res>),
+        Sched(&'static [u8; 4], Vec<SOp>, bool),
+        Env(&'static [u8; 4]),
+    }
+
+    fn res_dat(items: &[Res], dat: &mut Vec<u8>) {
+        let head = |name: &[u8; 4], units: u32, kind: u8| {
+            let mut h = vec![0u8; 16];
+            h[..4].copy_from_slice(name);
+            h[4..8].copy_from_slice(&((units << 7) | u32::from(kind)).to_le_bytes());
+            h
+        };
+        for r in items {
+            match r {
+                Res::Folder(name, inner) => {
+                    dat.extend(head(name, 1, kind::FOLDER));
+                    res_dat(inner, dat);
+                    dat.extend(head(b"end ", 1, kind::END));
+                }
+                Res::Sched(name, ops, looping) => {
+                    let mut chunk = vec![0; 0x30];
+                    chunk[0x24..0x28].copy_from_slice(&0x30u32.to_le_bytes());
+                    for op in ops {
+                        chunk.extend(&op.raw);
+                    }
+                    if *looping {
+                        // The end stream: an op 0x01, then the end.
+                        let at = chunk.len() as u32;
+                        chunk[0x28..0x2c].copy_from_slice(&at.to_le_bytes());
+                        chunk.extend([1, 2, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0]);
+                    }
+                    chunk.resize(chunk.len().next_multiple_of(16), 0);
+                    let h = head(name, chunk.len() as u32 / 16, kind::SCHEDULER);
+                    chunk[..16].copy_from_slice(&h);
+                    dat.extend(chunk);
+                }
+                Res::Env(name) => {
+                    dat.extend(head(name, 12, 0x2f));
+                    dat.extend(vec![0u8; 0xb0]);
+                }
+            }
+        }
+    }
+
+    /// Row 188: the weather ops change the weather objects inside the op. Op 0x7c (FUN_10188ac0 with no blend
+    /// time; its duration is never read): the old folder's tasks end, the new folder's self-starting scheduler starts
+    /// and takes its first update there, so a task it makes runs the op's scheduler again in the same walk. A tag the
+    /// file lacks takes `suny`, whose name is then the tag in force. Op 0x7e with its block deletes every weather
+    /// object; without it nothing changes. Op 0xae swaps the tag table and makes the same weather's other folder,
+    /// blended over f32 @0xc Vana'diel minutes (the older object stays) or at once with 0.
+    #[test]
+    fn weather_ops_change_the_weather_inside_the_op() {
+        use crate::fx::EnvOp;
+        let fc = crate::dat::generator::fourcc;
+        let table_op = |table: u32, minutes: f32| {
+            let mut raw = vec![0u8; 16];
+            (raw[0], raw[1]) = (0xae, 4);
+            raw[8..12].copy_from_slice(&table.to_le_bytes());
+            raw[12..16].copy_from_slice(&minutes.to_le_bytes());
+            SOp { code: 0xae, wait: 0, dur: 0, raw }
+        };
+        let name_op = |code: u8, dur: i16, name: &[u8; 4]| sop(code, 0, dur, u32::from_le_bytes(*name));
+        struct Out {
+            counts: Vec<f32>,
+            live: Vec<String>,
+            env: Vec<String>,
+            now: Option<[u8; 4]>,
+            objects: usize,
+            table: u8,
+        }
+        let run = |ops: Vec<SOp>, makes: bool| -> Out {
+            let body = |first: bool| {
+                let mut o = if first && makes { vec![sop(0x72, 0, 0, 0)] } else { Vec::new() };
+                o.extend([sop(0x01, 50, 0, 0), sop(0x00, 0, 0, 0)]);
+                o
+            };
+            let mut dat = Vec::new();
+            res_dat(
+                &[
+                    Res::Sched(
+                        b"prnt",
+                        [vec![sop(0x01, 10, 0, 0)], ops, vec![sop(0x01, 100, 0, 0), sop(0, 0, 0, 0)]].concat(),
+                        false,
+                    ),
+                    Res::Env(b"s101"),
+                    Res::Folder(
+                        b"weat",
+                        vec![
+                            Res::Folder(b"suny", vec![Res::Sched(b"sunA", body(false), true)]),
+                            Res::Folder(b"rain", vec![Res::Sched(b"raiA", body(true), true)]),
+                            Res::Folder(b"sun1", vec![Res::Sched(b"su1A", body(true), true)]),
+                        ],
+                    ),
+                ],
+                &mut dat,
+            );
+            let mut fx = Effects::new();
+            let l = fx.load_zone(Library::load(900, dat).unwrap());
+            fx.set_weather("suny", 0.0);
+            let r = (l, fx.reg.libs[l].tree.nodes.iter().position(|n| &n.name == b"prnt").unwrap());
+            let ops = fx.sched_ops(r);
+            fx.tasks.push(Some(Task::new(r, ops, Who::None, Who::None, None, 1.0)));
+            let f = ticks_frame(RETAIL_FRAME);
+            let actors = Armed { invisible: false };
+            let (mut counts, mut env) = (Vec::new(), Vec::new());
+            for _ in 0..6 {
+                fx.tick(&f, &actors);
+                for e in fx.env_ops.drain(..) {
+                    env.push(match e {
+                        EnvOp::Weather { tag, seconds } => format!("{} {seconds}", String::from_utf8_lossy(&tag)),
+                        EnvOp::Static(_) => "static".into(),
+                        EnvOp::Clock(_) => "clock".into(),
+                    });
+                }
+                let named = |t: &Task| &fx.reg.libs[t.res.0].tree.nodes[t.res.1].name == b"prnt";
+                counts.push(fx.tasks.iter().flatten().find(|t| named(t)).map_or(-1.0, |t| t.countdown));
+            }
+            let mut live: Vec<String> = fx
+                .tasks
+                .iter()
+                .flatten()
+                .map(|t| String::from_utf8_lossy(&fx.reg.libs[t.res.0].tree.nodes[t.res.1].name).into_owned())
+                .filter(|n| n != "prnt")
+                .collect();
+            live.sort();
+            live.dedup();
+            Out { counts, live, env, now: fx.weather_now(), objects: fx.weathers.len(), table: fx.weather_table() }
+        };
+        // Op 0x7c: `rain`'s scheduler makes a task in its first update, inside the op: the scheduler runs again in
+        // frame 5's walk. The duration (200 here) blends nothing.
+        let o = run(vec![name_op(0x7c, 200, b"rain")], true);
+        assert_eq!(o.counts, [8.0, 6.0, 4.0, 2.0, 98.0, 96.0]);
+        assert_eq!(
+            (o.live, o.env, o.now, o.objects),
+            (vec!["raiA".to_string()], vec!["rain 0".to_string()], Some(fc("rain")), 1)
+        );
+        assert_eq!(run(vec![name_op(0x7c, 0, b"rain")], false).counts, [8.0, 6.0, 4.0, 2.0, 100.0, 98.0]);
+        // The tag in force: nothing.
+        let o = run(vec![name_op(0x7c, 0, b"suny")], true);
+        assert_eq!((o.live, o.env.len(), o.objects), (vec!["sunA".to_string()], 0, 1));
+        // A tag the file lacks: `suny`'s folder again, and `suny` is the tag in force, so a second ask does it again.
+        let o = run(vec![name_op(0x7c, 0, b"snow"), name_op(0x7c, 0, b"snow")], true);
+        assert_eq!((o.live, o.env, o.now), (vec!["sunA".to_string()], vec!["snow 0".to_string(); 2], Some(fc("suny"))));
+        // Op 0x7e: with its block no weather object is left; with none nothing changes.
+        let o = run(vec![name_op(0x7e, 0, b"s101")], true);
+        assert_eq!((o.live, o.env, o.now, o.objects), (Vec::<String>::new(), vec!["static".to_string()], None, 0));
+        let o = run(vec![name_op(0x7e, 0, b"s999")], true);
+        assert_eq!((o.live, o.env.len(), o.now), (vec!["sunA".to_string()], 0, Some(fc("suny"))));
+        // After it the same tag makes an object again.
+        let o = run(vec![name_op(0x7e, 0, b"s101"), name_op(0x7c, 0, b"suny")], true);
+        assert_eq!(
+            (o.live, o.env, o.objects),
+            (vec!["sunA".to_string()], vec!["static".to_string(), "suny 0".to_string()], 1)
+        );
+        // Op 0xae: table 1's folder of the weather in force, over 30 Vana'diel minutes (72 s) beside the old object;
+        // every `weat` scheduler's tasks end at once all the same, and the new one's first update is inside the op.
+        let o = run(vec![table_op(1, 30.0)], true);
+        assert_eq!(o.counts, [8.0, 6.0, 4.0, 2.0, 98.0, 96.0]);
+        assert_eq!(
+            (o.live, o.env, o.now, o.objects, o.table),
+            (vec!["su1A".to_string()], vec!["sun1 72".to_string()], Some(fc("sun1")), 2, 1)
+        );
+        // And back at once; a table above 1 is table 0.
+        let o = run(vec![table_op(1, 0.0), table_op(0, 0.0)], true);
+        assert_eq!(
+            (o.live, o.env, o.now, o.objects, o.table),
+            (vec!["sunA".to_string()], vec!["sun1 0".to_string(), "suny 0".to_string()], Some(fc("suny")), 1, 0)
+        );
+        let o = run(vec![table_op(1, 0.0), table_op(2, 0.0)], true);
+        assert_eq!((o.now, o.table), (Some(fc("suny")), 0));
+        // The table in force names the server's weather numbers (FUN_1018d0e0).
+        let mut fx = Effects::new();
+        assert_eq!((fx.weather_tag(6), fx.weather_tag(26)), ("rain", "rai1"));
+        fx.weather_table = 1;
+        assert_eq!((fx.weather_tag(6), fx.weather_tag(26)), ("rai1", "suny"));
+    }
+
     /// Op 0x2e (dur 30): the root holds while its counter is not below 0, so the restart comes on the 31st frame;
     /// a scheduler killed at frame 10 ends it there.
     #[test]
@@ -6517,6 +6733,40 @@ mod auto_tests {
 
     fn frame(dayfrac: f32) -> Frame {
         Frame { dayfrac, eye: Vec3::new(0.0, -2.0, -10.0), ..super::tests::ticks_frame(crate::fx::RETAIL_FRAME) }
+    }
+
+    /// DAT 158 (a Silver Sea ferry): the door `_1m6`'s `evst` holds op 0xae (table 1, 30 Vana'diel minutes) and its
+    /// `eved` op 0xae (table 0, 30). From `suny`, `evst` makes `sun1`'s object beside the old one, with that folder's
+    /// generators; `eved` makes `suny`'s again; `ints` (table 1, no time) deletes the others at once.
+    #[test]
+    fn ferry_door_swaps_the_weather_table() {
+        let Some(index) = index() else { return };
+        let Ok(bytes) = index.read(158) else { return };
+        let mut fx = Effects::new();
+        fx.set_index(index.clone());
+        fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
+        let l = fx.load_zone(Library::load(158, bytes).unwrap());
+        fx.set_weather("suny", 0.0);
+        let play = |fx: &mut Effects, name: &str| {
+            let r = (l, sched(&fx.reg.libs[l], &["door", "_1m6"], name));
+            let i = fx.spawn_task(r, Who::None, Who::None, None, 1.0, None);
+            fx.run_new(i, &crate::fx::NoActors);
+            fx.env_ops.drain(..).filter(|e| matches!(e, crate::fx::EnvOp::Weather { .. })).count()
+        };
+        let owned = |fx: &Effects| {
+            let newest = fx.weathers.last().map(|w| w.serial);
+            fx.insts.iter().flatten().filter(|x| matches!(x.owner, Owner::Weather(s) if Some(s) == newest)).count()
+        };
+        assert_eq!((fx.weather_now(), fx.weather_table(), fx.weather_tag(1)), (Some(fourcc("suny")), 0, "suny"));
+        assert_eq!(play(&mut fx, "evst"), 1);
+        assert_eq!((fx.weather_now(), fx.weather_table(), fx.weathers.len()), (Some(fourcc("sun1")), 1, 2));
+        assert_eq!((fx.weathers[1].duration, owned(&fx), fx.weather_tag(1)), (72.0, 1, "sun1"));
+        assert_eq!(play(&mut fx, "eved"), 1);
+        assert_eq!((fx.weather_now(), fx.weather_table(), fx.weathers.len()), (Some(fourcc("suny")), 0, 3));
+        assert_eq!(play(&mut fx, "ints"), 1);
+        assert_eq!((fx.weather_now(), fx.weather_table(), fx.weathers.len()), (Some(fourcc("sun1")), 1, 1));
+        // The same table and weather again: nothing.
+        assert_eq!(play(&mut fx, "ints"), 0);
     }
 
     /// FUN_1018b500: the load runs the zone file's `@ini` at once. Escha - Zi'Tah (83923) and Ru'Aun (83924) fix the
