@@ -458,6 +458,7 @@ pub(super) fn install(
     ui.set(
         "window",
         lua.create_function(|lua, (id, spec): (String, Table)| {
+            not_client_ask(&id)?;
             let spec = unhooked(lua, &spec)?;
             let st = state(lua);
             let mut s = st.borrow_mut();
@@ -522,6 +523,7 @@ pub(super) fn install(
     ui.set(
         "update",
         lua.create_function(|lua, (id, eid, fields): (String, String, Table)| {
+            not_client_ask(&id)?;
             let fields = unhooked(lua, &fields)?;
             let st = state(lua);
             let mut s = st.borrow_mut();
@@ -736,6 +738,7 @@ pub(super) fn install(
     ui.set(
         "opacity",
         lua.create_function(|lua, (id, opacity): (String, Option<f32>)| {
+            not_client_ask(&id)?;
             set_opacity(lua, &format!("mod:{}:{id}", mod_id(lua)?), opacity);
             Ok(())
         })?,
@@ -743,6 +746,7 @@ pub(super) fn install(
     ui.set(
         "on",
         lua.create_function(|lua, (id, func): (String, Function)| {
+            not_client_ask(&id)?;
             let st = state(lua);
             let key = lua.create_registry_value(func)?;
             let mut s = st.borrow_mut();
@@ -2187,6 +2191,26 @@ fn player(lua: &Lua) -> mlua::Result<Table> {
     // Our pet as our status names it (s2c 0x037: avatars, wyverns, jug pets, automatons, luopans).
     t.set("pet", (w.my_pet != 0).then(|| w.entity_at(w.my_pet).map(|(id, _)| id)).flatten())?;
     Ok(t)
+}
+
+/// The client's own question in a mod's window list (fs.open_folder): the mod cannot change it or take its answer.
+pub(super) const CLIENT_ASK: &str = "__client_ask";
+
+fn not_client_ask(id: &str) -> mlua::Result<()> {
+    if id == CLIENT_ASK {
+        return Err(mlua::Error::runtime(format!("{id:?} is the client's window")));
+    }
+    Ok(())
+}
+
+/// A modal question from the client (not the mod): `handler` gets the button (1-based) or nil when it is closed.
+pub(super) fn prompt_window(lua: &Lua, text: String, items: Vec<String>, handler: Function) -> mlua::Result<()> {
+    use super::window::{Elem, Meta};
+    let elems = vec![
+        Elem::Text { id: String::new(), text, dim: false, colour: None },
+        Elem::Buttons { id: "answer".into(), label: String::new(), items, marked: None },
+    ];
+    popup(lua, CLIENT_ASK, elems.into_iter().map(|e| (e, Meta::default())).collect(), false, None, handler)
 }
 
 /// ui.prompt / ui.menu: a modal window whose answer (1-based, or nil when it is closed) goes to `handler`.

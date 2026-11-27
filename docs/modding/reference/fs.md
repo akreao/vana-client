@@ -33,6 +33,16 @@ come as "<path>: <reason>".
 | [`fs.remove(path)`](#fsremove) | Removes a file, or a folder with everything in it. |
 | [`fs.rename(from, to)`](#fsrename) | Moves or renames a file or folder. |
 | [`fs.lock(path, fn)`](#fslock) | Runs a function holding a lock on a file, so clients take turns. |
+| [`fs.game_installs()`](#fsgame_installs) | The game installs on this computer. |
+| [`fs.pick_folder(title?, handler)`](#fspick_folder) | Lets the player pick a folder the mod may read. |
+| [`fs.open_folder(path, reason, handler)`](#fsopen_folder) | Asks the player to let the mod read a folder. |
+| [`fs.read_outside(path)`](#fsread_outside) | A file's contents in a folder the player let the mod read. |
+| [`fs.exists_outside(path)`](#fsexists_outside) | Whether a file is there, in such a folder. |
+| [`fs.list_outside(path)`](#fslist_outside) | The names in such a folder. |
+
+Folders outside the mod's (the `_outside` calls) need the `files.outside` permission, and are read only. The mod
+reads only a folder the player picked in the folder dialog or allowed when the client asked (`fs.open_folder`), until
+the mod unloads. Paths there are full paths. The client's mod data is never one of them: read it with `fs.read`.
 
 ## `fs.read`
 
@@ -325,3 +335,172 @@ end)
 ```
 
 Older clients have no `fs.lock`; a mod listed in the catalogue checks for it (`if fs.lock then ... end`).
+
+## `fs.game_installs`
+
+```lua
+fs.game_installs() -> table[]
+```
+
+The retail game installs on this computer: on Windows from the registry (`HKLM\SOFTWARE\PlayOnline{US,,EU}\InstallFolder`,
+as the game reads it), elsewhere from the same key in Wine prefixes (`WINEPREFIX`, `~/.wine`, Steam's prefixes) and the
+installer's default folders in them. Finding an install does not let the mod read it: ask with `fs.open_folder`.
+
+**Returns** `table[]`: one table per install:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `path` | `string` | The `FINAL FANTASY XI` folder. |
+| `source` | `string` | Where it was found: the registry key, or the prefix's `system.reg`. |
+| `own` | `boolean` | Whether this client plays from it too (its macros are already the client's). |
+
+**Needs** the `files.outside` permission.
+
+**Example**
+
+```lua
+for _, i in ipairs(fs.game_installs()) do
+  print(i.path .. (i.own and " (this client's)" or ""))
+end
+```
+
+## `fs.pick_folder`
+
+```lua
+fs.pick_folder(title?, handler) -> nil
+```
+
+Shows the system's folder dialog. The folder the player picks may be read from then on; `handler` gets its full path,
+or nil when the dialog was closed.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `title` | `string` | no | The dialog's title (default "Choose a folder"). |
+| `handler` | `function` | yes | Called with the path, or nil. |
+
+**Returns** nothing.
+
+**Needs** the `files.outside` permission.
+
+**Example**
+
+```lua
+fs.pick_folder("Choose your FINAL FANTASY XI folder", function(path)
+  if path then print(#fs.list_outside(path) .. " names there") end
+end)
+```
+
+## `fs.open_folder`
+
+```lua
+fs.open_folder(path, reason, handler) -> nil
+```
+
+Asks the player, in a window of the client's (the mod cannot change it or answer it), to let the mod read a folder
+and everything in it. `handler` gets true when the player allows it, false otherwise. A folder already allowed (or
+inside one) answers true at once. Its first button is Don't Allow, and keys a mod presses (`input.press`,
+`input.send`) are ignored while it has the focus, so only the player can allow.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `path` | `string` | yes | The folder's full path. |
+| `reason` | `string` | yes | Why the mod wants it, shown under the path. |
+| `handler` | `function` | yes | Called with true or false. |
+
+**Returns** nothing.
+
+**Needs** the `files.outside` permission.
+
+**Errors** `"<path>": not a folder`; `"<path>": the mod data is read with fs.read` for the client's mod data (or a
+folder holding it).
+
+**Example**
+
+```lua
+fs.open_folder("/home/me/.wine/drive_c/Program Files (x86)/PlayOnline", "To read your macros.", function(ok)
+  print(ok and "allowed" or "not allowed")
+end)
+```
+
+## `fs.read_outside`
+
+```lua
+fs.read_outside(path) -> string?
+```
+
+Reads a whole file in a folder the player picked or allowed.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `path` | `string` | yes | The file's full path. |
+
+**Returns** `string?`: the file's bytes, or nil when it is not there.
+
+**Needs** the `files.outside` permission.
+
+**Errors** `"<path>": not a full path` (a relative path, or one with a `..` part); `"<path>": not in a folder you
+picked or allowed` (a link that leads out of one counts as outside); "<path>: <reason>" when it cannot be read.
+
+**Example**
+
+```lua
+local raw = fs.read_outside(folder .. "/mcr.ttl")
+```
+
+## `fs.exists_outside`
+
+```lua
+fs.exists_outside(path) -> boolean
+```
+
+Whether a file or folder is there, in a folder the player picked or allowed.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `path` | `string` | yes | The full path. |
+
+**Returns** `boolean`.
+
+**Needs** the `files.outside` permission.
+
+**Errors** As `fs.read_outside`.
+
+**Example**
+
+```lua
+if fs.exists_outside(install .. "/USER") then print("this install has characters") end
+```
+
+## `fs.list_outside`
+
+```lua
+fs.list_outside(path) -> string[]
+```
+
+The names in a folder the player picked or allowed, sorted; folders end in `/`.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `path` | `string` | yes | The folder's full path. |
+
+**Returns** `string[]`.
+
+**Needs** the `files.outside` permission.
+
+**Errors** As `fs.read_outside`, and "<path>: <reason>" when it is not a folder.
+
+**Example**
+
+```lua
+for _, name in ipairs(fs.list_outside(install .. "/USER")) do print(name) end
+```

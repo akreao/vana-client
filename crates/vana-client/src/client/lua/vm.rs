@@ -152,6 +152,8 @@ pub(super) struct ModState {
     pub inject_out: Vec<Vec<u8>>,
     /// The permissions the user granted this mod.
     pub granted: Vec<String>,
+    /// Folders outside the mod's that the player picked or allowed (fs.pick_folder, fs.open_folder), canonical.
+    pub outside: Vec<std::path::PathBuf>,
     /// The running coroutine began with the player's input (a typed command, a window event): `actions` suffices.
     pub input: bool,
     /// Key and mouse filters (docs/lua-mods.md 4.5), and key binds.

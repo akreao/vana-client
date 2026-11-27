@@ -16,6 +16,7 @@ mod flashshot;
 mod fx;
 mod gamecfg;
 mod install;
+mod installs;
 mod itemshot;
 mod mpeg1;
 mod padreg;

@@ -1190,6 +1190,11 @@ function actions.macro_set(book, set) end
 ---@param text string 
 function actions.macro_edit(row, n, line, text) end
 
+--- Copies macro books of another character folder (USER/<content id> of a game install, in a folder the player picked or allowed) over this character's: each book's ten sets and its title, /lua lines left out. The books replaced are kept in USER/<content id>/backup/. The result is a line in the chat log.
+---@param folder string a full path
+---@param books integer[]? 1..40; none: all
+function actions.macro_import(folder, books) end
+
 --- Engages a target, or switches to it while engaged (/attack).
 ---@param target integer|string? none: the current target
 function actions.attack(target) end
@@ -1576,6 +1581,36 @@ function fs.rename(from, to) end
 ---@param fn function 
 ---@return any
 function fs.lock(path, fn) end
+
+--- The retail FINAL FANTASY XI installs on this computer, from the registry (Windows) or Wine and Steam prefixes: {path, source (where it was found), own (the one this client plays from)}. Finding one does not let the mod read it: see fs.open_folder. Needs files.outside.
+---@return {path: string, source: string, own: boolean}[]
+function fs.game_installs() end
+
+--- Shows the system's folder dialog; handler gets the folder picked (which the mod may then read with fs.read_outside) or nil. Needs files.outside.
+---@param title string? the dialog's title
+---@param handler function 
+function fs.pick_folder(title, handler) end
+
+--- Asks the player, in the client's own window, to let the mod read a folder and everything in it; handler gets true or false. A folder already allowed answers true at once. Allowed until the mod unloads. Needs files.outside.
+---@param path string a full path
+---@param reason string why, shown to the player
+---@param handler function 
+function fs.open_folder(path, reason, handler) end
+
+--- A file's bytes in a folder the player picked or allowed (a full path), or nil when it is not there. Needs files.outside.
+---@param path string 
+---@return string?
+function fs.read_outside(path) end
+
+--- Whether a file or folder is there, in a folder the player picked or allowed. Needs files.outside.
+---@param path string 
+---@return boolean
+function fs.exists_outside(path) end
+
+--- The names in a folder the player picked or allowed (folders end in /). Needs files.outside.
+---@param path string 
+---@return string[]
+function fs.list_outside(path) end
 
 --- Plain data as JSON text.
 ---@param value any 

@@ -340,6 +340,8 @@ pub struct Host {
     pub(in crate::client) synth: Vec<input::Synth>,
     /// A mod pressed Enter this frame: a chat line it submits is the mod's, not the player's.
     pub(in crate::client) synth_enter: bool,
+    /// A mod pressed any key this frame: the client's own question (fs.open_folder) takes no keys then.
+    pub(in crate::client) synth_keys: bool,
     /// actions.choose's pick, held until the event's menu takes input (5 s at most).
     pub(in crate::client) choose: Option<(usize, std::time::Instant)>,
     /// Every loaded mod, for mods.list / call / emit.
@@ -4462,6 +4464,12 @@ pub(super) fn window_key(w: &mut World, key: egui::Key, shift: bool) -> bool {
     for vm in host.vms.iter().filter(|v| v.suspended.is_none()) {
         let mut st = vm.st.borrow_mut();
         if let Some(win) = st.windows.iter_mut().find(|w| w.open && w.focus) {
+            // A key a mod pressed never answers the client's question for the player (a real key the same frame
+            // goes too).
+            if win.id == api::CLIENT_ASK && host.synth_keys {
+                log::info!("{}: a pressed key ignored by the client's question", vm.manifest.id);
+                return true;
+            }
             let (ev, se) = win.key_mod(key, shift);
             hit = Some((vm.manifest.id.clone(), win.id.clone(), ev, se));
             break;
@@ -4915,6 +4923,10 @@ fn permission_text(p: &str) -> (&'static str, &'static str) {
         "packets.write" => ("Allow changing packets", "Changes, blocks and sends packets."),
         "input.capture" => ("Allow taking input", "Takes keys and the mouse from the game and presses keys."),
         "files.shared" => ("Allow shared files", "Reads and writes files outside its folder, in the shared mod data."),
+        "files.outside" => (
+            "Allow reading your folders",
+            "Reads folders on this computer that you pick or allow, such as a game install.",
+        ),
         "net" => ("Allow network", "Connects to the internet (web requests, sockets)."),
         "exec" => ("Allow running programs", "Starts programs on this computer."),
         "clipboard" => ("Allow reading the clipboard", "Reads the text you copied."),
