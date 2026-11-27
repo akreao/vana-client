@@ -179,10 +179,13 @@ pub fn takes_no_hand(gu: &GameUi, name: &str, child: u16, frame: bool) -> bool {
 /// (`Hover::frame`). No hand: the hover tail hit-tests the focused window alone.
 pub fn hook(w: &World, gu: &GameUi, frame: Option<[f32; 4]>, p: (f32, f32)) -> bool {
     let h = gu.ptr_hover.borrow();
-    fires(h.hook_frame, h.hidden, super::textcmd::busy(w), frame, p)
+    // A scroll thumb held is mouse mode 3, not 2 (`mousecur::SCROLL_DRAG`).
+    let mode2 = !h.hidden && !gu.bar_hold.as_ref().is_some_and(|b| b.dragging());
+    fires(h.hook_frame, !mode2, super::textcmd::busy(w), frame, p)
 }
 
-/// `hook`'s test: a retail frame, the pointer shown (mouse mode 2), not busy, the pointer in the frame.
+/// `hook`'s test: a retail frame, mouse mode 2 (the pointer shown, no scroll thumb held), not busy, the pointer in the
+/// frame.
 fn fires(tick: bool, hidden: bool, busy: bool, frame: Option<[f32; 4]>, p: (f32, f32)) -> bool {
     tick && !hidden && !busy && frame.is_some_and(|r| inside(r, p))
 }

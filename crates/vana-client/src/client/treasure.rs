@@ -304,8 +304,8 @@ pub fn key(w: &mut World, key: egui::Key) {
                 }
                 l.done = false;
             }
+            // lnowin's message 6 is its message 8 (FUN_101406e0): loot raised (FUN_10140720), SE 0013 alone.
             egui::Key::Escape => {
-                w.sounds.push(Ui::Cancel as u32);
                 w.sounds.push(13);
                 l.done = false;
             }
