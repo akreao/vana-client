@@ -14257,9 +14257,6 @@ impl App {
         for k in std::mem::take(&mut world.effects.knocks) {
             combat::knock(world, &k);
         }
-        for (a, k, which, line) in std::mem::take(&mut world.effects.action_prints) {
-            combat::print_record(world, &a, k, which, line);
-        }
         for (id, m) in std::mem::take(&mut world.effects.motions) {
             actmotion::play_op(world, id, m);
         }
@@ -18927,6 +18924,13 @@ impl App {
     /// The frame's work before any drawing: finished loader tasks, the network, area switches, then the world's
     /// (or the lobby's) per-frame updates and the mods' frame.
     fn frame_updates(&mut self) {
+        // The lines of the records the last effects update printed (FUN_100ad660 inside FUN_1009e090): before any
+        // packet or load changes the actors its tests saw.
+        if let Phase::World(w) = &mut self.phase {
+            for (a, k, which, line) in std::mem::take(&mut w.effects.action_prints) {
+                combat::print_record(w, &a, k, which, line);
+            }
+        }
         // Material Maps: the pack follows the setting before any load starts, so the first zone's textures get maps.
         crate::material::set_enabled(self.cfg.material_maps != 0);
         while let Ok(t) = self.tasks.try_recv() {

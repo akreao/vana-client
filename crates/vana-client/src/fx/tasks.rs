@@ -4612,6 +4612,37 @@ mod tests {
         assert!(nums.is_empty());
     }
 
+    /// The same with the game's DAT 27: `damv` is a task after the op's walk, with no pending start, and the
+    /// generators its first update started carry the number.
+    #[test]
+    fn op_0x2b_starts_dat_27s_number() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let index = std::sync::Arc::new(index);
+        let name = |n: &[u8; 4]| u32::from_le_bytes(*n);
+        let mut fx = Effects::new();
+        fx.set_index(index.clone());
+        fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
+        while fx.reg.lib_of(27).is_none() {
+            fx.poll_loads();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        fx.reg
+            .add(sched_lib(1, &[(name(b"prnt"), vec![sop(0x2b, 0, 0, 0), sop(0x01, 100, 0, 0), sop(0x00, 0, 0, 0)])]));
+        drop(action_task(&mut fx, name(b"prnt"), 1));
+        let actors = Prints { number: true, asked: RefCell::new(Vec::new()) };
+        fx.tick(&ticks_frame(RETAIL_FRAME), &actors);
+        assert!(fx.pending.is_empty());
+        let nums = numbers(&fx);
+        assert_eq!(
+            nums.iter().map(|n| (n.0, n.1, n.2)).collect::<Vec<_>>(),
+            [(Who::Actor(HUME), Who::Actor(ORC), Some((100, 0x10_20_30)))]
+        );
+        let dams: Vec<_> = fx.insts.iter().flatten().filter_map(|x| x.dam.as_ref()).collect();
+        assert!(!dams.is_empty());
+        assert!(dams.iter().all(|d| d.glyphs == [1, 0, 0] && d.rgb == 0x10_20_30));
+    }
+
     /// FUN_1018de40 (case 0x71 at 0x100593d4): message n of the record op 0x2b printed last, a reaction's number on
     /// (target, caster); n above 2 asks FUN_1009e090, which prints nothing. FUN_1018dbf0 at the action's end (the
     /// last task that holds it deleted, in the walk): the records left print with their numbers on the spot.
