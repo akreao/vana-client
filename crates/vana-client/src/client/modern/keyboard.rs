@@ -73,13 +73,14 @@ pub fn draw(p: &mut Panels, w: &mut World) {
             let mut kx = x;
             for &(id, label, kw) in keys.iter() {
                 let r = egui::Rect::from_min_size(pos2(kx, o.y + row as f32 * (KEY + GAP)), vec2(kw, KEY));
-                key(ui, id, r, label, &small, id == 0x55 && swkbd::shifted(&k), false);
+                let lit = id == 0x55 && swkbd::shifted(&k) && !swkbd::composition_only(id);
+                key(ui, id, r, label, &small, lit, swkbd::composition_only(id));
                 kx += kw + GAP;
             }
         }
         if let Some(tabs) = tabs {
             let y = o.y + 5.0 * (KEY + GAP);
-            let tw = (15.0 * (KEY + GAP) - GAP - 4.0 * GAP) / 5.0;
+            let tw = (15.0 * (KEY + GAP) - GAP - 5.0 * GAP) / 6.0;
             for (n, (id, label)) in tabs.into_iter().enumerate() {
                 let r = egui::Rect::from_min_size(pos2(o.x + n as f32 * (tw + GAP), y), vec2(tw, KEY));
                 key(ui, id, r, label, &small, id == 4 && swkbd::shifted(&k), false);

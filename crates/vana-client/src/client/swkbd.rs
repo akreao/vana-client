@@ -312,8 +312,11 @@ fn page(p: u8) -> Option<&'static Page> {
 
 /// FUN_101b0200: the caps drawn dim (European letters). 0x114, 0x132 and 0x133 are dim only outside Japanese.
 fn dim(sprite: u16) -> bool {
-    matches!(sprite, 0x15a..=0x173 | 0x177..=0x18d | 0x1ae..=0x1b0)
-        || (!ja() && matches!(sprite, 0x114 | 0x132 | 0x133))
+    dim_in(ja(), sprite)
+}
+
+fn dim_in(ja: bool, sprite: u16) -> bool {
+    matches!(sprite, 0x15a..=0x173 | 0x177..=0x18d | 0x1ae..=0x1b0) || (!ja && matches!(sprite, 0x114 | 0x132 | 0x133))
 }
 
 /// The text engine's input mode (T+0xf10c, copied to the keyboard's +0x24 as it opens): 1 when the field takes
@@ -330,8 +333,12 @@ const CLASS: u32 = 5;
 /// it (2 / 5: 3 in Japanese, 11 in the others); mode 2 is page 9; other modes keep the page (+0x2c, FUN_101b0010: 0
 /// in Japanese, 11 in the others), or 0 when it is a single-byte one.
 fn first_page(mode: u32, class: u32) -> u8 {
-    let kept = if ja() { 0 } else { 0xb };
-    let any = if ja() { 3 } else { 11 };
+    first_page_in(ja(), mode, class)
+}
+
+fn first_page_in(ja: bool, mode: u32, class: u32) -> u8 {
+    let kept = if ja { 0 } else { 0xb };
+    let any = if ja { 3 } else { 11 };
     match (mode, class) {
         (1, 0) | (2, _) => 9,
         (1, 1) => 10,
@@ -417,12 +424,16 @@ enum Typed {
 /// one byte outside Japanese or on page 5 (a European letter then types nothing, one with no byte types the pair,
 /// the full-width space a space).
 fn typed(page: u8, i: usize) -> Option<Typed> {
+    typed_in(ja(), page, i)
+}
+
+fn typed_in(ja: bool, page: u8, i: usize) -> Option<Typed> {
     let p = self::page(page)?;
     match &p.keys {
         Keys::Bytes(b) => Some(Typed::Byte(b[i])),
         Keys::Pairs(v) => {
             let pair = v[i];
-            if !ja() || page == 5 {
+            if !ja || page == 5 {
                 let (b, european) = pair_byte(pair);
                 if european {
                     return None;
@@ -702,7 +713,9 @@ fn glyph(page: u8, i: usize) -> Option<char> {
 pub fn label(k: &Keyboard, i: usize) -> (String, bool) {
     match typed(k.page, i) {
         None => (glyph(k.page, i).map(String::from).unwrap_or_default(), true),
-        Some(Typed::Byte(b' ')) => (String::new(), false),
+        // A space key: blank on the English pages' padding, marked on the Japanese keyboard, whose SPACE key is the
+        // composition's.
+        Some(Typed::Byte(b' ')) => (if ja() { "␣".into() } else { String::new() }, false),
         Some(t) => (text(t), false),
     }
 }
@@ -725,8 +738,14 @@ pub fn shifted(k: &Keyboard) -> bool {
 }
 
 /// The Japanese keyboard's tabs and Config for the modern layer: (child, label).
-pub fn ja_tabs() -> Option<[(u16, &'static str); 5]> {
-    ja().then_some([(1, "かな"), (2, "英数"), (3, "記号"), (4, "Shift"), (0x54, "Config")])
+pub fn ja_tabs() -> Option<[(u16, &'static str); 6]> {
+    ja().then_some([(1, "かな"), (2, "英数"), (3, "記号"), (4, "Shift"), (5, "Close"), (0x54, "Config")])
+}
+
+/// The right-hand keys that act on the composition only (SHIFT and SPACE in Japanese): with ours' direct input they
+/// buzz, so the modern layer shows them inert.
+pub fn composition_only(c: u16) -> bool {
+    ja() && MODE != 0 && matches!(c, 0x55 | 0x56)
 }
 
 /// The pointer on child `c` (the modern layer): the cursor moves there (SE 0001).
@@ -892,6 +911,24 @@ mod tests {
         assert!(!turnable(0) && !turnable(2) && !turnable(4) && turnable(3) && turnable(12) && !turnable(13));
         let mut pg = 3;
         assert!(!choose(&mut pg, 0) && !choose(&mut pg, 3) && choose(&mut pg, 5) && pg == 5);
+    }
+
+    /// The Japanese keyboard's rules, with ours' direct input: page 3 first for the chat line, the tabs to 3 and 5
+    /// only, the kana pages typed as pairs, page 5 made bytes (European letters silent, ￥ a pair), 0x114 not dim.
+    #[test]
+    fn japanese() {
+        assert_eq!((first_page_in(true, 1, 5), first_page_in(true, 1, 2), first_page_in(true, 0, 5)), (3, 3, 0));
+        assert_eq!(first_page_in(true, 1, 3), 6);
+        assert!(!dim_in(true, 0x114) && dim_in(true, 0x172) && dim_in(false, 0x114));
+        let s = |p: u8, r: std::ops::Range<usize>| -> String {
+            r.map(|i| typed_in(true, p, i).map_or(String::from("."), text)).collect()
+        };
+        assert_eq!(s(0, 0..5), "あいうえお");
+        assert_eq!(s(1, 0..5), "アイウエオ");
+        assert_eq!(s(2, 15..18), "ａｂｃ");
+        assert_eq!(s(3, 0..15), "1234567890:;_/@");
+        assert_eq!(s(5, 24..29), "..￥$@");
+        assert_eq!(typed_in(true, 0, 12), Some(Typed::Byte(b' ')));
     }
 
     /// FUN_101b5a20 over the table: a full-width letter is its byte, the full-width space a space, a European letter

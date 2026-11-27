@@ -43,10 +43,11 @@ throughout. Ours had the English keyboard only, in every language. The window is
 - Pad (win_keypad_onkey): Y (message 0xc) is Enter and RB (0x11) a space outside Japanese; in Japanese RB is Enter
   and Y the conversion (mode 0, else a buzz).
 - Ours (client/swkbd.rs): the window, caps, pages, first page, page changes, keys and pad by language as above, with
-  mode 1 and class 5; the modern layer's keyboard gets the tabs and Config 0x54 in Japanese.
+  mode 1 and class 5; the modern layer's keyboard gets the tabs, Close (5) and Config (0x54) in Japanese, its SHIFT and
+  SPACE shown inert there (they act on the composition only) and the space keys marked ␣.
 - Not language reads: FUN_1019f5c0 (installp in Japanese, installu in English, nothing in German / French) is called
   only by FUN_1019fe50 (the install credits, no caller) and by FUN_1019ff10 unless +0x57 is set, which the ending
   credits (FUN_10164700) set first with FUN_101a0330(1). 0x101b029a is FUN_101b0200's jump table, not code.
 - Not built: the Japanese composition (mode 0, the edit mode, feppalle) and the compact keyboard (config 0xc9 = 2
   in Japanese: FUN_101b29c0 opens keyselec through FUN_10191f50).
-- Tests: `client::swkbd::tests::pages`, `pairs`, `tables_are_ffximain`, `layouts_and_caps`.
+- Tests: `client::swkbd::tests::pages`, `pairs`, `tables_are_ffximain`, `layouts_and_caps`, `japanese`.
