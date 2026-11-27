@@ -764,6 +764,13 @@ pub struct EventCamera {
     pub owner: u64,
 }
 
+/// A task's camera op: a path started, or op 0xb0's path (4cc) ended.
+#[derive(Clone, Debug)]
+pub enum CameraOp {
+    Start(EventCamera),
+    Stop(u32),
+}
+
 /// What effect runs skipped or could not resolve (the fx-sweep command, main.rs).
 #[derive(Default, Debug)]
 pub struct Audit {
@@ -1230,9 +1237,9 @@ pub struct Effects {
     /// Scheduler ops 0x0f / 0x72 / 0x0e for the screen (client/event.rs Screen): code, the RGBA bytes @8, f32 @0xc
     /// (0x0e's zoom), dur x speed.
     pub screen_ops: Vec<(u8, [u8; 4], f32, f32)>,
-    /// Camera ops (0x04 / 0x81) of the tasks this frame but an event's own scheduler, for the camera task
-    /// (client/event.rs Screen).
-    pub event_cameras: Vec<EventCamera>,
+    /// Camera ops 0x04 / 0x81 (start) and 0xb0 (end) of the tasks this frame but an event's own scheduler, in their
+    /// order, for the camera task (client/event.rs Screen).
+    pub event_cameras: Vec<CameraOp>,
     /// Camera ops this frame with their path found, an event's own scheduler's too: each forces every actor's next
     /// pose (FUN_1003c8a0 -> FUN_10085310, actor +0xa04).
     pub camera_cuts: u32,
@@ -1240,8 +1247,6 @@ pub struct Effects {
     pub event_crosses: Vec<f32>,
     /// Ops 0x7c / 0x7d this frame.
     pub env_ops: Vec<EnvOp>,
-    /// Op 0xb0 (camera path 4cc to end) of the tasks this frame but an event's own scheduler.
-    pub event_path_stops: Vec<u32>,
     /// The running task's event: the tasks its op creates take it (tasks.rs run_op).
     spawn_event: bool,
     /// Ops 0x79 / 0x8c / 0xa4 / 0xa5: actor1's battle / idle / run / walk motion set (motion::MotionNames::apply).
@@ -1450,7 +1455,6 @@ impl Effects {
             camera_cuts: 0,
             event_crosses: Vec::new(),
             env_ops: Vec::new(),
-            event_path_stops: Vec::new(),
             spawn_event: false,
             motion_sets: Vec::new(),
             look_holds: Vec::new(),

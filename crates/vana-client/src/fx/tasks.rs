@@ -59,6 +59,8 @@ pub(super) struct Pending {
     pub seq: Option<f32>,
     /// An event op's scheduler (on_event_scheduler).
     pub event: bool,
+    /// The event runner's own scheduler (on_runner_scheduler): client/event.rs plays its camera ops and fades.
+    pub root: bool,
     /// An `init` start's wanted sub-animation (on_init).
     pub init_sub: Option<u8>,
     /// Asked by the entity loop (`Effects::in_loop`): it starts at the loop's task in the walk.
@@ -334,6 +336,7 @@ impl Effects {
                 own: false,
                 seq: None,
                 event: false,
+                root: false,
                 init_sub: None,
                 looped: self.asking,
             }),
@@ -364,6 +367,7 @@ impl Effects {
                     own: false,
                     seq: None,
                     event: false,
+                    root: false,
                     init_sub: None,
                     looped: self.asking,
                 });
@@ -391,6 +395,7 @@ impl Effects {
                     own: true,
                     seq: None,
                     event: false,
+                    root: false,
                     init_sub: None,
                     looped: self.asking,
                 });
@@ -427,6 +432,7 @@ impl Effects {
                 own: true,
                 seq: None,
                 event: false,
+                root: false,
                 init_sub: None,
                 looped: self.asking,
             });
@@ -436,9 +442,19 @@ impl Effects {
         }
     }
 
-    /// Event opcodes 0x45 and family: the scheduler `name` of DAT `file` as a task on (a1, a2), the same task the
-    /// event's camera runner follows (its camera / fade ops are the runner's; the rest run here).
+    /// The scheduler `name` of DAT `file` as a task on (a1, a2) for an event op, a 0x039, a battle message or the
+    /// like: a scheduler as any other, whose camera ops and fades reach the screen from here.
     pub fn on_event_scheduler(&mut self, file: u32, name: u32, a1: Who, a2: Who) {
+        self.start_event_scheduler(file, name, a1, a2, false);
+    }
+
+    /// Event opcodes 0x45 and family: the same task the event's camera runner follows (client/event.rs plays its
+    /// camera / fade ops; the rest run here).
+    pub fn on_runner_scheduler(&mut self, file: u32, name: u32, a1: Who, a2: Who) {
+        self.start_event_scheduler(file, name, a1, a2, true);
+    }
+
+    fn start_event_scheduler(&mut self, file: u32, name: u32, a1: Who, a2: Who, root: bool) {
         log::debug!("effects: event scheduler {} of DAT {file}", String::from_utf8_lossy(&name.to_le_bytes()));
         self.pending.push(Pending {
             file: Some(file),
@@ -458,6 +474,7 @@ impl Effects {
             own: false,
             seq: None,
             event: true,
+            root,
             init_sub: None,
             looped: self.asking,
         });
@@ -519,6 +536,7 @@ impl Effects {
             own: false,
             seq: None,
             event: false,
+            root: false,
             init_sub: None,
             looped: self.asking,
         });
@@ -549,6 +567,7 @@ impl Effects {
             own: false,
             seq: None,
             event: false,
+            root: false,
             init_sub: None,
             looped: self.asking,
         });
@@ -742,6 +761,7 @@ impl Effects {
             own: true,
             seq: None,
             event: false,
+            root: false,
             init_sub: None,
             looped: self.asking,
         });
@@ -908,7 +928,7 @@ impl Effects {
                                     self.skill_mains.push((t.uid, c));
                                 }
                                 t.seq = p.seq.is_some();
-                                (t.event, t.event_root) = (p.event, p.event);
+                                (t.event, t.event_root) = (p.event, p.root);
                             }
                             match p.seq {
                                 // A file that came in later skips the time waited too (this frame's ticks came
@@ -2077,6 +2097,7 @@ impl Effects {
                     own: false,
                     seq: None,
                     event: false,
+                    root: false,
                     init_sub: None,
                     looped: self.asking,
                 });
@@ -2563,14 +2584,14 @@ impl Effects {
                     self.camera_cuts += 1;
                     if !t.event_root {
                         let tag = self.reg.libs[t.res.0].tree.nodes[t.res.1].name;
-                        self.event_cameras.push(super::EventCamera {
+                        self.event_cameras.push(super::CameraOp::Start(super::EventCamera {
                             file: self.reg.libs[r.0].file_id,
                             tag,
                             path: op.u32_at(8),
                             ticks: ticks as f32,
                             who: [t.a1, t.a2],
                             owner: t.uid,
-                        });
+                        }));
                     }
                 }
                 Flow::Next
@@ -2643,7 +2664,7 @@ impl Effects {
             // +0x74 is it), from any scheduler.
             0xb0 => {
                 if !t.event_root {
-                    self.event_path_stops.push(op.u32_at(8));
+                    self.event_cameras.push(super::CameraOp::Stop(op.u32_at(8)));
                 }
                 Flow::Next
             }
@@ -2970,6 +2991,7 @@ impl Effects {
                     own: false,
                     seq: None,
                     event: false,
+                    root: false,
                     init_sub: None,
                     looped: self.asking,
                 });
@@ -3146,6 +3168,7 @@ impl Effects {
             own: false,
             seq: Some(skip),
             event: false,
+            root: false,
             init_sub: None,
             looped: self.asking,
         });
@@ -4956,7 +4979,7 @@ mod tests {
         };
         let (cams, cuts, uid) = run(sop(0x04, 0, 45, path), 0.5);
         assert_eq!(cuts, 1);
-        let [c] = &cams[..] else { panic!("{cams:?}") };
+        let [super::super::CameraOp::Start(c)] = &cams[..] else { panic!("{cams:?}") };
         assert_eq!((c.file, c.tag, c.path, c.ticks, Some(c.owner)), (7, *b"main", path, 22.0, uid));
         assert_eq!(c.who, [Who::Actor(HUME), Who::Actor(ORC)]);
         let (cams, cuts, _) = run(sop(0x04, 0, 45, name(b"cm02")), 1.0);
@@ -7705,7 +7728,7 @@ mod event_camera_tests {
             fx.poll_loads();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        fx.on_event_scheduler(51252, u32::from_le_bytes(fourcc("main")), Who::None, Who::None);
+        fx.on_runner_scheduler(51252, u32::from_le_bytes(fourcc("main")), Who::None, Who::None);
         let f = Frame {
             dt: 1.0,
             seconds: 1.0 / 60.0,
@@ -7723,6 +7746,7 @@ mod event_camera_tests {
         for tick in 0..3400 {
             fx.tick(&f, &crate::fx::NoActors);
             for c in std::mem::take(&mut fx.event_cameras) {
+                let crate::fx::CameraOp::Start(c) = c else { continue };
                 shots.push((tick, String::from_utf8_lossy(&c.path.to_le_bytes()).to_string(), c.ticks));
             }
         }

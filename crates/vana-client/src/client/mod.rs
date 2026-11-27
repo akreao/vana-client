@@ -14277,12 +14277,14 @@ impl App {
         for op in std::mem::take(&mut world.effects.env_ops) {
             event::env_op(world, op);
         }
-        for name in std::mem::take(&mut world.effects.event_path_stops) {
-            world.screen.stop_path(String::from_utf8_lossy(&name.to_le_bytes()).trim_end_matches('\0'));
-        }
         for c in std::mem::take(&mut world.effects.event_cameras) {
-            if let Some(index) = world.index.clone() {
-                world.screen.fx_camera(&index, c);
+            match c {
+                crate::fx::CameraOp::Start(c) => {
+                    if let Some(index) = world.index.clone() {
+                        world.screen.fx_camera(&index, c);
+                    }
+                }
+                crate::fx::CameraOp::Stop(name) => world.screen.fx_stop(name),
             }
         }
         // FUN_1003c8a0 -> FUN_10085310: a camera op forces every actor's next pose (+0xa04).

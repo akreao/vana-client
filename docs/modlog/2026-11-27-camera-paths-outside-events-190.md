@@ -30,13 +30,19 @@ Built:
   that one), only when the path is found, with trunc(dur x speed) ticks, the path's own file and the task's uid
   (`EventCamera::owner`); `Effects::camera_cuts` counts the ops (an event's own scheduler's too), and the client
   forces every actor's next pose (`Actor::anim_force`, +0xa04). `Effects::task_live`.
-- fx/tasks.rs: op 0xb0 ends the path in every task but an event's own scheduler.
+- fx/tasks.rs: op 0xb0 ends the path in every task but an event's own scheduler, in the walk's order with the starts
+  (`CameraOp::Start` / `Stop`, `Screen::fx_stop`).
+- fx/tasks.rs: only the event runner's scheduler (`on_runner_scheduler`, client/event.rs's 0x45 family) leaves its
+  camera ops and fades to the runner; 0x039 map schedulers, battle-message files, event op 0x7d's file and fishing's
+  start through `on_event_scheduler` as any scheduler (their fades had gone nowhere).
+- client/event.rs: an event's end keeps the camera task (FUN_100ae3f0 deletes none; only op 0x46 does, FUN_1003d5c0).
 - client/event.rs: a shot whose scheduler task is gone ends where it is (`camera_frame`, `Shot::owner`; this also
   holds for an event's sub-schedulers, which ours let run on). `Screen::game_pose` / `game_camera`: outside an event
   the live shot's pose goes over the game camera after the follow camera's step, the last pose once at its time, then
   nothing; a shot that ends inside an event writes nothing after it.
 - client/camera.rs: `set_pose` (eye, look unless on the eye, `State::roll`, the focal held while config 0x49 is
-  unchanged, `State::held`), `view` draws the roll (`up_of`), `scene_reset` at a zone load drops both.
+  unchanged, `State::held`), `view` draws the roll (`up_of`) and the written pose without a mod's distance scale,
+  `scene_reset` at a zone load drops both. The zoom clamps 242..900 only what its keys step, not a path's focal.
 
 Not built: op 0x10's crossfade outside events (FUN_1005f020 in any scheduler; ours only for an event's tasks), new
 queue row 222. Actor +0x9f8 (FUN_100cbde0 tests whether an actor is on screen one frame in four; ours tests every frame,

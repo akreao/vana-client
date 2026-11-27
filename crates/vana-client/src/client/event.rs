@@ -145,6 +145,13 @@ struct Shot {
     written: bool,
 }
 
+/// A camera op of an effect task: a path started (its file, the file id, the scheduler's tag, the path, ticks, actors,
+/// the task) or op 0xb0's path ended.
+enum FxShot {
+    Start(Arc<SchedFile>, u32, String, String, f32, [crate::fx::sched::Who; 2], u64),
+    Stop(String),
+}
+
 /// Op 0x10 (0x10057d12, FUN_1005f020): the frame before the cut fades out over `len` ticks.
 #[derive(Clone, Copy)]
 pub struct Cross {
@@ -175,8 +182,9 @@ pub struct Screen {
     /// the capture, DAT_1045692c = 0).
     blur: ([f32; 5], [f32; 5], f32, f32),
     blur_starts: u32,
-    /// Camera paths an event's effect tasks asked for (fx_camera), started at the next advance.
-    fx_shots: Vec<(Arc<SchedFile>, u32, String, String, f32, [crate::fx::sched::Who; 2], u64)>,
+    /// Camera paths the effect tasks asked for (fx_camera) and ended (op 0xb0, fx_stop), in their order, applied at
+    /// the next advance.
+    fx_shots: Vec<FxShot>,
     /// Crossfades (op 0x10) of an event's effect tasks, their lengths, started at the next advance.
     fx_crosses: Vec<f32>,
     /// The scene is held black after a zone-in with a login event (hold_black) and no 0x0f has raised it yet.
@@ -286,8 +294,15 @@ impl Screen {
         let four = |v: [u8; 4]| String::from_utf8_lossy(&v).trim_end_matches('\0').to_string();
         if let Some(f) = self.file(index, c.file) {
             let (tag, path) = (four(c.tag), four(c.path.to_le_bytes()));
-            self.fx_shots.push((f, c.file, tag, path, c.ticks.max(1.0), c.who, c.owner));
+            self.fx_shots.push(FxShot::Start(f, c.file, tag, path, c.ticks.max(1.0), c.who, c.owner));
         }
+    }
+
+    /// Op 0xb0 in an effect task (FUN_1003cbb0): the camera task playing path `name` ends, after the starts asked
+    /// before it.
+    pub fn fx_stop(&mut self, name: u32) {
+        let name = String::from_utf8_lossy(&name.to_le_bytes()).trim_end_matches('\0').to_string();
+        self.fx_shots.push(FxShot::Stop(name));
     }
 
     /// Op 0x10 in an event's effect task (FUN_1005f020 for any task): a crossfade over `ticks`.
@@ -454,7 +469,14 @@ impl Screen {
             cross = Some(Cross { start: now, len, camera: current, captured: false });
         }
         // The effect tasks' paths after the runner's (they ran this frame).
-        for (f, file_id, tag, name, ticks, who, owner) in std::mem::take(&mut self.fx_shots) {
+        for shot in std::mem::take(&mut self.fx_shots) {
+            let (f, file_id, tag, name, ticks, who, owner) = match shot {
+                FxShot::Start(f, file_id, tag, name, ticks, who, owner) => (f, file_id, tag, name, ticks, who, owner),
+                FxShot::Stop(name) => {
+                    self.stop_path(&name);
+                    continue;
+                }
+            };
             let Some(path) = f.title.as_ref().and_then(|t| t.paths.iter().position(|p| p.name == name)) else {
                 continue;
             };
@@ -1065,7 +1087,7 @@ impl Host for LiveHost<'_> {
                     if a == 0 { crate::fx::sched::Who::None } else { crate::fx::sched::Who::Actor(self.wid(a)) }
                 };
                 let who = [who(actor), who(target)];
-                self.w.effects.on_event_scheduler(
+                self.w.effects.on_runner_scheduler(
                     file,
                     u32::from_le_bytes(crate::dat::generator::fourcc(&tag)),
                     who[0],
@@ -3229,7 +3251,8 @@ fn finish(w: &mut World, live: Box<Live>) {
         w.control_lock = None;
     }
     w.event_end_at = Some(Instant::now());
-    w.screen.shot = None;
+    // The camera task goes on: the event's end deletes none (FUN_100ae3f0; only op 0x46 does, FUN_1003d5c0), and
+    // outside the event it moves the game camera (game_camera).
     // FUN_100ac9c0: an event map still open closes (FUN_101f14c0(1)), as when an abort skips the script's 0x8a.
     if w.map_open.take().is_some() {
         w.map_cmds.push(super::map::Cmd::CloseEvent);
@@ -5429,7 +5452,7 @@ mod tests {
             Arc::new(SchedFile { bytes: Vec::new(), title: Some(Title { schedulers: Vec::new(), paths: vec![path] }) });
         let who = [crate::fx::sched::Who::None; 2];
         let start = |sc: &mut Screen, owner: u64| {
-            sc.fx_shots.push((file.clone(), 7, "main".into(), "cm01".into(), 20.0, who, owner));
+            sc.fx_shots.push(FxShot::Start(file.clone(), 7, "main".into(), "cm01".into(), 20.0, who, owner));
             sc.advance(None, None);
         };
         let mut sc = Screen::default();
@@ -5449,6 +5472,16 @@ mod tests {
         let fx = crate::fx::Effects::new();
         camera_frame(&mut sc, &fx, &crate::fx::NoActors, 1.0);
         assert!(!sc.shot_live() && sc.game_pose(false).is_none());
+        // Op 0xb0 after the start in the same walk ends it; before the start it does not.
+        let mut sc = Screen::default();
+        sc.fx_shots.push(FxShot::Start(file.clone(), 7, "main".into(), "cm01".into(), 20.0, who, 1));
+        sc.fx_stop(u32::from_le_bytes(*b"cm01"));
+        sc.advance(None, None);
+        assert!(!sc.shot_live() && sc.game_pose(false).is_none());
+        let mut sc = Screen::default();
+        sc.fx_stop(u32::from_le_bytes(*b"cm01"));
+        start(&mut sc, 1);
+        assert!(sc.shot_live());
         // In an event: the event's camera; ended there, nothing after it.
         let mut sc = Screen::default();
         start(&mut sc, 1);

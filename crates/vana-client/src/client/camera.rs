@@ -75,6 +75,8 @@ pub struct State {
     /// The drawn eye's distance over the camera's (a mod's scale, held in by what lies behind; 0 unset): the
     /// camera itself always runs at retail's distances.
     out: f32,
+    /// A camera path wrote this frame's pose (set_pose): it is drawn as written, without a mod's distance scale.
+    posed: bool,
     /// Camera object +0x5c: the roll a camera path left (FUN_10021900 from +0xa4); 0 from a scene load (FUN_1001e4f0).
     pub roll: f32,
     /// The focal a camera path left (FUN_10015290), and config 0x49 then: it holds until the zoom or the config
@@ -455,6 +457,7 @@ pub fn set_pose(w: &mut World, eye: Vec3, look: Vec3, focal: f32, roll: f32) {
         w.cam.look = look;
     }
     w.camst.prev = w.cam;
+    w.camst.posed = true;
     w.camst.held = Some((focal, super::cfgapply::focal(&w.game) as u32));
     w.camst.roll = roll;
 }
@@ -467,6 +470,7 @@ pub fn scene_reset(w: &mut World) {
 
 /// One frame of the camera, after the player has moved.
 pub fn step(w: &mut World, dt: f32, inp: &Inputs) {
+    w.camst.posed = false;
     if super::layout::camera(w, dt * 60.0) || super::garden::camera(w, dt * 60.0) {
         w.camst.prev = w.cam;
         return;
@@ -794,7 +798,8 @@ fn zoom(w: &mut World, ticks: f32, inp: &Inputs) {
     let before = live_focal(w);
     let st = &mut w.camst;
     let f = zoom_step(before, &mut st.zoom_reset, inp, ticks);
-    let f = f.clamp(FOCAL_MIN, FOCAL_MAX);
+    // The keys' branches clamp what they step (all.c 23149..23160); a camera path's focal stands untouched.
+    let f = if f == before { f } else { f.clamp(FOCAL_MIN, FOCAL_MAX) };
     st.focal = Some(f);
     if f != before {
         st.held = None;
@@ -900,7 +905,7 @@ pub fn view(w: &World) -> Camera {
     let t = s.acc.clamp(0.0, 1.0);
     // Not glam's lerp (a(1 - t) + bt): a camera at rest must not wobble in the last bit with t.
     let (eye, look) = (s.prev.eye + (c.eye - s.prev.eye) * t, s.prev.look + (c.look - s.prev.look) * t);
-    let f = if s.first || w.locked || s.out <= 0.0 { 1.0 } else { s.out };
+    let f = if s.first || w.locked || s.posed || s.out <= 0.0 { 1.0 } else { s.out };
     Camera {
         jitter: glam::Vec2::ZERO,
         eye: look + (eye - look) * f,
