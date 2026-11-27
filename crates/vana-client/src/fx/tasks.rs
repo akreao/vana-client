@@ -6769,6 +6769,38 @@ mod auto_tests {
         assert_eq!(play(&mut fx, "ints"), 0);
     }
 
+    /// FUN_1018cbb0: a weather made under a roof passes its camera emitters by (FUN_1018c020), and leaving the roof
+    /// starts them (FUN_10188bb0 -> FUN_1018c0b0), as many as the weather has in the open. On the first of zones
+    /// 100..126 whose rain, snow, dust or sand has such emitters.
+    #[test]
+    fn leaving_cover_starts_the_passed_by_emitters() {
+        let Some(index) = index() else { return };
+        let count = |fx: &Effects| fx.insts.iter().flatten().filter(|x| matches!(x.owner, Owner::Weather(_))).count();
+        let load = |file: u32, tag: &str, covered: bool| {
+            let mut fx = Effects::new();
+            fx.set_index(index.clone());
+            fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
+            fx.load_zone(Library::load(file, index.read(file).ok()?).ok()?);
+            fx.set_covered(covered);
+            fx.set_weather(tag, 0.0);
+            Some(fx)
+        };
+        let found = (100..=126).flat_map(|z| ["rain", "snow", "dust", "sand"].map(|t| (z, t))).find_map(|(z, tag)| {
+            let file = crate::dat::zone::file_id(z);
+            let open = count(&load(file, tag, false)?);
+            let fx = load(file, tag, true)?;
+            (count(&fx) < open).then_some((fx, open, z, tag))
+        });
+        let Some((mut fx, open, z, tag)) = found else { panic!("no zone with roofed weather emitters") };
+        println!("zone {z} {tag}: {} under the roof, {open} in the open", count(&fx));
+        fx.set_covered(false);
+        assert_eq!(count(&fx), open);
+        // Under the roof again they stop (their elements go), and come back without a second copy.
+        fx.set_covered(true);
+        fx.set_covered(false);
+        assert_eq!(count(&fx), open);
+    }
+
     /// FUN_1018b500: the load runs the zone file's `@ini` at once. Escha - Zi'Tah (83923) and Ru'Aun (83924) fix the
     /// sky at 10:00, Reisenjima Sanctorium (83928) at 14:00, Reisenjima (83926) and its Henge (83927) tilt the sun 36
     /// degrees; the next load clears both, and the sun generator's point follows them.

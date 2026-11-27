@@ -1974,8 +1974,10 @@ impl Effects {
         sound::sesep(lib.data(node)).map(|(se, _)| se)
     }
 
-    /// FUN_101845c0: on a change, covered stops the transient weather emitters that spawn at the camera (op-1
-    /// flags 4 or 0x4000000: rain, snow, dust) and kills their elements (FUN_10183b90); uncovered starts them again.
+    /// FUN_1018cbb0: on a change, covered stops the transient weather emitters that spawn at the camera (op-1
+    /// flags 4 or 0x4000000: rain, snow, dust) and kills their elements (FUN_10188b90 -> FUN_1018c130 ->
+    /// FUN_1018c180); uncovered starts them again (FUN_10188bb0 -> FUN_1018c0b0 -> FUN_100531d0), for every weather
+    /// object: also the ones a weather made under the roof passed by (FUN_1018c020).
     pub fn set_covered(&mut self, covered: bool) {
         if covered == self.covered {
             return;
@@ -2002,6 +2004,42 @@ impl Effects {
                 x.countdown = 0.0;
                 x.elapsed = 0.0;
                 x.emitted = 0;
+            }
+        }
+        let Some(l) = self.zone_lib.filter(|_| !covered) else { return };
+        // FUN_1018c0b0 walks each object's folder: flag 0x1000, not running, not static, op-1 flag 4 or 0x4000000.
+        for k in 0..self.weathers.len() {
+            let (serial, folder) = (self.weathers[k].serial, self.weathers[k].folder);
+            let tree = &self.reg.libs[l].tree;
+            let within = |mut i: usize| loop {
+                match tree.nodes[i].parent {
+                    Some(p) if p == folder => return true,
+                    Some(p) => i = p,
+                    None => return false,
+                }
+            };
+            let missing: Vec<usize> = self.reg.libs[l]
+                .gens
+                .iter()
+                .filter(|g| {
+                    let transient = !(g.flags & 0x400 != 0 || g.template().is_some_and(|o| o.i16_at(0x22) == 0));
+                    g.flags & 0x1000 != 0 && transient && roofed(g) && within(g.node)
+                })
+                .map(|g| g.node)
+                .filter(|&n| !self.insts.iter().flatten().any(|x| x.owner == Owner::Weather(serial) && x.src == (l, n)))
+                .collect();
+            // The object's blend weight, as weather_step sets it.
+            let newest = self.weathers.last().map_or((serial, 1.0), |w| {
+                (w.serial, if w.duration > 0.0 { (w.duration - w.remaining) / w.duration } else { 1.0 })
+            });
+            let weight = if serial == newest.0 { newest.1 } else { 1.0 - newest.1 };
+            for n in missing {
+                if let Some(i) = self.start((l, n), Owner::Weather(serial)) {
+                    self.list.made(tasklist::Made::Moved);
+                    if let Some(x) = self.insts[i].as_mut() {
+                        x.weather = weight;
+                    }
+                }
             }
         }
     }
