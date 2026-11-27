@@ -4038,6 +4038,17 @@ impl Effects {
         self.tasks.iter().flatten().any(|t| t.uid == uid)
     }
 
+    /// The event runner's scheduler `name` of DAT `file` is alive (on_runner_scheduler), started or waiting for its
+    /// files: its camera task dies with it (FUN_10074ad0 -> FUN_10074890).
+    pub fn runner_live(&self, file: u32, name: [u8; 4]) -> bool {
+        self.pending.iter().any(|p| p.root && p.file == Some(file) && p.name == u32::from_le_bytes(name))
+            || self.tasks.iter().flatten().any(|t| {
+                t.event_root
+                    && self.reg.libs[t.res.0].file_id == file
+                    && self.reg.libs[t.res.0].tree.nodes[t.res.1].name == name
+            })
+    }
+
     pub fn task_count(&self) -> usize {
         self.tasks.iter().filter(|t| t.is_some()).count()
     }
@@ -4984,6 +4995,17 @@ mod tests {
         assert_eq!(c.who, [Who::Actor(HUME), Who::Actor(ORC)]);
         let (cams, cuts, _) = run(sop(0x04, 0, 45, name(b"cm02")), 1.0);
         assert!(cams.is_empty() && cuts == 0);
+    }
+
+    /// The runner's scheduler counts as alive while it waits for its files; another caller's does not make it so.
+    #[test]
+    fn runner_scheduler_lives_while_pending() {
+        let main = u32::from_le_bytes(*b"main");
+        let mut fx = Effects::new();
+        fx.on_event_scheduler(30777, main, Who::None, Who::None);
+        assert!(!fx.runner_live(30777, *b"main"));
+        fx.on_runner_scheduler(30777, main, Who::None, Who::None);
+        assert!(fx.runner_live(30777, *b"main") && !fx.runner_live(30777, *b"x000"));
     }
 
     /// An engaged actor whose part file (2) holds the `wep0` glow schedulers.

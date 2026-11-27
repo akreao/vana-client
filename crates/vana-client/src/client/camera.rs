@@ -433,6 +433,9 @@ pub fn focal(w: &World) -> f32 {
         if l.dress.is_some() { 300.0 } else { 250.0 }
     } else if let Some(f) = super::garden::focal(w) {
         f
+    } else if let Some((f, _)) = w.camst.held.filter(|_| w.camst.posed) {
+        // A camera path's pose this frame carries its focal (FUN_10015290), in first person too.
+        f
     } else if w.camst.first {
         FIRST_FOCAL
     } else {

@@ -35,6 +35,8 @@ Built:
 - fx/tasks.rs: only the event runner's scheduler (`on_runner_scheduler`, client/event.rs's 0x45 family) leaves its
   camera ops and fades to the runner; 0x039 map schedulers, battle-message files, event op 0x7d's file and fishing's
   start through `on_event_scheduler` as any scheduler (their fades had gone nowhere).
+- client/event.rs: the runner's own shot ends with the event's scheduler too (`Effects::runner_live`: the effects run
+  the same task); a written pose carries its focal in first person as well.
 - client/event.rs: an event's end keeps the camera task (FUN_100ae3f0 deletes none; only op 0x46 does, FUN_1003d5c0).
 - client/event.rs: a shot whose scheduler task is gone ends where it is (`camera_frame`, `Shot::owner`; this also
   holds for an event's sub-schedulers, which ours let run on). `Screen::game_pose` / `game_camera`: outside an event
