@@ -647,29 +647,33 @@ pub fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
 }
 
 /// Mouse on the list while it has the focus: a row takes the cursor by winhits::takes, a click on the highlighted row
-/// acts as Enter.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
-    let Some(e) = win(w) else { return };
+/// acts as Enter. Then the focused window's frame hook (super::winhits::hook; FUN_10160fd0 runs the hooks after the
+/// mouse routine and the buttons): the grid's (win_equip_v28 0x10134030, with the list open, FUN_10132f40) sends
+/// itself message 8 while the pointer is in the list's frame, the list's (FUN_101f3d70) message 8 while it is in the
+/// grid's (menu equip, DAT_10579360). Message 8 is Num+: the grid in mode 2 to the list, the list in mode 1 with
+/// nothing picked back to the grid.
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool) {
     let Some(r) = gu.window_rect(LIST, sw, sh) else { return };
-    let x0 = r[0] + LIST_X as f32 - gu.window_rect_x(LIST);
-    // C.7 (FUN_10132c30 / FUN_101f27a0): the pointer over the other window sends message 8, as Num+: the grid's goes
-    // to the list (mode 1), the list's back to the grid when nothing is picked.
-    let in_list = p.0 >= x0 && p.0 < x0 + r[2] && p.1 >= r[1] && p.1 < r[1] + r[3];
-    let in_grid = gu
-        .window_rect(GRID, sw, sh)
-        .is_some_and(|g| p.0 >= g[0] && p.0 < g[0] + g[2] && p.1 >= g[1] && p.1 < g[1] + g[3]);
-    if (moved || clicked) && ((e.focus == Focus::Grid && in_list) || (e.focus == Focus::List && in_grid)) {
-        num_plus(w);
-        return;
-    }
+    let list = [r[0] + LIST_X as f32 - gu.window_rect_x(LIST), r[1], r[2], r[3]];
+    list_rows(w, gu, list, p, clicked);
     let Some(e) = win(w) else { return };
-    if e.focus != Focus::List {
-        return;
+    let other = match e.focus {
+        Focus::Grid => Some(list),
+        Focus::List => gu.window_rect(GRID, sw, sh),
+        Focus::Storage(_) => None,
+    };
+    if super::winhits::hook(w, gu, other, p) {
+        num_plus(w);
     }
-    let row = ((p.1 - r[1] - 4.0) / crate::inventory::ROW_PITCH).floor();
-    let inside =
-        p.0 >= x0 && p.0 < x0 + r[2] && p.1 >= r[1] && p.1 < r[1] + r[3] && row >= 0.0 && (row as usize) < VISIBLE_ROWS;
-    if !inside {
+}
+
+/// The list's rows under the pointer while it has the focus (`list`: its frame).
+fn list_rows(w: &mut World, gu: &GameUi, list: [f32; 4], p: (f32, f32), clicked: bool) {
+    let Some(e) = win(w).filter(|e| e.focus == Focus::List) else { return };
+    let [x0, y0, lw, lh] = list;
+    let in_list = p.0 >= x0 && p.0 < x0 + lw && p.1 >= y0 && p.1 < y0 + lh;
+    let row = ((p.1 - y0 - 4.0) / crate::inventory::ROW_PITCH).floor();
+    if !in_list || row < 0.0 || row as usize >= VISIBLE_ROWS {
         return;
     }
     let takes = super::winhits::takes(gu, LIST, row as u16 + 1, in_list);

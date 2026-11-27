@@ -1362,8 +1362,24 @@ pub fn draw_event_timer(gu: &mut GameUi, w: &World, sw: f32, sh: f32) {
 }
 
 /// Mouse (window messages 9 hover / 5 confirm): a row or category takes the cursor by winhits::takes (SE 0001), a
-/// click on the highlighted one is Enter.
+/// click on the highlighted one is Enter. Then the focused list's frame hook (win_magic_v60 0x1022e1a0, the sort
+/// window at list +0xc0; win_ability_v60 0x10225c50, win_emote_v60 0x102275a0, win_mount_v60 0x10228180: abisortw):
+/// the pointer in the sort window's frame is message 8 (Num+: the sort window takes the focus; super::winhits::hook).
 pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool) {
+    hover(w, gu, sw, sh, p, clicked);
+    let list =
+        w.ability.as_ref().or(w.magic.as_ref()).filter(|x| !x.hidden && x.sort_focus.is_none() && x.ask.is_none());
+    if let Some(sort) = list.and_then(|x| x.sort)
+        && w.prompt.is_none()
+        && w.cats.is_none()
+        && super::winhits::hook(w, gu, super::winhits::frame_of(w, sort), p)
+    {
+        num_plus(w);
+    }
+}
+
+/// The hover and the buttons on the focused window.
+fn hover(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool) {
     if w.prompt.is_some() {
         return;
     }
@@ -1503,6 +1519,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         let hide: &[u16] = if off { &[3] } else { &[] };
         if let Some(sw_) = gu.lobby_window_off(sort, sw, sh, (0.0, 0.0), win.sort_focus, win.sort_focus.is_some(), hide)
         {
+            super::winhits::record(w, sort, &sw_);
             rects.push(sw_.frame);
             if off && let Some(&(_, r)) = sw_.children.iter().find(|ch| ch.0 == 2) {
                 let on = win.sort_focus == Some(3);

@@ -4009,7 +4009,7 @@ fn world_hud(
         && world.maze.screen.is_none()
         && let Some(p) = input.pointer
     {
-        items::pointer(world, gu, sw, sh, p, input.moved, input.released, input.right_clicked);
+        items::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| {
         world.linkshell.is_some()
@@ -4032,7 +4032,7 @@ fn world_hud(
         blklist::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.loot.is_some() && world.confirm.is_none()) {
-        treasure::pointer(world, gu, sw, sh, p, input.moved, input.released, input.right_clicked);
+        treasure::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.layout.is_some() && world.confirm.is_none()) {
         layout::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
@@ -4077,13 +4077,13 @@ fn world_hud(
         shop::pointer(world, gu, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.macroedit.is_some() && world.confirm.is_none()) {
-        macroedit::pointer(world, gu, sw, sh, p, input.moved, input.released, input.right_clicked);
+        macroedit::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.remodel.is_some() && world.confirm.is_none()) {
         remodel::pointer(world, gu, sw, sh, p, input.released);
     }
     if let Some(p) = input.pointer.filter(|_| mannequin::active(world) && world.confirm.is_none()) {
-        mannequin::pointer(world, gu, sw, sh, p, input.moved, input.released, input.right_clicked);
+        mannequin::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| trade::active(world) && world.confirm.is_none()) {
         trade::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
@@ -4171,14 +4171,14 @@ fn world_hud(
         status::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     if let Some(p) = input.pointer.filter(|_| world.pupset.is_some() && world.confirm.is_none()) {
-        pupset::pointer(world, gu, sw, sh, p, input.moved, input.released);
+        pupset::pointer(world, gu, sw, sh, p, input.released);
     }
     if let Some(p) = input.pointer.filter(|_| world.maze.screen.is_some() && world.confirm.is_none()) {
         maze::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     // Mouse on the magic / ability lists and their category windows, or the Set Spells screen over them.
     if let Some(p) = input.pointer.filter(|_| world.bluset.is_some() && world.confirm.is_none()) {
-        bluset::pointer(world, gu, sw, sh, p, input.moved, input.released, input.right_clicked);
+        bluset::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     } else if let Some(p) = input.pointer.filter(|_| world.moncustom.is_some() && world.confirm.is_none()) {
         moncustom::pointer(world, gu, p, input.released, input.right_clicked);
     } else if let Some(p) = input
@@ -15660,6 +15660,9 @@ impl App {
         }
         if self.input.test(0x11, input::mode::PRESS) && treasure::active(world) {
             treasure::num_plus(world);
+        }
+        if self.input.test(0x11, input::mode::PRESS) && world.handover.is_none() && world.confirm.is_none() {
+            trade::num_plus(world);
         }
         if self.input.test(0x11, input::mode::PRESS) && world.macroedit.is_some() {
             macroedit::num_plus(world);

@@ -2305,13 +2305,13 @@ fn draw_count(gu: &mut GameUi, n: usize, size: u8, sw: f32, sh: f32) {
 }
 
 /// Mouse on the item list: a row takes the cursor by winhits::takes, a click on the highlighted row acts as Enter.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     // The yes / no prompt (comyn) over the list has the focus, so the mouse (FUN_101267f0 tests the focused window only).
     if w.confirm.is_some() {
         return;
     }
     if matches!(w.win, Some(Win::Equip(_))) {
-        super::equipwin::pointer(w, gu, sw, sh, p, moved, clicked);
+        super::equipwin::pointer(w, gu, sw, sh, p, clicked);
         return;
     }
     // The bin view's count (itemctrl) by winhits::ctr.

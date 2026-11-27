@@ -468,9 +468,11 @@ pub fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
     super::scrollbar::rows(m, &mut d.scroll, &mut d.row, n, VISIBLE_ROWS)
 }
 
-/// The mouse: a grid child under it takes the cursor (winhits::takes) and a click on the cursor's child is Enter; the list's rows as
-/// the item list's; the pointer over the other window moves the focus there (message 8), as the Equipment screen.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+/// The mouse: a grid child under it takes the cursor (winhits::takes) and a click on the cursor's child is Enter; the
+/// list's rows as the item list's. The pointer over the other window moves no focus: the grid is menu inspect's
+/// object (rmlo4_case 0x10135a70), whose frame hook (win_inspect_v28 0x10135260) asks nothing of the mouse, and the
+/// list's (FUN_101f3d70) asks only about itmsortw / itmsort2, bank and menu equip (super::winhits::hook).
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     // The modern layer draws them and takes their mouse.
     if w.modern {
         return;
@@ -486,10 +488,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     }
     match focus {
         Focus::Grid => {
-            if list_row.is_some() && (moved || clicked) {
-                num_plus(w);
-                return;
-            }
             let Some(id) = super::trade::child_at(gu, GRID, sw, sh, p, 1..=REMOVE_ALL) else { return };
             if super::winhits::takes(gu, GRID, id, in_grid) && id != cursor {
                 if let Some(d) = dress_mut(w) {
@@ -504,10 +502,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
             }
         }
         Focus::List => {
-            if in_grid && (moved || clicked) {
-                num_plus(w);
-                return;
-            }
             let Some(r) = list_row.filter(|r| scroll + r < n) else { return };
             if super::winhits::takes(gu, "menu    inventor", r as u16 + 1, true) && r != row {
                 if let Some(d) = dress_mut(w) {

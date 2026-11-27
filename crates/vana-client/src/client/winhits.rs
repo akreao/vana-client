@@ -97,17 +97,31 @@ pub struct Hover {
     now: Vec<(String, u16)>,
     down: bool,
     hidden: bool,
+    /// Ticks gathered towards the next retail frame, and whether this frame of ours is one (the windows' frame hooks
+    /// run once a retail frame, `hook`).
+    hook_acc: f32,
+    hook_frame: bool,
+    last: Option<std::time::Instant>,
 }
 
 impl Hover {
     /// A frame of the mouse routine. With the pointer hidden (+0x4e = 0) the hover block does not run and +0x52 keeps
     /// its value, and the hit test answers -1 (FUN_1011a140 tests +0x4e), so nothing takes the cursor.
     fn frame(&mut self, down: bool, shown: bool) {
+        let now = std::time::Instant::now();
+        let dt = self.last.map_or(0.0, |t| now.duration_since(t).as_secs_f32().min(0.1));
+        self.last = Some(now);
+        self.hook_tick(dt);
         self.hidden = !shown;
         if shown {
             self.prev = std::mem::take(&mut self.now);
         }
         self.down = down;
+    }
+
+    /// Whether this frame of ours (`dt` seconds) ends a retail frame, for the frame hooks (`hook`).
+    fn hook_tick(&mut self, dt: f32) {
+        self.hook_frame = super::camera::retail_frame(&mut self.hook_acc, dt, 8.0).is_some();
     }
 
     /// `takes` without the hand.
@@ -155,6 +169,27 @@ pub fn takes_no_hand(gu: &GameUi, name: &str, child: u16, frame: bool) -> bool {
     let t = takes(gu, name, child, frame);
     gu.hover.set(hand);
     t
+}
+
+/// The focused window's frame hook asking about another window (vtable +0x28, which FUN_10160fd0 calls for every
+/// window each frame, 1 for the focused one DAT_10622a44): while the mouse drives the menus and the player is not busy
+/// (FUN_10127770: mouse +0x4d == 2, FUN_10087070(0) clear), the pointer anywhere inside the other window's `frame`
+/// (FUN_1011a0a0: window +0x3a .. +0x40, both ends in) sends the hook's message, mostly 8 (Num+). A resting pointer
+/// counts, so it sends again every retail frame while it stays there; ours asks once a retail frame of ours
+/// (`Hover::frame`). No hand: the hover tail hit-tests the focused window alone.
+pub fn hook(w: &World, gu: &GameUi, frame: Option<[f32; 4]>, p: (f32, f32)) -> bool {
+    let h = gu.ptr_hover.borrow();
+    fires(h.hook_frame, h.hidden, super::textcmd::busy(w), frame, p)
+}
+
+/// `hook`'s test: a retail frame, the pointer shown (mouse mode 2), not busy, the pointer in the frame.
+fn fires(tick: bool, hidden: bool, busy: bool, frame: Option<[f32; 4]>, p: (f32, f32)) -> bool {
+    tick && !hidden && !busy && frame.is_some_and(|r| inside(r, p))
+}
+
+/// The frame of a window drawn this frame (`record`), for `hook`.
+pub fn frame_of(w: &World, name: &str) -> Option<[f32; 4]> {
+    w.win_hits.borrow().iter().find(|h| h.0 == name).map(|h| h.1)
 }
 
 /// The pointer inside window `name`'s frame as laid out (FUN_1011a0a0: both ends in), for `takes`.
@@ -422,6 +457,29 @@ mod tests {
         // Another window's child of the same number is another hit (ours keys by window too).
         h.frame(false, true);
         assert!(h.take("menu    v", 3, false));
+    }
+
+    /// The frame hooks ask once a retail frame (2 ticks gathered): every second frame of ours at 60 fps, every frame
+    /// at 20; then with the pointer shown, the player not busy and the pointer in the other window's frame, both ends
+    /// in (FUN_10127770, FUN_1011a0a0).
+    #[test]
+    fn hooks_once_a_retail_frame() {
+        let mut h = Hover::default();
+        let mut ticks = |dt: f32, n: usize| {
+            (0..n)
+                .map(|_| {
+                    h.hook_tick(dt);
+                    h.hook_frame
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ticks(1.0 / 60.0, 4), [false, true, false, true]);
+        assert_eq!(ticks(1.0 / 20.0, 2), [true, true]);
+        let r = Some([10.0, 20.0, 30.0, 40.0]);
+        assert!(fires(true, false, false, r, (10.0, 20.0)) && fires(true, false, false, r, (40.0, 60.0)));
+        assert!(!fires(true, false, false, r, (40.5, 60.0)) && !fires(true, false, false, None, (15.0, 25.0)));
+        assert!(!fires(false, false, false, r, (15.0, 25.0)));
+        assert!(!fires(true, true, false, r, (15.0, 25.0)) && !fires(true, false, true, r, (15.0, 25.0)));
     }
 
     /// Two windows hit in the same frame keep their own last hits; the hidden pointer takes nothing and keeps them.

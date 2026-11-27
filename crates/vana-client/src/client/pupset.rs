@@ -65,8 +65,6 @@ pub struct Screen {
     filter: u16,
     /// pupsibor's cursor row while it is open.
     sibo: Option<u16>,
-    /// When the pointer's refused hand-over last sounded (`pointer`).
-    buzzed: Option<std::time::Instant>,
 }
 
 /// FUN_100fcbc0(side, 0x1200, i): slot i's byte (0 head, 1 frame, 2..13 attachments), 0 without a PUP block.
@@ -228,7 +226,6 @@ pub fn open(w: &mut World) {
         mode: Mode::All,
         filter: 0,
         sibo: None,
-        buzzed: None,
     });
 }
 
@@ -568,31 +565,28 @@ fn hit(gu: &GameUi, sw: f32, sh: f32, p: (f32, f32)) -> Option<Hit> {
     (0..VISIBLE).find(|&k| inside([x + 3.0, y + 6.0 + 18.0 * k as f32, 132.0, 16.0])).map(Hit::List)
 }
 
-/// Mouse *(inf, as BLU)*: over the other window the focus moves there (message 8) while nothing is picked; a cell or
-/// row moves the cursor, a click on the cursor's is Enter.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool) {
+/// Mouse: a cell or row of the focused window takes the cursor, a click on the cursor's is Enter. Then the focused
+/// window's frame hook (super::winhits::hook): automato's (win_automato_v28 0x10209050) sends itself message 8 while
+/// the pointer is in bluinven's frame, bluinven's (automato's win_automato_v60 0x1020a510) sends the list message 8
+/// while it is in automato's; message 8 is Num+ (`num_plus`: with a pick held automato refuses, SE 0004, every retail
+/// frame).
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool) {
     if w.modern {
         return;
     }
+    hover(w, gu, sw, sh, p, clicked);
+    let Some(s) = w.pupset.as_ref().filter(|s| s.sibo.is_none()) else { return };
+    let other = if s.focus == Focus::Grid { INVEN } else { AUTO };
+    if super::winhits::hook(w, gu, gu.window_rect(other, sw, sh), p) {
+        num_plus(w);
+    }
+}
+
+/// The hover and the buttons on the focused window.
+fn hover(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool) {
     let Some(s) = w.pupset.clone().filter(|s| s.sibo.is_none()) else { return };
     let Some(h) = hit(gu, sw, sh, p) else { return };
-    let on_grid = matches!(h, Hit::Grid(_));
-    if on_grid != (s.focus == Focus::Grid) {
-        // automato's frame hook (win_automato_v28 0x10209050): while the pointer drives the menus and rests on
-        // bluinven it sends itself message 8 every frame. With nothing picked that hands the focus over once; with a
-        // pick the focus stays, so the refusal's SE 0004 sounds again every retail frame until the pointer leaves.
-        if s.focus == Focus::Grid && (s.pick.is_some() || s.slot_pick.is_some()) {
-            let due = s.buzzed.is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(33));
-            if due {
-                num_plus(w);
-                if let Some(s) = w.pupset.as_mut() {
-                    s.buzzed = Some(std::time::Instant::now());
-                }
-            }
-        } else if moved {
-            num_plus(w);
-        }
-        gu.hover.set(true);
+    if matches!(h, Hit::Grid(_)) != (s.focus == Focus::Grid) {
         return;
     }
     let (name, child) = match h {
