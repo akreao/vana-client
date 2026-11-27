@@ -15,6 +15,7 @@ mod eventdump;
 mod flashshot;
 mod fx;
 mod gamecfg;
+mod grain;
 mod install;
 mod itemshot;
 mod lock;
@@ -1627,6 +1628,11 @@ fn main() -> Result<()> {
             let keys = dat::zone::Keys::from_ffximain(&std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir()))?)?;
             let file = index.read(dat::zone::file_id(zone))?;
             let mut scene = dat::zone::load_scene(&keys, &file)?;
+            // FFXI_UPSCALE_GRAIN=1..3: the offscreen shot with Upscale Grain (grain.rs).
+            if let Some(l) = std::env::var("FFXI_UPSCALE_GRAIN").ok().and_then(|l| l.parse().ok()) {
+                grain::set_level(l);
+                grain::apply(&index, dat::zone::file_id(zone), &mut scene.textures);
+            }
             // Config 0017 (FUN_10171360 / FUN_101720a0): the bump maps, never in zone 182.
             let bump = cfg.tool("0017") != 0 && zone != 182;
             if bump {

@@ -275,6 +275,9 @@ pub struct Config {
     /// Not retail (Settings' Material Maps): normal / roughness / metal maps from the material pack (material.rs); 0
     /// off, 1..3 Low / Medium / High, their strength.
     pub material_maps: u32,
+    /// Not retail (Settings' Upscale Grain, grain.rs): the stock grain back on the upscale pack's smeared textures
+    /// and in their material maps; 0 off, 1..3 Low / Medium / High. Only with Vana Upscale and Material Maps.
+    pub upscale_grain: u32,
     /// Character shadows: 0 retail's (blob / silhouette), 1 real (a shadow map from the sun, render/sunshadow.rs,
     /// retail's where there is no sun). Not a retail option.
     pub actor_shadows: u32,
@@ -669,6 +672,7 @@ impl Default for Config {
             lamp_lights: true,
             smooth_lights: false,
             material_maps: 0,
+            upscale_grain: 0,
             actor_shadows: 0,
             shadow_map: 2048,
             ssao: false,

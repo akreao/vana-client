@@ -612,7 +612,7 @@ fn load_any_png(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
 
 /// A material map image as BC5 with its mips down to 4 texels; `normal` renormalises each level (x, y kept, z from the
 /// blue channel).
-fn bc5_chain(w: u32, h: u32, rgba: &[u8], levels: u32, normal: bool) -> Vec<u8> {
+pub(crate) fn bc5_chain(w: u32, h: u32, rgba: &[u8], levels: u32, normal: bool) -> Vec<u8> {
     let mut px: Vec<[f32; 3]> = rgba
         .as_chunks::<4>()
         .0

@@ -355,6 +355,7 @@ fn pick_mesh(names: &[String]) -> Option<usize> {
 pub fn load(index: &DatIndex, keys: &Keys, (entity, seq, file): Job) -> Result<Loaded> {
     let bytes = index.read(file)?;
     let mut scene = crate::dat::zone::load_scene(keys, &bytes)?;
+    crate::grain::apply(index, file, &mut scene.textures);
     let names: Vec<String> = scene.meshes.iter().map(|m| m.name.clone()).collect();
     let k = pick_mesh(&names).ok_or_else(|| anyhow!("ship file {file}: no MMB"))?;
     let mesh = scene.meshes.swap_remove(k);

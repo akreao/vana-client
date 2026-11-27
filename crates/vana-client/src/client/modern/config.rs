@@ -134,6 +134,7 @@ const PAGES: [(&str, &str, &[Item]); 14] = [
             Ours("2-D Mapping"),
             Ours("Fonts"),
             Ours("Material Maps"),
+            Ours("Upscale Grain"),
             Ours("MIP Mapping"),
             Ours("Anisotropic Filtering"),
             Head("Edges & Stability"),

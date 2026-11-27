@@ -108,6 +108,7 @@ pub fn load(
     let file_id = zone::file_id(id);
     let file = index.read(file_id)?;
     let mut scene = zone::load_scene(keys, &file)?;
+    crate::grain::apply(index, file_id, &mut scene.textures);
     let mut all = zone_keys.to_vec();
     for &k in &scene.light_keys {
         if k != 0 && !all.contains(&k) {

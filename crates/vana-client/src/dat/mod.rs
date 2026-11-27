@@ -75,6 +75,7 @@ impl DatIndex {
         use std::sync::{Arc, Mutex, OnceLock};
         type Scan = (PathBuf, Vec<PathBuf>, Arc<overlay::Overlays>);
         let dirs = crate::config::enabled_mod_dirs();
+        crate::grain::set_upscale(dirs.iter().any(|d| d.file_name().is_some_and(|n| n == crate::grain::UPSCALE_MOD)));
         if dirs.is_empty() {
             return None;
         }
@@ -117,13 +118,23 @@ impl DatIndex {
         self.entries.len()
     }
 
-    pub fn path(&self, id: u32) -> Option<PathBuf> {
+    /// The install's own file of `id`, whatever the mods have.
+    pub fn stock_path(&self, id: u32) -> Option<PathBuf> {
         let &(rom, packed) = self.entries.get(id as usize)?;
         if rom == 0 {
             return None;
         }
         let rom_dir = if rom == 1 { "ROM".to_string() } else { format!("ROM{rom}") };
-        let stock = self.root.join(rom_dir).join((packed >> 7).to_string()).join(format!("{}.DAT", packed & 0x7F));
+        Some(self.root.join(rom_dir).join((packed >> 7).to_string()).join(format!("{}.DAT", packed & 0x7F)))
+    }
+
+    pub fn read_stock(&self, id: u32) -> Result<Vec<u8>> {
+        let path = self.stock_path(id).with_context(|| format!("file id {id} is not in the index"))?;
+        std::fs::read(&path).with_context(|| format!("reading {}", path.display()))
+    }
+
+    pub fn path(&self, id: u32) -> Option<PathBuf> {
+        let stock = self.stock_path(id)?;
         match &self.overlays {
             Some(o) if o.has(id) => Some(o.resolve(id, &stock).unwrap_or(stock)),
             _ => Some(stock),

@@ -8052,6 +8052,7 @@ fn load_zone_data(
 ) -> Result<ZoneData> {
     let file = index.read(crate::dat::zone::file_id(map_no as u32))?;
     let mut scene = zone::load_scene(keys, &file)?;
+    crate::grain::apply(index, crate::dat::zone::file_id(map_no as u32), &mut scene.textures);
     scene.floors = floor_list(map_no as u32);
     if bump {
         scene.bumps =
@@ -12396,6 +12397,7 @@ impl App {
                         (|| {
                             let file = index.read(crate::dat::zone::file_id(area as u32))?;
                             let mut scene = zone::load_scene(&keys, &file)?;
+                            crate::grain::apply(&index, crate::dat::zone::file_id(area as u32), &mut scene.textures);
                             scene.floors = floor_list(area as u32);
                             if bump {
                                 scene.bumps = crate::dat::bump::parse(
@@ -19153,6 +19155,7 @@ impl App {
         }
         // Material Maps: the pack follows the setting before any load starts, so the first zone's textures get maps.
         crate::material::set_enabled(self.cfg.material_maps != 0);
+        crate::grain::set_level(self.cfg.upscale_grain);
         while let Ok(t) = self.tasks.try_recv() {
             let name = t.name();
             perf::timed(|| format!("task {name}"), || self.handle_task(t));
