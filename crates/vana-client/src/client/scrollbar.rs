@@ -414,5 +414,4 @@ mod tests {
         focus(&mut sites);
         assert_eq!(sites.len(), 2);
     }
-
 }

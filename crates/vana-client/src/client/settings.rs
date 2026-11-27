@@ -1728,13 +1728,7 @@ impl SettingsUi {
                         // A caption cut to its button (a row narrowed to fit the frame).
                         let mut cap = r.choices[*c].1.clone();
                         while gu.label_width(&cap) > b[2] - 12.0 && cap.pop().is_some() {}
-                        gu.label(
-                            &cap,
-                            x + b[0] + 5.0 + d,
-                            y + b[1] + 1.0 + d,
-                            if on { ON } else { N },
-                            true,
-                        );
+                        gu.label(&cap, x + b[0] + 5.0 + d, y + b[1] + 1.0 + d, if on { ON } else { N }, true);
                         if r.choices[*c].0 == self.get(r.val) {
                             marker(gu, x + b[0], y + b[1], b[2]);
                         }
@@ -2856,7 +2850,7 @@ mod tests {
         use crate::config::ModRef;
         let c = Config::default();
         let mut ui = SettingsUi::open(&c, [1280, 800]);
-        ui.s.mods = (0..12).map(|k| ModRef::new(&format!("p{k}"), true)).collect();
+        ui.s.mods = (0..12).map(|k| ModRef::new(format!("p{k}"), true)).collect();
         ui.lua_names = std::collections::HashSet::new();
         ui.mods_ui = Some(super::super::modsui::Mods::empty());
         (ui.tab, ui.row, ui.col) = (PACKS, 1, 0);
