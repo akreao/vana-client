@@ -183,11 +183,8 @@ pub fn build(
     aug_ctx: Option<&super::augment::AugCtx>,
 ) -> Info {
     let mut info = Info { name_tint: WHITE, icon_tint: WHITE, extra_tint: WHITE, ..Default::default() };
-    let mut name = it.singular.clone();
-    if let Some(c) = name.get(..1) {
-        name.replace_range(..1, &c.to_uppercase());
-    }
-    info.name = name;
+    // FUN_1013e2c0: the name with its first char up, under 0x80 bytes (FUN_1025d720).
+    info.name = crate::dat::case::cap_first_str(&it.singular, 0x80).unwrap_or_default();
     info.name_tint = if cx.shop {
         0x8090_9040
     } else if cx.equipped {

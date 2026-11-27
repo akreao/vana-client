@@ -438,9 +438,21 @@ fn hit(gu: &GameUi, sw: f32, sh: f32, p: (f32, f32)) -> Option<(Focus, usize)> {
     None
 }
 
-/// Mouse *(inf)*: over the other list the focus moves there (message 8) while nothing is picked; a row takes the
-/// cursor by winhits::takes, a click on the cursor row is Enter.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+/// Mouse: a row of the focused list takes the cursor by winhits::takes, a click on the cursor row is Enter. Then the
+/// focused list's frame hook (super::winhits::hook): bluequip's (win_bluequip_v50_2 0x101e0d00) sends itself message 8
+/// while the pointer is in bluinven's frame, bluinven's (bluequip's FUN_101e1780) sends the list message 8 while it is
+/// in bluequip's; message 8 is Num+ (`num_plus`: with a pick held bluequip refuses, SE 0004, every retail frame).
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
+    hover(w, gu, sw, sh, p, clicked, right);
+    let Some(s) = w.bluset.as_ref().filter(|s| !w.modern && s.sibo.is_none()) else { return };
+    let other = if s.focus == Focus::Equip { INVEN } else { EQUIP };
+    if super::winhits::hook(w, gu, gu.window_rect(other, sw, sh), p) {
+        num_plus(w);
+    }
+}
+
+/// The hover and the buttons on the focused window.
+fn hover(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     // The modern layer draws it and takes its mouse.
     if w.modern {
         return;
@@ -458,10 +470,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     let Some(s) = w.bluset.clone() else { return };
     let Some((f, k)) = hit(gu, sw, sh, p) else { return };
     if f != s.focus {
-        gu.hover.set(true);
-        if moved && s.spell_pick.is_none() && s.slot_pick.is_none() {
-            num_plus(w);
-        }
         return;
     }
     let n = if f == Focus::Equip { s.slots } else { inven_rows(w, &s).len() };

@@ -211,6 +211,26 @@ pub fn title_button_rects(lobby: &UiFile, w: f32, h: f32, shift: f32) -> Vec<[f3
     out
 }
 
+/// The title buttons' child boxes (children 1..5 in layout order, at their places: no header offset), as loby2win's
+/// open (FUN_10241450) sets them: each layout box (FUN_10119d90) scaled by (W / 1024, H / 768), `__ftol` of the
+/// scaled left / top and of the scaled width / height (0x1024151b..0x1024157d). The buttons are drawn at these places
+/// (FUN_10241640), so the box is the button's, not its sprite's extent. FUN_10119d90 is asked with the cursor's nudge
+/// on: the cursor's child (child 1, cursor_start under registry flag 0x10000; window +0x63 is 1 from the window's
+/// constructor) is read a pixel up-left before the scale, so child 1 keeps that box.
+pub fn title_child_boxes(lobby: &UiFile, w: f32, h: f32, shift: f32) -> Vec<(u16, [f32; 4])> {
+    let Some(m) = lobby.menu("menu    loby2win") else { return Vec::new() };
+    let (sx, sy) = (w / 1024.0, h / 768.0);
+    m.elements
+        .iter()
+        .skip(1)
+        .map(|c| {
+            let d = if c.id == 1 { 1.0 } else { 0.0 };
+            let (x, y) = ((m.elements[0].x + c.x) as f32 + shift - d, (m.elements[0].y + c.y) as f32 - d);
+            (c.id, [(x * sx).trunc(), (y * sy).trunc(), (c.w as f32 * sx).trunc(), (c.h as f32 * sy).trunc()])
+        })
+        .collect()
+}
+
 /// lobyhelp: anchored bottom (header 0x13 = 2), frame offset (-256, 155) from its (256, 224),
 /// widened to the UI width by FUN_10236ac0; the help line is centred at frame y + 5.
 /// Where the title's version line starts (loby2win's slot).

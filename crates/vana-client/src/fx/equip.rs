@@ -28,6 +28,8 @@ pub struct EquipState {
 /// again when `show` (FUN_10061920).
 #[derive(Clone, Copy, Debug)]
 pub(super) struct WepTimer {
+    /// Its node in the task list (`tasklist::Node::Timer`).
+    pub id: u64,
     pub owner: u64,
     pub actor: u32,
     pub n: u8,
@@ -171,17 +173,54 @@ impl Effects {
         if waiting { Err(()) } else { Ok(None) }
     }
 
-    /// Timed hides end with their time or their scheduler (FUN_100619d0, FUN_10061920).
-    pub(super) fn step_wep_timers(&mut self, dt: f32, live: &[u64]) {
-        for mut t in std::mem::take(&mut self.wep_timers) {
-            t.left -= dt;
-            if t.left >= 0.0 && live.contains(&t.owner) {
-                self.wep_timers.push(t);
-            } else if t.show {
-                self.weapons.push(WeaponOp { actor: t.actor, n: t.n, byte: 0, hide: false, glow: true });
-            }
+    /// A timed hide's update in the walk (FUN_100619d0): the frame's ticks off, and under 0.0 it deletes itself.
+    pub(super) fn walk_timer(&mut self, id: u64, f: &super::Frame, actors: &dyn Actors) {
+        let Some(k) = self.wep_timers.iter().position(|t| t.id == id) else { return };
+        self.wep_timers[k].left -= f.dt;
+        if self.wep_timers[k].left < 0.0 {
+            let t = self.wep_timers.remove(k);
+            self.end_wep_timer(t, actors);
         }
     }
+
+    /// The timers of task `owner`, deleted with it (its destructor deletes its children, FUN_10074890).
+    pub(super) fn end_timers_of(&mut self, owner: u64, actors: &dyn Actors) {
+        while let Some(k) = self.wep_timers.iter().position(|t| t.owner == owner) {
+            let t = self.wep_timers.remove(k);
+            self.end_wep_timer(t, actors);
+        }
+    }
+
+    /// Timers whose task went outside the walk (killed by the client or another task's op), before the walk with
+    /// none running.
+    pub(super) fn end_orphan_timers(&mut self, actors: &dyn Actors) {
+        let owners: Vec<u64> = self
+            .wep_timers
+            .iter()
+            .map(|t| t.owner)
+            .filter(|&o| !self.tasks.iter().flatten().any(|t| t.uid == o))
+            .collect();
+        for o in owners {
+            self.end_timers_of(o, actors);
+        }
+    }
+
+    /// FUN_10061920, the timer's destructor: with its hide argument 0 the weapon shows (FUN_100d5f10(n, 0)), whose
+    /// glow starts there and runs its first update at once, while the timer is still the running task; then the timer
+    /// is unlinked (FUN_100747c0).
+    fn end_wep_timer(&mut self, t: WepTimer, actors: &dyn Actors) {
+        if t.show {
+            self.weapons.push(WeaponOp { actor: t.actor, n: t.n, byte: 0, hide: false });
+            self.glow_in_op(t.actor, t.n, glow_on(t.actor, actors), actors);
+        }
+        self.list.unlink(super::tasklist::Node::Timer(t.id));
+    }
+}
+
+/// FUN_100d5f10's test: the glow goes on (FUN_100d5fe0) while the actor is engaged (FUN_10084390 == 1) and not
+/// invisible (+0x128 bit 6), else off (FUN_100d6180).
+pub(super) fn glow_on(id: u32, actors: &dyn Actors) -> bool {
+    actors.applied_status(id) == 1 && !actors.invisible(id)
 }
 
 /// `!w01` / `!w11` (on) and `!w02` / `!w12` (off); other N have none.

@@ -567,7 +567,9 @@ pub(super) fn draw(gu: &mut GameUi, f: &Fep, x: f32, line_y: f32) -> [f32; 4] {
 /// (win_fep_v10: FUN_1011a240(sel % 7 + 2, 0)), at that child's rect; `win.warp` the open hook's pointer move to
 /// child 2.
 pub(super) fn draw_list(gu: &mut GameUi, cands: &[Cand], sel: usize, win: &ListWin, x: f32, line_y: f32) -> [f32; 4] {
-    let widest = cands.iter().map(|c| gu.text_width(&c.text)).fold(0.0, f32::max);
+    // win_fep_v10 draws each row with its first char up, under 0x168 bytes (FUN_1025d720).
+    let shown = |c: &Cand| crate::dat::case::cap_first_str(&c.text, 0x168).unwrap_or_default();
+    let widest = cands.iter().map(|c| gu.text_width(&shown(c))).fold(0.0, f32::max);
     let w = (widest.max(90.0) + 12.0).min(200.0);
     let h = 134.0;
     let y = line_y - h - 2.0;
@@ -594,7 +596,7 @@ pub(super) fn draw_list(gu: &mut GameUi, cands: &[Cand], sel: usize, win: &ListW
         win.stepped.set(true);
     }
     for (k, c) in cands.iter().enumerate().skip(first).take(ROWS) {
-        let mut t = c.text.clone();
+        let mut t = shown(c);
         // The text from x + 6 (inf: retail cuts at the width - 15 from its start).
         if gu.text_width(&t) > w - 12.0 {
             while !t.is_empty() && gu.text_width(&format!("{t}...")) > w - 12.0 {

@@ -164,8 +164,9 @@ pub struct Task {
     pub paused: u32,
     /// +0x143: a model actor's sequence (FUN_100c4730), killed by the next one.
     pub seq: bool,
-    /// Started by an event op (0x45 family), or by a task that was: its camera ops (0x04 / 0x81) move the cutscene
-    /// camera. The event's scheduler (`event_root`) leaves them to client/event.rs's runner, which plays it too.
+    /// Started by an event op (0x45 family), or by a task that was: its crossfades (op 0x10) reach the screen. The
+    /// event's scheduler (`event_root`) leaves its camera ops and fades to client/event.rs's runner, which plays it
+    /// too.
     pub event: bool,
     pub event_root: bool,
     /// An `init` start's wanted sub-animation (Effects::on_init), for the tasks of its first step. Retail loads

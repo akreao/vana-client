@@ -42,6 +42,22 @@ pub fn record_rects(w: &World, name: &str, frame: [f32; 4], children: Vec<(u16, 
     w.win_hits.borrow_mut().push((name.to_string(), frame, children));
 }
 
+/// Window `name`'s children as laid out, moved to the window's place `at` (a window drawn by hand from its layout).
+pub fn layout_at(gu: &GameUi, name: &str, at: (f32, f32)) -> Vec<(u16, [f32; 4])> {
+    gu.menu_def(name).map_or(Vec::new(), |m| {
+        m.elements
+            .iter()
+            .skip(1)
+            .map(|e| (e.id, [at.0 + e.x as f32, at.1 + e.y as f32, e.w as f32, e.h as f32]))
+            .collect()
+    })
+}
+
+/// `record_rects` for a window drawn by hand at `at` (its layout's children there), its frame `frame`.
+pub fn record_layout(w: &World, gu: &GameUi, name: &str, at: (f32, f32), frame: [f32; 4]) {
+    record_rects(w, name, frame, layout_at(gu, name, at));
+}
+
 /// Both ends of a box take the mouse (FUN_1011a140: `jg` / `jl` around each bound).
 pub(super) fn inside(r: [f32; 4], p: (f32, f32)) -> bool {
     p.0 >= r[0] && p.0 <= r[0] + r[2] && p.1 >= r[1] && p.1 <= r[1] + r[3]
@@ -97,17 +113,31 @@ pub struct Hover {
     now: Vec<(String, u16)>,
     down: bool,
     hidden: bool,
+    /// Ticks gathered towards the next retail frame, and whether this frame of ours is one (the windows' frame hooks
+    /// run once a retail frame, `hook`).
+    hook_acc: f32,
+    hook_frame: bool,
+    last: Option<std::time::Instant>,
 }
 
 impl Hover {
     /// A frame of the mouse routine. With the pointer hidden (+0x4e = 0) the hover block does not run and +0x52 keeps
     /// its value, and the hit test answers -1 (FUN_1011a140 tests +0x4e), so nothing takes the cursor.
     fn frame(&mut self, down: bool, shown: bool) {
+        let now = std::time::Instant::now();
+        let dt = self.last.map_or(0.0, |t| now.duration_since(t).as_secs_f32().min(0.1));
+        self.last = Some(now);
+        self.hook_tick(dt);
         self.hidden = !shown;
         if shown {
             self.prev = std::mem::take(&mut self.now);
         }
         self.down = down;
+    }
+
+    /// Whether this frame of ours (`dt` seconds) ends a retail frame, for the frame hooks (`hook`).
+    fn hook_tick(&mut self, dt: f32) {
+        self.hook_frame = super::camera::retail_frame(&mut self.hook_acc, dt, 8.0).is_some();
     }
 
     /// `takes` without the hand.
@@ -127,6 +157,11 @@ impl Hover {
 /// pointer (hidden by the keys).
 pub fn frame(gu: &GameUi, down: bool, shown: bool) {
     gu.ptr_hover.borrow_mut().frame(down, shown);
+}
+
+/// The pointer shown this frame (mouse +0x4e).
+pub fn shown(gu: &GameUi) -> bool {
+    !gu.ptr_hover.borrow().hidden
 }
 
 /// The mouse on child `child` of window `name`, hit under the pointer this frame (`frame`: the pointer is inside the
@@ -157,9 +192,28 @@ pub fn takes_no_hand(gu: &GameUi, name: &str, child: u16, frame: bool) -> bool {
     t
 }
 
-/// The pointer shown (mouse +0x4e): the keys hide it until it moves.
-pub fn shown(gu: &GameUi) -> bool {
-    !gu.ptr_hover.borrow().hidden
+/// The focused window's frame hook asking about another window (vtable +0x28, which FUN_10160fd0 calls for every
+/// window each frame, 1 for the focused one DAT_10622a44): while the mouse drives the menus and the player is not busy
+/// (FUN_10127770: mouse +0x4d == 2, FUN_10087070(0) clear), the pointer anywhere inside the other window's `frame`
+/// (FUN_1011a0a0: window +0x3a .. +0x40, both ends in) sends the hook's message, mostly 8 (Num+). A resting pointer
+/// counts, so it sends again every retail frame while it stays there; ours asks once a retail frame of ours
+/// (`Hover::frame`). No hand: the hover tail hit-tests the focused window alone.
+pub fn hook(w: &World, gu: &GameUi, frame: Option<[f32; 4]>, p: (f32, f32)) -> bool {
+    let h = gu.ptr_hover.borrow();
+    // A scroll thumb held is mouse mode 3, not 2 (`mousecur::SCROLL_DRAG`).
+    let mode2 = !h.hidden && !gu.bar_hold.as_ref().is_some_and(|b| b.dragging());
+    fires(h.hook_frame, !mode2, super::textcmd::busy(w), frame, p)
+}
+
+/// `hook`'s test: a retail frame, mouse mode 2 (the pointer shown, no scroll thumb held), not busy, the pointer in the
+/// frame.
+fn fires(tick: bool, hidden: bool, busy: bool, frame: Option<[f32; 4]>, p: (f32, f32)) -> bool {
+    tick && !hidden && !busy && frame.is_some_and(|r| inside(r, p))
+}
+
+/// The frame of a window drawn this frame (`record`), for `hook`.
+pub fn frame_of(w: &World, name: &str) -> Option<[f32; 4]> {
+    w.win_hits.borrow().iter().find(|h| h.0 == name).map(|h| h.1)
 }
 
 /// The pointer inside window `name`'s frame as laid out (FUN_1011a0a0: both ends in), for `takes`.
@@ -196,6 +250,72 @@ pub fn release_off_child(w: &World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32)
     child.is_none()
 }
 
+/// A lobby screen's focused window as drawn this frame (the title's loby2win, character select's dbnamese, chfwin,
+/// chswin, the yes / no and ok windows, the creator's steps): its frame (window +0x3a .. +0x40, which the held step
+/// tests, FUN_1011a0a0) and every child FUN_1011a140 hits, each box moved by its header offset (+0xe, +0x10). A
+/// disabled child (state 5) is hit like any other; one in state 0x10 (hidden) is left out by the caller.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LobbyFocus {
+    pub frame: [f32; 4],
+    pub children: Vec<(u16, [f32; 4])>,
+}
+
+impl LobbyFocus {
+    /// `children` at their places (as `LobbyWin` gives them) moved by window `name`'s header offsets.
+    pub fn new(gu: &GameUi, name: &str, frame: [f32; 4], children: &[(u16, [f32; 4])]) -> Self {
+        let part = parts(gu, name);
+        let children = children
+            .iter()
+            .filter_map(|&(id, r)| part(id).map(|(ox, oy)| (id, [r[0] + ox, r[1] + oy, r[2], r[3]])))
+            .collect();
+        LobbyFocus { frame, children }
+    }
+
+    /// Window `name` at its layout place (the frame by `GameUi::window_rect`, the children at the window position):
+    /// for the windows a lobby screen draws with no record of its own. None while it opens (state 0xe: no mode 2).
+    pub fn layout(gu: &GameUi, name: &str, sw: f32, sh: f32) -> Option<Self> {
+        Self::layout_off(gu, name, sw, sh, (0.0, 0.0))
+    }
+
+    /// `layout` moved by `off`, as `GameUi::lobby_window_off` draws it.
+    pub fn layout_off(gu: &GameUi, name: &str, sw: f32, sh: f32, off: (f32, f32)) -> Option<Self> {
+        let (x, y) = gu.window_xy(name, sw, sh)?;
+        let [fx, fy, fw, fh] = gu.window_rect(name, sw, sh)?;
+        let (x, y) = (x + off.0, y + off.1);
+        let kids: Vec<(u16, [f32; 4])> = gu
+            .menu_def(name)?
+            .elements
+            .iter()
+            .skip(1)
+            .map(|e| (e.id, [x + e.x as f32, y + e.y as f32, e.w as f32, e.h as f32]))
+            .collect();
+        Some(Self::new(gu, name, [fx + off.0, fy + off.1, fw, fh], &kids))
+    }
+
+    /// The first child whose box holds `p` (both ends in), as FUN_1011a140.
+    pub fn child(&self, p: (f32, f32)) -> Option<u16> {
+        self.children.iter().find(|c| inside(c.1, p)).map(|c| c.0)
+    }
+
+    /// The held step's frame test (FUN_1011a0a0, both ends in).
+    pub fn in_frame(&self, p: (f32, f32)) -> bool {
+        inside(self.frame, p)
+    }
+}
+
+/// The left release on a lobby screen (FUN_1015f420, the same window manager frame as in the world): with the
+/// pointer shown (mouse mode 2: the focused window `win`, not opening) and no child of it under the pointer, SE 0004
+/// (FUN_10037c50). Mouse +0x87 (rem4line, the map's marker cursor) is never set there, and no lobby window ours draws
+/// has a scroll bar to press (+0x86). A left drag stays mode 2 there (mode 5 is the right button's drag,
+/// FUN_10126600; mode 4, FUN_101264d0, only in the world), so a drag's release buzzes too.
+pub fn lobby_release_off(gu: &GameUi, win: Option<&LobbyFocus>, p: (f32, f32)) -> bool {
+    release_off(gu.ptr_hover.borrow().hidden, win, p)
+}
+
+fn release_off(hidden: bool, win: Option<&LobbyFocus>, p: (f32, f32)) -> bool {
+    win.is_some_and(|w| !hidden && w.child(p).is_none())
+}
+
 /// The generic handler on the focused window: a child under the pointer takes the cursor by `takes` (SE 0001), a
 /// click (the release, FUN_1015f420) on the cursor's child is Enter and on another child nothing, a right click on the window Escape (ours only over it; retail's message 6 takes any right
 /// click, FUN_1015def0). `key` is the window's key handler.
@@ -224,6 +344,77 @@ pub fn generic(
     } else if clicked && id == cursor {
         key(w, gu, egui::Key::Enter);
     }
+}
+
+/// A list window of the list base (win_common_onkey_3 0x101f8280, its frame hook FUN_101f7fe0) on the focused window:
+/// `count` entries from entry `top` on children 1.., the cursor on child `cursor`.
+/// - The hover's or the held button's cursor move (FUN_1011a240, message 9; the list base keeps no SE on the window,
+///   +0x85 clear): onto a child with an entry, SE 0001 when it is not the last cursor (case 9 at 0x101f82d5); onto a
+///   child past the count, no SE, and the tail's clamp (0x101f855b: entry index at or past the count) puts the cursor
+///   on the count's child (FUN_1011a240(count - top)).
+/// - The frame hook clears the hand (mouse +0x4c) every frame while the hit child is past the count.
+/// - The release on the cursor's child is message 5, the list's Enter; a right click on the window Escape (ours only
+///   over it, as `generic`).
+#[allow(clippy::too_many_arguments)]
+pub fn list(
+    w: &mut World,
+    gu: &GameUi,
+    name: &str,
+    cursor: u16,
+    (count, top): (usize, usize),
+    ids: std::ops::RangeInclusive<u16>,
+    p: (f32, f32),
+    clicked: bool,
+    right: bool,
+    set: impl FnOnce(&mut World, u16),
+    key: impl FnOnce(&mut World, &GameUi, egui::Key),
+) {
+    let (child, on) = child_under(w, name, p, ids, parts(gu, name));
+    if right && on {
+        key(w, gu, egui::Key::Escape);
+        return;
+    }
+    let Some(id) = child else { return };
+    // Retail's frame hook tests the child against the count; ours tests the entry, as ours may keep a top the count
+    // no longer reaches (retail's refresh FUN_101f8630 moves it), which comes to the same while the top is in range.
+    let entry = top + id as usize <= count;
+    let takes = if entry { takes(gu, name, id, on) } else { takes_no_hand(gu, name, id, on) };
+    if !entry {
+        // FUN_101f7fe0 clears the hand every frame over a child past the count, whatever showed it before.
+        gu.hover.set(false);
+    }
+    if id != cursor && takes {
+        match list_move(id, cursor, count, top) {
+            ListMove::Row => {
+                set(w, id);
+                w.sounds.push(Ui::Cursor as u32);
+            }
+            ListMove::Clamp(c) => set(w, c),
+            ListMove::Stay => {}
+        }
+    } else if clicked && id == cursor {
+        key(w, gu, egui::Key::Enter);
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum ListMove {
+    /// The cursor onto the hit row, SE 0001.
+    Row,
+    /// The hit child is past the count: the cursor on this child, no SE.
+    Clamp(u16),
+    Stay,
+}
+
+/// The list base's cursor move onto child `id` (not the cursor's): case 9 tests the child against the count (mouse
+/// +0x52 above +0x20), the tail's clamp the entry index (top + child - 1) against it.
+fn list_move(id: u16, cursor: u16, count: usize, top: usize) -> ListMove {
+    if top + id as usize > count {
+        // FUN_1011a240(count - top): at least child 1.
+        let c = count.saturating_sub(top).max(1) as u16;
+        return if c == cursor { ListMove::Stay } else { ListMove::Clamp(c) };
+    }
+    ListMove::Row
 }
 
 /// What a click on an itemctrl / moneyctr child re-sends (message 5, FUN_1013a6c0 / FUN_10140bc0's tables): 1 the
@@ -381,6 +572,79 @@ mod tests {
     use super::*;
     use egui::Key as K;
 
+    /// FUN_1015f420 on a lobby window: a release over a child (a disabled one or one outside the frame too, as the
+    /// prompt's Yes / No and the creator's page arrows) is no miss; one over none of them buzzes, inside the frame or
+    /// out; nothing with the pointer hidden or no window focused (opening).
+    #[test]
+    fn lobby_release_buzzes_off_the_children() {
+        // ptc6yesn-like: frame (256, 128) 512 x 144; Yes / No with header offset (0, -3) already in; the icon.
+        let win = LobbyFocus {
+            frame: [256.0, 128.0, 512.0, 144.0],
+            children: vec![
+                (1, [232.0, 243.0, 118.0, 22.0]),
+                (2, [360.0, 243.0, 118.0, 22.0]),
+                (3, [32.0, 144.0, 32.0, 32.0]),
+            ],
+        };
+        assert!(!release_off(false, Some(&win), (300.0, 250.0)));
+        assert!(!release_off(false, Some(&win), (232.0, 243.0)));
+        assert!(!release_off(false, Some(&win), (478.0, 265.0)));
+        // The icon sits outside the frame and is still a child.
+        assert_eq!(win.child((40.0, 150.0)), Some(3));
+        assert!(!win.in_frame((40.0, 150.0)));
+        assert!(!release_off(false, Some(&win), (40.0, 150.0)));
+        // Between Yes and No, and elsewhere in the frame or off it: SE 0004.
+        assert!(release_off(false, Some(&win), (355.0, 250.0)));
+        assert!(release_off(false, Some(&win), (500.0, 140.0)));
+        assert!(release_off(false, Some(&win), (900.0, 700.0)));
+        assert!(!release_off(true, Some(&win), (900.0, 700.0)));
+        assert!(!release_off(false, None, (900.0, 700.0)));
+        // The frame test of the held step: both ends in.
+        assert!(win.in_frame((256.0, 128.0)) && win.in_frame((768.0, 272.0)) && !win.in_frame((768.5, 272.0)));
+    }
+
+    /// loby2win's open (FUN_10241450): each child box is the layout box scaled by (W / 1024, H / 768), truncated;
+    /// child 1, the cursor at the open, is read a pixel up-left first (needs the game's files).
+    #[test]
+    fn title_boxes_scale_the_layout() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else { return };
+        let Ok(data) = super::super::game_ui::GameUiData::load(&index, &dll) else { return };
+        let gu = GameUi::new(data);
+        // With an expansion logo owned the art is not shifted.
+        let b = gu.title_boxes(1280.0, 720.0, 2);
+        // Layout: children 1..5 at (354, 443 + 28 k) 143 x 24 (Back 4 below Config 5); offsets (0, -3).
+        assert_eq!(b[0], (1, [441.0, 414.0, 178.0, 22.0]));
+        assert_eq!(b[1], (2, [442.0, 441.0, 178.0, 22.0]));
+        assert_eq!(b[3], (4, [442.0, 520.0, 178.0, 22.0]));
+        let f = LobbyFocus::new(&gu, "menu    loby2win", [0.0; 4], &b);
+        assert_eq!(f.child((500.0, 438.0)), Some(2));
+        assert_eq!(f.child((500.0, 462.0)), None);
+    }
+
+    /// The creator's step windows: their rows (the labels `screens::push_menu` highlights by order) are children
+    /// 1..n in layout order, so a hit child id - 1 is the row the draw highlights (needs the game's files).
+    #[test]
+    fn creator_rows_are_the_first_children() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else { return };
+        let Ok(data) = super::super::game_ui::GameUiData::load(&index, &dll) else { return };
+        let gu = GameUi::new(data);
+        for (name, n) in crate::client::creator::STEPS {
+            let m = gu.menu_def(name).unwrap();
+            let labels: Vec<u16> = m
+                .elements
+                .iter()
+                .skip(1)
+                .filter(|c| c.refs.iter().find(|r| r.kind == 0).is_some_and(|r| r.lib.ends_with("windowps")))
+                .map(|c| c.id)
+                .collect();
+            assert_eq!(labels, (1..=n as u16).collect::<Vec<_>>(), "{name}");
+        }
+    }
+
     /// FUN_1011a140: the first child in order whose box (moved by its header offset, both ends in) holds the mouse;
     /// a child in state 0x10 (the caption of a window with registry flag 0x200000) is passed over.
     #[test]
@@ -427,6 +691,29 @@ mod tests {
         // Another window's child of the same number is another hit (ours keys by window too).
         h.frame(false, true);
         assert!(h.take("menu    v", 3, false));
+    }
+
+    /// The frame hooks ask once a retail frame (2 ticks gathered): every second frame of ours at 60 fps, every frame
+    /// at 20; then with the pointer shown, the player not busy and the pointer in the other window's frame, both ends
+    /// in (FUN_10127770, FUN_1011a0a0).
+    #[test]
+    fn hooks_once_a_retail_frame() {
+        let mut h = Hover::default();
+        let mut ticks = |dt: f32, n: usize| {
+            (0..n)
+                .map(|_| {
+                    h.hook_tick(dt);
+                    h.hook_frame
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ticks(1.0 / 60.0, 4), [false, true, false, true]);
+        assert_eq!(ticks(1.0 / 20.0, 2), [true, true]);
+        let r = Some([10.0, 20.0, 30.0, 40.0]);
+        assert!(fires(true, false, false, r, (10.0, 20.0)) && fires(true, false, false, r, (40.0, 60.0)));
+        assert!(!fires(true, false, false, r, (40.5, 60.0)) && !fires(true, false, false, None, (15.0, 25.0)));
+        assert!(!fires(false, false, false, r, (15.0, 25.0)));
+        assert!(!fires(true, true, false, r, (15.0, 25.0)) && !fires(true, false, true, r, (15.0, 25.0)));
     }
 
     /// Two windows hit in the same frame keep their own last hits; the hidden pointer takes nothing and keeps them.
@@ -487,6 +774,18 @@ mod tests {
         assert_eq!(pick(&all, (310.0, 110.0), 1..=2, |_| Some((0.0, 0.0))), Some(1));
         // Nothing drawn that the layout knows: the drawn ones as they are.
         assert_eq!(put_back(&layout, &[(9, [0.0; 4])]), vec![(9, [0.0; 4])]);
+    }
+
+    /// win_common_onkey_3 message 9 and the tail's clamp: a child with an entry takes the cursor; one past the count
+    /// puts it on the count's child (at least child 1), unless it is there already.
+    #[test]
+    fn list_moves_and_clamps() {
+        assert_eq!(list_move(3, 1, 5, 0), ListMove::Row);
+        assert_eq!(list_move(8, 2, 5, 0), ListMove::Clamp(5));
+        assert_eq!(list_move(8, 5, 5, 0), ListMove::Stay);
+        assert_eq!(list_move(2, 3, 0, 0), ListMove::Clamp(1));
+        // Scrolled: every child holds an entry (the top is at most count - 10).
+        assert_eq!(list_move(10, 1, 25, 15), ListMove::Row);
     }
 
     #[test]

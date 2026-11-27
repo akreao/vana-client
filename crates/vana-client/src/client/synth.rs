@@ -847,6 +847,22 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
 /// Escape); itemctrl as
 /// retail's (winhits::ctr).
 pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
+    if w.modern {
+        return;
+    }
+    hover(w, gu, sw, sh, p, clicked, right);
+    // cmbhlst's frame hook (win_cmbhlst_v50 0x101e4200): while it has the focus, the pointer in cmbhwin's frame is
+    // the list's message 8 (Num+: cmbhwin takes the focus, SE 0013; super::winhits::hook). cmbhwin's asks nothing of
+    // the mouse.
+    let away = w.synth.win.as_ref().is_some_and(|s| s.focus == Focus::Away);
+    let list = w.synth.menu.as_ref().is_some_and(|m| matches!(m.history, Some((_, None))));
+    if away && list && w.confirm.is_none() && super::winhits::hook(w, gu, super::winhits::frame_of(w, CMBHWIN), p) {
+        num_plus(w);
+    }
+}
+
+/// The hover and the buttons on the focused window.
+fn hover(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     use super::winhits::generic;
     if w.modern {
         return;

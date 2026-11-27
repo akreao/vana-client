@@ -1362,8 +1362,28 @@ pub fn draw_event_timer(gu: &mut GameUi, w: &World, sw: f32, sh: f32) {
 }
 
 /// Mouse (window messages 9 hover / 5 confirm): a row or category takes the cursor by winhits::takes (SE 0001), a
-/// click on the highlighted one is Enter.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool) {
+/// click on the highlighted one is Enter. Then the focused list's frame hook (win_magic_v60 0x1022e1a0, the sort
+/// window at list +0xc0; win_ability_v60 0x10225c50, win_emote_v60 0x102275a0, win_mount_v60 0x10228180: abisortw):
+/// the pointer in the sort window's frame is message 8 (Num+: the sort window takes the focus; super::winhits::hook).
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
+    // A prompt over the windows (comyn) has the focus, so the mouse.
+    if w.confirm.is_some() {
+        return;
+    }
+    hover(w, gu, sw, sh, p, clicked, right);
+    let list =
+        w.ability.as_ref().or(w.magic.as_ref()).filter(|x| !x.hidden && x.sort_focus.is_none() && x.ask.is_none());
+    if let Some(sort) = list.and_then(|x| x.sort)
+        && w.prompt.is_none()
+        && w.cats.is_none()
+        && super::winhits::hook(w, gu, super::winhits::frame_of(w, sort), p)
+    {
+        num_plus(w);
+    }
+}
+
+/// The hover and the buttons on the focused window.
+fn hover(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     if w.prompt.is_some() {
         return;
     }
@@ -1387,6 +1407,36 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clic
         return;
     }
     let Some(win) = w.ability.as_ref().or(w.magic.as_ref()).filter(|x| !x.hidden) else { return };
+    // The sort window with the focus takes the mouse as the generic window (rows as its keys count them).
+    // Auto-sort's sortyn over it the same: Yes 1, No 2.
+    if let Some(yes) = win.ask.filter(|_| win.sort.is_some()) {
+        let set = |w: &mut World, id: u16| {
+            if let Some(x) = w.ability.as_mut().or(w.magic.as_mut()) {
+                x.ask = Some(id == 1);
+            }
+        };
+        let c = if yes { 1 } else { 2 };
+        super::winhits::generic(w, gu, "menu    sortyn", c, 1..=2, p, clicked, right, set, |w, _, k| {
+            key(w, k);
+        });
+        return;
+    }
+    if let (Some(sort), Some(c)) = (win.sort, win.sort_focus) {
+        let n = match sort {
+            "menu    blusortw" => 3,
+            "menu    mgcsortw" => 2,
+            _ => 1,
+        };
+        let set = |w: &mut World, id: u16| {
+            if let Some(x) = w.ability.as_mut().or(w.magic.as_mut()) {
+                x.sort_focus = Some(id);
+            }
+        };
+        super::winhits::generic(w, gu, sort, c, 1..=n, p, clicked, right, set, |w, _, k| {
+            key(w, k);
+        });
+        return;
+    }
     let menu = win.menu();
     let rows = win.rows.len().saturating_sub(win.scroll).min(VISIBLE);
     let Some(k) = (0..rows).find(|&k| hit(menu, k as u16 + 1)) else { return };
@@ -1503,6 +1553,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         let hide: &[u16] = if off { &[3] } else { &[] };
         if let Some(sw_) = gu.lobby_window_off(sort, sw, sh, (0.0, 0.0), win.sort_focus, win.sort_focus.is_some(), hide)
         {
+            super::winhits::record(w, sort, &sw_);
             rects.push(sw_.frame);
             if off && let Some(&(_, r)) = sw_.children.iter().find(|ch| ch.0 == 2) {
                 let on = win.sort_focus == Some(3);
@@ -1519,10 +1570,12 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         // sortyn 16 px lower under blusortw (FUN_102227d0, inferred from its child count).
         if let Some(yes) = win.ask {
             let dy = if sort == "menu    blusortw" { 16.0 } else { 0.0 };
-            rects.extend(
+            if let Some(yn) =
                 gu.lobby_window_off("menu    sortyn", sw, sh, (0.0, dy), Some(if yes { 1 } else { 2 }), true, &[])
-                    .map(|x| x.frame),
-            );
+            {
+                super::winhits::record(w, "menu    sortyn", &yn);
+                rects.push(yn.frame);
+            }
         }
     }
     // subwindo for the cursor row: magic "MP Cost" (9 0xe6) and "Next" (9 0xe7); abilities by their kind.

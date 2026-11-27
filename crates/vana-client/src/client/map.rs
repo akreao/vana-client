@@ -354,8 +354,10 @@ pub struct MapWin {
     /// Sets 2 / 3: the one member of each whose label shows (flag 8 cleared by FUN_101fa6d0; it stays over set changes).
     label_only: [Option<usize>; 2],
     list: Option<List>,
-    /// map0 / mapscan / mapv2 as drawn this frame (name, frame, children), for the mouse (winhits::record_rects).
-    pub drawn: std::cell::RefCell<Vec<(&'static str, [f32; 4], Vec<(u16, [f32; 4])>)>>,
+    /// The map's windows as drawn this frame (name, frame, children, the disabled children drawn by hand), for the
+    /// mouse (winhits::record_all, GameUi::mark_disabled).
+    #[allow(clippy::type_complexity)]
+    pub drawn: std::cell::RefCell<Vec<(&'static str, [f32; 4], Vec<(u16, [f32; 4])>, Vec<u16>)>>,
     /// Change Map's list (maplist) while open.
     pub maplist: Option<MapList>,
     /// Change Map's pick (+0x110 / +0x112): reopened in mode 5 once this map has closed.
@@ -1350,9 +1352,25 @@ impl MapWin {
                 _ => {}
             }
         } else {
+            // Up / Down move by the layout's links in the window's handler (FUN_101196f0 -> FUN_1011c6b0): the rows
+            // wrap, and the set arrows 11 / 12 (the mouse's only) both lead to row 1; SE 0001 (+0x85 kept).
+            // Enter on an arrow is message 5 on it, which re-sends 4 / 3 (the set before / after).
+            let key = match (key, l.cursor) {
+                (K::Enter, 11) => K::ArrowLeft,
+                (K::Enter, 12) => K::ArrowRight,
+                _ => key,
+            };
             match key {
-                K::ArrowUp => l.cursor = if l.cursor <= 1 { 10 } else { l.cursor - 1 },
-                K::ArrowDown => l.cursor = if l.cursor >= 10 { 1 } else { l.cursor + 1 },
+                K::ArrowUp | K::ArrowDown => {
+                    l.cursor = match (key, l.cursor) {
+                        (_, 11 | 12) => 1,
+                        (K::ArrowUp, c) if c <= 1 => 10,
+                        (K::ArrowUp, c) => c - 1,
+                        (_, c) if c >= 10 => 1,
+                        (_, c) => c + 1,
+                    };
+                    self.sounds.push(Ui::Cursor as u32);
+                }
                 // Messages 3 / 4: the positions asked for (once, whatever the set), then the next / previous set.
                 K::ArrowRight | K::ArrowLeft => {
                     self.want_party();
@@ -1758,7 +1776,7 @@ impl MapWin {
             let hide: &[u16] = if self.scan_ok { &[] } else { &[2] };
             let win = gu.lobby_window_off("menu    map0", sw, sh, (0.0, 0.0), Some(self.cursor), true, hide);
             if let Some(w) = &win {
-                self.drawn.borrow_mut().push(("menu    map0", w.frame, w.children.clone()));
+                self.drawn.borrow_mut().push(("menu    map0", w.frame, w.children.clone(), hide.to_vec()));
             }
             if let Some(win) = win
                 && !self.scan_ok
@@ -1783,8 +1801,10 @@ impl MapWin {
             self.cursor_w = b[2] - b[0];
         }
         self.draw_list(gu, sw, sh, modern);
-        if let Some(l) = self.maplist.as_ref().filter(|_| !modern) {
-            l.draw(gu, sw, sh);
+        if let Some(l) = self.maplist.as_ref().filter(|_| !modern)
+            && let Some(win) = l.draw(gu, sw, sh)
+        {
+            self.drawn.borrow_mut().push(("menu    maplist", win.frame, win.children, Vec::new()));
         }
     }
 
@@ -1820,6 +1840,7 @@ impl MapWin {
             return;
         }
         if let Some(win) = gu.lobby_window_off("menu    scanlist", sw, sh, (0.0, 0.0), None, false, &[]) {
+            self.drawn.borrow_mut().push(("menu    scanlist", win.frame, win.children.clone(), Vec::new()));
             let [x, y, fw, fh] = win.frame;
             gu.scroll_bar(x + fw - 8.0, y, fh, s.rows.len(), SCAN_ROWS, s.scroll);
             if s.mapscan.is_none() {
@@ -1841,7 +1862,7 @@ impl MapWin {
             let hide: &[u16] = if off { &[1] } else { &[] };
             let win = gu.lobby_window_off("menu    mapscan", sw, sh, (0.0, 0.0), Some(c), true, hide);
             if let Some(w) = &win {
-                self.drawn.borrow_mut().push(("menu    mapscan", w.frame, w.children.clone()));
+                self.drawn.borrow_mut().push(("menu    mapscan", w.frame, w.children.clone(), hide.to_vec()));
             }
             if let Some(win) = win
                 && off
@@ -2013,7 +2034,8 @@ impl MapWin {
             set: self.set as usize,
             sets,
             rows,
-            cursor: keys.then(|| l.cursor as usize - 1),
+            // The set arrows 11 / 12 (the classic mouse's) are no row of the modern list: its first row then.
+            cursor: keys.then(|| if l.cursor > 10 { 0 } else { l.cursor as usize - 1 }),
             v2,
             placing: l.placing.is_some(),
         })
@@ -2031,6 +2053,10 @@ impl MapWin {
         }
         let sel = if l.v2.is_some() || l.placing.is_some() || self.locked() { 0 } else { l.cursor };
         let Some((x, y)) = gu.menu_sel("menu    mapv3", sw, sh, sel) else { return };
+        if let Some(frame) = gu.window_rect("menu    mapv3", sw, sh) {
+            let kids = super::winhits::layout_at(gu, "menu    mapv3", (x, y));
+            self.drawn.borrow_mut().push(("menu    mapv3", frame, kids, Vec::new()));
+        }
         // Icon at (16, 5 + 16 i), name at (0x1f, 7 + 16 i) fitted into 0x44 px with the ellipsis (FUN_101cb320).
         for i in 0..10 {
             let ry = y + 16.0 * i as f32;
@@ -2052,7 +2078,7 @@ impl MapWin {
             let hide: &[u16] = if valid { &[] } else { &[1] };
             let win = gu.lobby_window_swaps("menu    mapv2", sw, sh, at, Some(c), true, hide, swaps);
             if let Some(w) = &win {
-                self.drawn.borrow_mut().push(("menu    mapv2", w.frame, w.children.clone()));
+                self.drawn.borrow_mut().push(("menu    mapv2", w.frame, w.children.clone(), hide.to_vec()));
             }
             if let Some(win) = win
                 && !valid
@@ -2384,13 +2410,11 @@ impl MapList {
     /// cells; MODLOG "Search: arealist"): rows from (+3, +4) 16 apart; names in the game font at y + 2; numbers "[n]"
     /// (type 9) in the shape font right-aligned at the column's end - 2, y + 4; small texts "(s)" (type 0x21) in the
     /// shape font at y + 2; the windowps 75 cursor bar at (+0, +4), nothing recoloured.
-    fn draw(&self, gu: &mut GameUi, sw: f32, sh: f32) {
+    fn draw(&self, gu: &mut GameUi, sw: f32, sh: f32) -> Option<super::game_ui::LobbyWin> {
         const WHITE: u32 = 0x8080_8080;
         let sel = (!self.rows.is_empty()).then(|| (self.cursor - self.scroll + 1) as u16);
-        if gu.lobby_window_off("menu    maplist", sw, sh, (0.0, 0.0), sel, true, &[]).is_none() {
-            return;
-        }
-        let Some((x, y)) = gu.window_xy("menu    maplist", sw, sh) else { return };
+        let win = gu.lobby_window_off("menu    maplist", sw, sh, (0.0, 0.0), sel, true, &[])?;
+        let (x, y) = gu.window_xy("menu    maplist", sw, sh)?;
         if let Some([fx, fy, fw, fh]) = gu.window_rect("menu    maplist", sw, sh) {
             gu.scroll_bar(fx + fw - 8.0, fy, fh, self.rows.len(), ROWS, self.scroll);
             gu.bar_site(super::scrollbar::Owner::MapList, fx + fw - 8.0, fy, fh, self.rows.len(), ROWS, self.scroll);
@@ -2407,6 +2431,7 @@ impl MapList {
         if !self.rows.is_empty() {
             gu.sprite("menu    windowps", 75, x, y + 4.0 + 16.0 * (self.cursor - self.scroll) as f32, WHITE);
         }
+        Some(win)
     }
 }
 
@@ -2878,24 +2903,45 @@ pub fn marker_set_click(w: &mut World, s: usize) {
     m.sounds.push(crate::audio::Ui::Cursor as u32);
 }
 
+/// The map's window that has the mouse (the focused one, FUN_101267f0).
+enum MouseWin {
+    /// A generic window (mapscan, mapv2, map0) and its cursor child: win_mapframe_onkey_3 0x101fd140,
+    /// win_mapv2_onkey 0x101fda10, win_mapframe_onkey 0x101f9270 take messages 5 / 6 only.
+    Generic(&'static str, u16),
+    /// mapv3 (win_mapframe_onkey_4 0x101fd680) and its cursor child (rows 1..10, the set arrows 11 / 12).
+    MapV3(u16),
+    /// A list of the list base (scanlist, maplist): its cursor child, count and top entry.
+    List(&'static str, u16, usize, usize),
+}
+
 impl MapWin {
-    /// The map's window that has the mouse in ours, and its cursor: mapscan, mapv2 or map0, generic windows in retail
-    /// (win_mapframe_onkey_3 0x101fd140, win_mapv2_onkey 0x101fda10, win_mapframe_onkey 0x101f9270: messages 5 / 6
-    /// only). Not mapv3, scanlist or maplist (their mouse is not done), nor the event maps that take no keys.
-    fn mouse_window(&self) -> Option<(&'static str, u16)> {
+    /// The map's window that has the mouse in ours. Not the event maps that take no keys.
+    fn mouse_window(&self) -> Option<MouseWin> {
         if self.closing.is_some() || self.primer.is_some() {
             return None;
         }
         if let Some(s) = &self.scan {
-            return s.mapscan.filter(|_| !s.hidden && s.narrow.is_none()).map(|c| ("menu    mapscan", c));
+            if s.hidden || s.narrow.is_some() {
+                return None;
+            }
+            return Some(match s.mapscan {
+                Some(c) => MouseWin::Generic("menu    mapscan", c),
+                None => MouseWin::List("menu    scanlist", (s.cursor - s.scroll + 1) as u16, s.rows.len(), s.scroll),
+            });
         }
         if let Some(l) = &self.list {
-            return l
-                .v2
-                .filter(|_| !self.locked() && l.placing.is_none() && l.rename.is_none())
-                .map(|(_, c)| ("menu    mapv2", c));
+            if self.locked() || l.placing.is_some() {
+                return None;
+            }
+            return Some(match l.v2 {
+                Some((_, c)) => MouseWin::Generic("menu    mapv2", c),
+                None => MouseWin::MapV3(l.cursor),
+            });
         }
-        self.has_menu().then_some(("menu    map0", self.cursor))
+        if let Some(l) = &self.maplist {
+            return Some(MouseWin::List("menu    maplist", (l.cursor - l.scroll + 1) as u16, l.rows.len(), l.scroll));
+        }
+        self.has_menu().then_some(MouseWin::Generic("menu    map0", self.cursor))
     }
 
     /// The mouse's cursor move onto `child` of the window `mouse_window` names.
@@ -2911,23 +2957,94 @@ impl MapWin {
                     *c = child;
                 }
             }
+            "menu    scanlist" => {
+                if let Some(s) = self.scan.as_mut() {
+                    s.cursor = s.scroll + child as usize - 1;
+                }
+            }
+            "menu    maplist" => {
+                if let Some(l) = self.maplist.as_mut() {
+                    l.cursor = l.scroll + child as usize - 1;
+                }
+            }
             _ => self.cursor = child,
         }
     }
+
+    /// The name entry's end (FUN_101fd450(1)): the typed text into the slot (FUN_101fa440), changed or not.
+    fn end_rename(&mut self) {
+        let Some((slot, text)) = self.list.as_mut().and_then(|l| l.rename.take()) else { return };
+        self.marks.sets[0][slot].name = text;
+        self.dirty = true;
+    }
 }
 
-/// The mouse on the map's generic windows (mapscan, mapv2, map0) by the shared window steps (winhits::generic): a child
-/// takes the cursor (SE 0001), a click on the cursor's child is Enter, a right click on the window Escape.
+/// The mouse on the map's windows:
+/// - map0, mapscan, mapv2 by the shared window steps (winhits::generic): a child takes the cursor (SE 0001), a click on
+///   the cursor's child is Enter, a right click on the window Escape;
+/// - scanlist and maplist by the list base's (winhits::list);
+/// - mapv3 (`mapv3_pointer`).
 pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool, right: bool) {
     let Some(m) = w.map.as_ref() else { return };
-    let Some((name, cursor)) = m.mouse_window() else { return };
-    let ids = if name == "menu    mapscan" { 1..=2 } else { 1..=3 };
-    let set = |w: &mut World, id: u16| {
-        if let Some(m) = w.map.as_mut() {
-            m.set_mouse_child(name, id);
+    let Some(target) = m.mouse_window() else { return };
+    let set = |name: &'static str| {
+        move |w: &mut World, id: u16| {
+            if let Some(m) = w.map.as_mut() {
+                m.set_mouse_child(name, id);
+            }
         }
     };
-    super::winhits::generic(w, gu, name, cursor, ids, p, clicked, right, set, |w, _, k| key(w, k));
+    match target {
+        MouseWin::Generic(name, cursor) => {
+            let ids = if name == "menu    mapscan" { 1..=2 } else { 1..=3 };
+            super::winhits::generic(w, gu, name, cursor, ids, p, clicked, right, set(name), |w, _, k| key(w, k));
+        }
+        MouseWin::List(name, cursor, count, top) => {
+            let rows = if name == "menu    maplist" { ROWS } else { SCAN_ROWS } as u16;
+            let key = |w: &mut World, _: &GameUi, k| key(w, k);
+            super::winhits::list(w, gu, name, cursor, (count, top), 1..=rows, p, clicked, right, set(name), key);
+        }
+        MouseWin::MapV3(cursor) => mapv3_pointer(w, gu, cursor, p, clicked, right),
+    }
+}
+
+/// The mouse on mapv3 (win_mapframe_onkey_4 0x101fd680 behind the window's handler FUN_101196f0): every child but the
+/// caption takes the cursor as on any window, SE 0001 (+0x85 kept; the arrows 11 / 12 too, state 0xf from
+/// win_mapframe_v04_4). Message 9 does nothing more, but while a name is typed (+0x38) it ends the entry
+/// (FUN_101fd450(1), the text kept). The click on the cursor's child is message 5: 11 / 12 re-send 4 / 3 (the set
+/// before / after, as Left / Right), a row is Enter on it; while typing, a row is the entry's Enter (FUN_101c7ef0(1):
+/// its done callback FUN_101fd390 sends 0x11, the entry's end) and the arrows move the entry's caret, which ours has
+/// not. A right click is message 6: Escape, or while typing the entry's end.
+fn mapv3_pointer(w: &mut World, gu: &GameUi, cursor: u16, p: (f32, f32), clicked: bool, right: bool) {
+    const NAME: &str = "menu    mapv3";
+    let typing = w.map.as_ref().is_some_and(|m| m.typing());
+    let (child, on) = super::winhits::child_under(w, NAME, p, 1..=12, super::winhits::parts(gu, NAME));
+    if right && on {
+        if typing {
+            w.map.as_mut().map(MapWin::end_rename);
+        } else {
+            key(w, egui::Key::Escape);
+        }
+        return;
+    }
+    let Some(id) = child else { return };
+    let takes = super::winhits::takes(gu, NAME, id, on);
+    let Some(m) = w.map.as_mut() else { return };
+    if id != cursor && takes {
+        if let Some(l) = m.list.as_mut() {
+            l.cursor = id;
+        }
+        m.sounds.push(crate::audio::Ui::Cursor as u32);
+        if typing {
+            m.end_rename();
+        }
+    } else if clicked && id == cursor {
+        match (typing, id) {
+            (true, 11 | 12) => {}
+            (true, _) => m.end_rename(),
+            (false, _) => key(w, egui::Key::Enter),
+        }
+    }
 }
 
 /// A key for the map's windows: MapWin::key, and on its false (Escape, a pick) the zoom into config 0x8a and the
@@ -3655,5 +3772,42 @@ mod marker_tests {
         assert_eq!((l.cursor, m.set, m.outs.len()), (1, 1, 0));
         let look = m.markers_look().unwrap();
         assert_eq!((look.cursor, look.sets[0]), (None, false));
+    }
+
+    /// mapv3's set arrows 11 / 12 (the mouse puts the cursor there): Enter on them is message 5, re-sent as 4 / 3 (the
+    /// set before / after); Left / Right still turn the set; Up / Down lead to row 1 by the links; every cursor move
+    /// plays SE 0001 (+0x85).
+    #[test]
+    fn mapv3_set_arrows() {
+        use crate::audio::Ui;
+        let mut m = win(Mode::Menu);
+        m.set = 1;
+        m.sounds.clear();
+        m.list.as_mut().unwrap().cursor = 12;
+        m.key(K::Enter);
+        // Set 1 to the next shown set (2 / 3 have no members, so set 0), the cursor kept on the arrow.
+        assert_eq!((m.set, m.list.as_ref().unwrap().cursor), (0, 12));
+        m.list.as_mut().unwrap().cursor = 11;
+        m.key(K::Enter);
+        assert_eq!((m.set, m.list.as_ref().unwrap().cursor), (1, 11));
+        assert_eq!(m.markers_look().unwrap().cursor, Some(0));
+        m.key(K::ArrowDown);
+        assert_eq!(m.list.as_ref().unwrap().cursor, 1);
+        m.list.as_mut().unwrap().cursor = 12;
+        m.key(K::ArrowUp);
+        assert_eq!(m.list.as_ref().unwrap().cursor, 1);
+        m.key(K::ArrowUp);
+        assert_eq!(m.list.as_ref().unwrap().cursor, 10);
+        assert_eq!(m.sounds, [Ui::Cursor as u32; 5]);
+    }
+
+    /// FUN_101fd450(1): the name entry's end keeps the typed text in the slot.
+    #[test]
+    fn rename_ends_with_the_text() {
+        let mut m = win(Mode::Menu);
+        m.list.as_mut().unwrap().rename = Some((2, "Gate".into()));
+        m.end_rename();
+        assert!(!m.typing());
+        assert_eq!((m.marks.sets[0][2].name.as_str(), m.dirty), ("Gate", true));
     }
 }

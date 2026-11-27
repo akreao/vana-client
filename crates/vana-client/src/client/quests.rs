@@ -511,9 +511,10 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
             let row = l.top + id as usize - 1;
             let Some(e) = l.rows.get(row).and_then(|&i| f.entries.get(i)) else { continue };
             gu.sprite("menu    framesus", 35, cx + 4.0, cy + 5.0, WHITE);
+            // FUN_10234890: the entry with its first char up (FUN_1025d7a0).
             super::missions::lines(
                 gu,
-                e.name.trim_start_matches('+'),
+                &crate::dat::case::cap_str(e.name.trim_start_matches('+')),
                 cx + 18.0,
                 cy,
                 301.0,
@@ -525,7 +526,8 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         gu.bar_site(super::scrollbar::Owner::Journal, bx, fy, fh, l.rows.len(), VISIBLE, l.top);
     } else if let Some(e) = l.rows.get(l.cursor).and_then(|&i| f.entries.get(i)) {
         gu.sprite("menu    framesus", 35, x + 36.0, y + 25.0, WHITE);
-        text(gu, e.name.trim_start_matches('+'), x + 50.0, y + 20.0, WHITE);
+        // FUN_102347a0: the name with its first char up (FUN_1025d7a0).
+        text(gu, &crate::dat::case::cap_str(e.name.trim_start_matches('+')), x + 50.0, y + 20.0, WHITE);
         super::missions::lines(gu, &e.desc, x + 40.0, y + 50.0, 327.0, WHITE);
     }
     rects

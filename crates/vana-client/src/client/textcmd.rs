@@ -1665,28 +1665,36 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             }
             Ok(())
         }
-        // FUN_10079b30: an item name between languages (letters J 0, E 1, G 2, F 3; ours English): one letter is the
-        // target, two are from and to; c2s 0x02B {From, To, 0, Name[64]}; s2c 0x047 answers (translate_result).
+        // FUN_10079b30: an item name between languages; c2s 0x02B {From, To, 0, Name[0x40]}; s2c 0x047 answers
+        // (translate_result). No letters: from and to the client's language; one letter: from it to the letter; two:
+        // from and to. Both with the European flag read German and French as English (lang::files()).
         id::TRANSLATE => {
             if !(2..=3).contains(&args.len()) {
                 return Err(());
             }
-            let lang = |c: char| match c.to_ascii_uppercase() {
-                'J' => 0,
-                'G' => 2,
-                'F' => 3,
-                _ => 1,
-            };
-            let (from, to) = match args.get(2).map(|s| s.chars().collect::<Vec<char>>()) {
-                Some(l) if l.len() == 2 => (lang(l[0]), lang(l[1])),
-                Some(l) if l.len() == 1 => (1, lang(l[0])),
-                _ => (1, 1),
+            let own = crate::dat::lang::files() as u8;
+            // The letters: messages 0xc 0x5e..0x61's first bytes (J, E, G, F in English).
+            let mut letters = *b"JEGF";
+            if let Some(bt) = &w.battle {
+                for (k, l) in letters.iter_mut().enumerate() {
+                    if let Some(b) =
+                        bt.group12(0x5e + k).and_then(|t| crate::dat::font::encode_sjis(&t).first().copied())
+                    {
+                        *l = b;
+                    }
+                }
+            }
+            let letter =
+                |c| translate_letter(c, letters, crate::dat::lang::files(), crate::dat::lang::european_as_english());
+            let (from, to) = match args.get(2).map(|s| s.bytes().collect::<Vec<u8>>()) {
+                Some(l) if l.len() < 2 => (own, letter(l.first().copied().unwrap_or(0))),
+                Some(l) => (letter(l[0]), letter(l[1])),
+                None => (own, own),
             };
             let mut b = vec![0u8; 0x44];
             (b[0], b[1]) = (from, to);
-            for (k, c) in args[1].bytes().take(0x3f).enumerate() {
-                b[4 + k] = c;
-            }
+            let name = translate_name(&args[1]);
+            b[4..4 + name.len()].copy_from_slice(&name);
             send(w, NetCommand::Packet { id: 0x02B, body: b });
             w.translating = true;
             Ok(())
@@ -1836,12 +1844,14 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             server_flag(w, args, 8, w.conf_sys[3] & 2 != 0);
             Ok(())
         }
-        // FUN_1007b0a0: c2s 0x02C {Language 1 (English) @4, Name[0x40] @8}; s2c 0x049 answers (item_search_result).
+        // FUN_1007b0a0: c2s 0x02C {Language @4, Name[0x40] @8}; s2c 0x049 answers (item_search_result). The language is
+        // the client's (DAT_10457bd8 +8), English (1) for German and French under the European flag: the files'
+        // language. The name is strncpy'd into its 0x40 bytes (no NUL when it fills them).
         id::ITEMSEARCH => {
             let Some(name) = args.get(1) else { return Err(()) };
             let mut b = vec![0u8; 0x44];
-            b[0] = 1;
-            for (k, c) in name.bytes().take(0x3f).enumerate() {
+            b[0] = crate::dat::lang::files() as u8;
+            for (k, c) in crate::dat::font::encode_sjis(name).into_iter().take(0x40).enumerate() {
                 b[4 + k] = c;
             }
             send(w, NetCommand::Packet { id: 0x02C, body: b });
@@ -2223,10 +2233,36 @@ fn attack(w: &mut World, args: &[String], mode: Mode) -> Done {
 /// (the same, then ear1, ear2, ring1, ring2).
 const SLOT_OF: [u8; 20] = [0, 1, 2, 3, 4, 9, 11, 12, 5, 6, 13, 14, 15, 10, 7, 8, 11, 12, 13, 14];
 
+/// /translate's name (FUN_100ec3e0): the line's Shift-JIS bytes strncpy'd into the 0x40-byte field @8.
+fn translate_name(name: &str) -> Vec<u8> {
+    let mut b = crate::dat::font::encode_sjis(name);
+    b.truncate(0x40);
+    b
+}
+
+/// FUN_10079c10: a /translate letter as a language. `letters` are messages 0xc 0x5e..0x61's first bytes (Japanese,
+/// English, German, French), each also matched + 0x20. German and French count only without the European flag; any
+/// other letter (and theirs with it) is the client's language, English for German and French with the flag
+/// (`files`).
+fn translate_letter(c: u8, letters: [u8; 4], files: crate::dat::items::Lang, european: bool) -> u8 {
+    let is = |k: usize| c == letters[k] || c == letters[k].wrapping_add(0x20);
+    if is(0) {
+        0
+    } else if is(1) {
+        1
+    } else if !european && is(2) {
+        2
+    } else if !european && is(3) {
+        3
+    } else {
+        files as u8
+    }
+}
+
 /// The bags /equip looks in, and its third argument's choices ("0" inventory, "1" wardrobe 8, "2".."8" 10..16).
 const EQUIP_BAGS: [u8; 9] = [0, 8, 10, 11, 12, 13, 14, 15, 16];
 
-/// A bag slot holding an item named `name` (record name, case-insensitive), in the bags' order.
+/// A bag slot holding an item named `name` (`items::named`), in the bags' order.
 fn find_item(w: &World, name: &str, bags: &[u8]) -> Option<(u8, u8, u16)> {
     let info = w.item_info.as_ref()?;
     bags.iter().find_map(|&bag| {
@@ -2234,7 +2270,7 @@ fn find_item(w: &World, name: &str, bags: &[u8]) -> Option<(u8, u8, u16)> {
             .slots
             .iter()
             .filter(|((c, i), _)| *c == bag && *i != 0)
-            .find(|(_, (id, _))| info.item(*id).is_some_and(|it| it.name.eq_ignore_ascii_case(name)))
+            .find(|(_, (id, _))| info.item(*id).is_some_and(|it| crate::dat::items::named(info.lang(), name, &it)))
             .map(|((c, i), (id, _))| (*c, *i, *id))
     })
 }
@@ -2418,8 +2454,8 @@ fn equip(w: &mut World, args: &[String]) -> Done {
     // FUN_1007b1c0: the slot already wears an item of that name: nothing.
     let worn = w.inv.equip[slot as usize]
         .and_then(|s| w.inv.slots.get(&s))
-        .and_then(|&(id, _)| w.item_info.as_ref()?.item(id))
-        .is_some_and(|it| it.name.eq_ignore_ascii_case(name));
+        .and_then(|&(id, _)| w.item_info.as_ref().and_then(|info| Some((info.lang(), info.item(id)?))))
+        .is_some_and(|(lang, it)| crate::dat::items::named(lang, name, &it));
     if worn {
         return Ok(());
     }
@@ -2452,7 +2488,7 @@ fn find_free(w: &World, name: &str, bags: &[u8]) -> Option<(u8, u8, u16)> {
             .iter()
             .filter(|((c, i), _)| *c == bag && *i != 0)
             .find(|(k, (id, _))| {
-                info.item(*id).is_some_and(|it| it.name.eq_ignore_ascii_case(name))
+                info.item(*id).is_some_and(|it| crate::dat::items::named(info.lang(), name, &it))
                     && w.inv.locks.get(k).is_none_or(|&l| l == 0)
                     && !claimed(k)
             })
@@ -2573,7 +2609,9 @@ pub(super) fn translate_result(w: &mut World, item: u16, from: u8, to: u8, from_
             vec![fmt(0x68, &[from_text, &letter(from), to_text, &letter(to)]), fmt(0x6a, &[&block])]
         }
     };
+    // Printed by FUN_1012b310 (the mode word {0x79, 3}): the log leaves the quotes.
     for l in lines {
+        w.chat.no_quotes_next();
         super::push_chat_mode(w, l, 0x79, 0);
     }
 }
@@ -3333,6 +3371,20 @@ fn bstpet_named(w: &World, word: &str) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FUN_10079c10: J / E always, G / F only without the European flag, anything else the client's language.
+    #[test]
+    fn translate_letters() {
+        use crate::dat::items::Lang;
+        let l = *b"JEGF";
+        assert_eq!(b"jEgF".map(|c| translate_letter(c, l, Lang::En, false)), [0, 1, 2, 3]);
+        assert_eq!(translate_letter(b'x', l, Lang::Fr, false), 3);
+        assert_eq!(b"GFx".map(|c| translate_letter(c, l, Lang::En, true)), [1, 1, 1]);
+        assert_eq!(translate_letter(b'x', l, Lang::Ja, true), 0);
+        assert_eq!(translate_letter(b'D', *b"JEDF", Lang::En, false), 2);
+        assert_eq!(translate_name("ポーション")[..2], [0x83, 0x7c]);
+        assert_eq!(translate_name(&"ア".repeat(40)).len(), 0x40);
+    }
 
     #[test]
     fn quoted_tokens() {

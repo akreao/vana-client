@@ -263,7 +263,7 @@ fn send_langs(w: &World, mask: u32) {
 /// Once a zone: its sent flag (+0x30) is cleared by slot 0x2c (FUN_10203120) from the zone teardown's walk
 /// FUN_10160470(1) (FUN_10093b70).
 pub(super) fn zone_langs(config: u32) -> u32 {
-    if config == 0 { 1 << LANG_BITS[0] } else { config }
+    if config == 0 { 1 << lang_bits()[0] } else { config }
 }
 
 /// c2s 0x0DB (FUN_100e46a0(kind, param)): @6 the kind (0 the filters, 1 the party languages), @8..@0x14 the three
@@ -280,8 +280,14 @@ pub(super) fn body_0db(conf: &[u8; 12], kind: u8, mask: u32) -> Vec<u8> {
     b
 }
 
-/// Table 0x10385388 for an English client: prty5us row 1..5 (English, French, German, Japanese, Other) -> bit.
-const LANG_BITS: [u32; 5] = [1, 3, 2, 0, 4];
+/// Table 0x10386450 (FUN_10207070 / FUN_10207120 / FUN_102071b0): the language window's row 1..5 -> the mask's bit,
+/// one line per client language (DAT_10457bd8 +8, not the European-as-English flag), as each language's layout orders
+/// its rows (the client's own language first, Other last). Bits: 0 Japanese, 1 English, 2 German, 3 French, 4 Other.
+const LANG_TABLE: [[u32; 5]; 4] = [[0, 1, 3, 2, 4], [1, 3, 2, 0, 4], [2, 1, 3, 0, 4], [3, 1, 2, 0, 4]];
+
+fn lang_bits() -> [u32; 5] {
+    LANG_TABLE[crate::dat::lang::client() as usize]
+}
 
 fn packet(w: &World, id: u16, body: Vec<u8>) {
     let _ = w.net.commands.send(NetCommand::Packet { id, body });
@@ -447,9 +453,9 @@ fn enter(w: &mut World, name: &'static str, sel: u16) {
         // An emptied mask gets the first row's bit back (SE 0004 when that row was the one cleared).
         (LANGS, 1..=5) => {
             let Some(m) = w.partymenu.as_mut() else { return };
-            m.langs ^= 1 << LANG_BITS[sel as usize - 1];
+            m.langs ^= 1 << lang_bits()[sel as usize - 1];
             if m.langs == 0 {
-                m.langs = 1 << LANG_BITS[0];
+                m.langs = 1 << lang_bits()[0];
                 if sel == 1 {
                     w.sounds.push(Ui::Error as u32);
                 }
@@ -663,7 +669,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         }
         match win.name {
             LANGS => {
-                for (row, bit) in LANG_BITS.iter().enumerate() {
+                for (row, bit) in lang_bits().iter().enumerate() {
                     if m.langs & 1 << bit != 0
                         && let Some((cx, cy)) = child(row as u16 + 1)
                     {
@@ -693,7 +699,7 @@ pub(super) fn views(w: &World) -> Vec<super::modern::MenuWin> {
             let mut labels = swaps(w, win.name);
             labels.extend(find_child(win.name).map(|c| (c, if seeker(w).is_some() { 79 } else { 82 })));
             let marked = match win.name {
-                LANGS => LANG_BITS
+                LANGS => lang_bits()
                     .iter()
                     .enumerate()
                     .filter(|(_, b)| m.langs & 1 << **b != 0)
@@ -734,6 +740,16 @@ pub fn draw_invite_icon(gu: &mut GameUi, w: &World, sw: f32, sh: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The language rows' bits are the DLL's table (0x10386450 in 30261102_0: five bytes per client language). Needs
+    /// the installed game; skipped without it.
+    #[test]
+    fn language_table_is_retail() {
+        let dir = crate::config::Config::load().ffxi_dir();
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&dir)) else { return };
+        let bytes: Vec<u8> = LANG_TABLE.iter().flatten().map(|&b| b as u8).collect();
+        assert!(dll.windows(bytes.len()).any(|w| w == bytes.as_slice()));
+    }
 
     /// c2s 0x0DB kind 1 at a retail zone-in (capture, client 30261102_0): config 0x98 unset, English client.
     #[test]

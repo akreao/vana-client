@@ -237,8 +237,12 @@ pub fn bars(gu: &GameUi, w: &World, bars: &mut super::hudtop::BarText) {
     if s.shown == Some(1)
         && let (Some(st), Some(names)) = (&w.stats, &w.names)
     {
-        use crate::dat::names::NameSource;
-        bars.help[2] = format!("{}{}", gu.menu_msg(0x4e, ""), names.title(st.title as u32).unwrap_or_default());
+        // win_persona_v10_2: FUN_101586f0 into the rest of a 200-byte line, the title in our grammatical gender
+        // (German FUN_1008aab0, French FUN_1008ab00: the actor's flags FUN_1009afe0 sets female for races 2, 4, 6, 7).
+        let head = gu.menu_msg(0x4e, "");
+        let room = 200usize.saturating_sub(crate::dat::font::encode_sjis(&head).len());
+        let female = matches!(w.my_race, 2 | 4 | 6 | 7);
+        bars.help[2] = format!("{head}{}", names.title_of(st.title as u32, female, room).unwrap_or_default());
     }
 }
 

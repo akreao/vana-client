@@ -198,7 +198,10 @@ pub fn on_message(w: &mut World, p: &[u8]) {
     if name != w.name
         && let Some(bt) = w.battle.clone()
     {
-        let t = w.names.as_ref().and_then(|n| crate::dat::names::NameSource::title(&**n, title)).unwrap_or_default();
+        // FUN_10158940: the title in the grammatical gender of the race at @0x7f >> 2 (Hume F, Elvaan F, Tarutaru F,
+        // Mithra female; German and French have a form for each).
+        let female = p.get(0x7f).is_some_and(|b| matches!(b >> 2, 2 | 4 | 6 | 7));
+        let t = w.names.as_ref().and_then(|n| n.title_of(title, female, 0x80)).unwrap_or_default();
         let fmt = bt.group10(0x33).unwrap_or_default();
         let line = fmt.replacen("%s", &name, 1).replacen("%s", &t, 1);
         w.chat.push_colour(line, bt.colour_in(0x29, &w.game));
