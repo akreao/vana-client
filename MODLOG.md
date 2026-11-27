@@ -25060,3 +25060,13 @@ Settings > Graphics > Upscaling (config `upscaler` 0 off / 1 FSR / 2 external, `
   the installed Lua mods and DAT packs offered an update (catalogue::offer Some(true)). Any found: one log line in
   lua::ERROR red, "Updates are available for N mods (Settings > Mods)." (DAT packs: Settings > DAT Packs). Seen live
   (modern UI) with a test list (VANA_MOD_CATALOGUE) one version ahead.
+
+## Camera: the spring rests in front of a wall (ours, 2026-11-26)
+- Retail's free camera with a wall nearer than the spring's 3 behind the eye (MODLOG "Camera collision as retail"):
+  the spring pushes the eye out 12.5 % of the shortfall a tick, the look -> eye ray (A) finds nothing while the eye is
+  still in front of the wall, so it creeps up to the wall over a few ticks, crosses it, and (A) snaps it back to 0.5
+  in front. With a wall 2 back: 1.5, 1.69, 1.85, 2.0, then 1.5 again, every few ticks: the view bounces in and out
+  while standing still. Retail does the same at its 30 fps; ours ran it every 60 Hz tick.
+- Ours (camera.rs `spring`): a push stops 0.5 short of what the look -> pushed eye (+0.5) ray hits, where (A) would put
+  it, and never pulls in (that stays (A)'s). The eye settles there and stays. Test spring_rests_in_front_of_a_wall
+  (a wall 2 back: rests at 1.5; retail's spring in the same loop still saws by more than 0.3).
