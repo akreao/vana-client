@@ -751,7 +751,9 @@ pub struct WeaponOp {
 
 pub use equip::{EquipCall, EquipState};
 
-/// A camera path an event's task asked for: its file and scheduler, the path's 4cc, its length in ticks, the actors.
+/// A camera path a task asked for (op 0x04 / 0x81, FUN_1003c8a0): the path's file and the scheduler's 4cc, the path's
+/// 4cc, its length in ticks (trunc(dur x speed)), the actors, the scheduler task it is a child of (FUN_100747d0: it
+/// dies with it, FUN_10074ad0 -> FUN_10074890).
 #[derive(Clone, Debug)]
 pub struct EventCamera {
     pub file: u32,
@@ -759,6 +761,7 @@ pub struct EventCamera {
     pub path: u32,
     pub ticks: f32,
     pub who: [sched::Who; 2],
+    pub owner: u64,
 }
 
 /// What effect runs skipped or could not resolve (the fx-sweep command, main.rs).
@@ -1227,12 +1230,17 @@ pub struct Effects {
     /// Scheduler ops 0x0f / 0x72 / 0x0e for the screen (client/event.rs Screen): code, the RGBA bytes @8, f32 @0xc
     /// (0x0e's zoom), dur x speed.
     pub screen_ops: Vec<(u8, [u8; 4], f32, f32)>,
-    /// Camera ops (0x04 / 0x81) of an event's tasks this frame, for the cutscene camera (client/event.rs Screen).
+    /// Camera ops (0x04 / 0x81) of the tasks this frame but an event's own scheduler, for the camera task
+    /// (client/event.rs Screen).
     pub event_cameras: Vec<EventCamera>,
-    /// Ops 0x10 (crossfade ticks) and 0xb0 (camera path 4cc to end) of an event's tasks this frame.
+    /// Camera ops this frame with their path found, an event's own scheduler's too: each forces every actor's next
+    /// pose (FUN_1003c8a0 -> FUN_10085310, actor +0xa04).
+    pub camera_cuts: u32,
+    /// Op 0x10 (crossfade ticks) of an event's tasks this frame.
     pub event_crosses: Vec<f32>,
     /// Ops 0x7c / 0x7d this frame.
     pub env_ops: Vec<EnvOp>,
+    /// Op 0xb0 (camera path 4cc to end) of the tasks this frame but an event's own scheduler.
     pub event_path_stops: Vec<u32>,
     /// The running task's event: the tasks its op creates take it (tasks.rs run_op).
     spawn_event: bool,
@@ -1439,6 +1447,7 @@ impl Effects {
             door_moves: Vec::new(),
             screen_ops: Vec::new(),
             event_cameras: Vec::new(),
+            camera_cuts: 0,
             event_crosses: Vec::new(),
             env_ops: Vec::new(),
             event_path_stops: Vec::new(),

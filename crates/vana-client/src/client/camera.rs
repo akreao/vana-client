@@ -75,6 +75,11 @@ pub struct State {
     /// The drawn eye's distance over the camera's (a mod's scale, held in by what lies behind; 0 unset): the
     /// camera itself always runs at retail's distances.
     out: f32,
+    /// Camera object +0x5c: the roll a camera path left (FUN_10021900 from +0xa4); 0 from a scene load (FUN_1001e4f0).
+    pub roll: f32,
+    /// The focal a camera path left (FUN_10015290), and config 0x49 then: it holds until the zoom or the config
+    /// changes it.
+    held: Option<(f32, u32)>,
 }
 
 /// The farthest a mod may set the distance.
@@ -436,7 +441,28 @@ pub fn focal(w: &World) -> f32 {
 /// The float focal while config 0x49 still holds it, else the config's (set elsewhere: the Config page).
 fn live_focal(w: &World) -> f32 {
     let cfg = super::cfgapply::focal(&w.game);
+    if let Some((f, _)) = w.camst.held.filter(|h| h.1 == cfg as u32) {
+        return f;
+    }
     w.camst.focal.filter(|f| f.trunc() == cfg).unwrap_or(cfg)
+}
+
+/// A camera path's pose written over the camera (event::game_camera; FUN_10021900 at the frame's end): the eye, the
+/// look unless it sits on the eye (FUN_1001e780), the focal and the roll. The follow camera goes on from there.
+pub fn set_pose(w: &mut World, eye: Vec3, look: Vec3, focal: f32, roll: f32) {
+    w.cam.eye = eye;
+    if (look - eye).length() > 0.0 {
+        w.cam.look = look;
+    }
+    w.camst.prev = w.cam;
+    w.camst.held = Some((focal, super::cfgapply::focal(&w.game) as u32));
+    w.camst.roll = roll;
+}
+
+/// FUN_1001e4f0 at a scene load: roll 0 and the focal back (ours: to the config's).
+pub fn scene_reset(w: &mut World) {
+    w.camst.roll = 0.0;
+    w.camst.held = None;
 }
 
 /// One frame of the camera, after the player has moved.
@@ -771,6 +797,7 @@ fn zoom(w: &mut World, ticks: f32, inp: &Inputs) {
     let f = f.clamp(FOCAL_MIN, FOCAL_MAX);
     st.focal = Some(f);
     if f != before {
+        st.held = None;
         // __ftol: the config takes it truncated.
         if f as u32 != w.game.get_i(0x49) as u32 {
             w.game.set(0x49, f as u32);
@@ -878,7 +905,7 @@ pub fn view(w: &World) -> Camera {
         jitter: glam::Vec2::ZERO,
         eye: look + (eye - look) * f,
         target: look,
-        up: Vec3::NEG_Y,
+        up: if s.roll == 0.0 { Vec3::NEG_Y } else { crate::dat::title::up_of(eye, look, s.roll) },
         fov_y: crate::dat::title::fov_y(focal(w)),
     }
 }

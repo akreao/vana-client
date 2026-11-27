@@ -12683,8 +12683,10 @@ impl App {
                     if let (Some(m), Some(dats)) = (world.msgshift.clone(), world.index.clone()) {
                         std::thread::spawn(move || m.installed(&dats, zone));
                     }
-                    // FUN_1018b500 -> FUN_1001e4f0: the view shake stops at a zone load.
+                    // FUN_1018b500 -> FUN_1001e4f0: the view shake stops at a zone load, and a camera path's roll
+                    // and focal go.
                     world.camst.shake = camera::Shake::default();
+                    camera::scene_reset(world);
                     // FUN_10093720: the zone load clears the once-a-zone sound reset; it runs when the player's model
                     // is up (below), or at an event end before that.
                     world.sound_reset = false;
@@ -14283,6 +14285,12 @@ impl App {
                 world.screen.fx_camera(&index, c);
             }
         }
+        // FUN_1003c8a0 -> FUN_10085310: a camera op forces every actor's next pose (+0xa04).
+        if std::mem::take(&mut world.effects.camera_cuts) > 0 {
+            for a in world.actors.values_mut() {
+                a.anim_force = true;
+            }
+        }
         for (id, _, ticks) in std::mem::take(&mut world.effects.locks) {
             let until = Instant::now() + std::time::Duration::from_secs_f32(ticks.max(0.0) / 60.0);
             let e = world.face_locks.entry(id).or_insert(until);
@@ -15340,6 +15348,7 @@ impl App {
             target::step_camera(world, ticks, turn, rise);
         }
         camera::step(world, dt, &cam_in);
+        event::game_camera(world);
         let in_event = event::active(world);
         // FUN_100adf70: the "Screen shaking" filter is off while the player is busy, not only in an event.
         world.effects.busy = textcmd::busy(world);
