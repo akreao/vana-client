@@ -560,8 +560,12 @@ pub fn expand(s: &[u8], ctx: &Ctx) -> Expanded {
             while line.get(pos) == Some(&0x1e) {
                 pos += 2;
             }
-            if let Some(b) = line.get_mut(pos) {
-                b.make_ascii_uppercase();
+            // FUN_1025d5e0 on the first char (French: an accented small vowel goes up plain).
+            if pos < line.len() {
+                let n = super::case::source_len(&line[pos..]).min(line.len() - pos);
+                let mut up = Vec::new();
+                super::case::upper_char(&mut up, &line[pos..]);
+                line.splice(pos..pos + n, up);
             }
         }
     };

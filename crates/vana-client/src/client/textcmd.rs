@@ -1836,12 +1836,14 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             server_flag(w, args, 8, w.conf_sys[3] & 2 != 0);
             Ok(())
         }
-        // FUN_1007b0a0: c2s 0x02C {Language 1 (English) @4, Name[0x40] @8}; s2c 0x049 answers (item_search_result).
+        // FUN_1007b0a0: c2s 0x02C {Language @4, Name[0x40] @8}; s2c 0x049 answers (item_search_result). The language is
+        // the client's (DAT_10457bd8 +8), English (1) for German and French under the European flag: the files'
+        // language. The name is strncpy'd into its 0x40 bytes (no NUL when it fills them).
         id::ITEMSEARCH => {
             let Some(name) = args.get(1) else { return Err(()) };
             let mut b = vec![0u8; 0x44];
-            b[0] = 1;
-            for (k, c) in name.bytes().take(0x3f).enumerate() {
+            b[0] = crate::dat::lang::files() as u8;
+            for (k, c) in crate::dat::font::encode_sjis(name).into_iter().take(0x40).enumerate() {
                 b[4 + k] = c;
             }
             send(w, NetCommand::Packet { id: 0x02C, body: b });
@@ -2573,7 +2575,9 @@ pub(super) fn translate_result(w: &mut World, item: u16, from: u8, to: u8, from_
             vec![fmt(0x68, &[from_text, &letter(from), to_text, &letter(to)]), fmt(0x6a, &[&block])]
         }
     };
+    // Printed by FUN_1012b310 (the mode word {0x79, 3}): the log leaves the quotes.
     for l in lines {
+        w.chat.no_quotes_next();
         super::push_chat_mode(w, l, 0x79, 0);
     }
 }

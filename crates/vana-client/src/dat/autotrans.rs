@@ -705,7 +705,13 @@ impl Dictionary {
                 }
             }
             let n = names?;
-            return if key { n.key_item(id).map(|x| x.bare) } else { n.item_name(id) };
+            // Kind 0x13: the key item's name with its first char up (FUN_10155af0 -> FUN_1025d720); kind 7: the item
+            // record's name as it is (FUN_1015d210 +0x1b4).
+            return if key {
+                n.key_item(id).and_then(|x| super::case::cap_first_str(&x.bare, usize::MAX))
+            } else {
+                n.item_name(id)
+            };
         }
         let g = &self.groups[*self.by_id.get(&hi)?];
         if lo == 0 {

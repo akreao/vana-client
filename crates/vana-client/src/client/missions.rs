@@ -439,7 +439,8 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
                         let (name, n) = journal::indent(&e.name);
                         let n = if matches!(r, Row::Current(_)) { 0.0 } else { 6.0 * n as f32 };
                         gu.sprite("menu    framesus", 35, cx + 4.0 + n, cy + 5.0, WHITE);
-                        lines(gu, name, cx + 18.0 + n, cy, 319.0 - 18.0 - n, tint);
+                        // FUN_10234890: the entry with its first char up (FUN_1025d7a0).
+                        lines(gu, &crate::dat::case::cap_str(name), cx + 18.0 + n, cy, 319.0 - 18.0 - n, tint);
                     }
                 }
             }
@@ -454,7 +455,9 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
             };
             if let Some(e) = f.entries.get(i) {
                 gu.sprite("menu    framesus", 35, x + 36.0, y + 25.0, WHITE);
-                gu.text(journal::indent(&e.name).0, x + 50.0, y + 20.0, 0, WHITE.to_le_bytes());
+                // FUN_102347a0: the name with its first char up (FUN_1025d7a0).
+                let name = crate::dat::case::cap_str(journal::indent(&e.name).0);
+                gu.text(&name, x + 50.0, y + 20.0, 0, WHITE.to_le_bytes());
                 lines(gu, &e.desc, x + 40.0, y + 50.0, 327.0, WHITE);
             }
         }

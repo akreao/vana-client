@@ -5,6 +5,8 @@
 use super::World;
 use super::game_ui::GameUi;
 use crate::audio::Ui;
+/// The list entries' text (FUN_10234890 / FUN_102347a0 / FUN_10234990 -> FUN_1025d7a0): the first char up.
+use crate::dat::case::cap_str;
 
 pub const WINDOW: &str = "menu    evitem";
 pub const ASK: &str = "menu    evitem01";
@@ -169,7 +171,7 @@ pub fn busy(w: &World) -> bool {
 
 /// FUN_10233380: a row's height: 16 a wrapped line at 283 px, 18 at least.
 fn heights(gu: &GameUi, items: &[(u16, String)]) -> Vec<f32> {
-    items.iter().map(|(_, n)| (gu.wrap(n, NAME_W).len().max(1) as f32 * 16.0).max(18.0)).collect()
+    items.iter().map(|(_, n)| (gu.wrap(&cap_str(n), NAME_W).len().max(1) as f32 * 16.0).max(18.0)).collect()
 }
 
 /// FUN_1022a590: the rows a page from `start` holds: add a row's height; stop at the budget or 8 rows, else add the
@@ -453,7 +455,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
                 let row = k.top + id as usize - 1;
                 let Some(c) = cats.get(row) else { continue };
                 gu.sprite("menu    framesus", 35, cx + 22.0, cy + 5.0, WHITE);
-                text(gu, &c.0, cx + 36.0, cy, if row == k.cursor { CURSOR } else { WHITE });
+                text(gu, &cap_str(&c.0), cx + 36.0, cy, if row == k.cursor { CURSOR } else { WHITE });
             }
             let bx = fx + fw - 8.0;
             gu.scroll_bar(bx, fy, fh, cats.len(), CAT_ROWS, k.top);
@@ -477,7 +479,8 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
                 } else {
                     gu.sprite("menu    keytops3", 170, cx + 18.0, ry + 1.0, WHITE);
                 }
-                super::missions::lines(gu, name, cx + 36.0, ry, NAME_W, if i == k.cursor { CURSOR } else { WHITE });
+                let tint = if i == k.cursor { CURSOR } else { WHITE };
+                super::missions::lines(gu, &cap_str(name), cx + 36.0, ry, NAME_W, tint);
                 if on && focused {
                     // The list base puts the window's cursor on child 1 + (cursor - top) (FUN_102234e0 ->
                     // FUN_1011a320, clamped to the 8 children), and win_evitem_v10 sets each shown row's child to the
@@ -494,7 +497,7 @@ pub fn draw(gu: &mut GameUi, w: &World, sw: f32, sh: f32) -> Vec<[f32; 4]> {
         _ => {
             if let Some((id, name)) = k.items.get(k.cursor) {
                 gu.sprite("menu    framesus", 35, x + 36.0, y + 25.0, WHITE);
-                text(gu, name, x + 50.0, y + 20.0, WHITE);
+                text(gu, &cap_str(name), x + 50.0, y + 20.0, WHITE);
                 let desc = w.names.as_ref().and_then(|n| n.key_item_description(*id as u32)).unwrap_or_default();
                 super::missions::lines(gu, &desc, x + 40.0, y + 50.0, 327.0, WHITE);
             }
