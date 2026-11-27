@@ -5,7 +5,7 @@ use super::DatIndex;
 use super::effect::*;
 use anyhow::{Context, Result};
 
-const FILE: u32 = 81;
+pub(crate) const FILE: u32 = 81;
 const SPELL_CHUNK: u8 = 0x49;
 const ABILITY_CHUNK: u8 = 0x53;
 const SPELL_SIZE: usize = 100;

@@ -18,7 +18,8 @@ const MERGED: [u8; 3] = [0x20, 0x31, 0x5d];
 /// as XIPivot pins the whole file.
 const SPELLS: u8 = 0x49;
 const SPELL_SIZE: usize = 100;
-/// Hashed into a merged build's cache key: bump it when `merge` takes something new, so builds made before go.
+/// Hashed into the spell file's merged build key (only that file merges differently since spell records were taken,
+/// so every other build keeps its key): bump it when `merge` takes something new from that file.
 const MERGE_VERSION: u32 = 2;
 
 pub struct Overlays {
@@ -80,7 +81,9 @@ impl Overlays {
     pub fn resolve(&self, id: u32, stock: &Path) -> Option<PathBuf> {
         let mods = self.by_id.get(&id)?;
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        MERGE_VERSION.hash(&mut h);
+        if id == super::actions::FILE {
+            MERGE_VERSION.hash(&mut h);
+        }
         for p in std::iter::once(stock).chain(mods.iter().map(PathBuf::as_path)) {
             p.hash(&mut h);
             let m = std::fs::metadata(p).ok()?;
@@ -464,13 +467,22 @@ mod tests {
         assert_eq!(merge(&stock, std::slice::from_ref(&high)).unwrap(), spell_file(&[a, b, Some(9), d, a], 1));
         let (s, kept) = slim(&stock, &low).unwrap();
         assert_eq!(kept, 1);
-        let stock_rec = &stock[16 + 100..16 + 200];
-        assert!(!s.windows(100).any(|w| w == stock_rec), "slim copy holds no stock record");
+        let at = s.windows(4).position(|w| w == b"mgc_").unwrap() + 16;
+        for k in 0..6 {
+            let (st, lo) = (&stock[16 + k * 100..16 + (k + 1) * 100], &low[16 + k * 100..16 + (k + 1) * 100]);
+            let r = &s[at + k * 100..at + (k + 1) * 100];
+            if st == lo {
+                assert!(r.iter().all(|&b| b == 0), "slot {k}: stock's record zeroed");
+            } else {
+                assert_eq!(r, lo, "slot {k}: the pack's record kept");
+            }
+        }
         assert_eq!(merge(&stock, &[s]).unwrap(), merge(&stock, &[low]).unwrap());
         assert_eq!(slim(&stock, &stock).unwrap().1, 0);
     }
 
-    /// A merged build cached before the merge took spell records (a key without MERGE_VERSION) is not read again.
+    /// A merged build of the spell file cached before the merge took spell records (a key without MERGE_VERSION) is
+    /// not read again; another file's build keeps its key and is.
     #[test]
     fn older_merge_builds_not_reused() {
         use std::hash::{Hash, Hasher};
@@ -486,12 +498,22 @@ mod tests {
             let m = std::fs::metadata(p).unwrap();
             (m.len(), m.modified().ok()).hash(&mut h);
         }
-        let old = dir.join("cache").join(format!("7-{:016x}.DAT", h.finish()));
-        std::fs::write(&old, std::fs::read(&stock).unwrap()).unwrap();
-        let o = Overlays { by_id: [(7, vec![pack.clone()])].into(), dirs: Vec::new(), cache: dir.join("cache") };
-        let p = o.resolve(7, &stock).unwrap();
+        let key = h.finish();
+        let spells = super::super::actions::FILE;
+        let old = dir.join("cache").join(format!("{spells}-{key:016x}.DAT"));
+        let other = dir.join("cache").join(format!("7-{key:016x}.DAT"));
+        for p in [&old, &other] {
+            std::fs::write(p, std::fs::read(&stock).unwrap()).unwrap();
+        }
+        let o = Overlays {
+            by_id: [(spells, vec![pack.clone()]), (7, vec![pack.clone()])].into(),
+            dirs: Vec::new(),
+            cache: dir.join("cache"),
+        };
+        let p = o.resolve(spells, &stock).unwrap();
         assert_ne!(p, old);
         assert_eq!(std::fs::read(&p).unwrap(), spell_file(&[Some(5), Some(2)], 1));
+        assert_eq!(o.resolve(7, &stock).unwrap(), other);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
