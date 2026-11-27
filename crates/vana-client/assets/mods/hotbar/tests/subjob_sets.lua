@@ -1,7 +1,8 @@
 -- Hotbars: each main / sub job pair has its own bars and crossbars. A pair's first use starts its set from the old
 -- layout (one main set, sub sets over it): THF/NIN keeps Utsusemi, THF/DNC drops it (a spell neither THF nor DNC
 -- learns) and keeps Spectral Jig only while the server lists it; abilities are judged once the list has settled,
--- and at main level 99 only. Until then the pair's set is shown, not saved.
+-- and at main level 99 only. Pet commands stay though unlisted (the list has them only while the pet is out).
+-- Until then the pair's set is shown, not saved.
 
 local spells = {
   [338] = { name = "Utsusemi: Ichi", kind = 4, levels = { [13] = 12 } },
@@ -10,6 +11,7 @@ local spells = {
 local abilities = {
   [0x2b5] = { name = "Spectral Jig", kind = 1, targets = 1 },
   [0x240] = { name = "Steal", kind = 1, targets = 0x20 },
+  [0x480] = { name = "Searing Light", kind = 1, targets = 1 },
 }
 res = setmetatable({ spell = function(id) return spells[id] end, ability = function(id) return abilities[id] end,
   job = function(id) return ({ [6] = "THF", [13] = "NIN", [19] = "DNC" })[id] end },
@@ -25,7 +27,8 @@ chat = { add = function() end }
 local function slot(name, line) return { name = name, lines = { line } } end
 local OLD = { THF = {
   main = { ["1"] = { ["1"] = slot("Steal", '/ja "Steal" <t>'), ["2"] = slot("Utsu", '/ma "Utsusemi: Ichi" <me>'),
-    ["3"] = slot("Jig", '/ja "Spectral Jig" <me>'), ["5"] = slot("Gone", "/p x") } },
+    ["3"] = slot("Jig", '/ja "Spectral Jig" <me>'), ["5"] = slot("Gone", "/p x"),
+    ["7"] = slot("Pact", '/pet "Searing Light" <me>') } },
   sub = { NIN = { ["1"] = { ["4"] = slot("Tonko", '/ma "Tonko: Ichi" <me>'), ["5"] = false } } },
   pad = { lt = { up = slot("Utsu", '/ma "Utsusemi: Ichi" <me>') } },
 } }
@@ -54,16 +57,16 @@ end
 
 -- THF/NIN before the list settled: shown (Jig kept: abilities not judged yet), not saved.
 subjob.watch()
-assert(names("THF", "NIN") == "1.1=Steal,1.2=Utsu,1.3=Jig,1.4=Tonko", names("THF", "NIN"))
+assert(names("THF", "NIN") == "1.1=Steal,1.2=Utsu,1.3=Jig,1.4=Tonko,1.7=Pact", names("THF", "NIN"))
 assert(writes == 0, "a pair's set was saved before the list settled")
--- Settled: Spectral Jig is not listed for THF/NIN at 99: another sub job's; saved now.
+-- Settled: Spectral Jig is not listed for THF/NIN at 99: another sub job's; the pact stays; saved now.
 settle()
-assert(names("THF", "NIN") == "1.1=Steal,1.2=Utsu,1.4=Tonko", names("THF", "NIN"))
+assert(names("THF", "NIN") == "1.1=Steal,1.2=Utsu,1.4=Tonko,1.7=Pact", names("THF", "NIN"))
 assert(writes > 0, "the pair's set was not saved")
 -- THF/DNC: Utsusemi is neither THF's nor DNC's; Spectral Jig listed now, kept; the NIN sub set's Tonko is not here.
 ME.sub_job, LISTED = 19, { 0x240, 0x2b5 }
 settle()
-assert(names("THF", "DNC") == "1.1=Steal,1.3=Jig,1.5=Gone", names("THF", "DNC"))
+assert(names("THF", "DNC") == "1.1=Steal,1.3=Jig,1.5=Gone,1.7=Pact", names("THF", "DNC"))
 -- The pairs are apart from here on.
 data.set_macro("THF", "DNC", 1, 6, slot("Samba", "/p samba"))
 assert(not names("THF", "NIN"):find("Samba", 1, true), "THF/NIN shows THF/DNC's slot")
@@ -75,4 +78,4 @@ assert(data.pad_resolve("THF", "NIN", "lt", "up").name == "Utsu")
 ME.main_level, ME.sub_job, LISTED = 50, 0, { 0x240 }
 settle()
 -- THF alone: Jig stays (not judged below 99), Utsusemi goes (no NIN), slot 5 is the old main set's.
-assert(names("THF", nil) == "1.1=Steal,1.3=Jig,1.5=Gone", names("THF", nil))
+assert(names("THF", nil) == "1.1=Steal,1.3=Jig,1.5=Gone,1.7=Pact", names("THF", nil))
