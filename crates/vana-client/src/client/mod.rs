@@ -17045,16 +17045,41 @@ impl App {
                                 .enumerate()
                                 .map(|(i, r)| (CHILD[i], r))
                                 .collect();
-                            // The shared window steps (winhits::takes); a click picks the cursor's button.
-                            for (m, r) in &rects {
+                            // The shared window steps (winhits::takes); a click picks the cursor's button. Classic:
+                            // on loby2win's child boxes (FUN_1011a140, header offsets in) with the held step on its
+                            // frame (FUN_1011a0a0); modern: on the buttons as drawn.
+                            let title_win = (!self.cfg.modern_ui && !window_over).then(|| {
+                                let kids = lu.title_boxes(sw, sh, logos);
+                                let frame = lu.window_rect("menu    loby2win", sw, sh).unwrap_or_default();
+                                winhits::LobbyFocus::new(lu, "menu    loby2win", frame, &kids)
+                            });
+                            let hits: Vec<(usize, [f32; 4])> = match &title_win {
+                                Some(t) => t.children.iter().map(|&(id, r)| (CHILD[id as usize - 1], r)).collect(),
+                                None => rects.clone(),
+                            };
+                            for (m, r) in &hits {
                                 if !config_open && input.pointer.is_some_and(|p| inside(r, p)) {
                                     let at = *menu;
-                                    if winhits::takes(lu, "lobby title", *m as u16 + 1, true) && at != *m {
+                                    let frame = match (&title_win, input.pointer) {
+                                        (Some(t), Some(p)) => t.in_frame(p),
+                                        _ => true,
+                                    };
+                                    if winhits::takes(lu, "lobby title", *m as u16 + 1, frame) && at != *m {
                                         *menu = *m;
                                     } else if input.released && at == *m {
                                         chosen = Some(*m);
                                     }
+                                    // The first child in order takes the pointer (FUN_1011a140).
+                                    break;
                                 }
+                            }
+                            // The release over no button (FUN_1015f420 on loby2win, the focused window): SE 0004.
+                            if input.released
+                                && let Some(p) = input.pointer
+                                && winhits::lobby_release_off(lu, title_win.as_ref(), p)
+                                && let Some(a) = self.audio.as_mut()
+                            {
+                                a.ui(crate::audio::Ui::Error);
                             }
                             let child_enabled = CHILD.map(|k| enabled[k]);
                             let shown = CHILD[*menu];
@@ -17654,7 +17679,7 @@ impl App {
                         let status_line = (!status.is_empty()).then_some(status.as_str());
                         // Modern: the panels draw the steps and prompts; their mouse acts as retail's below.
                         let modern_ui = self.cfg.modern_ui;
-                        let (rects, ptr) = if modern_ui {
+                        let ptr = if modern_ui {
                             creator::draw_modern(gu, &view, sw, sh);
                             let page = creator::Page {
                                 view: &view,
@@ -17665,18 +17690,11 @@ impl App {
                                 free: !busy,
                             };
                             let m = self.modern.get_or_insert_with(|| modern::Modern::new(ctx));
-                            (
-                                Vec::new(),
-                                m.creator_screen(
-                                    ctx,
-                                    gu,
-                                    [screen_size[0], screen_size[1]],
-                                    self.cfg.modern_scale,
-                                    &page,
-                                ),
-                            )
+                            m.creator_screen(ctx, gu, [screen_size[0], screen_size[1]], self.cfg.modern_scale, &page)
                         } else {
-                            (creator::draw_ui(gu, &view, sw, sh, status_line, None), creator::Pointer::default())
+                            // The classic mouse hits the focused window as laid out (winhits::LobbyFocus) below.
+                            creator::draw_ui(gu, &view, sw, sh, status_line, None);
+                            creator::Pointer::default()
                         };
                         let pointer = input.pointer.filter(|_| !busy);
                         let mut check = false;
@@ -17714,51 +17732,77 @@ impl App {
                                 }
                                 answer = answer.or(ptr.yes.1);
                             }
-                        } else if let Some((text, _)) = &self.creator_ok {
-                            if let Some(r) = gu.ok_window(text, sw, sh)
-                                && pointer.is_some_and(|p| inside(&r, p))
-                            {
-                                gu.hover.set(true);
-                                ok |= input.clicked;
-                            }
-                        } else if let Some(ws) = self.creator_world.as_mut().filter(|_| step == 5) {
-                            // worldsel's rows: a row takes the cursor by winhits::takes (0001), a click on the cursor's
-                            // row is Enter (inf: the generic list).
-                            if let Some(p) = pointer
-                                && let Some(i) = rects.iter().position(|r| inside(r, p))
-                            {
-                                let on = ws.top + i == ws.cursor;
-                                if winhits::takes(gu, "creator worldsel", i as u16 + 1, true) && ws.hover(i) {
-                                    world_se.push(crate::audio::Ui::Cursor);
-                                } else if input.released
-                                    && on
-                                    && let creator::WorldAct::Sound(s) = ws.pick()
+                        } else {
+                            // The focused window (FUN_1015f920 opens each step's window with the focus): its hit
+                            // boxes take the shared window steps (winhits::takes), the held step inside its frame
+                            // (FUN_1011a0a0), and a release over none of its children buzzes (FUN_1015f420).
+                            let focus = if let Some((text, _)) = &self.creator_ok {
+                                gu.ok_win(text, sw, sh)
+                                    .map(|w| winhits::LobbyFocus::new(gu, "menu    ok", w.frame, &w.children))
+                            } else if let Some(ws) = self.creator_world.as_ref().filter(|_| step == 5) {
+                                // worldsel (menu_worldsel_fn), then chmkpass over it for the pass; both 8 down.
+                                let name = if ws.pass.is_some() { "menu    chmkpass" } else { "menu    worldsel" };
+                                winhits::LobbyFocus::layout_off(gu, name, sw, sh, (0.0, 8.0))
+                            } else if step < 7 {
+                                (!(step == 5 && name_hidden))
+                                    .then(|| winhits::LobbyFocus::layout(gu, STEPS[step].0, sw, sh))
+                                    .flatten()
+                            } else if step == 7 {
+                                gu.yes_no_win(&select::register_text(gu, new_name), self.creator_yes, true, sw, sh)
+                                    .map(|w| winhits::LobbyFocus::new(gu, "menu    ptc6yesn", w.frame, &w.children))
+                            } else {
+                                None
+                            };
+                            let hit =
+                                pointer.zip(focus.as_ref()).and_then(|(p, f)| f.child(p).map(|c| (c, f.in_frame(p))));
+                            if self.creator_ok.is_some() {
+                                if let Some((1, _)) = hit {
+                                    gu.hover.set(true);
+                                    ok |= input.released;
+                                }
+                            } else if let Some(ws) = self.creator_world.as_mut().filter(|_| step == 5) {
+                                // worldsel's rows: a row takes the cursor by winhits::takes (0001), a click on the
+                                // cursor's row is Enter (inf: the generic list).
+                                if ws.pass.is_none()
+                                    && let Some((c, frame)) = hit
+                                    && ws.top + (c as usize) <= ws.rows.len()
                                 {
-                                    world_se.push(s);
+                                    let i = c as usize - 1;
+                                    let on = ws.top + i == ws.cursor;
+                                    if winhits::takes(gu, "creator worldsel", c, frame) && ws.hover(i) {
+                                        world_se.push(crate::audio::Ui::Cursor);
+                                    } else if input.released
+                                        && on
+                                        && let creator::WorldAct::Sound(s) = ws.pick()
+                                    {
+                                        world_se.push(s);
+                                    }
                                 }
-                            }
-                        } else if step < 7 {
-                            if let Some(p) = pointer
-                                && let Some(i) = rects.iter().position(|r| inside(r, p))
+                            } else if step < 7 {
+                                // The step's rows (children 1..n; its page arrows are hit but not taken here).
+                                if let Some((c, frame)) = hit.filter(|h| (h.0 as usize) <= n) {
+                                    let (i, at) = (c as usize - 1, sel);
+                                    if winhits::takes(gu, "creator step", c, frame) && at != i {
+                                        sel = i;
+                                    } else if input.released && at == i {
+                                        next = true;
+                                    }
+                                }
+                            } else if step == 7
+                                && let Some((id, frame)) = hit.filter(|h| h.0 <= 2)
                             {
-                                let at = sel;
-                                if winhits::takes(gu, "creator step", i as u16 + 1, true) && at != i {
-                                    sel = i;
-                                } else if input.released && at == i {
-                                    next = true;
+                                let on = (id == 1) == self.creator_yes;
+                                if winhits::takes(gu, "creator yes no", id, frame) && !on {
+                                    self.creator_yes = id == 1;
+                                } else if input.released && on {
+                                    answer = Some(id == 1);
                                 }
                             }
-                        } else if step == 7
-                            && let Some(children) =
-                                gu.yes_no_window(&select::register_text(gu, new_name), self.creator_yes, true, sw, sh)
-                            && let Some(p) = pointer
-                            && let Some(&(id, _)) = children.iter().find(|(_, r)| inside(r, p))
-                        {
-                            let on = (id == 1) == self.creator_yes;
-                            if winhits::takes(gu, "creator yes no", id, true) && !on {
-                                self.creator_yes = id == 1;
-                            } else if input.released && on {
-                                answer = Some(id == 1);
+                            if input.released
+                                && let Some(p) = pointer
+                                && winhits::lobby_release_off(gu, focus.as_ref(), p)
+                            {
+                                world_se.push(crate::audio::Ui::Error);
                             }
                         }
                         match step {
