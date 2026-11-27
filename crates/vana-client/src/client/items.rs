@@ -268,6 +268,11 @@ impl ItemCache {
 
     /// The record; retail's record cache (the auto-translate Items group's source) counts the lookup. No lock while
     /// the id surely still holds its slot.
+    /// The names' language.
+    pub fn lang(&self) -> crate::dat::items::Lang {
+        self.names.lang
+    }
+
     pub fn item(&self, id: u16) -> Option<Arc<Item>> {
         let items = &self.names.items;
         let mut cache = self.cache.borrow_mut();

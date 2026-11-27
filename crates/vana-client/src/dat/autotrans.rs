@@ -160,6 +160,21 @@ fn fold_cmp(a: &[u8], b: &[u8], n: usize, t: &[u8; 0x42]) -> i32 {
     0
 }
 
+/// FUN_101c9d00(a, b, 0): the whole strings char by char through DAT_1037e358; true when no char differs (accented
+/// letters stay apart, case does not count).
+pub fn order_eq(a: &[u8], b: &[u8]) -> bool {
+    let (mut i, mut j) = (0, 0);
+    while byte(a, i) != 0 || byte(b, j) != 0 {
+        let (x, k) = fold(&FOLD_ORDER, a, i);
+        let (y, l) = fold(&FOLD_ORDER, b, j);
+        if x != y {
+            return false;
+        }
+        (i, j) = (i + k, j + l);
+    }
+    true
+}
+
 /// _strncmp.
 fn strncmp(a: &[u8], b: &[u8], n: usize) -> i32 {
     for i in 0..n {

@@ -2226,7 +2226,7 @@ const SLOT_OF: [u8; 20] = [0, 1, 2, 3, 4, 9, 11, 12, 5, 6, 13, 14, 15, 10, 7, 8,
 /// The bags /equip looks in, and its third argument's choices ("0" inventory, "1" wardrobe 8, "2".."8" 10..16).
 const EQUIP_BAGS: [u8; 9] = [0, 8, 10, 11, 12, 13, 14, 15, 16];
 
-/// A bag slot holding an item named `name` (record name, case-insensitive), in the bags' order.
+/// A bag slot holding an item named `name` (`items::named`), in the bags' order.
 fn find_item(w: &World, name: &str, bags: &[u8]) -> Option<(u8, u8, u16)> {
     let info = w.item_info.as_ref()?;
     bags.iter().find_map(|&bag| {
@@ -2234,7 +2234,7 @@ fn find_item(w: &World, name: &str, bags: &[u8]) -> Option<(u8, u8, u16)> {
             .slots
             .iter()
             .filter(|((c, i), _)| *c == bag && *i != 0)
-            .find(|(_, (id, _))| info.item(*id).is_some_and(|it| it.name.eq_ignore_ascii_case(name)))
+            .find(|(_, (id, _))| info.item(*id).is_some_and(|it| crate::dat::items::named(info.lang(), name, &it)))
             .map(|((c, i), (id, _))| (*c, *i, *id))
     })
 }
@@ -2418,8 +2418,8 @@ fn equip(w: &mut World, args: &[String]) -> Done {
     // FUN_1007b1c0: the slot already wears an item of that name: nothing.
     let worn = w.inv.equip[slot as usize]
         .and_then(|s| w.inv.slots.get(&s))
-        .and_then(|&(id, _)| w.item_info.as_ref()?.item(id))
-        .is_some_and(|it| it.name.eq_ignore_ascii_case(name));
+        .and_then(|&(id, _)| w.item_info.as_ref().and_then(|info| Some((info.lang(), info.item(id)?))))
+        .is_some_and(|(lang, it)| crate::dat::items::named(lang, name, &it));
     if worn {
         return Ok(());
     }
@@ -2452,7 +2452,7 @@ fn find_free(w: &World, name: &str, bags: &[u8]) -> Option<(u8, u8, u16)> {
             .iter()
             .filter(|((c, i), _)| *c == bag && *i != 0)
             .find(|(k, (id, _))| {
-                info.item(*id).is_some_and(|it| it.name.eq_ignore_ascii_case(name))
+                info.item(*id).is_some_and(|it| crate::dat::items::named(info.lang(), name, &it))
                     && w.inv.locks.get(k).is_none_or(|&l| l == 0)
                     && !claimed(k)
             })
