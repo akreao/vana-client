@@ -2784,9 +2784,9 @@ impl ZoneGeometry {
                 }
             }
             // Scenery water (render/reflect.rs water_mask): each model placed at full detail whose faces lie on the
-            // collision's water levels, its upward water faces with its colour. Only placements whose box reaches a
-            // level are walked.
-            for model in mesh.models.iter().filter(|_| animate && levels.iter().any(|l| l.exact)) {
+            // collision's water levels, its upward water faces with its colour. Only placements whose box may hold
+            // water (reflect::may_hold_water) are walked.
+            for model in mesh.models.iter().filter(|_| animate && (levels.iter().any(|l| l.exact) || !wet.is_empty())) {
                 let indices = if model.strip { strip_to_list(&model.indices) } else { model.indices.clone() };
                 for inst in matrices[start as usize..]
                     .iter()
@@ -2802,7 +2802,7 @@ impl ZoneGeometry {
                         let y = m.transform_point3(c).y;
                         (a.min(y), b.max(y))
                     });
-                    if !levels.iter().any(|l| l.exact && (l.holds(ylo) || l.holds(yhi) || (ylo < l.y && yhi > l.y))) {
+                    if !reflect::may_hold_water(&levels, &wet, ylo, yhi) {
                         continue;
                     }
                     let tris: Vec<([Vec3; 3], [usize; 3])> = indices

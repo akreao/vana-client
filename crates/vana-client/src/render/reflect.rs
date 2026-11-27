@@ -193,6 +193,8 @@ const WET_CELL: f32 = 4.0;
 pub struct WetGrid {
     /// Each face's x/z corners and its water height.
     tris: Vec<([[f32; 2]; 3], f32)>,
+    /// The distinct water heights, lowest first (no cap, unlike the shader's levels).
+    heights: Vec<f32>,
     cells: std::collections::HashMap<(i32, i32), Vec<u32>>,
 }
 
@@ -211,13 +213,21 @@ impl WetGrid {
             }
             let id = grid.tris.len() as u32;
             grid.tris.push((t.map(|v| [v.x, v.z]), h));
+            grid.heights.push(h);
             for cx in cell(t[0].x.min(t[1].x).min(t[2].x))..=cell(t[0].x.max(t[1].x).max(t[2].x)) {
                 for cz in cell(t[0].z.min(t[1].z).min(t[2].z))..=cell(t[0].z.max(t[1].z).max(t[2].z)) {
                     grid.cells.entry((cx, cz)).or_default().push(id);
                 }
             }
         }
+        grid.heights.sort_unstable_by(f32::total_cmp);
+        grid.heights.dedup();
         grid
+    }
+
+    /// Whether the zone has water faces at all.
+    pub fn is_empty(&self) -> bool {
+        self.tris.is_empty()
     }
 
     /// How far `p` lies under the water over it: of the water faces holding its x/z, the nearest water height not
@@ -232,6 +242,15 @@ impl WetGrid {
             .map(|(_, h)| p.y - h)
             .min_by(f32::total_cmp)
     }
+}
+
+/// Whether a placement spanning heights `ylo..=yhi` (y grows downward) may hold water: it reaches an exact level as a
+/// whole water model sits on it (`Level::holds`), or the depths under some water height where a mixed tile's water
+/// faces lie (WET_MIN to WET_MAX, from `wet`'s own heights, which the level list's cap does not drop). Checked before
+/// a placement's triangles are walked.
+pub fn may_hold_water(levels: &[Level], wet: &WetGrid, ylo: f32, yhi: f32) -> bool {
+    levels.iter().any(|l| l.exact && (l.holds(ylo) || l.holds(yhi) || (ylo < l.y && yhi > l.y)))
+        || wet.heights.iter().any(|h| ylo <= h + WET_MAX && yhi >= h + WET_MIN)
 }
 
 /// Which of a placed model's triangles are water (`water_mask`).
@@ -1139,6 +1158,13 @@ mod tests {
         assert_eq!(water_mask(&[bed(0.0, 0.0, 10.0, 5.0).to_vec(), vec![bank(15.0)]].concat(), &levels, &wet), None);
         // A model wholly on the water stays whole.
         assert_eq!(water_mask(&bed(0.0, 0.0, 10.0, 6.1), &levels, &wet), Some(WaterMask::Whole));
+        // A placement wholly 0.75 to 1.25 under the water (out of the level's reach) may still hold a mixed tile's
+        // water faces; one wholly above the water or too deep may not.
+        let none: [Level; 0] = [];
+        assert!(may_hold_water(&none, &wet, 6.8, 7.2));
+        assert!(!may_hold_water(&none, &wet, 2.0, 5.0));
+        assert!(!may_hold_water(&none, &wet, 7.5, 9.0));
+        assert!(may_hold_water(&levels, &WetGrid::default(), 5.5, 5.9));
         // Faces kept: a mixed tile's face whose corner normals lean toward its banks still points up; one facing
         // down is not.
         let m = Mat4::IDENTITY;
