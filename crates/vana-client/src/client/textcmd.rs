@@ -376,6 +376,21 @@ fn pet(w: &World) -> Option<(u32, u16)> {
     (w.my_pet != 0).then(|| by_index(w, w.my_pet).map(|(id, _)| (id, w.my_pet))).flatten()
 }
 
+/// FUN_101cdb20: our adventuring fellow (player +0x2a0).
+fn fellow(w: &World) -> Option<(u32, u16)> {
+    (w.my_fellow != 0).then(|| by_index(w, w.my_fellow).map(|(id, _)| (id, w.my_fellow))).flatten()
+}
+
+/// Actor +0xa0: the actor has a model now (none before its load, or while an unload mark has freed it).
+fn has_model(w: &World, id: u32) -> bool {
+    w.actors.get(&id).is_some_and(|a| a.character.is_some())
+}
+
+/// FUN_100875d0: the pet status packet (s2c 0x068) is about our pet (its index is our +0x1fa).
+fn pet_sync(w: &World) -> Option<&super::net::PetSync> {
+    w.pet_sync.as_ref().filter(|p| p.index == w.my_pet)
+}
+
 /// The name a flag-0x08 command gets for a pick (`"%s\"%s\""`).
 pub fn display_name(w: &World, id: u32) -> String {
     name_of(w, (id, 0)).unwrap_or_default()
@@ -406,6 +421,15 @@ fn tag(w: &World, tag: &str, target_cmd: bool) -> Option<String> {
         "<me>" if !target_cmd => Some(w.name.clone()),
         "<bt>" if !target_cmd => battle_target(w).and_then(|t| name_of(w, t)),
         "<pet>" if !target_cmd => pet(w).and_then(|t| name_of(w, t)),
+        // Types 0x12 / 0x13 (0x1007712a / 0x10077172), in target commands too: the pet's HP% (+0xec) and MP% (the
+        // pet status packet's, 0 when it is about another pet: FUN_100875f0) as "%d%%", only while the pet has a
+        // model (+0xa0): not before it loads or while an unload mark has freed it. Type 0x14 (0x100771b7): its TP
+        // (FUN_10087610) as "%d", with no pet test at all.
+        "<pethpp>" => {
+            pet(w).filter(|t| has_model(w, t.0)).and_then(|t| w.entities.get(&t.0)).map(|e| format!("{}%", e.hpp))
+        }
+        "<petmpp>" => pet(w).filter(|t| has_model(w, t.0)).map(|_| format!("{}%", pet_sync(w).map_or(0, |p| p.mpp))),
+        "<pettp>" => Some(pet_sync(w).map_or(0, |p| p.tp).to_string()),
         "<lastst>" if !target_cmd => super::target::last_subtarget(w).and_then(|t| name_of(w, t)),
         // FUN_10076ff0 type 0x16: the zone NPC-list name of the call-for-help monster.
         "<ht>" if !target_cmd => super::target::call_for_help(w)
@@ -416,6 +440,12 @@ fn tag(w: &World, tag: &str, target_cmd: bool) -> Option<String> {
         "<focust>" => focus_name(w),
         // Ours, modern only: <ft> is <focust>; <lt> the last target's name (a target command resolves it itself).
         "<ft>" if w.modern => focus_name(w),
+        // Types 0x1b / 0x1c (0x100776c5): our adventuring fellow's name, and its HP% (in target commands too) while
+        // it has a model. The modern interface's <ft> above takes the name's tag.
+        "<ft>" if !target_cmd => fellow(w).and_then(|t| name_of(w, t)),
+        "<fthpp>" => {
+            fellow(w).filter(|t| has_model(w, t.0)).and_then(|t| w.entities.get(&t.0)).map(|e| format!("{}%", e.hpp))
+        }
         "<lt>" if w.modern && !target_cmd => super::target::last_target(w).and_then(|t| name_of(w, t)),
         "<r>" => w.tells.first().cloned(),
         "<tp>" => vit.map(|v| v.2.to_string()),
@@ -496,8 +526,12 @@ pub(super) fn resolve(w: &World, text: Option<&str>, fallback: bool, wide: bool,
             "<t>" => current_target(w),
             "<me>" => Some((w.my_id, w.my_index)),
             "<bt>" => battle_target(w),
-            // FUN_1007a1c0: the tracked actor while tracking, when it is here.
-            "<scan>" => w.scan.tracking().and_then(|t| w.entity_at(t.index).map(|(id, e)| (id, e.index))),
+            // FUN_1007a1c0 (0x1007a30c): the tracked actor while tracking, when it is here with a model (+0xa0).
+            "<scan>" => w
+                .scan
+                .tracking()
+                .and_then(|t| w.entity_at(t.index).map(|(id, e)| (id, e.index)))
+                .filter(|t| has_model(w, t.0)),
             "<pet>" => pet(w),
             "<lastst>" => super::target::last_subtarget(w),
             "<lt>" if w.modern => super::target::last_target(w),

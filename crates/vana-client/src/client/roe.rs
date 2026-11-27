@@ -209,15 +209,11 @@ pub fn timed_seen(w: &mut World) {
     w.roe_timed = id;
 }
 
-/// FUN_10087230 each frame: once the zone is in, no event runs and our model is loaded, "New Challenge" (file 0xaf0 +
-/// 0x396, en / ja; fr 0x397, de 0x398: table 0x1035b53c) `main` on us, with no text.
+/// FUN_10087230 each frame: once the zone is in, no event runs and our model is up (+0x120 bit 9, 0x1008723c: not
+/// while an unload mark has freed it), "New Challenge" (file 0xaf0 + 0x396, en / ja; fr 0x397, de 0x398: table
+/// 0x1035c53c) `main` on us, with no text.
 pub fn new_challenge(w: &mut World) {
-    if !w.new_challenge
-        || !w.in_scene()
-        || w.zone_uploading.is_some()
-        || super::event::active(w)
-        || !w.actors.get(&w.my_id).is_some_and(|a| a.character.is_some())
-    {
+    if !w.new_challenge || !w.in_scene() || w.zone_uploading.is_some() || super::event::active(w) || !w.my_model_up() {
         return;
     }
     w.new_challenge = false;

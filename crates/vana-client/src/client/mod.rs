@@ -588,7 +588,8 @@ fn res_rdy(w: &mut World) {
     } else {
         w.res_rdy.kings.len() >= w.res_rdy.send_count as usize || ticks >= 600.0
     };
-    if go {
+    // FUN_100882d0 (0x100882e2): only once our model is up (+0x120 bit 9), each frame until then.
+    if go && w.my_model_up() {
         w.res_rdy.sent = true;
         let body = net::action_body(w.my_id, w.my_index, 0x14);
         let _ = w.net.commands.send(NetCommand::Packet { id: 0x01A, body });
@@ -8766,6 +8767,9 @@ struct World {
     audio_cmds: Vec<(i32, f32, f32)>,
     /// DAT_104804c3: the per-zone sound-level reset has run, so the event end doesn't restore levels (batch 6 item 18).
     sound_reset: bool,
+    /// FUN_10096640's DAT_1048909e, inverted: the zone-in's camera placement on our model is still to come (our model
+    /// was not up when the zone settled).
+    zone_cam_owed: bool,
     /// Chat call sounds to play (FUN_100380f0, at the op 0x69 mask 0x10 level), the call's task, and what the audio
     /// says of it: the call level is on (DAT_10351710), the call's voice still plays.
     call_sounds: Vec<u32>,
@@ -9130,6 +9134,15 @@ impl World {
     /// the old ground must not settle or move us meanwhile).
     fn in_scene(&self) -> bool {
         self.zone == Some(self.pos_zone) && self.loading.is_none()
+    }
+
+    /// Our own actor's +0x120 bit 9 and +0xa0: its model is made. FUN_10092900 clears both when FUN_10095900 frees
+    /// the model for an unload mark (`event::unload_models`: ours keeps its entry, so the mark says it), and
+    /// FUN_1008f740 sets them again the frame the mark is gone. A model that failed to load counts as made, as for
+    /// an event's actors (`event::has_model`). Addresses are 30261102_0.
+    fn my_model_up(&self) -> bool {
+        !self.unload_marks.contains(&self.my_id)
+            && self.actors.get(&self.my_id).is_some_and(|a| a.character.is_some() || a.failed)
     }
 
     /// FUN_10118870: the cursor child a window opened by name starts on (the one it last had; 1 the first time).
@@ -11394,6 +11407,7 @@ impl App {
                             bid: Default::default(),
                             audio_cmds: Vec::new(),
                             sound_reset: false,
+                            zone_cam_owed: false,
                             call_sounds: Vec::new(),
                             call: None,
                             call_heard: (true, false),
@@ -12589,6 +12603,7 @@ impl App {
                     // FUN_10093720: the zone load clears the once-a-zone sound reset; it runs when the player's model
                     // is up (below), or at an event end before that.
                     world.sound_reset = false;
+                    world.zone_cam_owed = true;
                     let f = forward_from_dir(dir);
                     camera::face(world, f.x.atan2(f.z));
                     world.my_id = char_id;
@@ -14529,11 +14544,17 @@ impl App {
             world.lift_wait = None;
         }
         let lift_wait = world.lift_wait.is_some_and(|t| t.elapsed().as_secs_f32() < 10.0);
+        // FUN_1008abe0 state 1 (0x1008ad3c): the zone-in's fade in ('fdi0') starts only once our model is up (+0x120
+        // bit 9), so not while an unload mark keeps it freed (our hide or sleep bit with no event). The state is
+        // entered only without a zone-in event (FUN_10093db0), and left for good at that point (`sound_reset`).
+        let model_wait =
+            !world.sound_reset && world.event.is_none() && world.event_pending.is_none() && !world.my_model_up();
         let ready = world.zoning_since.is_none()
             && world.in_scene()
             && world.renderer.is_some()
             && world.zone_uploading.is_none()
-            && !lift_wait;
+            && !lift_wait
+            && !model_wait;
         // A zone change's fade to black runs to the end before the new zone fades in.
         let target = if ready && !world.unsettled && world.zone_hold.is_none() { 0.0 } else { 1.0 };
         if target > world.fade {
@@ -14552,6 +14573,16 @@ impl App {
             // player, now that the zone collision is in (ours; retail places it once, FUN_10021680).
             let yaw = world.yaw;
             camera::face(world, yaw);
+            if world.my_model_up() {
+                world.zone_cam_owed = false;
+            }
+        }
+        // FUN_10096640 (0x10096676, once a zone: DAT_1048909e): the camera goes behind us the frame our model is up
+        // (+0x120 bit 9, FUN_10021680 on the model), so after an unload mark that held it at the zone-in is gone.
+        if world.zone_cam_owed && !world.unsettled && world.in_scene() && world.my_model_up() {
+            world.zone_cam_owed = false;
+            let yaw = world.yaw;
+            camera::face(world, yaw);
         }
         // FUN_1008abe0 (once a zone, DAT_104804c3), at the point the player's model is ready: the ambient to full at
         // once, the world and interface effects over 30 ticks. The stream is left alone. A zone-in cutscene already
@@ -14560,6 +14591,7 @@ impl App {
         if !world.unsettled
             && world.event.is_none()
             && world.event_pending.is_none()
+            && world.my_model_up()
             && !std::mem::replace(&mut world.sound_reset, true)
         {
             world.audio_cmds.push((4, 1.0, 0.0));
@@ -20737,12 +20769,9 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
     // FUN_10188a50: the gusts, every frame in retail (30 fps); ours on the cloth's 30 Hz clock.
     w.wind.advance(dt);
     let wind = (w.wind.tick, w.wind.dir, w.wind.strength);
-    // FUN_100cd040's fishing fade needs our drawobj (FUN_101cc4f0) and our place.
-    let (fish, my_pos) = (
-        fishing::any_fishing_status(w.my_motion.status)
-            && w.actors.get(&w.my_id).is_some_and(|a| a.character.is_some()),
-        w.pos,
-    );
+    // FUN_100cd040's fishing fade needs our model (0x100cd231: our +0xa0, none while an unload mark has freed it)
+    // and our place.
+    let (fish, my_pos) = (fishing::any_fishing_status(w.my_motion.status) && w.my_model_up(), w.pos);
     let put_away: HashSet<u32> = w.actors.keys().copied().filter(|id| fishrod::put_away(w, *id)).collect();
     for (id, a) in w.actors.iter_mut() {
         // A changed look goes up in the background; the swap is one frame, the old model drawn till then.
