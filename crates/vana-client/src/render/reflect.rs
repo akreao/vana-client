@@ -4,6 +4,10 @@
 //! water levels (`water_levels`); a drawn surface on one of them is water, found two ways, with no list per zone:
 //! - Scenery: a placed model whose upward faces lie on an exact level and make up nearly all of it (`is_water`),
 //!   checked once at load. Its faces are copied out in world space with its colour (texture average x vertex colour).
+//!   A terrain tile holding both water and land (a coast or river tile: its water and its banks in one model) is
+//!   taken face by face instead (`water_mask`): its flat faces lying a little under the water height of the
+//!   collision's water face below them (`WetGrid`), as a river drawn on its bed does; the sand at a sea's waterline,
+//!   which the collision marks wet too, lies within a few tenths of it and stays out.
 //! - Effect meshes (most open water: Buburimu's `umi1`): a flat mesh of a zone effect, its vertices on a level. These
 //!   move and are placed on the GPU, so the effects draw (render/effects.rs) draws their reflection right after each
 //!   one, through the element's own matrix, texture and colour (`FxWater`, reflect.wgsl `vs_fx` / `fs_fx`).
@@ -173,6 +177,105 @@ pub fn is_water(tris: &[[Vec3; 3]], levels: &[Level]) -> bool {
         }
     }
     on >= WATER_AREA && on >= WATER_SHARE * all
+}
+
+/// A face of a mixed tile is water when it lies between these depths under the water height of the collision's water
+/// face below it (world units, y grows downward). Jugner's river is drawn mostly 0.5 to 1 under it; the beaches of
+/// Buburimu and Valkurm mostly meet the sea's height within half a unit, where the sea's own sheet fades out over them.
+const WET_MIN: f32 = 0.5;
+const WET_MAX: f32 = 1.25;
+/// The wet grid's cell side, world units.
+const WET_CELL: f32 = 4.0;
+
+/// The collision's water faces (type 9 with a water height, banks left out as in `water_levels`) by 4-unit cell in
+/// x/z, for the water height over a point. Built once at load, linear.
+#[derive(Default)]
+pub struct WetGrid {
+    /// Each face's x/z corners and its water height.
+    tris: Vec<([[f32; 2]; 3], f32)>,
+    cells: std::collections::HashMap<(i32, i32), Vec<u32>>,
+}
+
+impl WetGrid {
+    pub fn build(c: &Collision) -> Self {
+        let mut grid = Self::default();
+        let cell = |v: f32| (v / WET_CELL).floor() as i32;
+        for (i, t) in c.tris.iter().enumerate() {
+            if c.kinds.get(i) != Some(&9) {
+                continue;
+            }
+            let Some(o) = c.object.get(i).and_then(|&o| c.objects.get(o as usize)) else { continue };
+            let h = water_of(o.flags);
+            if h == 0.0 || t.iter().all(|v| v.y < h - 0.05) {
+                continue;
+            }
+            let id = grid.tris.len() as u32;
+            grid.tris.push((t.map(|v| [v.x, v.z]), h));
+            for cx in cell(t[0].x.min(t[1].x).min(t[2].x))..=cell(t[0].x.max(t[1].x).max(t[2].x)) {
+                for cz in cell(t[0].z.min(t[1].z).min(t[2].z))..=cell(t[0].z.max(t[1].z).max(t[2].z)) {
+                    grid.cells.entry((cx, cz)).or_default().push(id);
+                }
+            }
+        }
+        grid
+    }
+
+    /// How far `p` lies under the water over it: of the water faces holding its x/z, the nearest water height not
+    /// below it (y grows downward), as a depth; none when no water lies over it.
+    pub fn depth(&self, p: Vec3) -> Option<f32> {
+        let key = ((p.x / WET_CELL).floor() as i32, (p.z / WET_CELL).floor() as i32);
+        self.cells
+            .get(&key)?
+            .iter()
+            .map(|&i| &self.tris[i as usize])
+            .filter(|(t, h)| *h <= p.y && inside(t, p.x, p.z))
+            .map(|(_, h)| p.y - h)
+            .min_by(f32::total_cmp)
+    }
+}
+
+/// Which of a placed model's triangles are water (`water_mask`).
+#[derive(Debug, PartialEq)]
+pub enum WaterMask {
+    /// The model is water (`is_water`): its faces that face up (`faces_up`).
+    Whole,
+    /// A tile holding both water and land: the faces marked, flat by their corners, that point up at all (their
+    /// normals are bent toward the banks they share corners with).
+    Faces(Vec<bool>),
+}
+
+impl WaterMask {
+    /// Whether face `i`, with these corner normals through `m`, is drawn as water.
+    pub fn keeps(&self, i: usize, m: &Mat4, normals: [[f32; 3]; 3]) -> bool {
+        match self {
+            Self::Whole => faces_up(m, normals),
+            Self::Faces(f) => f[i] && normals.iter().map(|n| m.transform_vector3(Vec3::from(*n))).sum::<Vec3>().y < 0.0,
+        }
+    }
+}
+
+/// Which of a placed model's triangles (world space) are water: all of them when the model is water (`is_water`);
+/// else, for a tile holding both water and land, each flat face whose centre lies WET_MIN to WET_MAX under the water
+/// over it (`WetGrid::depth`). None when no face is.
+pub fn water_mask(tris: &[[Vec3; 3]], levels: &[Level], wet: &WetGrid) -> Option<WaterMask> {
+    if is_water(tris, levels) {
+        return Some(WaterMask::Whole);
+    }
+    let mut any = false;
+    let mask = tris
+        .iter()
+        .map(|t| {
+            let n = (t[1] - t[0]).cross(t[2] - t[0]);
+            let len = n.length();
+            let c = (t[0] + t[1] + t[2]) / 3.0;
+            let on = len > 0.0
+                && (n.y / len).abs() >= FLAT
+                && wet.depth(c).is_some_and(|d| (WET_MIN..=WET_MAX).contains(&d));
+            any |= on;
+            on
+        })
+        .collect();
+    any.then_some(WaterMask::Faces(mask))
 }
 
 /// Characters are mirrored in a reflecting surface this far below their feet at most (y grows downward), or this far
@@ -1006,6 +1109,45 @@ mod tests {
         assert!(!is_water(&sheet(20.0, 0.0), &[]));
         // Only exact levels: a sheet on a bed level may be the bed.
         assert!(!is_water(&sheet(20.0, 0.0), &[Level { exact: false, ..levels[0] }]));
+    }
+
+    #[test]
+    fn mixed_tiles_reflect_their_water_faces() {
+        // The river's collision: water height 6 over a bed square 0..20 at y 6.6 (y grows downward).
+        let flags = ((6.0f32 * 256.0) as u32) << 6;
+        let bed = |x: f32, z: f32, s: f32, y: f32| {
+            [
+                [Vec3::new(x, y, z), Vec3::new(x + s, y, z), Vec3::new(x, y, z + s)],
+                [Vec3::new(x + s, y, z), Vec3::new(x + s, y, z + s), Vec3::new(x, y, z + s)],
+            ]
+        };
+        let c = collision(bed(0.0, 0.0, 20.0, 6.6).to_vec(), vec![9, 9], flags);
+        let wet = WetGrid::build(&c);
+        assert!((wet.depth(Vec3::new(5.0, 6.6, 5.0)).unwrap() - 0.6).abs() < 1e-5);
+        // Above the water, or off it: none.
+        assert_eq!(wet.depth(Vec3::new(5.0, 5.0, 5.0)), None);
+        assert_eq!(wet.depth(Vec3::new(25.0, 6.6, 5.0)), None);
+        let levels = water_levels(&c);
+        // A river tile: its riverbed drawn 0.6 under the water, its banks rising beside it (most of its area).
+        let river = bed(5.0, 0.0, 10.0, 6.6);
+        let bank = |x: f32| [Vec3::new(x, 6.6, 0.0), Vec3::new(x + 10.0, 0.0, 0.0), Vec3::new(x, 6.6, 20.0)];
+        let tile: Vec<[Vec3; 3]> = [river.to_vec(), vec![bank(15.0), bank(25.0), bank(-10.0)]].concat();
+        assert!(!is_water(&tile, &levels));
+        assert_eq!(water_mask(&tile, &levels, &wet), Some(WaterMask::Faces(vec![true, true, false, false, false])));
+        // Sand at the waterline (0.1 under) or dry above it: no water face.
+        assert_eq!(water_mask(&[bed(0.0, 0.0, 10.0, 6.1).to_vec(), vec![bank(15.0)]].concat(), &levels, &wet), None);
+        assert_eq!(water_mask(&[bed(0.0, 0.0, 10.0, 5.0).to_vec(), vec![bank(15.0)]].concat(), &levels, &wet), None);
+        // A model wholly on the water stays whole.
+        assert_eq!(water_mask(&bed(0.0, 0.0, 10.0, 6.1), &levels, &wet), Some(WaterMask::Whole));
+        // Faces kept: a mixed tile's face whose corner normals lean toward its banks still points up; one facing
+        // down is not.
+        let m = Mat4::IDENTITY;
+        let mask = WaterMask::Faces(vec![true, false]);
+        let leaning = [[0.0, -0.7, 0.7], [0.0, -0.7, 0.7], [0.0, -1.0, 0.0]];
+        assert!(mask.keeps(0, &m, leaning));
+        assert!(!mask.keeps(1, &m, leaning));
+        assert!(!mask.keeps(0, &m, [[0.0, 1.0, 0.0]; 3]));
+        assert!(!WaterMask::Whole.keeps(0, &m, leaning));
     }
 
     #[test]

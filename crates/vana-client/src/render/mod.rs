@@ -2705,9 +2705,9 @@ impl ZoneGeometry {
         };
         let mut floor_faces: Vec<reflect::Face> = Vec::new();
         // The collision's water levels and the scenery water on them (render/reflect.rs); none for a sub-area.
-        let levels = match (&scene.collision, animate) {
-            (Some(c), true) => reflect::water_levels(c),
-            _ => Vec::new(),
+        let (levels, wet) = match (&scene.collision, animate) {
+            (Some(c), true) => (reflect::water_levels(c), reflect::WetGrid::build(c)),
+            _ => (Vec::new(), Default::default()),
         };
         let mut water_faces: Vec<reflect::Face> = Vec::new();
         let mut tex_mean: HashMap<String, [u8; 4]> = HashMap::new();
@@ -2783,9 +2783,9 @@ impl ZoneGeometry {
                     }
                 }
             }
-            // Scenery water (render/reflect.rs is_water): each model placed at full detail whose faces lie on the
-            // collision's water levels, its upward faces with its colour. Only placements whose box reaches a level
-            // are walked.
+            // Scenery water (render/reflect.rs water_mask): each model placed at full detail whose faces lie on the
+            // collision's water levels, its upward water faces with its colour. Only placements whose box reaches a
+            // level are walked.
             for model in mesh.models.iter().filter(|_| animate && levels.iter().any(|l| l.exact)) {
                 let indices = if model.strip { strip_to_list(&model.indices) } else { model.indices.clone() };
                 for inst in matrices[start as usize..]
@@ -2816,9 +2816,7 @@ impl ZoneGeometry {
                         })
                         .collect();
                     let corners: Vec<[Vec3; 3]> = tris.iter().map(|t| t.0).collect();
-                    if !reflect::is_water(&corners, &levels) {
-                        continue;
-                    }
+                    let Some(mask) = reflect::water_mask(&corners, &levels, &wet) else { continue };
                     let tex = *tex_mean.entry(model.texture.clone()).or_insert_with(|| {
                         scene
                             .textures
@@ -2828,8 +2826,8 @@ impl ZoneGeometry {
                     });
                     // Opaque unless blended (bit 0x8000: drawn after the opaque scenery, no depth written).
                     let kind = if model.blending & 0x8000 != 0 { reflect::SEE_THROUGH } else { reflect::OPAQUE };
-                    for (c, k) in tris {
-                        if reflect::faces_up(&m, k.map(|k| model.vertices[k].normal)) {
+                    for (i, (c, k)) in tris.into_iter().enumerate() {
+                        if mask.keeps(i, &m, k.map(|k| model.vertices[k].normal)) {
                             let rgba = k.map(|k| {
                                 let [b, g, r, a] = model.vertices[k].color.to_le_bytes();
                                 [r, g, b, a]
