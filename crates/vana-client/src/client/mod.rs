@@ -4185,7 +4185,7 @@ fn world_hud(
         .pointer
         .filter(|_| !world.modern && (world.cats.is_some() || world.magic.is_some() || world.ability.is_some()))
     {
-        magic::pointer(world, gu, sw, sh, p, input.released);
+        magic::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
     // The party cursor (<stpc>, a party menu pick): the mouse over the party windows' rows.
     if let Some(p) = input.pointer.filter(|_| world.party_cursor.is_some() && world.confirm.is_none()) {

@@ -1365,8 +1365,12 @@ pub fn draw_event_timer(gu: &mut GameUi, w: &World, sw: f32, sh: f32) {
 /// click on the highlighted one is Enter. Then the focused list's frame hook (win_magic_v60 0x1022e1a0, the sort
 /// window at list +0xc0; win_ability_v60 0x10225c50, win_emote_v60 0x102275a0, win_mount_v60 0x10228180: abisortw):
 /// the pointer in the sort window's frame is message 8 (Num+: the sort window takes the focus; super::winhits::hook).
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool) {
-    hover(w, gu, sw, sh, p, clicked);
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
+    // A prompt over the windows (comyn) has the focus, so the mouse.
+    if w.confirm.is_some() {
+        return;
+    }
+    hover(w, gu, sw, sh, p, clicked, right);
     let list =
         w.ability.as_ref().or(w.magic.as_ref()).filter(|x| !x.hidden && x.sort_focus.is_none() && x.ask.is_none());
     if let Some(sort) = list.and_then(|x| x.sort)
@@ -1379,7 +1383,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clic
 }
 
 /// The hover and the buttons on the focused window.
-fn hover(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool) {
+fn hover(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     if w.prompt.is_some() {
         return;
     }
@@ -1412,7 +1416,7 @@ fn hover(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: b
             }
         };
         let c = if yes { 1 } else { 2 };
-        super::winhits::generic(w, gu, "menu    sortyn", c, 1..=2, p, clicked, false, set, |w, _, k| {
+        super::winhits::generic(w, gu, "menu    sortyn", c, 1..=2, p, clicked, right, set, |w, _, k| {
             key(w, k);
         });
         return;
@@ -1428,7 +1432,7 @@ fn hover(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: b
                 x.sort_focus = Some(id);
             }
         };
-        super::winhits::generic(w, gu, sort, c, 1..=n, p, clicked, false, set, |w, _, k| {
+        super::winhits::generic(w, gu, sort, c, 1..=n, p, clicked, right, set, |w, _, k| {
             key(w, k);
         });
         return;
