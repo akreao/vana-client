@@ -52,7 +52,6 @@ pub fn function_name(id: usize) -> Option<String> {
         0x6c => "the game's Ctrl macro 10".into(),
         0x6d..=0x75 => format!("the game's Ctrl macro {}", id - 0x6c),
         0x76 | 0x77 => "opening the macro palette".into(),
-        0x7e | 0x9a => "the map".into(),
         0x81 => "/shoot".into(),
         0x82 => "/help".into(),
         0x84 | 0x97 => "cycling targets".into(),
@@ -62,7 +61,6 @@ pub fn function_name(id: usize) -> Option<String> {
         0xa9 | 0xaa => "turning left / right".into(),
         0xa8 => "the page modifier".into(),
         0xab => "targeting the nearest enemy only".into(),
-        0xaf => "the full log".into(),
         _ => return None,
     })
 }

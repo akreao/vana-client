@@ -1,7 +1,8 @@
 -- Which slots a main / sub job pair keeps when its set starts from the old layout (one set for every sub job):
 -- another sub job's actions go. A spell neither job learns at any level is another job's; an ability not ours goes
 -- only at main level 99 (below that it may be the main job's, not learned yet; the game files name no job for an
--- ability). Weapon skills, items, equipment, commands and typed lines without either stay.
+-- ability). Weapon skills, pet commands (listed only while their pet is out), items, equipment, commands and typed
+-- lines without either stay.
 
 local jobs = require("src.jobs")
 local actions = require("src.actions")
@@ -45,7 +46,7 @@ local function ours(m, main_id, sub_id, level, have)
     local s = res.spell(a.id)
     if not s or s.kind == 8 or type(s.levels) ~= "table" or next(s.levels) == nil then return true end
     return s.levels[main_id] ~= nil or (sub_id ~= nil and s.levels[sub_id] ~= nil)
-  elseif a.kind == "ability" and not a.ws and a.id >= 0x200 then
+  elseif a.kind == "ability" and not a.ws and a.id >= 0x200 and a.id < 0x400 then
     if (level or 0) < 99 or next(have) == nil or not M.ready() then return true end
     return have[a.id] == true
   end
