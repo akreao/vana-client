@@ -186,6 +186,8 @@ const WET_MIN: f32 = 0.5;
 const WET_MAX: f32 = 1.25;
 /// The wet grid's cell side, world units.
 const WET_CELL: f32 = 4.0;
+/// `WetGrid::touches` looks at no more cells than this.
+const WET_BOX: i64 = 4096;
 
 /// The collision's water faces (type 9 with a water height, banks left out as in `water_levels`) by 4-unit cell in
 /// x/z, for the water height over a point. Built once at load, linear.
@@ -225,6 +227,17 @@ impl WetGrid {
         grid
     }
 
+    /// Whether any cell under the x/z box `lo..=hi` holds water faces (a box over more than WET_BOX cells is taken
+    /// as touching, to bound the work for a zone-wide model).
+    pub fn touches(&self, lo: Vec3, hi: Vec3) -> bool {
+        let cell = |v: f32| (v / WET_CELL).floor() as i32;
+        let (x0, x1, z0, z1) = (cell(lo.x), cell(hi.x), cell(lo.z), cell(hi.z));
+        if (x1 - x0 + 1) as i64 * (z1 - z0 + 1) as i64 > WET_BOX {
+            return true;
+        }
+        (x0..=x1).any(|cx| (z0..=z1).any(|cz| self.cells.contains_key(&(cx, cz))))
+    }
+
     /// Whether the zone has water faces at all.
     pub fn is_empty(&self) -> bool {
         self.tris.is_empty()
@@ -244,13 +257,14 @@ impl WetGrid {
     }
 }
 
-/// Whether a placement spanning heights `ylo..=yhi` (y grows downward) may hold water: it reaches an exact level as a
-/// whole water model sits on it (`Level::holds`), or the depths under some water height where a mixed tile's water
-/// faces lie (WET_MIN to WET_MAX, from `wet`'s own heights, which the level list's cap does not drop). Checked before
-/// a placement's triangles are walked.
-pub fn may_hold_water(levels: &[Level], wet: &WetGrid, ylo: f32, yhi: f32) -> bool {
+/// Whether a placement whose world box is `lo..=hi` (y grows downward) may hold water: it reaches an exact level as a
+/// whole water model sits on it (`Level::holds`), or it reaches the depths under some water height where a mixed
+/// tile's water faces lie (WET_MIN to WET_MAX, from `wet`'s own heights, which the level list's cap does not drop)
+/// and its x/z box touches a cell with water faces. Checked before a placement's triangles are walked.
+pub fn may_hold_water(levels: &[Level], wet: &WetGrid, lo: Vec3, hi: Vec3) -> bool {
+    let (ylo, yhi) = (lo.y, hi.y);
     levels.iter().any(|l| l.exact && (l.holds(ylo) || l.holds(yhi) || (ylo < l.y && yhi > l.y)))
-        || wet.heights.iter().any(|h| ylo <= h + WET_MAX && yhi >= h + WET_MIN)
+        || (wet.heights.iter().any(|h| ylo <= h + WET_MAX && yhi >= h + WET_MIN) && wet.touches(lo, hi))
 }
 
 /// Which of a placed model's triangles are water (`water_mask`).
@@ -1161,10 +1175,18 @@ mod tests {
         // A placement wholly 0.75 to 1.25 under the water (out of the level's reach) may still hold a mixed tile's
         // water faces; one wholly above the water or too deep may not.
         let none: [Level; 0] = [];
-        assert!(may_hold_water(&none, &wet, 6.8, 7.2));
-        assert!(!may_hold_water(&none, &wet, 2.0, 5.0));
-        assert!(!may_hold_water(&none, &wet, 7.5, 9.0));
-        assert!(may_hold_water(&levels, &WetGrid::default(), 5.5, 5.9));
+        let bx = |x: f32, ylo: f32, yhi: f32| (Vec3::new(x, ylo, 0.0), Vec3::new(x + 10.0, yhi, 10.0));
+        let (a, b) = bx(0.0, 6.8, 7.2);
+        assert!(may_hold_water(&none, &wet, a, b));
+        let (a, b) = bx(0.0, 2.0, 5.0);
+        assert!(!may_hold_water(&none, &wet, a, b));
+        let (a, b) = bx(0.0, 7.5, 9.0);
+        assert!(!may_hold_water(&none, &wet, a, b));
+        // At the right depth but far from any water face (dry ground elsewhere in the zone): not walked.
+        let (a, b) = bx(100.0, 6.8, 7.2);
+        assert!(!may_hold_water(&none, &wet, a, b));
+        let (a, b) = bx(0.0, 5.5, 5.9);
+        assert!(may_hold_water(&levels, &WetGrid::default(), a, b));
         // Faces kept: a mixed tile's face whose corner normals lean toward its banks still points up; one facing
         // down is not.
         let m = Mat4::IDENTITY;

@@ -2793,16 +2793,16 @@ impl ZoneGeometry {
                     .filter(|i| i.band[0] <= 0.0 && i.band[2] == 0.0 && i.band[3] == 0.0)
                 {
                     let m = Mat4::from_cols_array_2d(&inst.model);
-                    let (ylo, yhi) = (0..8).fold((f32::MAX, f32::MIN), |(a, b), k| {
+                    let (wlo, whi) = (0..8).fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(a, b), k| {
                         let c = Vec3::new(
                             if k & 1 == 0 { lo.x } else { hi.x },
                             if k & 2 == 0 { lo.y } else { hi.y },
                             if k & 4 == 0 { lo.z } else { hi.z },
                         );
-                        let y = m.transform_point3(c).y;
-                        (a.min(y), b.max(y))
+                        let w = m.transform_point3(c);
+                        (a.min(w), b.max(w))
                     });
-                    if !reflect::may_hold_water(&levels, &wet, ylo, yhi) {
+                    if !reflect::may_hold_water(&levels, &wet, wlo, whi) {
                         continue;
                     }
                     let tris: Vec<([Vec3; 3], [usize; 3])> = indices
