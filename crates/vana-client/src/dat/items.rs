@@ -392,12 +392,13 @@ pub fn parse(r: &[u8], kind: Kind, lang: Lang, wide: bool) -> Item {
 /// (FUN_101ca190).
 pub fn named(lang: Lang, typed: &str, it: &Item) -> bool {
     use super::font::encode_sjis;
-    // A letter typed as Unicode Latin-1 (U+00C0..U+00FF: a keyboard's or a paste's accents) is the game's 0x85 row
+    // A letter typed as Unicode Latin-1 (U+00C0..U+00FF but × and ÷, which Shift-JIS has: a keyboard's or a paste's
+    // accents) is the game's 0x85 row
     // (0x85 0x9F..0xDE, the letter - 0x21), the bytes the game's own text and keyboard hold.
     let t: Vec<u8> = typed
         .chars()
         .flat_map(|c| match c as u32 {
-            l @ 0xc0..=0xff => vec![0x85, (l - 0x21) as u8],
+            l @ 0xc0..=0xff if l != 0xd7 && l != 0xf7 => vec![0x85, (l - 0x21) as u8],
             _ => encode_sjis(c.encode_utf8(&mut [0; 4])),
         })
         .collect();
@@ -681,6 +682,8 @@ mod tests {
         assert!(!named(Lang::Fr, "epee de bronze", &it));
         assert!(named(Lang::En, "EP. BRONZE", &it));
         assert!(named(Lang::Ja, "Ep. bronze", &it) && !named(Lang::Ja, "ep. bronze", &it));
+        let times = Item { name: "2×3".into(), ..Default::default() };
+        assert!(named(Lang::Ja, "2×3", &times));
     }
 
     /// FUN_1015b5c0: a new id takes the next slot round robin, from slot 1; a held id takes none; names stop at 30
