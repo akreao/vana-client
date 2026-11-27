@@ -243,7 +243,7 @@ pub fn generic(
 ///   +0x85 clear): onto a child with an entry, SE 0001 when it is not the last cursor (case 9 at 0x101f82d5); onto a
 ///   child past the count, no SE, and the tail's clamp (0x101f855b: entry index at or past the count) puts the cursor
 ///   on the count's child (FUN_1011a240(count - top)).
-/// - The frame hook clears the hand (mouse +0x4c) while the hit child is past the count.
+/// - The frame hook clears the hand (mouse +0x4c) every frame while the hit child is past the count.
 /// - The release on the cursor's child is message 5, the list's Enter; a right click on the window Escape (ours only
 ///   over it, as `generic`).
 #[allow(clippy::too_many_arguments)]
@@ -266,8 +266,14 @@ pub fn list(
         return;
     }
     let Some(id) = child else { return };
-    let entry = (id as usize) <= count;
+    // Retail's frame hook tests the child against the count; ours tests the entry, as ours may keep a top the count
+    // no longer reaches (retail's refresh FUN_101f8630 moves it), which comes to the same while the top is in range.
+    let entry = top + id as usize <= count;
     let takes = if entry { takes(gu, name, id, on) } else { takes_no_hand(gu, name, id, on) };
+    if !entry {
+        // FUN_101f7fe0 clears the hand every frame over a child past the count, whatever showed it before.
+        gu.hover.set(false);
+    }
     if id != cursor && takes {
         match list_move(id, cursor, count, top) {
             ListMove::Row => {
