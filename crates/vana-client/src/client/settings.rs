@@ -913,6 +913,9 @@ pub struct SettingsUi {
     col: usize,
     /// The first row shown (0-based) on a page longer than ROWS: it follows the cursor (view_top) and the bar.
     top: std::cell::Cell<usize>,
+    /// The first row as last drawn: the pointer hits the controls where they were seen, though a key or the wheel
+    /// this frame has scrolled the page since.
+    drawn: std::cell::Cell<Option<usize>>,
     /// A slider being edited (Enter, then Left / Right, as the Config pages' sliders).
     edit: bool,
     pub sounds: Vec<Se>,
@@ -969,6 +972,7 @@ impl SettingsUi {
             row: 0,
             col: 0,
             top: std::cell::Cell::new(0),
+            drawn: std::cell::Cell::new(None),
             edit: false,
             sounds: Vec::new(),
             dirty: false,
@@ -1016,6 +1020,11 @@ impl SettingsUi {
                 self.mod_pages.push(p);
             }
         }
+        // The pages can shift under an open screen: the cursor stays on one that is there.
+        self.tab = self.tab.min(self.tabs().len() - 1);
+        self.row = self.row.min(self.row_count());
+        self.col = self.col.min(self.cols(self.row).saturating_sub(1));
+        self.drawn.set(None);
     }
 
     /// A mod's setting on our Extras tabs as a row.
@@ -1413,16 +1422,24 @@ impl SettingsUi {
         }
     }
 
-    /// Turns the page by `d`, the cursor kept on its row where the page has it.
+    /// Turns the page by `d`, the cursor kept on its row where the page shows it at its top; a slider being edited
+    /// lets go.
     fn turn(&mut self, d: i32) {
+        self.edit = false;
         self.tab = (self.tab as i32 + d).rem_euclid(self.tabs().len() as i32) as usize;
-        if self.on_mods() {
-            // An install's failure belongs to the page it was asked on.
-            self.mods_ui.get_or_insert_with(super::modsui::Mods::open).error = None;
-        }
-        self.row = self.row.min(self.row_count());
+        let shown = if self.on_mods() {
+            let m = self.mods_ui.get_or_insert_with(super::modsui::Mods::open);
+            // An install's failure belongs to the page it was asked on; DAT Packs and Mods share the list's top.
+            (m.error, m.top) = (None, 0);
+            super::modsui::VISIBLE
+        } else {
+            ROWS
+        };
+        // Turning the page starts the next at its top.
+        self.row = self.row.min(self.row_count()).min(shown);
         self.col = self.marked_col();
         self.top.set(0);
+        self.drawn.set(None);
         self.sounds.push(Se::Cursor);
     }
 
@@ -1468,7 +1485,10 @@ impl SettingsUi {
             return self.mods_key(key, page_mod);
         }
         if self.edit {
-            let r = self.rows()[self.row - 1].clone();
+            let Some(r) = self.row.checked_sub(1).and_then(|i| self.rows().get(i).cloned()) else {
+                self.edit = false;
+                return false;
+            };
             let (n, i) = self.stops(&r);
             match key {
                 egui::Key::ArrowRight if i + 1 < n => self.set_stop(&r, i + 1),
@@ -1532,13 +1552,17 @@ impl SettingsUi {
         ARROWS.map(|x| [x - 4.0, ARROW_Y - 4.0, 26.0, 17.0])
     }
 
-    /// Every control's rect relative to the page: (row, col, rect).
+    /// The shown rows' controls relative to the page, (row, col, rect), the page scrolled to keep the cursor in view.
     fn controls(&self) -> Vec<(usize, usize, [f32; 4])> {
         if self.on_mods() {
-            return self.mods_controls();
+            return self.mods_controls(self.mods_top());
         }
+        self.controls_at(self.view_top())
+    }
+
+    /// The controls of the rows shown from `top`.
+    fn controls_at(&self, top: usize) -> Vec<(usize, usize, [f32; 4])> {
         let mut out = Vec::new();
-        let top = self.view_top();
         for (i, r) in self.rows().iter().enumerate().skip(top).take(ROWS) {
             let y = Self::TOP + PITCH * (i - top) as f32 + 14.0;
             // conf2win's two 88-px and conf3win's three 64-px columns; a caption that does not fit (12 px of the
@@ -1580,7 +1604,7 @@ impl SettingsUi {
         let mut ws: Vec<f32> = widths.iter().map(|w| w.max(64.0)).collect();
         let sum: f32 = ws.iter().sum();
         let gaps = (n - 1) as f32;
-        let gap = if gaps > 0.0 { ((room - sum) / gaps).clamp(2.0, 8.0) } else { 0.0 };
+        let gap = if gaps > 0.0 { ((room - sum) / gaps).floor().clamp(2.0, 8.0) } else { 0.0 };
         let over = sum + gap * gaps - room;
         if over > 0.0 {
             let k = (sum - over) / sum;
@@ -1616,8 +1640,12 @@ impl SettingsUi {
         if self.on_mods() && self.mods_ui.as_ref().is_some_and(|m| m.held.is_some()) {
             return;
         }
-        let hit = self
-            .controls()
+        let shown = match self.drawn.get() {
+            Some(t) if self.on_mods() => self.mods_controls(t),
+            Some(t) => self.controls_at(t),
+            None => self.controls(),
+        };
+        let hit = shown
             .into_iter()
             .find(|(_, _, r)| p.0 >= x + r[0] && p.1 >= y + r[1] && p.0 < x + r[0] + r[2] && p.1 < y + r[1] + r[3]);
         let Some((row, col, r)) = hit else { return };
@@ -1668,15 +1696,21 @@ impl SettingsUi {
         let mut hand = None;
         let rows = self.rows();
         let top = self.view_top();
+        self.drawn.set(Some(top));
+        // A long page's headings stop short of the scroll bar.
+        let head_room = if rows.len() > ROWS { W - 52.0 } else { f32::INFINITY };
         for (i, r) in rows.iter().enumerate().skip(top).take(ROWS) {
             let hy = y + Self::TOP + PITCH * (i - top) as f32;
             // The bullet (465 cell 2, drawn at its place (20, 27) on the page) moved to the heading.
             if let Some(b) = gu.cell_bounds("menu    windowps", 465, 2) {
                 gu.sprite_cells("menu    windowps", 465, 2..3, x + 20.0 - b[0], hy + 2.0 - b[1], N);
             }
-            gu.label(&r.label, x + 32.0, hy, N, false);
+            let mut head = r.label.clone();
+            let icon_w = if self.warns(r) { 16.0 } else { 0.0 };
+            while gu.label_width(&head) > head_room - icon_w && head.pop().is_some() {}
+            gu.label(&head, x + 32.0, hy, N, false);
             let icon =
-                if self.warns(r) { gu.warning_icon(x + 32.0 + gu.label_width(&r.label) + 4.0, hy) + 4.0 } else { 0.0 };
+                if self.warns(r) { gu.warning_icon(x + 32.0 + gu.label_width(&head) + 4.0, hy) + 4.0 } else { 0.0 };
             // A slider's value at the heading's end, right-aligned to the slider's (cut to the room left).
             if matches!(Self::ctl(r), Ctl::Slider) {
                 let room = SLIDER_X + SLIDER_W - 32.0 - gu.label_width(&r.label) - icon - 16.0;
@@ -1691,8 +1725,11 @@ impl SettingsUi {
                     Ctl::Buttons(_) => {
                         let d = if on { -1.0 } else { 0.0 };
                         button(gu, [x + b[0] + d, y + b[1] + d, b[2], b[3]], if on { ON } else { N });
+                        // A caption cut to its button (a row narrowed to fit the frame).
+                        let mut cap = r.choices[*c].1.clone();
+                        while gu.label_width(&cap) > b[2] - 12.0 && cap.pop().is_some() {}
                         gu.label(
-                            &r.choices[*c].1,
+                            &cap,
                             x + b[0] + 5.0 + d,
                             y + b[1] + 1.0 + d,
                             if on { ON } else { N },
@@ -1730,10 +1767,13 @@ impl SettingsUi {
         if let Some((hx, hy)) = hand {
             gu.cursor(hx, hy);
         }
-        // A page longer than ROWS: the Config pages' bar at the right edge, for the mouse and the wheel too.
+        // A page longer than ROWS: the Config pages' bar at the right edge. In game the site is there on every page,
+        // so the wheel stays with the screen (not the camera behind it); the title screen has no bar input.
+        let (bx, by, bh) = (x + W - 12.0, y + Self::TOP, PITCH * ROWS as f32);
         if rows.len() > ROWS {
-            let (bx, by, bh) = (x + W - 12.0, y + Self::TOP, PITCH * ROWS as f32);
             gu.scroll_bar(bx, by, bh, rows.len(), ROWS, top);
+        }
+        if self.in_game {
             gu.bar_site(super::scrollbar::Owner::Settings, bx, by, bh, rows.len(), ROWS, top);
         }
         [x, y, W, H]
@@ -1744,14 +1784,24 @@ impl SettingsUi {
         let n = self.rows().len();
         let mut top = self.top.get().min(n.saturating_sub(ROWS));
         if let Some(i) = self.row.checked_sub(1) {
-            super::scrollbar::keep_in_view(&mut top, i, ROWS);
+            super::scrollbar::keep_in_view(&mut top, i.min(n.saturating_sub(1)), ROWS);
         }
         self.top.set(top);
         top
     }
 
+    /// The DAT Packs / Mods list's first row: the shared top, inside this page's list and keeping the cursor in view.
+    fn mods_top(&self) -> usize {
+        let n = self.mods_total();
+        let mut top = self.mods_ui.as_ref().map_or(0, |m| m.top).min(n.saturating_sub(super::modsui::VISIBLE));
+        if let Some(i) = self.row.checked_sub(1) {
+            super::scrollbar::keep_in_view(&mut top, i.min(n.saturating_sub(1)), super::modsui::VISIBLE);
+        }
+        top
+    }
+
     /// The bar's message (a row, a page, the thumb's place) on a long page: the rows scroll and the hand stays on its
-    /// line, as the Config pages' lists do. True when the page moved.
+    /// screen line (scrollbar::rows_abs, the row lists' rule), moving to the row now there. True when the page moved.
     pub fn bar(&mut self, m: super::scrollbar::Msg) -> bool {
         if self.on_mods() {
             return self.mods_bar(m);
@@ -1782,7 +1832,9 @@ impl SettingsUi {
         self.row = row.min(self.row_count());
         self.col = self.marked_col();
         self.top.set(0);
+        self.drawn.set(None);
         if let Some(m) = self.mods_ui.as_mut().filter(|_| self.kind == Kind::Settings && self.tab >= PACKS) {
+            m.top = 0;
             m.follow(self.row);
         }
     }
@@ -2295,8 +2347,7 @@ impl SettingsUi {
 
     /// The shown rows' buttons, relative to the page: conf3win's three for a pack (two for a mod), conf2win's first
     /// for an offer.
-    fn mods_controls(&self) -> Vec<(usize, usize, [f32; 4])> {
-        let top = self.mods_ui.as_ref().map_or(0, |m| m.top);
+    fn mods_controls(&self, top: usize) -> Vec<(usize, usize, [f32; 4])> {
         let n = self.on_page().len();
         let mut out = Vec::new();
         for (vis, i) in (top..self.mods_total()).take(super::modsui::VISIBLE).enumerate() {
@@ -2316,8 +2367,8 @@ impl SettingsUi {
     /// held for a move).
     fn mods_bar(&mut self, m: super::scrollbar::Msg) -> bool {
         let n = self.mods_total();
+        let mut top = self.mods_top();
         let Some(ui) = self.mods_ui.as_mut().filter(|u| u.held.is_none()) else { return false };
-        let mut top = ui.top;
         let mut at = self.row.checked_sub(1).unwrap_or(top);
         let moved = super::scrollbar::rows_abs(m, &mut top, &mut at, n, super::modsui::VISIBLE);
         ui.top = top;
@@ -2332,7 +2383,8 @@ impl SettingsUi {
         const N: u32 = 0x8080_8080;
         const ON: u32 = 0x8080_5020;
         let m = self.mods_ui.as_ref();
-        let (top, held) = (m.map_or(0, |m| m.top), m.is_some_and(|m| m.held.is_some()));
+        let (top, held) = (self.mods_top(), m.is_some_and(|m| m.held.is_some()));
+        self.drawn.set(Some(top));
         let sh = self.on_page();
         let n = sh.len();
         let total = self.mods_total();
@@ -2360,7 +2412,7 @@ impl SettingsUi {
         }
         let captions: [&str; 3] = ["ON", "OFF", if self.lua_page() { "Update" } else { "Move" }];
         let mut hand = None;
-        for (row, c, b) in self.mods_controls() {
+        for (row, c, b) in self.mods_controls(top) {
             let on = self.row == row && self.col == c;
             let d = if on && !held { -1.0 } else { 0.0 };
             let tint = if on { ON } else { N };
@@ -2377,24 +2429,13 @@ impl SettingsUi {
         if let Some((hx, hy)) = hand {
             gu.cursor(hx, hy);
         }
+        let (bx, by, bh) = (x + W - 12.0, y + Self::TOP, PITCH * super::modsui::VISIBLE as f32);
         if total > super::modsui::VISIBLE {
-            gu.scroll_bar(
-                x + W - 12.0,
-                y + Self::TOP,
-                PITCH * super::modsui::VISIBLE as f32,
-                total,
-                super::modsui::VISIBLE,
-                top,
-            );
-            gu.bar_site(
-                super::scrollbar::Owner::Settings,
-                x + W - 12.0,
-                y + Self::TOP,
-                PITCH * super::modsui::VISIBLE as f32,
-                total,
-                super::modsui::VISIBLE,
-                top,
-            );
+            gu.scroll_bar(bx, by, bh, total, super::modsui::VISIBLE, top);
+        }
+        // As on the other pages: in game only, and on a short list too (the wheel stays with the screen).
+        if self.in_game {
+            gu.bar_site(super::scrollbar::Owner::Settings, bx, by, bh, total, super::modsui::VISIBLE, top);
         }
     }
 
@@ -2729,7 +2770,8 @@ mod tests {
             place_modern: None,
             edit: Edit::Choice,
         };
-        ui.set_mod_pages(vec![ModPage { id: "m".into(), name: "M".into(), rows: (0..20).map(row).collect() }]);
+        let page = |id: &str| ModPage { id: id.into(), name: id.to_uppercase(), rows: (0..20).map(row).collect() };
+        ui.set_mod_pages(vec![page("l"), page("m")]);
         ui.tab = ui.tabs().len() - 1;
         assert_eq!(ui.rows().len(), 20);
         let shown = |ui: &SettingsUi| {
@@ -2757,10 +2799,37 @@ mod tests {
         assert!(ui.bar(Msg::Set(0)));
         assert_eq!(ui.view_top(), 0);
         assert!(!ui.bar(Msg::Up));
-        // Turning the page starts the next at its top.
-        ui.top.set(5);
+        // Turning from a deep row to another long page starts it at its top, the hand on the last line shown.
+        ui.tab = ui.tabs().len() - 2;
+        ui.row = 20;
+        assert_eq!(ui.view_top(), 20 - ROWS);
         ui.key(egui::Key::Tab);
-        assert_eq!(ui.top.get(), 0);
+        assert_eq!((ui.tab, ui.row, ui.view_top()), (ui.tabs().len() - 1, ROWS, 0));
+        // The pages shifting under the screen leave the cursor on a row that is there, and the page drawn.
+        ui.row = 20;
+        let short = ModPage { id: "s".into(), name: "S".into(), rows: (0..12).map(row).collect() };
+        ui.set_mod_pages(vec![page("l"), short]);
+        assert_eq!((ui.row, ui.view_top()), (12, 12 - ROWS));
+        assert!(!ui.controls().is_empty());
+        assert!(ui.bar(Msg::Up));
+    }
+
+    /// Shift+Tab (LB) while a slider is edited lets go of it: no key then reads a row from the page name.
+    #[test]
+    fn turning_ends_an_edit() {
+        let mut ui = SettingsUi::open(&Config::default(), [1280, 800]);
+        let slider = (1..=ui.rows().len())
+            .find(|&r| matches!(SettingsUi::ctl(&ui.rows()[r - 1]), Ctl::Slider))
+            .expect("a slider on the first page");
+        ui.row = slider;
+        ui.key(egui::Key::Enter);
+        assert!(ui.edit);
+        ui.tab_back();
+        assert!(!ui.edit);
+        // A stuck edit on the page name is let go, not read.
+        (ui.edit, ui.row) = (true, 0);
+        ui.key(egui::Key::ArrowRight);
+        assert!(!ui.edit);
     }
 
     /// A row whose captions are too wide for the columns stays inside the frame, clear of the scroll bar.
@@ -2772,7 +2841,10 @@ mod tests {
             assert_eq!(row.len(), widths.len());
             assert!(row.windows(2).all(|p| p[0].0 + p[0].1 < p[1].0), "{row:?}");
             assert!(row.iter().all(|b| b.0 >= WIDE_X && b.0 + b.1 <= right), "{row:?}");
+            assert!(row.iter().all(|b| b.0.fract() == 0.0 && b.1.fract() == 0.0), "whole pixels: {row:?}");
         }
+        // An odd room left splits into whole-pixel gaps.
+        assert!(SettingsUi::fit_row(&[100.0, 100.0, 109.0]).iter().all(|b| b.0.fract() == 0.0));
         // Room enough: each button as wide as its caption (64 at least), 8 apart.
         assert_eq!(SettingsUi::fit_row(&[52.0, 70.0, 150.0]), vec![(32.0, 64.0), (104.0, 70.0), (182.0, 150.0)]);
     }
@@ -2795,6 +2867,27 @@ mod tests {
         assert_eq!(top(&ui), 5);
         assert!(!ui.bar(Msg::Down));
         assert!(ui.controls().iter().all(|c| c.0 > 5 && c.0 <= 12));
+        // Scrolled from the page name, Enter there keeps the list where it is.
+        ui.row = 0;
+        assert!(ui.bar(Msg::Set(3)));
+        ui.key(egui::Key::Enter);
+        assert_eq!(top(&ui), 3);
+        // The two pages share the list's top: turning to Mods (2 mods) starts it at the top, and the wheel there
+        // neither panics nor leaves the cursor past the list.
+        ui.s.mods.push(ModRef::new("clock", true));
+        ui.s.mods.push(ModRef::new("map", true));
+        ui.lua_names = ["clock".to_string(), "map".to_string()].into();
+        assert!(ui.bar(Msg::Set(5)));
+        ui.tab_back();
+        ui.tab = MODS;
+        ui.mods_ui.as_mut().unwrap().top = 9;
+        assert!(!ui.bar(Msg::Up));
+        let _ = ui.bar(Msg::PageUp);
+        assert!(ui.row <= 2 && ui.controls().iter().all(|c| c.0 <= 2));
+        ui.tab = PACKS;
+        ui.key(egui::Key::Tab);
+        assert_eq!((ui.tab, top(&ui)), (MODS, 0));
+        ui.tab = PACKS;
         // Not while a pack is held for a move.
         ui.mods_ui.as_mut().unwrap().held = Some(ui.s.mods.clone());
         assert!(!ui.bar(Msg::Up));
