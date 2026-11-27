@@ -748,6 +748,10 @@ struct Entity {
     marks: net::Marks,
     female: bool,
     sub_kind: u8,
+    /// The script's hide (+0x120 bit 0x20000, ops 0x22 / 0x4e) as the last event that bound the actor left it: the
+    /// bit outlives the event, so an actor a script hid stays hidden (and untargetable) until another event shows
+    /// it. The Mog Garden's zone-in event hides this way what the player has not unlocked yet.
+    ev_hidden: bool,
 }
 
 impl Entity {
@@ -755,9 +759,10 @@ impl Entity {
     const HIDE: u8 = 2;
     const SLEEP: u8 = 4;
 
-    /// Hidden or asleep by the server (+0x120 & 0x44000): not targetable, off the radar, marked for unloading.
+    /// Hidden or asleep by the server (+0x120 & 0x44000), or left hidden by an event's script (`ev_hidden`): not
+    /// targetable, off the radar, marked for unloading.
     fn server_hidden(&self) -> bool {
-        self.flags & (Self::HIDE | Self::SLEEP) != 0
+        self.flags & (Self::HIDE | Self::SLEEP) != 0 || self.ev_hidden
     }
 
     fn targetable(&self) -> bool {
@@ -2271,6 +2276,7 @@ fn self_entity(w: &World) -> Entity {
         aura: Default::default(),
         gate: 0,
         name_ncol: 0x17,
+        ev_hidden: false,
         marks: net::Marks::default(),
         female: false,
         sub_kind: 0,
@@ -5972,6 +5978,7 @@ fn place_mogdoor(w: &mut World) {
             aura: Default::default(),
             gate: 0,
             name_ncol: 0x17,
+            ev_hidden: false,
             marks: net::Marks::default(),
             female: false,
             // +0xee 3 is SubKind 2 + 1 (MODLOG "0x00E SubKind 5 / 6"): a door, kind bit 0x20 (FUN_1008e290).
@@ -12396,6 +12403,7 @@ impl App {
                         aura: Default::default(),
                         gate: 0,
                         name_ncol: 0x17,
+                        ev_hidden: false,
                         marks: net::Marks::default(),
                         // FUN_1008a350: +0x124 = 0x880, bit 25 clear (female) until a mask-4 update.
                         female: true,

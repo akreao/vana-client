@@ -2737,7 +2737,7 @@ fn begin(w: &mut World, mut wt: Box<Waiting>, index: &DatIndex) {
     for b in blocks.iter().filter(|b| bound_block(b, st.start.event)) {
         if let Some((id, _)) = resolve((w.my_id, w.my_index), b.actor) {
             st.bound.insert(id);
-            if w.entities.get(&id).is_some_and(|e| e.flags & 2 != 0) || (id == w.my_id && self_hidden(w)) {
+            if w.entities.get(&id).is_some_and(|e| e.flags & 2 != 0 || e.ev_hidden) || (id == w.my_id && self_hidden(w)) {
                 st.hidden.insert(id);
             }
             if st.start.mode & 0x200 == 0
@@ -3041,6 +3041,11 @@ fn reserved_status(event: &HashMap<u32, u8>, doors: &HashMap<u32, u8>, id: u32) 
     doors.get(&id).or_else(|| event.get(&id)).copied()
 }
 
+/// The hide each bound actor but us keeps after the event: the script's (+0x120 bit 0x20000) as it ends.
+fn left_hidden(bound: &HashSet<u32>, hidden: &HashSet<u32>, me: u32) -> Vec<(u32, bool)> {
+    bound.iter().filter(|&&id| id != me).map(|&id| (id, hidden.contains(&id))).collect()
+}
+
 fn finish(w: &mut World, live: Box<Live>) {
     w.screen.release_black();
     // FUN_100ae960: the credits roll closes with the event.
@@ -3068,6 +3073,13 @@ fn finish(w: &mut World, live: Box<Live>) {
     for (id, e) in w.entities.iter_mut().filter(|(_, e)| e.ev_reserved) {
         if let Some(s) = reserved_status(&live.st.event_status, &w.doors.event, *id) {
             e.motion.status = s;
+        }
+    }
+    // The script's hide stays on the actors it bound (+0x120 bit 0x20000 is not cleared at the end): what it hid
+    // stays hidden, what it showed is shown. Ours is the player's 0x037 / 0x00A bits, not this.
+    for (id, hidden) in left_hidden(&live.st.bound, &live.st.hidden, w.my_id) {
+        if let Some(e) = w.entities.get_mut(&id) {
+            e.ev_hidden = hidden;
         }
     }
     let reseat = live.st.flags() & mode::GROUND_SNAP_ON_END != 0;
@@ -3812,7 +3824,7 @@ impl<'a> HideRule<'a> {
     fn entity(&self, w: &World, id: u32, e: &super::Entity) -> bool {
         let hide = match self.script {
             Some(h) if self.takes_part(id) => h.contains(&id),
-            _ => e.flags & super::Entity::HIDE != 0 || w.unload_marks.contains(&id),
+            _ => e.flags & super::Entity::HIDE != 0 || e.ev_hidden || w.unload_marks.contains(&id),
         };
         // FUN_100cd040: a listed-only NPC the s2c 0x077 list lacks is not drawn (+0xb2 bit 7), events included; nor
         // one outside our fenced content's gate (+0xb2 bit 5).
@@ -4628,6 +4640,19 @@ mod tests {
     }
 
     /// 0x100952e7: only a zone-in event with Mode bit 0x80 starts in cinema mode, at (0, 0).
+    #[test]
+    fn scripts_hides_outlive_the_event() {
+        // The Mog Garden's zone-in: it binds the garden and hides what is not unlocked (Chacharoon 0x1118087, a
+        // second vein 0x111802b); what it left shown stays shown, an actor it never bound is untouched, and our own
+        // hide is the server's (0x037), not this.
+        let me = 0x46d0e;
+        let bound: HashSet<u32> = [0x1118087, 0x111802b, 0x111802c, me].into();
+        let hidden: HashSet<u32> = [0x1118087, 0x111802b, me].into();
+        let mut left = left_hidden(&bound, &hidden, me);
+        left.sort();
+        assert_eq!(left, [(0x111802b, true), (0x111802c, false), (0x1118087, true)]);
+    }
+
     #[test]
     fn login_mode_80_starts_cinema() {
         assert!(State::new(EventStart { mode: 0x80, login: true, ..Default::default() }).place_on);
