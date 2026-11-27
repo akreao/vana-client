@@ -2737,7 +2737,8 @@ fn begin(w: &mut World, mut wt: Box<Waiting>, index: &DatIndex) {
     for b in blocks.iter().filter(|b| bound_block(b, st.start.event)) {
         if let Some((id, _)) = resolve((w.my_id, w.my_index), b.actor) {
             st.bound.insert(id);
-            if w.entities.get(&id).is_some_and(|e| e.flags & 2 != 0 || e.ev_hidden) || (id == w.my_id && self_hidden(w)) {
+            if w.entities.get(&id).is_some_and(|e| e.flags & 2 != 0 || e.ev_hidden) || (id == w.my_id && self_hidden(w))
+            {
                 st.hidden.insert(id);
             }
             if st.start.mode & 0x200 == 0
