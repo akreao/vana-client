@@ -4028,6 +4028,10 @@ fn world_hud(
     {
         arealist::pointer(world, gu, sw, sh, p, input.released);
     }
+    // The chat line's auto-translate list, every frame it is up (its cursor and step mark follow the pointer).
+    if world.typing && world.fep.is_some() {
+        fep::pointer(world, gu, input.pointer, input.released);
+    }
     if let Some(p) = input.pointer.filter(|_| world.blklist.is_some() && world.confirm.is_none()) {
         blklist::pointer(world, gu, sw, sh, p, input.released, input.right_clicked);
     }
@@ -5040,7 +5044,9 @@ fn world_hud(
         world.ime_at.set(Some([caret_x, y + 3.0, 2.0, 16.0]));
         blockers.push([x, y, w, 22.0]);
         if let Some(f) = &world.fep {
-            blockers.push(fep::draw(gu, f, word_x - 8.0, y));
+            let r = fep::draw(gu, f, word_x - 8.0, y);
+            fep::record(world, gu, r);
+            blockers.push(r);
         } else if let Some(h) = cmdhint::hint(world) {
             blockers.push(cmdhint::draw(gu, &h, x, y));
         }

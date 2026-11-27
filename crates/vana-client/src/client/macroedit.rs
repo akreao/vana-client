@@ -1210,7 +1210,7 @@ fn draw_editor(gu: &mut GameUi, w: &World, d: &Editor, sw: f32, sh: f32, free: b
         if d.editing == Some(0) {
             caret_at(gu, w, &d.fields[0], d.caret, r[0] + 2.0, r[1] + 5.0, 120.0);
             if let Some(f) = &w.field_fep {
-                rects.push(super::fep::draw_list(gu, &f.cands, f.sel, &f.warp, r[0] - 6.0, r[1] + 3.0));
+                rects.push(super::fep::draw_list(gu, &f.cands, f.sel, &f.win, r[0] - 6.0, r[1] + 3.0));
             }
         }
     }
@@ -1220,7 +1220,7 @@ fn draw_editor(gu: &mut GameUi, w: &World, d: &Editor, sw: f32, sh: f32, free: b
             gu.text_fit(&german_quotes_str(&text(k + 1), 0x41a), x, y, 325.0, WHITE);
             caret_at(gu, w, &d.fields[k + 1], d.caret, x, y, 325.0);
             if let Some(f) = &w.field_fep {
-                rects.push(super::fep::draw_list(gu, &f.cands, f.sel, &f.warp, x - 8.0, y - 2.0));
+                rects.push(super::fep::draw_list(gu, &f.cands, f.sel, &f.win, x - 8.0, y - 2.0));
             }
         } else {
             // A line not edited (win_macro_v10 FUN_101a70c0): its bytes expanded with the auto-translate brackets

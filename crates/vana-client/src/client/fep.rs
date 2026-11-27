@@ -35,9 +35,37 @@ pub struct Fep {
     root: (String, usize),
     /// The chars of the word being completed at the end of the line.
     word_len: usize,
+    /// "menu    fep" as a window: its open hook, cursor and mouse.
+    pub win: ListWin,
+}
+
+/// The list's window state (win_fep, object DAT_10663f54).
+#[derive(Debug)]
+pub struct ListWin {
     /// The window's open hook ran (win_fep_v04: FUN_1011a240(2, 1)) and moved its cursor to the first row: the
     /// pointer goes there at the next draw.
     pub warp: std::cell::Cell<bool>,
+    /// The window's cursor child (+0x4c): 1 on a new window (FUN_101193d0), then the hook's 2, the hovered row, and
+    /// the selection's row as each draw puts it back (win_fep_v10: FUN_1011a240(sel % 7 + 2, 0)).
+    cursor: std::cell::Cell<u16>,
+    /// +0x2201: message 9 reached the window's handler since the last update (win_fep_v28 clears it), so another one
+    /// steps nothing.
+    stepped: std::cell::Cell<bool>,
+    /// The windows saw the pointer this frame (shown, no glide): a cursor move then sends message 9 (FUN_1011a240's
+    /// test of mouse +0x48 and +0x4e).
+    seen: std::cell::Cell<bool>,
+}
+
+impl ListWin {
+    /// A new list window: the open hook still to run.
+    pub(super) fn new() -> Self {
+        Self {
+            warp: std::cell::Cell::new(true),
+            cursor: std::cell::Cell::new(1),
+            stepped: std::cell::Cell::new(false),
+            seen: std::cell::Cell::new(false),
+        }
+    }
 }
 
 /// The line's unit boundaries (FUN_1018fb00 / FUN_1018fa80): a phrase block is one unit, any other char one.
@@ -177,7 +205,7 @@ pub(super) fn open(w: &mut World) {
         filter: None,
         root: (wd.clone(), 0),
         word_len: wd.chars().count(),
-        warp: std::cell::Cell::new(true),
+        win: ListWin::new(),
     });
 }
 
@@ -248,7 +276,7 @@ pub(super) fn key(w: &mut World, key: egui::Key, shift: bool) -> bool {
         egui::Key::Escape | egui::Key::Backspace | egui::Key::Delete => {
             // A category goes back to the root list (FUN_101b84b0 then FUN_1015f920), else the list closes.
             if f.filter.take().is_some() {
-                reopened(f.sel, &f.warp);
+                reopened(f.sel, &f.win.warp);
                 let (wd, sel) = f.root.clone();
                 f.cands = query(w, &wd, None);
                 f.sel = sel.min(f.cands.len().saturating_sub(1));
@@ -276,7 +304,7 @@ pub(super) fn key(w: &mut World, key: egui::Key, shift: bool) -> bool {
                     // goes in; the list reopens on its phrases.
                     put(w, line, 0);
                     // menu_fep_fn_8: the category's list, then FUN_1015f920.
-                    reopened(f.sel, &f.warp);
+                    reopened(f.sel, &f.win.warp);
                     if f.filter.is_none() {
                         f.root.1 = f.sel;
                     }
@@ -431,8 +459,8 @@ pub struct FieldFep {
     root: (String, usize),
     /// The word being completed (the chars after the last space before the caret).
     pub word: String,
-    /// As `Fep::warp`.
-    pub warp: std::cell::Cell<bool>,
+    /// As `Fep::win` (ours takes no mouse on these lists).
+    pub win: ListWin,
 }
 
 /// What a key did to a field's list.
@@ -458,7 +486,7 @@ pub(super) fn field_open(w: &mut World, before: &str) -> Option<FieldFep> {
         return None;
     }
     w.sounds.push(Se::Select as u32);
-    Some(FieldFep { cands, sel: 0, filter: None, root: (wd.clone(), 0), word: wd, warp: std::cell::Cell::new(true) })
+    Some(FieldFep { cands, sel: 0, filter: None, root: (wd.clone(), 0), word: wd, win: ListWin::new() })
 }
 
 /// A phrase id as the four private-use chars a line holds (font::PHRASE_BASE).
@@ -479,7 +507,7 @@ pub(super) fn field_key(w: &mut World, f: &mut FieldFep, key: egui::Key, shift: 
         egui::Key::ArrowLeft | egui::Key::ArrowRight | egui::Key::Home | egui::Key::End => return FieldPick::Keep,
         egui::Key::Escape | egui::Key::Backspace | egui::Key::Delete => {
             if f.filter.take().is_some() {
-                reopened(f.sel, &f.warp);
+                reopened(f.sel, &f.win.warp);
                 let (wd, sel) = f.root.clone();
                 f.cands = query(w, &wd, None);
                 f.sel = sel.min(f.cands.len().saturating_sub(1));
@@ -494,7 +522,7 @@ pub(super) fn field_key(w: &mut World, f: &mut FieldFep, key: egui::Key, shift: 
                 None => FieldPick::Put(c.text),
                 // A category: its phrases replace the list (the word stays until a phrase is put).
                 Some(id) if id[3] == 0 => {
-                    reopened(f.sel, &f.warp);
+                    reopened(f.sel, &f.win.warp);
                     if f.filter.is_none() {
                         f.root.1 = f.sel;
                     }
@@ -532,19 +560,13 @@ pub(super) fn field_put(
 /// row, 90..200 + 12; the header "%d/%d" at (+0x23, 0) after the ▲ at (+5, 0); seven rows 16 px apart; a row too wide
 /// cut with "...".
 pub(super) fn draw(gu: &mut GameUi, f: &Fep, x: f32, line_y: f32) -> [f32; 4] {
-    draw_list(gu, &f.cands, f.sel, &f.warp, x, line_y)
+    draw_list(gu, &f.cands, f.sel, &f.win, x, line_y)
 }
 
 /// The list's draw for any field: above `line_y` from `x`. The hand is the window's cursor: child 2 + the row
-/// (win_fep_v10: FUN_1011a240(sel % 7 + 2, 0)), at that child's rect; `warp` the open hook's pointer move to child 2.
-pub(super) fn draw_list(
-    gu: &mut GameUi,
-    cands: &[Cand],
-    sel: usize,
-    warp: &std::cell::Cell<bool>,
-    x: f32,
-    line_y: f32,
-) -> [f32; 4] {
+/// (win_fep_v10: FUN_1011a240(sel % 7 + 2, 0)), at that child's rect; `win.warp` the open hook's pointer move to
+/// child 2.
+pub(super) fn draw_list(gu: &mut GameUi, cands: &[Cand], sel: usize, win: &ListWin, x: f32, line_y: f32) -> [f32; 4] {
     let widest = cands.iter().map(|c| gu.text_width(&c.text)).fold(0.0, f32::max);
     let w = (widest.max(90.0) + 12.0).min(200.0);
     let h = 134.0;
@@ -555,8 +577,21 @@ pub(super) fn draw_list(
     gu.text(&format!("{}/{}", if cands.is_empty() { 0 } else { sel + 1 }, cands.len()), x + 35.0, y + 4.0, 0, C);
     gu.want(WINDOW);
     let first = sel / ROWS * ROWS;
-    if warp.take() {
+    // win_fep_v28, each frame after the mouse: the step mark goes.
+    win.stepped.set(false);
+    // The open hook's FUN_1011a240(2, 1) ran at the open (before the update), so its message 9 marks nothing that
+    // lasts; its pointer move glides, so the draw's cursor move below sends none.
+    let warped = win.warp.take();
+    if warped {
+        win.cursor.set(2);
         gu.warp_to_part(row_rect(x, y, 0));
+    }
+    // win_fep_v10's FUN_1011a240(sel % 7 + 2, 0): a cursor elsewhere (a hovered row the steps did not reach) comes
+    // back to the selection's row, and with the pointer seen that sends message 9, which steps nothing (the row is
+    // the selection's) but marks the window until the next update: the next frame's mouse steps nothing.
+    let row = (sel % ROWS + 2) as u16;
+    if win.cursor.replace(row) != row && win.seen.get() && !warped {
+        win.stepped.set(true);
     }
     for (k, c) in cands.iter().enumerate().skip(first).take(ROWS) {
         let mut t = c.text.clone();
@@ -574,6 +609,69 @@ pub(super) fn draw_list(
         }
     }
     [x, y, w, h]
+}
+
+/// The mouse on the chat line's list (classic layer; the modern layer's egui list takes its own), once a frame before
+/// the draw. FUN_10160fd0 runs the release (FUN_1015f420), the held step (FUN_1015f360), then the hover (tail of
+/// FUN_101267f0) on the focused window, then the windows' updates (win_fep_v28), then the draw:
+/// - the release on the cursor's child is message 5 (win_fep_onkey: command 5 -> menu_fep_fn_6(0xd, 1, 0), the list's
+///   Enter on the selection; the child is not read in English); on another child nothing;
+/// - the hover or the held button moving the cursor to child c sends message 9 (FUN_1011a240), which steps the
+///   selection to c's row (`hover_step`);
+/// - no right click: message 6 closes no window with flag 2 set (FUN_101196f0) and the handler takes none.
+pub(super) fn pointer(w: &mut World, gu: &GameUi, p: Option<(f32, f32)>, released: bool) {
+    let Some(f) = w.fep.as_ref() else { return };
+    f.win.seen.set(false);
+    let cursor = f.win.cursor.get();
+    // The mouse reaches the focused window only (FUN_10160380).
+    let focus = crate::dat::ui::norm_name(WINDOW.as_bytes());
+    let Some(p) = p.filter(|_| !w.modern && gu.focused() == Some(focus.as_str()) && super::winhits::shown(gu)) else {
+        return;
+    };
+    f.win.seen.set(true);
+    let (child, on) = super::winhits::child_under(w, WINDOW, p, 1..=8, super::winhits::parts(gu, WINDOW));
+    let Some(c) = child else { return };
+    let takes = super::winhits::takes(gu, WINDOW, c, on);
+    if released && c == cursor {
+        key(w, egui::Key::Enter, false);
+    } else if c != cursor && takes {
+        let Some(f) = w.fep.as_mut() else { return };
+        f.win.cursor.set(c);
+        let was = f.sel;
+        hover_step(f, c);
+        // win_fep_v28: a selection other than the last update's plays SE 0001 (FUN_10037b30).
+        if f.sel != was {
+            w.sounds.push(Se::Cursor as u32);
+        }
+    }
+}
+
+/// win_fep_onkey message 9 on child `c`, once between updates (+0x2201): from the selection's row (sel % 7 + 2) the
+/// list's next (command 2 -> FUN_101b8670, which wraps to the first) up to c while the count (taken before, not
+/// wrapped) stays under the candidates, or its previous (command 1 -> FUN_101b86a0, wrapping to the last) down to c.
+/// A row past the last candidate on the last page steps on past it and wraps to the first page; child 1 (the "n/m"
+/// line) steps back past the page's first row.
+fn hover_step(f: &mut Fep, c: u16) {
+    if f.win.stepped.replace(true) {
+        return;
+    }
+    let n = f.cands.len();
+    let (c, mut sel, mut row) = (c as usize, f.sel, f.sel % ROWS + 2);
+    while row < c && sel < n {
+        f.sel = (f.sel + 1) % n;
+        (row, sel) = (row + 1, sel + 1);
+    }
+    for _ in c..row {
+        f.sel = (f.sel + n - 1) % n;
+    }
+}
+
+/// The list's parts as drawn at `frame` (`draw`'s rect) for the mouse: rows 2..8 at `row_rect` and the "n/m" line
+/// from the layout. win_fep_v28 sets the frame's size (FUN_1011ba30), which the held step's frame test reads; the
+/// rows past the last candidate keep their places and take the mouse (the draw hides no child).
+pub(super) fn record(w: &World, gu: &GameUi, frame: [f32; 4]) {
+    let rows: Vec<(u16, [f32; 4])> = (0..ROWS).map(|r| (2 + r as u16, row_rect(frame[0], frame[1], r))).collect();
+    super::winhits::record_all(w, gu, WINDOW, frame, &rows);
 }
 
 /// Row `r`'s child (2 + r) of the list at (x, y): (3, 20 + 16 r), 68 x 16 in the layout (the frame's width set by
@@ -605,6 +703,43 @@ mod tests {
         reopened(9, &warp);
         assert!(warp.get());
         assert_eq!(row_rect(100.0, 50.0, 2), [103.0, 102.0, 68.0, 16.0]);
+    }
+
+    fn list(n: usize, sel: usize) -> Fep {
+        Fep {
+            cands: (0..n).map(|k| Cand { text: k.to_string(), id: None }).collect(),
+            sel,
+            filter: None,
+            root: (String::new(), 0),
+            word_len: 0,
+            win: ListWin::new(),
+        }
+    }
+
+    /// win_fep_onkey message 9: the selection steps to the hovered row (next / previous, wrapping), once between
+    /// updates; the count bound is taken before the wrap.
+    #[test]
+    fn hover_steps_to_the_row() {
+        let mut f = list(10, 1);
+        hover_step(&mut f, 6);
+        assert_eq!(f.sel, 4);
+        // Marked until the update: a second message 9 steps nothing.
+        hover_step(&mut f, 2);
+        assert_eq!(f.sel, 4);
+        f.win.stepped.set(false);
+        hover_step(&mut f, 2);
+        assert_eq!(f.sel, 0);
+        // The last page (7..9): a row past the last candidate steps on and wraps to the first.
+        let mut f = list(10, 8);
+        hover_step(&mut f, 8);
+        assert_eq!(f.sel, 0);
+        // Child 1, the "n/m" line, steps back past the page's first row (wrapping to the last).
+        let mut f = list(10, 0);
+        hover_step(&mut f, 1);
+        assert_eq!(f.sel, 9);
+        let mut f = list(10, 9);
+        hover_step(&mut f, 1);
+        assert_eq!(f.sel, 6);
     }
 
     #[test]

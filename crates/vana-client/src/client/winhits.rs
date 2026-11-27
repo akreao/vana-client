@@ -157,6 +157,11 @@ pub fn takes_no_hand(gu: &GameUi, name: &str, child: u16, frame: bool) -> bool {
     t
 }
 
+/// The pointer shown (mouse +0x4e): the keys hide it until it moves.
+pub fn shown(gu: &GameUi) -> bool {
+    !gu.ptr_hover.borrow().hidden
+}
+
 /// The pointer inside window `name`'s frame as laid out (FUN_1011a0a0: both ends in), for `takes`.
 pub fn in_frame(gu: &GameUi, name: &str, sw: f32, sh: f32, p: (f32, f32)) -> bool {
     gu.window_rect(name, sw, sh).is_some_and(|r| inside(r, p))
