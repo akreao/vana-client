@@ -61,6 +61,8 @@ pub(super) struct Pending {
     pub event: bool,
     /// An `init` start's wanted sub-animation (on_init).
     pub init_sub: Option<u8>,
+    /// Asked by the entity loop (`Effects::in_loop`): it starts at the loop's task in the walk.
+    pub looped: bool,
 }
 
 /// A doll (CXiDollActor, FUN_100abea0): the actor's placement and its 48 points when a scheduler froze it. Ops
@@ -333,6 +335,7 @@ impl Effects {
                 seq: None,
                 event: false,
                 init_sub: None,
+                looped: false,
             }),
             3..=6 | 0xb | 0xd..=0xf => {
                 let anim = a.targets.first().and_then(|t| t.results.first()).map_or(0, |r| r.animation as u32);
@@ -362,6 +365,7 @@ impl Effects {
                     seq: None,
                     event: false,
                     init_sub: None,
+                    looped: false,
                 });
             }
             7..=0xa | 0xc => {
@@ -388,6 +392,7 @@ impl Effects {
                     seq: None,
                     event: false,
                     init_sub: None,
+                    looped: false,
                 });
             }
             _ => {}
@@ -423,6 +428,7 @@ impl Effects {
                 seq: None,
                 event: false,
                 init_sub: None,
+                looped: false,
             });
         }
         if arg != 0 {
@@ -453,6 +459,7 @@ impl Effects {
             seq: None,
             event: true,
             init_sub: None,
+            looped: false,
         });
     }
 
@@ -512,6 +519,7 @@ impl Effects {
             seq: None,
             event: false,
             init_sub: None,
+            looped: false,
         });
     }
 
@@ -541,6 +549,7 @@ impl Effects {
             seq: None,
             event: false,
             init_sub: None,
+            looped: false,
         });
     }
 
@@ -733,6 +742,7 @@ impl Effects {
             seq: None,
             event: false,
             init_sub: None,
+            looped: false,
         });
     }
 
@@ -755,10 +765,58 @@ impl Effects {
         }
     }
 
-    /// Starts waiting for files, when they are in.
-    pub(super) fn run_pending(&mut self, f: &Frame, actors: &dyn Actors) {
-        self.run_furniture(actors);
-        let list = std::mem::take(&mut self.pending);
+    /// What `ask` asks to start is the entity loop's: FUN_10096640 (the update of the task made at 0x100142b0, vtable
+    /// 0x1032acfc +0x20 = FUN_100106c0) starts it from inside the walk, so the scheduler is linked right before the
+    /// loop's task (FUN_10075120 with it running) and takes its first update there. The starts read in the loop:
+    /// - FUN_1008e9a0 -> FUN_1008c480 (0x1008c598): `init`, `inte` on status 0x22, `hen0` (vtable +0x298 =
+    ///   FUN_100cee40 -> FUN_10056c70) and `!in?` (FUN_100cf060 -> FUN_100cef00).
+    /// - FUN_1008e9a0 -> FUN_1008c6c0: the status change's `bton` / `ntob`, the status' own name (`dead`, `sdep`,
+    ///   `fsh?`...), `ntoe` / `eton`, a door's open and close (FUN_100ad1e0 / FUN_100ad270), a model actor's
+    ///   sequence (FUN_10097a80 -> FUN_100c4730 -> FUN_10056c70, or FUN_10056b20 caught up).
+    /// - FUN_1008e9a0 -> FUN_1008b460 (the actor's machine): `res0` / `res2`, `sit0` / `sit2`, `chi2`, `coff`,
+    ///   `bntg`, `klbt`, `hwat`, the draw and the sheathe.
+    /// - FUN_10094190 / FUN_10095900 -> FUN_1008f740 (a model made): FUN_1008ef60's `ini<n>`, FUN_10097a80's
+    ///   sequence.
+    ///
+    /// A packet's start is not: FUN_100daf30 dispatches them after the walk (FUN_10001b50), with no task running.
+    pub fn in_loop<R>(&mut self, ask: impl FnOnce(&mut Self) -> R) -> R {
+        let from = self.pending.len();
+        let r = ask(self);
+        for p in self.pending.iter_mut().skip(from) {
+            p.looped = true;
+        }
+        r
+    }
+
+    /// How often the entity loop's task ran in this tick's walk (0 with no walk). Past 1, a start of its made a task
+    /// in its first update and left the walk's next before the loop's task: retail runs FUN_10096640 again with
+    /// the same ticks (FUN_10014cf0). The client's actor pass does not take that second run yet (queue row 211), so
+    /// only the tests read it.
+    #[cfg(test)]
+    pub fn loop_runs(&self) -> u32 {
+        self.loop_runs
+    }
+
+    /// The entity loop's task in the walk (FUN_100106c0): what the loop asked to start starts now, with the loop's
+    /// task as the running one. A second run in the same walk finds nothing new to start.
+    fn loop_task(&mut self, f: &Frame, actors: &dyn Actors) {
+        self.loop_runs += 1;
+        if self.loop_runs == 1 {
+            self.run_pending(f, actors, true);
+        } else {
+            log::debug!("effects: the entity loop's task runs again ({})", self.loop_runs);
+        }
+    }
+
+    /// Starts waiting for files, when they are in: the entity loop's (`looped`) at its task in the walk, the others
+    /// before the walk.
+    pub(super) fn run_pending(&mut self, f: &Frame, actors: &dyn Actors, looped: bool) {
+        if !looped {
+            self.run_furniture(actors);
+        }
+        let (list, rest): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.pending).into_iter().partition(|p| p.looped == looped);
+        self.pending = rest;
         for mut p in list {
             p.age += f.dt;
             // FUN_100a9230 -> FUN_100d25e0: a skeleton caster (any actor with a model) takes weapon skills from its race
@@ -1062,6 +1120,7 @@ impl Effects {
                 d.points.get(0x2b).copied().flatten()
             );
         }
+        self.loop_runs = 0;
         if walk {
             self.walk(&Frame { dt: self.walk_ticks, ..*f }, actors);
         }
@@ -1069,7 +1128,7 @@ impl Effects {
     }
 
     /// FUN_10074c30's walk over retail's one task list (tasklist.rs), one retail frame (`f.dt` its ticks): each node
-    /// in list order, the walk's next taken before the node's update. A task an op's new scheduler makes in that
+    /// in list order (the schedulers and the entity loop's task), the walk's next taken before the node's update. A task an op's new scheduler makes in that
     /// scheduler's first update leaves the walk's next in front of the running task, which then runs again.
     fn walk(&mut self, f: &Frame, actors: &dyn Actors) {
         self.purge_list();
@@ -1077,8 +1136,10 @@ impl Effects {
         let mut cur = self.list.head();
         while let Some(n) = cur {
             self.list.step(n);
-            if let tasklist::Node::Task(uid) = n {
-                self.walk_task(uid, f, actors);
+            match n {
+                tasklist::Node::Task(uid) => self.walk_task(uid, f, actors),
+                tasklist::Node::Entity => self.loop_task(f, actors),
+                _ => {}
             }
             cur = self.list.advance();
         }
@@ -1958,6 +2019,7 @@ impl Effects {
                     seq: None,
                     event: false,
                     init_sub: None,
+                    looped: false,
                 });
                 Flow::Next
             }
@@ -2807,6 +2869,7 @@ impl Effects {
                     seq: None,
                     event: false,
                     init_sub: None,
+                    looped: false,
                 });
                 Flow::Next
             }
@@ -2982,6 +3045,7 @@ impl Effects {
             seq: Some(skip),
             event: false,
             init_sub: None,
+            looped: false,
         });
     }
 
@@ -4416,6 +4480,62 @@ mod tests {
         // Started before frame 0's walk (8 left after its first update); the child starts in frame 4's walk.
         assert_eq!(run(false), [8.0, 6.0, 4.0, 2.0, 98.0, 96.0]);
         assert_eq!(run(true), [8.0, 6.0, 4.0, 2.0, 100.0, 98.0]);
+    }
+
+    /// Row 187: a start the entity loop asks for (`in_loop`) runs at the loop's task in the walk (FUN_100106c0 ->
+    /// FUN_10096640): its scheduler is linked right before that task, in bucket 13, where a start from outside the
+    /// walk goes before bucket 9. When its first update makes a task the loop's task runs again in that walk; a
+    /// later start of the loop's that makes none puts the walk's next back (one run). The new scheduler takes the
+    /// frame's ticks once either way.
+    #[test]
+    fn entity_loop_starts_run_at_its_task() {
+        use tasklist::Node;
+        let name = |n: &[u8; 4]| u32::from_le_bytes(*n);
+        let (makes, plain) = (name(b"make"), name(b"plin"));
+        // (the loop's runs in the first walk and in the second, where the first start's task sits, its countdowns)
+        let run = |names: &[u32], looped: bool| -> ([u32; 2], bool, [f32; 2]) {
+            let lib = sched_lib(
+                1,
+                &[
+                    (makes, vec![sop(0x72, 0, 0, 0), sop(0x01, 50, 0, 0), sop(0x00, 0, 0, 0)]),
+                    (plain, vec![sop(0x01, 50, 0, 0), sop(0x00, 0, 0, 0)]),
+                ],
+            );
+            let mut fx = Effects::new();
+            fx.reg.add(lib);
+            for &n in names {
+                if looped {
+                    fx.in_loop(|fx| fx.on_event_scheduler(1, n, Who::None, Who::None));
+                } else {
+                    fx.on_event_scheduler(1, n, Who::None, Who::None);
+                }
+            }
+            let f = ticks_frame(RETAIL_FRAME);
+            let first = |fx: &Effects| {
+                let named = |t: &Task| fx.reg.libs[t.res.0].tree.nodes[t.res.1].name == names[0].to_le_bytes();
+                fx.tasks.iter().flatten().find(|t| named(t)).map(|t| (t.uid, t.countdown)).unwrap()
+            };
+            fx.tick(&f, &Two);
+            let (runs, (uid, left)) = (fx.loop_runs(), first(&fx));
+            let at = |n: Node| fx.list.nodes().iter().position(|&x| x == n).unwrap();
+            let in_13 = at(Node::Anchor(13)) < at(Node::Task(uid)) && at(Node::Task(uid)) < at(Node::Entity);
+            assert_eq!(in_13, !(at(Node::Task(uid)) < at(Node::Anchor(9))));
+            fx.tick(&f, &Two);
+            ([runs, fx.loop_runs()], in_13, [left, first(&fx).1])
+        };
+        let left = [48.0, 46.0];
+        assert_eq!(run(&[makes], true), ([2, 1], true, left));
+        assert_eq!(run(&[plain], true), ([1, 1], true, left));
+        assert_eq!(run(&[makes, plain], true), ([1, 1], true, left));
+        assert_eq!(run(&[plain, makes], true), ([2, 1], true, left));
+        // Outside the walk: before bucket 9, and nothing for the loop's task to run again for.
+        assert_eq!(run(&[makes], false), ([1, 1], false, left));
+        // A tick of ours with no walk (half a retail frame): the loop's task did not run.
+        let mut fx = Effects::new();
+        fx.tick(&ticks_frame(1.0), &Two);
+        assert_eq!(fx.loop_runs(), 1);
+        fx.tick(&ticks_frame(1.0), &Two);
+        assert_eq!(fx.loop_runs(), 0);
     }
 
     /// Row 181: ops 0x7f (FUN_100613d0's ramp on actor1) and 0x04 (FUN_1003c8a0's camera task) make a task, so either

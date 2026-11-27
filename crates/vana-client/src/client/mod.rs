@@ -13946,13 +13946,15 @@ impl App {
         for (id, name) in stops {
             world.effects.stop_actor_scheduler(id, u32::from_le_bytes(name));
         }
+        // Both inside the entity loop (FUN_1008e9a0 -> FUN_1008c480; FUN_1008f740 -> FUN_1008ef60): the schedulers
+        // start at the loop's task in the walk (Effects::in_loop).
         for (id, sub) in inits {
             log::debug!(target: "motion", "actor {id:#x}: scheduler init (sub-animation {sub})");
-            world.effects.on_init(id, sub);
+            world.effects.in_loop(|fx| fx.on_init(id, sub));
         }
         for (id, name) in starts {
             log::debug!(target: "motion", "actor {id:#x}: scheduler {}", String::from_utf8_lossy(&name));
-            world.effects.on_scheduler(id, id, u32::from_le_bytes(name));
+            world.effects.in_loop(|fx| fx.on_scheduler(id, id, u32::from_le_bytes(name)));
         }
         for id in ins {
             wepfx::start_in(world, id);
