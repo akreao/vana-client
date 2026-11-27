@@ -25066,6 +25066,28 @@ Settings > Graphics > Upscaling (config `upscaler` 0 off / 1 FSR / 2 external, `
   lua::ERROR red, "Updates are available for N mods (Settings > Mods)." (DAT packs: Settings > DAT Packs). Seen live
   (modern UI) with a test list (VANA_MOD_CATALOGUE) one version ahead.
 
+## Closest auto-target (ours, 2026-11-26)
+- Not retail: config closest_auto_target (default on, no UI yet), only while /autotarget is on (0x0B4 byte 1 bit 6
+  clear). The server picks the next monster in a front cone after a kill (LSB CAttackState::UpdateTarget: the
+  first attacking monster facing within 64 and 10 yalms) or, with none there, lets us go; FUN_101514a0's client pick is
+  the lowest index we claimed.
+- Seen in a client log: the server's pick comes as an 0x058 while engaged before the dead target is
+  dropped on our side, and its let-go (status 1 -> 0) about 0.3 s before the target shows dead. So the order of
+  0x058 / status / death cannot be relied on.
+- client/target.rs: candidates are monsters within 30 claimed by us, a party or alliance member or our pet, or
+  unclaimed and either facing one of us (0x00E facetarget) or engaged (status 1); alive, targetable, with a model;
+  the nearest within 90 degrees of our heading, else the nearest behind (front_first). In a client log of a pull where
+  nothing is claimed (Dynamis), every monster of the pull had claim 0 and face target 0, so without the engaged rule
+  no candidate was found.
+  - An 0x058 while engaged that we did not ask for (no /attack or /attackoff in the last 2 s): the server's auto-target;
+    when the closest is another, c2s 0x01A category 0x0f to it instead, and the server's pick is not taken.
+  - The server lets us go unasked: c2s 0x01A category 0x02 (engage) on the closest at once (its dead target showed
+    dead 0.06 to 3 s after the let-go, so waiting for it missed kills).
+  - Each decision logs the monsters within 30 with claim, face target, hpp, flags and the checks
+    ("closest auto-target (...)").
+  - FUN_101514a0's pick (engaged, no target): the closest, and the attack switched to it (0x0f).
+- Not seen live yet.
+
 ## Riding out a local link drop (ours, 2026-11-26)
 - Seen over Wi-Fi: a beacon loss, a failed roam, NetworkManager taking the address away for about 20 s
   until DHCP gave the same one back. The zone session's send failed with ENETUNREACH (os error 101) and the client

@@ -254,6 +254,9 @@ pub struct Config {
     /// Not retail (Settings' Lamp Lights): real point lights at the zones' lamps in place of their baked lamplight
     /// (client/lamps.rs).
     pub lamp_lights: bool,
+    /// Auto-target picks the closest monster fighting our side (in front first, else behind) and keeps us engaged;
+    /// not retail (the server picks in a front cone, or lets us go).
+    pub closest_auto_target: bool,
     /// Not retail (Settings' Light Shading Smooth): the scenery's point lights per pixel with a soft edge, in place of
     /// retail's per-vertex lights with a hard cut at the range.
     pub smooth_lights: bool,
@@ -627,6 +630,7 @@ impl Default for Config {
             language: "en".into(),
             notes_seen: env!("CARGO_PKG_VERSION").into(),
             lamp_lights: true,
+            closest_auto_target: true,
             smooth_lights: false,
             material_maps: 0,
             actor_shadows: 0,
