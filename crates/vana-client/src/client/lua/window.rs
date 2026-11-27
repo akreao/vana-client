@@ -87,6 +87,16 @@ pub struct Row {
     pub cell_items: Vec<Option<ItemRef>>,
     /// Tags after a cell's text, by its column ("Rare", "Ex"): the item window's marks.
     pub cell_tags: Vec<Vec<String>>,
+    /// The tooltip by the pointer while it rests on the row (modern UI): a title with its icon, then the text.
+    pub hover: Option<RowTip>,
+}
+
+/// A list row's tooltip: its title, the icon beside the title, the lines under it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RowTip {
+    pub title: String,
+    pub text: String,
+    pub icon: Option<Icon>,
 }
 
 /// A tag's classic sprite: the item window's windowps mark (293 Aug, 294 Rare, 295 Ex, 296 Temp, 842 Alt).
@@ -282,6 +292,8 @@ pub enum Elem {
         max: usize,
         filter: bool,
         key: bool,
+        /// Rows shown: 1 an input line, more a text area (`textarea`: Enter breaks the line).
+        lines: usize,
     },
     /// One of `items`, turned with Left / Right. `drop` (`type = "dropdown"`): Enter or a click opens the items in a
     /// list under it (Up / Down, Enter or a click picks, Escape or a click elsewhere closes).
@@ -319,6 +331,9 @@ pub enum Elem {
         w: f32,
         h: f32,
         cmds: Vec<Cmd>,
+        /// `float = "right"`: at the window's right edge, taking no height; the elements after it narrow to stand
+        /// beside it until they pass its bottom.
+        float: bool,
     },
     /// The zone's map around us in the minimap panel's window (the client's map, our marker, Wide Scan's marks; the
     /// zoom is the client option minimap_span): the mod's dots; the wheel over it sends `wheel`.
@@ -400,6 +415,8 @@ pub enum Cmd {
         r: [f32; 4],
         title: String,
         text: String,
+        /// Beside the title (the modern UI's tooltip).
+        icon: Option<Icon>,
     },
     /// Tinted by `tint` (its alpha fades it).
     Icon {
@@ -633,6 +650,12 @@ pub enum Event {
         from: String,
     },
     Close,
+    /// A right-click on the window that none of its elements took (a canvas sends its own click): where, in window
+    /// pixels from its top left.
+    Context {
+        x: f32,
+        y: f32,
+    },
 }
 
 impl Event {
@@ -691,6 +714,7 @@ impl Event {
                 json!({"kind": kind, "id": id, "x": x.round() as i64, "y": y.round() as i64, "from": from})
             }
             Event::Close => json!({"kind": "close"}),
+            Event::Context { x, y } => json!({"kind": "context", "x": x.round() as i64, "y": y.round() as i64}),
         }
     }
 }
@@ -1374,22 +1398,31 @@ impl Window {
         if !self.typing() || self.listening() {
             return (ev, se);
         }
-        let Some(Elem::Input { id, text, max, .. }) = self.elems.get_mut(self.at) else { return (ev, se) };
+        let Some(Elem::Input { id, text, max, lines, .. }) = self.elems.get_mut(self.at) else { return (ev, se) };
+        // A text area: Enter breaks the line, Up / Down move between lines, Home / End go to the line's ends;
+        // Ctrl+Enter or Tab ends it as Enter ends a line.
+        let area = *lines > 1;
         let before = text.clone();
         let mut chars: Vec<char> = text.chars().collect();
         let mut caret = self.caret.min(chars.len());
         let mut end = None;
+        let put = |chars: &mut Vec<char>, caret: &mut usize, c: char| {
+            if chars.len() < *max {
+                chars.insert(*caret, c);
+                *caret += 1;
+            }
+        };
         for e in events {
             match e {
                 egui::Event::Text(t) | egui::Event::Paste(t) => {
-                    for c in t.chars().filter(|c| !c.is_control()) {
-                        if chars.len() < *max {
-                            chars.insert(caret, c);
-                            caret += 1;
+                    let pasted = matches!(e, egui::Event::Paste(_));
+                    for c in t.replace("\r\n", "\n").chars() {
+                        if area && pasted && c == '\n' || !c.is_control() {
+                            put(&mut chars, &mut caret, c);
                         }
                     }
                 }
-                egui::Event::Key { key, pressed: true, .. } => match key {
+                egui::Event::Key { key, pressed: true, modifiers, .. } => match key {
                     K::Backspace if caret > 0 => {
                         caret -= 1;
                         chars.remove(caret);
@@ -1399,8 +1432,16 @@ impl Window {
                     }
                     K::ArrowLeft => caret = caret.saturating_sub(1),
                     K::ArrowRight => caret = (caret + 1).min(chars.len()),
+                    K::ArrowUp | K::ArrowDown if area => caret = line_move(&chars, caret, *key == K::ArrowDown),
+                    K::Home if area => caret = line_start(&chars, caret),
+                    K::End if area => caret = line_end(&chars, caret),
                     K::Home => caret = 0,
                     K::End => caret = chars.len(),
+                    K::Enter if area && !modifiers.ctrl && !modifiers.command => put(&mut chars, &mut caret, '\n'),
+                    K::Tab if area => {
+                        end = Some(true);
+                        break;
+                    }
                     K::Enter => {
                         end = Some(true);
                         break;
@@ -1579,6 +1620,11 @@ impl Window {
         (ev, Vec::new())
     }
 
+    /// A right-click on the window off its elements: the window's 'context' event.
+    pub fn context(&mut self, x: f32, y: f32) -> (Vec<Event>, Vec<Se>) {
+        (vec![Event::Context { x, y }], Vec::new())
+    }
+
     /// The pointer gone off the canvas it was over (classic UI): its 'leave'.
     pub fn hover_off(&mut self) -> Vec<Event> {
         self.hovered.take().map_or_else(Vec::new, |i| self.canvas_hover(i, -1.0, -1.0).0)
@@ -1654,10 +1700,12 @@ impl Window {
             }
         }
         let mut ey = y + TOP;
+        let (widths, xs) = self.classic_widths(w);
         for (i, e) in self.elems.iter().enumerate() {
             if hidden[i] {
                 continue;
             }
+            let w = widths[i];
             match e {
                 Elem::Buttons { items, .. } => {
                     let bw = button_w(gu, items);
@@ -1696,7 +1744,9 @@ impl Window {
                     out.push((i, 1, [x + 32.0 + bw - 24.0, ey + 14.0, 24.0, 16.0]));
                     out.push((i, 2, [x + 56.0, ey + 14.0, bw - 48.0, 16.0]));
                 }
-                Elem::Input { .. } => out.push((i, 0, [x + 32.0, ey + 14.0, w - 64.0, 16.0])),
+                Elem::Input { lines, .. } => {
+                    out.push((i, 0, [x + 32.0, ey + 14.0, w - 64.0, 16.0 + LINE * (*lines - 1) as f32]))
+                }
                 Elem::Colour { alpha, .. } => {
                     out.push((i, 0, [x + 32.0, ey + 14.0, 64.0, 16.0]));
                     if self.edit && self.at == i {
@@ -1715,7 +1765,7 @@ impl Window {
                     }
                 }
                 Elem::Section { .. } => out.push((i, 0, [x + 20.0, ey, w - 40.0, LINE])),
-                Elem::Canvas { w: cw, h: ch, .. } => out.push((i, 0, [x + 20.0, ey, *cw, *ch])),
+                Elem::Canvas { w: cw, h: ch, .. } => out.push((i, 0, [x + xs[i], ey, *cw, *ch])),
                 _ => {}
             }
             ey += self.elem_h(i);
@@ -1775,7 +1825,12 @@ impl Window {
             {
                 self.drop_close(d);
             }
-            return (false, self.hover_off(), Vec::new());
+            let mut ev = self.hover_off();
+            // A right-click on the window off its controls: its context.
+            if right {
+                ev.extend(self.context(p.0 - x, p.1 - y).0);
+            }
+            return (false, ev, Vec::new());
         };
         let mut se = Vec::new();
         #[derive(PartialEq)]
@@ -1908,6 +1963,7 @@ impl Window {
             Elem::Timers { .. } | Elem::Map { .. } | Elem::Targets { .. } | Elem::Chip { .. } => 0.0,
             Elem::Lines { lines, .. } => lines.iter().map(classic_line_h).sum::<f32>() + 4.0,
             Elem::Text { .. } => LINE,
+            Elem::Input { lines, .. } if *lines > 1 => PITCH + LINE * (*lines - 1) as f32,
             Elem::Buttons { .. } | Elem::Slider { .. } | Elem::Input { .. } | Elem::Choice { .. } => PITCH,
             Elem::List { height, columns, .. } => LINE * (*height + usize::from(has_header(columns))) as f32 + 6.0,
             Elem::Gauge { .. } => LINE + 2.0,
@@ -1917,6 +1973,7 @@ impl Window {
                 PITCH + if self.edit && self.at == i { CHAN_H * if *alpha { 4.0 } else { 3.0 } + 4.0 } else { 0.0 }
             }
             Elem::Section { .. } => LINE + 4.0,
+            Elem::Canvas { float: true, .. } => 0.0,
             Elem::Canvas { h, .. } => h + 6.0,
         }
     }
@@ -1924,7 +1981,41 @@ impl Window {
     pub fn classic_size(&self) -> (f32, f32) {
         let w = if self.width > 0.0 { self.width } else { CLASSIC_W };
         let w = w.max(self.fit_w.get());
-        (w, TOP + (0..self.elems.len()).map(|i| self.elem_h(i)).sum::<f32>() + 12.0)
+        // A floated canvas taller than what stands beside it reaches past the elements' height.
+        let hidden = self.hidden();
+        let (mut y, mut bottom) = (0.0f32, 0.0f32);
+        for (i, e) in self.elems.iter().enumerate() {
+            if let Elem::Canvas { float: true, h, .. } = e
+                && !hidden[i]
+            {
+                bottom = bottom.max(y + h + 6.0);
+            }
+            y += self.elem_h(i);
+        }
+        (w, TOP + y.max(bottom) + 12.0)
+    }
+
+    /// Each element's width on the classic page of width `w`: narrower beside a floated canvas (until past its
+    /// bottom); and each floated canvas's x from the page's left.
+    fn classic_widths(&self, w: f32) -> (Vec<f32>, Vec<f32>) {
+        let hidden = self.hidden();
+        let (mut y, mut float) = (0.0f32, None::<(f32, f32)>);
+        let (mut widths, mut xs) = (Vec::new(), Vec::new());
+        for (i, e) in self.elems.iter().enumerate() {
+            match e {
+                Elem::Canvas { float: true, w: cw, h, .. } if !hidden[i] => {
+                    float = Some((y + h + 6.0, cw + 12.0));
+                    widths.push(w);
+                    xs.push(w - 20.0 - cw);
+                }
+                _ => {
+                    widths.push(float.filter(|f| y < f.0).map_or(w, |f| w - f.1));
+                    xs.push(20.0);
+                }
+            }
+            y += self.elem_h(i);
+        }
+        (widths, xs)
     }
 
     /// The open dropdown and its list's rect on the classic page at (x, y): the rows under its field, as the login
@@ -1982,11 +2073,14 @@ impl Window {
                 gu.sprite_scaled("menu    windowps", 384, sx, sy, f, 1.0, if lit { 0xa0a0_a0a0 } else { N });
             }
         };
+        let (widths, xs) = self.classic_widths(w);
         for (i, e) in self.elems.iter().enumerate() {
             if hidden[i] {
                 continue;
             }
             let here = self.focus && i == self.at;
+            // Narrower beside a floated canvas.
+            let w = widths[i];
             match e {
                 Elem::Timers { .. } | Elem::Map { .. } | Elem::Targets { .. } | Elem::Chip { .. } => {}
                 Elem::Lines { lines, .. } => {
@@ -2138,6 +2232,34 @@ impl Window {
                         hand = Some((bx, by));
                     }
                 }
+                Elem::Input { label, text, lines, .. } if *lines > 1 => {
+                    bullet(gu, ey);
+                    gu.label(label, x + 32.0, ey, N, false);
+                    let (bx, by, bw) = (x + 32.0, ey + 14.0, w - 64.0);
+                    super::super::settings::button(gu, [bx, by, bw, 16.0 + LINE * (*lines - 1) as f32], N);
+                    let chars: Vec<char> = text.chars().collect();
+                    let editing = here && self.edit;
+                    let k = self.caret.min(chars.len());
+                    let (rows, at) = area_rows(&chars, editing.then_some(k), *lines);
+                    for (r, row) in rows.iter().enumerate() {
+                        gu.text_fit(row, bx + 5.0, by + 1.0 + LINE * r as f32, bw - 10.0, N);
+                    }
+                    let blink = (std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis()
+                        / 500)
+                        .is_multiple_of(2);
+                    if let Some((r, col)) = at
+                        && blink
+                    {
+                        let left: String = rows[r].chars().take(col).collect();
+                        gu.text("|", bx + 4.0 + gu.label_width(&left), by + 1.0 + LINE * r as f32, 0, [0x80; 4]);
+                    }
+                    if here && !editing {
+                        hand = Some((bx, by));
+                    }
+                }
                 Elem::Input { label, text, .. } => {
                     bullet(gu, ey);
                     gu.label(label, x + 32.0, ey, N, false);
@@ -2233,7 +2355,7 @@ impl Window {
                     }
                 }
                 Elem::Canvas { w: cw, h: ch, cmds, .. } => {
-                    draw_canvas(gu, world, cmds, x + 20.0, ey, *cw, *ch);
+                    draw_canvas(gu, world, cmds, x + xs[i], ey, *cw, *ch);
                 }
                 Elem::Section { label, open, .. } => {
                     let mark = if *open { "-" } else { "+" };
@@ -2408,6 +2530,51 @@ fn pack_icon(gu: &mut GameUi, id: &str, x: f32, y: f32, s: f32, mul: [f32; 4]) -
     true
 }
 
+/// A text area's rows in view (`shown` of them, scrolled to keep the caret's line in), and the caret's (row, column)
+/// among them while it is edited.
+pub fn area_rows(chars: &[char], caret: Option<usize>, shown: usize) -> (Vec<String>, Option<(usize, usize)>) {
+    let text: String = chars.iter().collect();
+    let all: Vec<&str> = text.split('\n').collect();
+    let at = caret.map(|k| {
+        let line = chars[..k.min(chars.len())].iter().filter(|&&c| c == '\n').count();
+        (line, k - line_start(chars, k))
+    });
+    let top = at.map_or(0, |(line, _)| (line + 1).saturating_sub(shown));
+    let rows = all.iter().skip(top).take(shown).map(|s| s.to_string()).collect();
+    (rows, at.map(|(line, col)| (line - top, col)))
+}
+
+/// The start of the text area line that holds `caret` (the char after its line break).
+pub fn line_start(chars: &[char], caret: usize) -> usize {
+    chars[..caret.min(chars.len())].iter().rposition(|&c| c == '\n').map_or(0, |i| i + 1)
+}
+
+/// The end of the text area line that holds `caret` (its line break, or the text's end).
+pub fn line_end(chars: &[char], caret: usize) -> usize {
+    let from = caret.min(chars.len());
+    chars[from..].iter().position(|&c| c == '\n').map_or(chars.len(), |i| from + i)
+}
+
+/// The caret one line up or down, at the same column where that line is long enough (else its end).
+fn line_move(chars: &[char], caret: usize, down: bool) -> usize {
+    let start = line_start(chars, caret);
+    let col = caret - start;
+    if down {
+        let end = line_end(chars, caret);
+        if end >= chars.len() {
+            return caret;
+        }
+        let next = end + 1;
+        (next + col).min(line_end(chars, next))
+    } else {
+        if start == 0 {
+            return caret;
+        }
+        let prev = line_start(chars, start - 1);
+        (prev + col).min(start - 1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2548,6 +2715,7 @@ mod tests {
             max: 4,
             filter: false,
             key: false,
+            lines: 1,
         };
         let mut w = Window::new("w");
         w.elems = vec![input("a"), input("b"), input("c")];
@@ -2560,6 +2728,86 @@ mod tests {
         assert_eq!(w.stops(), vec![0, 1, 2]);
     }
 
+    /// A canvas floated right takes no height: the elements after it narrow beside it until past its bottom, and a
+    /// float taller than they are still sets the page's height.
+    #[test]
+    fn classic_float_right() {
+        let input = |id: &str| Elem::Input {
+            id: id.into(),
+            label: String::new(),
+            text: String::new(),
+            max: 8,
+            filter: false,
+            key: false,
+            lines: 1,
+        };
+        let mut w = Window::new("w");
+        w.width = 400.0;
+        w.elems = vec![
+            Elem::Canvas { id: "icon".into(), w: 52.0, h: 52.0, cmds: Vec::new(), float: true },
+            input("a"),
+            input("b"),
+            input("c"),
+        ];
+        w.meta = vec![Meta::default(); 4];
+        let (widths, xs) = w.classic_widths(400.0);
+        assert_eq!(xs[0], 400.0 - 20.0 - 52.0);
+        // a at 0 and b at 34 stand beside it (bottom 58); c at 68 is full width.
+        assert_eq!(widths[1..], [400.0 - 64.0, 400.0 - 64.0, 400.0]);
+        assert_eq!(w.classic_size().1, TOP + 3.0 * PITCH + 12.0);
+        w.elems.truncate(2);
+        w.meta.truncate(2);
+        assert_eq!(w.classic_size().1, TOP + 58.0 + 12.0, "a short page reaches the float's bottom");
+    }
+
+    /// A text area: Enter breaks the line, Up / Down keep the column, Home / End stay on the line, a paste keeps its
+    /// line breaks; Tab ends it, kept, and Escape puts back what it held.
+    #[test]
+    fn textarea_lines() {
+        use egui::{Event as E, Key as K, Modifiers};
+        let key = |k| E::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE };
+        let mut w = Window::new("w");
+        w.elems = vec![Elem::Input {
+            id: "a".into(),
+            label: String::new(),
+            text: String::new(),
+            max: 64,
+            filter: false,
+            key: false,
+            lines: 4,
+        }];
+        w.meta = vec![Meta::default()];
+        (w.open, w.focus) = (true, true);
+        w.settle();
+        w.key(K::Enter);
+        assert!(w.typing());
+        w.text(&[E::Text("/ma".into()), key(K::Enter), E::Text("/wait 2".into()), key(K::Enter), E::Text("/p".into())]);
+        let text = |w: &Window| match &w.elems[0] {
+            Elem::Input { text, .. } => text.clone(),
+            _ => unreachable!(),
+        };
+        assert_eq!(text(&w), "/ma\n/wait 2\n/p");
+        assert!(w.typing(), "Enter ended the text area");
+        // Up from "/p|" (column 2) to column 2 of "/wait 2", Home to its start, a letter there.
+        w.text(&[key(K::ArrowUp), E::Text("X".into())]);
+        assert_eq!(text(&w), "/ma\n/wXait 2\n/p");
+        w.text(&[key(K::Home), E::Text("Y".into()), key(K::End), key(K::ArrowDown), E::Text("Z".into())]);
+        assert_eq!(text(&w), "/ma\nY/wXait 2\n/pZ");
+        w.text(&[E::Paste("\n/echo a\r\n/echo b".into())]);
+        assert_eq!(text(&w), "/ma\nY/wXait 2\n/pZ\n/echo a\n/echo b");
+        let (ev, _) = w.text(&[key(K::Tab)]);
+        assert!(!w.typing());
+        assert!(ev.iter().any(|e| matches!(e, Event::Text { done: true, .. })), "Tab did not end it");
+        // Escape undoes the edit.
+        w.key(K::Enter);
+        w.text(&[key(K::Enter), E::Text("junk".into()), key(K::Escape)]);
+        assert_eq!(text(&w), "/ma\nY/wXait 2\n/pZ\n/echo a\n/echo b");
+        // The rows in view follow the caret's line.
+        let chars: Vec<char> = "a\nb\nc\nd\ne".chars().collect();
+        assert_eq!(area_rows(&chars, Some(chars.len()), 2), (vec!["d".to_string(), "e".to_string()], Some((1, 1))));
+        assert_eq!(area_rows(&chars, None, 2).0, vec!["a".to_string(), "b".to_string()]);
+    }
+
     #[test]
     fn hidden_filter_takes_no_typing() {
         let input = |id: &str, filter| Elem::Input {
@@ -2569,6 +2817,7 @@ mod tests {
             max: 9,
             filter,
             key: false,
+            lines: 1,
         };
         let mut w = Window::new("w");
         w.elems = vec![
@@ -2601,6 +2850,7 @@ mod tests {
             max: 4,
             filter: false,
             key: false,
+            lines: 1,
         };
         let mut w = Window::new("w");
         w.elems = vec![
@@ -2636,6 +2886,7 @@ mod tests {
                 max: 4,
                 filter: false,
                 key: false,
+                lines: 1,
             },
             Elem::Section { id: "sec".into(), label: "More".into(), open: false },
             Elem::Choice { id: "c".into(), label: "C".into(), items: vec!["x".into(), "y".into()], at: 0, drop: false },
@@ -2667,6 +2918,7 @@ mod tests {
             max: 4,
             filter: false,
             key: false,
+            lines: 1,
         });
         v.meta.push(Meta { page: Some(0), ..Default::default() });
         (v.at, v.elems[0]) = (0, Elem::Tabs { id: "t".into(), items: vec!["One".into(), "Two".into()], at: 0 });
@@ -2708,6 +2960,7 @@ mod tests {
             max: 9,
             filter,
             key: false,
+            lines: 1,
         };
         let mut w = Window::new("w");
         w.elems = vec![
@@ -2765,6 +3018,7 @@ mod tests {
             max: 64,
             filter: false,
             key: true,
+            lines: 1,
         }];
         (w.open, w.focus) = (true, true);
         w.settle();

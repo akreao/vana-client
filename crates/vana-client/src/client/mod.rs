@@ -4929,6 +4929,7 @@ fn world_hud(
     if !world.modern {
         blockers.extend(lua::draw_classic(gu, world));
         blockers.extend(voicechat::draw_classic(gu, world, sw, sh));
+        lua::draw_hud_top(gu, world);
     }
     // The map covers the screen (mapframe takes the mouse), as does cnqframe.
     if world.map.is_some() || world.cnq.is_some() {
@@ -15046,6 +15047,7 @@ impl App {
         let window = f.window;
         self.input.begin_frame(f);
         let Phase::World(world) = &mut self.phase else { return };
+        world.lua.set_game_keys(&self.input.bindings);
         // The software keyboard first: open, it is the focused window and takes the frame's presses.
         swkbd::update(world, self.game_ui.as_ref(), &mut self.input);
         if world.swkbd_reopen && world.in_scene() {

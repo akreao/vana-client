@@ -23,6 +23,6 @@ local manager = require("src.manager")
 manager.hooks = { changed = function() end, rebind = function() end }
 manager.open()
 H("manager", { kind = "press", id = "lbtn", index = 1 })
-H("manager", { kind = "set", id = "btype", index = 2 })
+H("manager", { kind = "set", id = "btype", index = require("src.builder").type_index("ja") })
 H("manager", { kind = "select", id = "found", index = 1 })
-assert(ui.get("manager", "line").text == '/ja "Provoke" <t>', ui.get("manager", "line").text)
+assert(ui.get("manager", "name").text == "Provoke", ui.get("manager", "name").text)

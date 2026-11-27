@@ -1,12 +1,14 @@
 -- See-through hotbars and crossbars on the HUD. No window and no canvas: each slot is a
--- translucent rectangle with an icon, a key hint and a recast shade. Clicks, drags and
--- palette drops use hud.on. The palette and the drag ghost keep their own element ids.
+-- translucent rectangle with an icon, a key hint and a recast shade. Clicks and drags use
+-- hud.on; a library tile from the manager lands through drop_at. The drag ghost keeps its own
+-- element ids.
 
 local data = require("src.data")
 local actions = require("src.actions")
 local ghost = require("src.ghost")
 
-local function palette() return require("src.palette") end
+local tiledrag = require("src.tiledrag")
+local tooltip = require("src.tooltip")
 local chooser = require("src.chooser")
 local slotview = require("src.slotview")
 
@@ -64,7 +66,7 @@ local function finish(prefix, seen)
   live[prefix] = seen
 end
 
--- Screen-pixel hit for manager / palette drags onto overlay slots (no bars canvas).
+-- Screen-pixel hit for manager drags onto overlay slots (no bars canvas).
 function M.drop_at(x, y, lib_id)
   if not lib_id then return false end
   for id, p in pairs(places) do
@@ -114,7 +116,7 @@ local function slot(seen, id, cell, o)
   local x, y, s, u = o.x, o.y, o.s, o.u
   local macro, act, sh = o.macro, o.act, o.shade
   local hover = o.hover
-  local dropping = palette().dragging and hover
+  local dropping = tiledrag.dragging and hover
   local rnd = slot_round(u, s)
   local lw = slotview.EDGE_W * u
   local fill = hover and slotview.KEY_HOVER or (macro and slotview.KEY or slotview.EMPTY_KEY)
@@ -140,13 +142,17 @@ local function slot(seen, id, cell, o)
       round = rnd + 1 * u, line = 1.5 * u, colour = { GLOW[1], GLOW[2], GLOW[3], math.floor(150 + 90 * glow) }, layer = 1 })
   end
   emit(seen, "rect", id, { x = x, y = y, w = s, h = s, round = rnd, colour = fill, layer = 2,
-    tip = macro and { title = data.trim(macro.name) ~= "" and macro.name or (o.fallback or ""),
-      text = data.tip_text(macro) } or nil })
+    tip = macro and tooltip.macro(macro, o.fallback) or nil })
   emit(seen, "rect", id .. "_e", { x = x, y = y, w = s, h = s, round = rnd, line = lw, colour = edge, layer = 3 })
-  if act then
+  if o.ring then
+    emit(seen, "rect", id .. "_r", { x = x - 2 * u, y = y - 2 * u, w = s + 4 * u, h = s + 4 * u, round = rnd + 2 * u,
+      line = 2.5 * u, colour = o.ring, layer = 7 })
+  end
+  local look = macro and actions.look(macro) or act
+  if look then
     local isz = math.floor(s * slotview.ICON_FRAC)
     emit(seen, "icon", id .. "_i", { x = x + (s - isz) / 2, y = y + slotview.ICON_TOP * u, size = isz,
-      kind = act.kind, id = act.id, layer = 4, colour = o.dim and { 150, 150, 150, 255 } or nil })
+      kind = look.kind, id = look.id, layer = 4, colour = o.dim and { 150, 150, 150, 255 } or nil })
   end
   if macro and macro.group then
     local ax = x + s - 9 * u
@@ -207,17 +213,13 @@ local function slot(seen, id, cell, o)
     elseif e.kind == "drag_start" then
       if not macro then return end
       local label = data.display_label(macro)
-      ghost.start(e.x, e.y, s, act, label)
+      ghost.start(e.x, e.y, s, actions.look(macro) or act, label)
     elseif e.kind == "drag" then
-      if not e.window then ghost.move(e.x, e.y) end
+      if not e.window or ghost.top then ghost.move(e.x, e.y) end
     elseif e.kind == "drag_end" then
       ghost.stop()
       local to = o.parse(e.over)
       if to and not o.same(cell, to) then o.swap(cell, to) end
-    elseif e.kind == "drop" then
-      local pal = palette()
-      local lib = pal.dragged_id(e.from) or pal.last
-      if lib then o.drop(cell, lib) end
     end
   end)
 end
@@ -320,13 +322,22 @@ function M.bars(p)
       slot(seen, id_of(b, i), { b = b, i = i }, {
         x = x0 + (i - 1) * (size + gap), y = y, s = size, u = u, up = p.top_dock,
         macro = macro, act = act, shade = p.shades[key],
-        hover = p.st.hover == key, hint = p.show_keys and p.hint(b, i) or nil, fallback = p.hint(b, i),
-        edge = cell and macro and p.edge[cell.from] or nil, st = p.st, key = key, redraw = p.redraw,
+        hover = p.st.hover == key, hint = (p.show_keys or p.assigning) and p.hint(b, i) or nil, fallback = p.hint(b, i),
+        -- Assigning keys: every slot's edge says so, the chosen one ringed.
+        edge = p.assigning and (p.selected == key and p.selected_edge or p.assign_edge)
+          or cell and macro and p.edge[cell.from] or nil,
+        ring = p.assigning and p.selected == key and p.selected_edge or nil,
+        st = p.st, key = key, redraw = p.redraw,
         fire = p.fire, menu = p.menu, swap = p.swap, drop = p.drop,
         suggested = p.suggested and macro and p.suggested(macro, act), glow = p.glow,
         parse = parse, same = function(a, b) return a.b == b.b and a.i == b.i end,
       })
     end
+  end
+  if p.assigning then
+    emit(seen, "text", "ovb_assign", { x = math.floor(scr.width / 2), y = y_base - math.floor(22 * u),
+      text = "Assigning keys: point at a slot, press its key (Esc: done)", size = 0.9, align = "center",
+      colour = { 232, 210, 156 }, outline = { 0, 0, 0, 220 }, layer = 6 })
   end
   local pad = math.floor((p.pad or 8) * u)
   local r = math.floor((p.btn or 18) * u / 2)
@@ -407,7 +418,7 @@ function M.crossbars(p)
     local lit = active == nil or active == sl.side
     local edge = p.slot_edge and p.slot_edge(sl, macro, lit, active == sl.side)
       or (active == sl.side and EDGE_HELD or (not lit and EDGE_OFF) or (macro and EDGE or nil))
-    local tip = fake and (sl.button == "mgr" and "Manager (Start)" or "Macro palette (Select)") or p.labels[sl.button]
+    local tip = fake and (sl.button == "mgr" and "Manager (Start)" or "Assigning on / off (Back)") or p.labels[sl.button]
     local sx, sy, su = x0 + sl.x * u, y0 + sl.y * u, math.floor(p.size * u)
     if fake and sl.pocket then
       su = math.floor(sl.pocket * u)

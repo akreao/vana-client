@@ -48,7 +48,7 @@ Every element, of any type, may also have these fields:
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `type` | `string` | (required) | The element type: `text`, `buttons`, `slider`, `list`, `gauge`, `separator`, `tabs`, `input`, `key`, `choice`, `dropdown`, `colour` (or `color`), `section` or `canvas`. |
+| `type` | `string` | (required) | The element type: `text`, `buttons`, `slider`, `list`, `gauge`, `separator`, `tabs`, `input`, `textarea`, `key`, `choice`, `dropdown`, `colour` (or `color`), `section` or `canvas`. |
 | `tip` | `string` | `""` | Help text shown while the cursor or the pointer is on this element (see [Tips and help](#tips-and-help)). |
 | `page` | `integer` | none | The page (from 1) of the tabs above it that this element belongs to (see [Pages](#pages-tabs)). Without it, the element shows on every page. |
 
@@ -117,6 +117,7 @@ A row is either a string (a number or a boolean is shown as text too), or a tabl
 | `colours` | `table` | none | Single cells' colours by column, over `colour`: `{[3] = {120, 220, 120}}` colours the third cell. Clients released before it show those cells in the row's colour. |
 | `items` | `table` | none | The item a cell names, by column: `{[2] = 23425}`, or `{[2] = {id = 23425, bag = 8, index = 4}}` for a piece the player holds there (its augments are shown while that slot still holds it). While the pointer rests on that cell the modern UI shows the item's description by the pointer, and the classic UI shows it in the item window. Clients released before it ignore it. |
 | `tags` | `table` | none | Tags after a cell's text, by column: `{[5] = {"Rare", "Ex"}}` (or one string). The modern UI draws them as the item window's mark tags; the classic UI draws `Aug`, `Rare`, `Ex`, `Temp` and `Alt` as the item window's marks and any other tag as `[text]`. Clients released before it ignore it. |
+| `hover` | `table` | none | The row's tooltip, shown by the pointer while it rests on the row (the modern UI): `{title, text, icon = {kind, id}}`, the icon (as the row's `icon`) beside the title and the text under them, as a spell's or an ability's tooltip. The classic UI shows the row's `tip` in the help line instead. Clients released before it ignore it. |
 
 A column is a table:
 
@@ -237,6 +238,23 @@ Right, Home and End work while typing.
 | `max` | `integer` | `64` | The most characters it takes (1 to 1024). |
 | `filter` | `boolean` | `false` | A type-to-filter line (a list's filter): while the window has the focus, typed characters and Backspace go into it (each change an `edit` event), or into the window's other line when the cursor is on one, and none of the typing reaches the game; Up, Down, Tab, Enter, Escape and the other keys work the window as ever. One per window. |
 
+### textarea
+
+Several lines the player types in, such as a macro's commands. Enter (or a click on it) starts typing; while typing,
+Enter breaks the line, Up and Down move between lines, Home and End go to the start and end of the line; Tab or
+Ctrl+Enter ends it and sends a `change` event (a click elsewhere keeps the text too), and Escape puts the text back as
+it was. Every change sends an `edit` event. The text has `\n` between its lines, in `text`, in the events and from
+`ui.get`. A paste keeps its line breaks. Clients released before it have no `textarea`: `ui.window` raises an error
+for the element type, so check for it with `pcall` and fall back to an `input`.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `string` | (required) | The element's id. |
+| `label` | `string` | `""` | The heading above the box. |
+| `text` | `string` | `""` | The text, `\n` between lines. |
+| `lines` | `integer` | `4` | The rows the box shows (2 to 12); longer text scrolls to keep the caret's line in view. |
+| `max` | `integer` | `1024` | The most characters it takes, line breaks included (1 to 4096). |
+
 ### key
 
 A key combination the player sets, such as a hotkey. Enter (or a click on it) listens for a key: the next key press,
@@ -324,6 +342,7 @@ instead, and no `click` follows it.
 | `id` | `string` | (required) | The element's id. |
 | `w` | `number` | `200` | Its width (at least 1). |
 | `h` | `number` | `100` | Its height (at least 1). |
+| `float` | `string` | none | `"right"`: the canvas stands at the window's right edge and takes no height of its own; the elements after it narrow to stand beside it until they pass its bottom (an icon beside a name, say). Clients released before it ignore it and stack the canvas as any other. |
 | `draw` | `table` | `{}` | The drawing commands, drawn in order (later ones over earlier ones). |
 
 Every drawing command is a table with a `type` (required) and a `colour` (`{r, g, b, a}`, default white). The other
@@ -336,7 +355,7 @@ fields, all numbers defaulting to `0` unless shown:
 | `"circle"` | `x`, `y`, `r`, `line` | A filled circle centred on (x, y) with radius `r`; with `line`, only its outline, that thick. |
 | `"tri"` | `x1`, `y1`, `x2`, `y2`, `x3`, `y3` | A filled triangle. |
 | `"text"` | `x`, `y`, `text` (default `""`), `size` (default `1`), `align`, `font`, `outline` | Text at (x, y), in the UI's text font: `size` times its small text, `align` `"left"` (the default), `"center"` or `"right"` of `x`, `font = "bold"` for the bold face, `outline` a colour round the letters. The classic UI draws its font at one size. |
-| `"tip"` | `x`, `y`, `w`, `h`, `title`, `text` | Nothing drawn: the tooltip shown while the pointer rests on that rectangle (modern UI). |
+| `"tip"` | `x`, `y`, `w`, `h`, `title`, `text`, `icon` | Nothing drawn: the tooltip shown while the pointer rests on that rectangle (modern UI). `icon` (`{kind, id}`, optional) stands beside the title, as a list row's `hover` tooltip; clients released before it ignore it. |
 | `"icon"` | `x`, `y`, `size` (default `16`), `kind`, `id` | A square icon with its top left at (x, y), tinted by `colour` (its alpha fades it; the classic UI draws it plain): `kind` is `"item"` (or none), `"status"`, `"spell"` or `"ability"`, as for [`hud.icon`](hud.md#hudicon). `id` is required. |
 
 ### chip
@@ -435,6 +454,7 @@ included), so whatever HUD element is under it there is hidden. Use it to drop o
 see. In the modern UI it counts every window and panel; in the classic UI your mods' windows and the game windows the
 mouse works on. Clients released before it leave `covered` out (`nil`).
 | `"close"` | (none) | Escape closed the window, or a click outside a `popup` window closed it. `ui.close` does not send it. |
+| `"context"` | `x`, `y` | A right-click on the window that none of its elements took (its heading, its edges, a text): `x`, `y` in window pixels from its top left. A canvas's right-click is the canvas's `click`. Clients released before it send none. |
 
 Note that `change` comes from both inputs and colours: look at `e.id`, or at whether `e.text` or `e.value` is set.
 
@@ -860,10 +880,11 @@ The handler runs as the player's input: with the `actions` permission it may do 
 ## `ui.prompt`
 
 ```lua
-ui.prompt(text, buttons?, handler)
+ui.prompt(text, buttons?, handler, at?)
 ```
 
-Asks the player a question in a small modal window in the centre of the screen, with a row of buttons under the text.
+Asks the player a question in a small modal window in the centre of the screen (or where `at` says), with a row of
+buttons under the text.
 When the player presses a button the window closes and `handler` gets that button's number. If the player presses
 Escape instead, `handler` gets `nil`.
 
@@ -874,6 +895,7 @@ Escape instead, `handler` gets `nil`.
 | `text` | `string` | yes | The question. |
 | `buttons` | `string[]` | no, default `{"Yes", "No"}` | The buttons' captions. Leave it out (`ui.prompt(text, handler)`) or pass `nil` for Yes / No. |
 | `handler` | `function` | yes | Called as `handler(index)`: `index` is the button pressed, from 1, or `nil` when Escape closed the prompt. |
+| `at` | `string` or `table` | no | Where it opens: `"pointer"` (its top left at the mouse pointer, as a confirmation of a click), or `{x, y, above}` in window pixels as [`ui.open`](#uiopen) takes them; kept on the screen. Left out, the centre. Clients released before it ignore it and centre the prompt. |
 
 **Returns** nothing.
 

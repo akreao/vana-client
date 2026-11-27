@@ -5,6 +5,7 @@ local M = {}
 -- kind nil: typed lines only.
 M.TYPES = {
   { kind = "ma", label = "Spell", search = "Search your spells", column = "Spell" },
+  { kind = "trust", label = "Trust", search = "Search your trusts", column = "Trust" },
   { kind = "ja", label = "Job ability", search = "Search your job abilities", column = "Ability" },
   { kind = "ws", label = "Weapon skill", search = "Search your weapon skills", column = "Weapon skill" },
   { kind = "pet", label = "Pet command", search = "Search your pet commands", column = "Command" },
@@ -38,7 +39,6 @@ M.COMMANDS = {
   { line = "/refa all", title = "Release trusts", does = "Release all your trusts",
     icon = { kind = "spell", id = 896 } },                              -- a trust's (Shantotto)
   { line = "/lockstyle on", title = "Lockstyle", does = "Lock your look to what you wear" },
-  { line = "/wait 1", title = "Wait", does = "Wait a second before the next line" },
 }
 
 local NO_TARGET = { { "", "(none)" } }
@@ -105,6 +105,16 @@ function M.target_label(kind, value, name)
 end
 
 local SPELL_KINDS = { "White", "Black", "Summoning", "Ninjutsu", "Song", "Blue", "Geomancy", "Trust" }
+local TRUST = 8
+
+-- Whether spell `name` is a trust (an older macro saved it as a spell).
+function M.is_trust(name)
+  for _, id in ipairs(game.spells()) do
+    local s = res.spell(id)
+    if s and s.name == name then return s.kind == TRUST end
+  end
+  return false
+end
 
 -- From valid-target bits: enemy, self only, party / alliance member (no other players), else any player.
 function M.default_target(targets)
@@ -185,13 +195,15 @@ local function all_of(kind)
         cells = { c.target and ("<" .. c.target .. ">") or "", c.does }, search = c.title .. " " .. c.does }
     end
     return out
-  elseif kind == "ma" then
-    local me = game.player()
+  elseif kind == "ma" or kind == "trust" then
+    -- Trusts (spell kind 8) are their own type.
+    local me, trusts = game.player(), kind == "trust"
     for _, id in ipairs(game.spells()) do
       local s = res.spell(id)
-      if s and s.name and s.name ~= "" and M.castable(id, me) then
-        out[#out + 1] = { name = s.name, cells = { tostring(s.mp or 0), SPELL_KINDS[s.kind] or "" },
-          icon = { kind = "spell", id = id }, target = M.default_target(s.targets), tip = s.description }
+      if s and s.name and s.name ~= "" and (s.kind == TRUST) == trusts and M.castable(id, me) then
+        local cells = trusts and { "", "" } or { tostring(s.mp or 0), SPELL_KINDS[s.kind] or "" }
+        out[#out + 1] = { name = s.name, cells = cells, icon = { kind = "spell", id = id },
+          target = M.default_target(s.targets), tip = s.description }
       end
     end
   elseif ABILITY_KIND[kind] then
@@ -247,7 +259,7 @@ M.MAX_RESULTS = 150
 
 -- Whether action `name` targets only yourself.
 function M.self_only(kind, name)
-  if not ABILITY_KIND[kind] and kind ~= "ma" then return false end
+  if not ABILITY_KIND[kind] and kind ~= "ma" and kind ~= "trust" then return false end
   for _, e in ipairs(all_of(kind)) do
     if e.name == name and e.icon then
       local r = e.icon.kind == "spell" and res.spell(e.icon.id) or e.icon.kind == "ability" and res.ability(e.icon.id)

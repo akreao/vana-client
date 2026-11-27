@@ -8,6 +8,10 @@ use mlua::{Lua, Table};
 /// What the mod phase reads from the UI for the mods (shared as app data): the map grid as <pos> shows it.
 #[derive(Default)]
 pub(super) struct FrameInfo {
+    /// The game's key bindings (the client's Input table: three per key function, flags << 8 | DIK), for binds.users.
+    pub game_keys: Vec<[u16; 3]>,
+    /// Every running mod's binds this frame (mod id, combination), for binds.users.
+    pub all_binds: Vec<(String, super::input::Combo)>,
     pub grid: String,
     grid_at: Option<std::time::Instant>,
     /// The window in pixels, and UI units per pixel (the classic layout's stretch).

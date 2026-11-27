@@ -13,6 +13,8 @@ game = { player = function() return { main_job = 22, sub_job = 0 } end,
 chat = { add = function() end }
 SENT = {}
 commands.run = function(line) SENT[#SENT + 1] = line end
+-- One action goes straight to the game's action: recorded as the line it stands for.
+actions.ability = function(id, t) SENT[#SENT + 1] = ('/ja "%s" %s'):format(res.ability(id).name, t or "") end
 local on_window = ui.on
 ui.on = function(id, f)
   if id == "manager" then H = f elseif id == "group" then G = f end
@@ -26,7 +28,7 @@ manager.hooks = { changed = function() end, rebind = function() end }
 manager.open()
 -- New, Job ability, into Rune Enchantment, Make a Group of These, Save.
 H("manager", { kind = "press", id = "lbtn", index = 1 })
-H("manager", { kind = "set", id = "btype", index = 2 })
+H("manager", { kind = "set", id = "btype", index = require("src.builder").type_index("ja") })
 H("manager", { kind = "select", id = "found", index = 1 })
 H("manager", { kind = "press", id = "grp", index = 1 })
 -- Another target for the group leaves the runes, which take only us, on <me>.

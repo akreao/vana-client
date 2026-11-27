@@ -25066,6 +25066,39 @@ Settings > Graphics > Upscaling (config `upscaler` 0 off / 1 FSR / 2 external, `
   lua::ERROR red, "Updates are available for N mods (Settings > Mods)." (DAT packs: Settings > DAT Packs). Seen live
   (modern UI) with a test list (VANA_MOD_CATALOGUE) one version ahead.
 
+## Mod UI additions for the Hotbars rework (ours, 2026-11-25)
+- `textarea` element (lua/window.rs Input with `lines` > 1): Enter breaks the line, Up / Down keep the column
+  (line_move), Home / End go to the line's ends, Tab or Ctrl+Enter ends it, Escape undoes it, a paste keeps its line
+  breaks. Both UIs draw `lines` rows scrolled to the caret's line (area_rows); modern kit::field_lines.
+- Canvas `float = "right"`: at the window's right edge, taking no height; the elements after it narrow until past its
+  bottom (classic classic_widths / classic_size; modern: the element loop is a closure run in a narrowed child Ui).
+- HUD `top = true`: drawn over every window (modern: a tooltip-order painter; classic: a second pass after the mod
+  windows, lua::draw_hud_top) and left out of the hit rects, so drops reach what is under it.
+- `ui.prompt(text, buttons, handler, at)`: at "pointer" or {x, y, above}, the window's anchor.
+- Window event `context` {x, y}: a right-click on a mod window none of its elements took (modern: the window's drawn
+  rect, no canvas right-click in the frame's clicks; classic: no control under the pointer).
+- List row `hover` {title, text, icon}, canvas `tip` icon, HUD tip icon: the modern tooltip with the icon beside its
+  title (modwin::icon_tip). The classic UI keeps the row's `tip` in the help line.
+- `binds.users(key)`: the game's field key functions on a combination from the client's Input table (copied to the
+  frame info each frame; client::input::functions_on applies FUN_1011ff30's modifier flags: 0x80 neither Ctrl nor
+  Alt, 0x01 Shift, 0x02 Ctrl, 0x04 Alt, 0x08 both, 0x10 either, 0x20 no Shift), named by function_name (Ctrl+0..9
+  0x6c..0x75 and Alt+0..9 0x62..0x6b the macros, 0x58..0x61 the macro sets, F1..F8 targeting 0x46..0x4e, 0x10 first /
+  third person, 0x1c autorun, 0x30 lock-on, 0x44 /heal, 0x45 walk / run, 0x91 / 0x92 Enter / Esc on the target, ...);
+  functions of windows and lists are not counted (a plain `]` binding there takes Alt+] too). Other mods' binds of
+  the same combination, and the client's F12 and Ctrl+Alt+Shift+V.
+- Hotbars 1.14.0 uses them: the Builder (Type, Name with its icon tile, Target; a Macro's lines in a text area), one
+  action a slot run straight through actions.cast / ability / use_item / equip; Copy From's tiles; Assign Keys on the
+  bars (right-click anywhere), the Keys tab gone; one tooltip (src/tooltip.lua) everywhere.
+
+## Hotbars: a set per main / sub job pair (ours, 2026-11-25)
+- Hotbars 1.15.0 keeps db[main].sets[sub or "-"] (bars) and .pads[sub or "-"] (crossbars). A pair's first use
+  starts its set from the old layout: main with the sub set over it (false blanks), the job's one crossbar set;
+  src/subjob.lua drops another sub job's actions: a spell with no `levels` entry for the main or the sub job; a job
+  ability or pet command not in game.abilities(), only at main level 99 and once the jobs and the list have held for
+  2 s (the server's list for the new jobs lands after the change; game files give no job for an ability). Until then
+  the pair's set is shown, not saved; the settled list rebuilds the bars and saves it. The old parts stay to start
+  the pairs not played yet; delete_entry clears every set, uses() counts the pairs' slots once a job has any.
+
 ## Closest auto-target (ours, 2026-11-26)
 - Not retail: config closest_auto_target (default on, no UI yet), only while /autotarget is on (0x0B4 byte 1 bit 6
   clear). The server picks the next monster in a front cone after a kill (LSB CAttackState::UpdateTarget: the

@@ -1,5 +1,5 @@
 -- Hotbars' Builder lists the spells the magic list offers: learned and castable on our jobs at their levels
--- (RDM 54 / NIN 27: no Dia III, no Utsusemi: Ni), blue magic only while set.
+-- (RDM 54 / NIN 27: no Dia III, no Utsusemi: Ni), blue magic only while set; each row's tooltip.
 
 local spells = {
   [4] = { name = "Cure IV", mp = 88, kind = 1, levels = { [3] = 41, [5] = 48 } },
@@ -48,9 +48,14 @@ H("manager", { kind = "press", id = "lbtn", index = 1 })
 local count = ui.get("manager", "fcount").text
 assert(count == "3 found.", count)
 assert(shown[2][1] == "Dia II" and shown[2].tip == spells[24].description and shown[1].tip == nil)
+-- The row's tooltip: the name beside its icon, the MP, then the description.
+local tip = shown[2].hover
+assert(tip and tip.title == "Dia II" and tip.icon and tip.icon.kind == "spell" and tip.icon.id == 24, "Dia II's tooltip")
+assert(tip.text == "MP 30\n\n" .. spells[24].description, tip.text)
 H("manager", { kind = "select", id = "found", index = 2 })
-local line = ui.get("manager", "line").text
-assert(line == '/ma "Dia II" <t>', line)
+-- The pick names the macro (it runs as the magic menu does: no line to build).
+local name = ui.get("manager", "name").text
+assert(name == "Dia II", name)
 -- BLU 50 / NIN 25: Venom Shell set, Screwdriver learned but not set.
 me = { main_job = 16, main_level = 50, sub_job = 13, sub_level = 25 }
 game.spells = function() return { 338, 513, 519 } end

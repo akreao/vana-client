@@ -1277,6 +1277,14 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
     }
     let mut host = Host::park(&mut w.lua);
     host.gu = gu.map(|g| g as *const _);
+    // Who binds what, for binds.users: every running mod's binds.
+    let all: Vec<(String, input::Combo)> = host
+        .vms
+        .iter()
+        .filter(|v| v.suspended.is_none())
+        .flat_map(|v| v.st.borrow().binds.iter().map(|b| (v.manifest.id.clone(), b.combo)).collect::<Vec<_>>())
+        .collect();
+    host.info.borrow_mut().all_binds = all;
     if !host.started {
         // Mods start with our character's state in: in a zone, our vitals known (or 5 s on, whatever came).
         let waited = *host.start_wait.get_or_insert_with(std::time::Instant::now);
@@ -1793,13 +1801,20 @@ pub(super) fn world_shapes(w: &World) -> [Vec<crate::render::LineVertex>; 2] {
 }
 
 /// The mods' HUD elements, under the windows (world_hud).
+/// The HUD elements drawn over the windows (`top`), after the classic UI's windows.
+pub(super) fn draw_hud_top(gu: &mut super::game_ui::GameUi, w: &World) {
+    if !w.modern && w.lua.started && !w.lua.all_hidden.get() {
+        hud::draw(gu, w, true);
+    }
+}
+
 pub(super) fn draw_hud(gu: &mut super::game_ui::GameUi, w: &World) {
     if !w.modern {
         w.lua.set_modern_scale(None);
     }
     if w.lua.started && !w.lua.all_hidden.get() {
         draw::draw_overlay(gu, w);
-        hud::draw(gu, w);
+        hud::draw(gu, w, false);
     } else {
         w.lua.info.borrow_mut().hud_rects.clear();
     }
@@ -1985,7 +2000,7 @@ impl Host {
     }
 
     /// The tooltip of the mod HUD element under the pointer: (title, text, seconds there).
-    pub(in crate::client) fn hud_tip(&self) -> Option<(String, String, f32)> {
+    pub(in crate::client) fn hud_tip(&self) -> Option<(String, String, Option<window::Icon>, f32)> {
         hud::tip(self)
     }
 
@@ -4788,6 +4803,14 @@ pub(super) fn pointer_classic(
 }
 
 impl Host {
+    /// The game's key bindings as the client's Input table holds them, for binds.users.
+    pub(in crate::client) fn set_game_keys(&self, keys: &[[u16; 3]]) {
+        let mut f = self.info.borrow_mut();
+        if f.game_keys != keys {
+            f.game_keys = keys.to_vec();
+        }
+    }
+
     /// F12's lines: each mod's time a frame (average and peak, ms), calls over the soft cap, memory, errors.
     pub(super) fn debug_lines(&self) -> Vec<String> {
         self.vms
