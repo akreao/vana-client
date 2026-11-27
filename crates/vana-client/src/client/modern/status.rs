@@ -253,10 +253,8 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         })
         .collect();
     let money = if sel == 6 { currencies::merged(gu, &s.cur) } else { Vec::new() };
-    let title = w.names.as_ref().and_then(|n| {
-        use crate::dat::names::NameSource;
-        n.title(stats.title as u32)
-    });
+    // The profile's gender rule (status::bars): German and French titles have a female form.
+    let title = w.names.as_ref().and_then(|n| n.title_of(stats.title as u32, matches!(w.my_race, 2 | 4 | 6 | 7), 200));
     let nation = (stats.nation < 3).then(|| caption("menu    keytops3", 74 + stats.nation as usize)).flatten();
     let home = crate::dat::font::plain(&crate::dat::font::decode_sjis(&gu.area_name(stats.home)));
     let race = status::RACES.get(w.my_race as usize).copied().unwrap_or("");

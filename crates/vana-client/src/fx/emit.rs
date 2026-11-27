@@ -977,6 +977,7 @@ fn emit_ops(
         serial: 0,
         born: 0,
         late: false,
+        rank: 0,
         life,
         max_life,
         flags,

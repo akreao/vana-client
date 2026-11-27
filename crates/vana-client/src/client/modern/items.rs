@@ -116,11 +116,13 @@ fn list(p: &mut Panels, w: &mut World) {
             return;
         }
         if !direct {
+            // Manual in state 5 on a temporary item (gitems::manual_off): drawn off, no click.
+            let manual_off = gitems::manual_off(&shown, scroll + cursor);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 for (child, label) in [(1u16, "Auto-sort"), (2, "Manual Sort"), (3, "Recycle Bin")] {
                     let lit = sort.is_some_and(|s| s.cursor == child) || (child == 2 && manual.is_some());
-                    if button(ui, m, label, lit, sub.is_some()) {
+                    if button(ui, m, label, lit, sub.is_some() || (child == 2 && manual_off)) {
                         mouse.sort = Some(child);
                     }
                 }

@@ -2148,22 +2148,70 @@ fn reply(world: &mut World) {
     world.typing = true;
 }
 
-/// Channel prefixes of key functions 0x3c, 0x38, 0x3a, 0x3e, 0xad, 0xae.
-fn chat_shortcut(k: egui::Key) -> Option<&'static str> {
-    Some(match k {
-        egui::Key::S => "/say ",
-        egui::Key::T => "/tell ",
-        egui::Key::P => "/party ",
-        egui::Key::L => "/linkshell ",
-        egui::Key::U => "/unity ",
-        egui::Key::X => "/linkshell2 ",
+/// The chat line's key functions in FUN_101af9b0's order: /say 0x3c, /linkshell 0x3e, /tell 0x38, /party 0x3a,
+/// /unity 0xad, /linkshell2 0xae, assist 0xb4. Each that fires writes the line, so the last one wins.
+const CHAT_KEYS: [u8; 7] = [0x3c, 0x3e, 0x38, 0x3a, 0xad, 0xae, 0xb4];
+
+/// A channel key function's text (FUN_101af710's table); 0xb4 has two (`assist_texts`).
+fn chat_text(id: u8) -> Option<&'static str> {
+    Some(match id {
+        0x3c => "/say ",
+        0x38 => "/tell ",
+        0x3a => "/party ",
+        0x3e => "/linkshell ",
+        0xad => "/unity ",
+        0xae => "/linkshell2 ",
         _ => return None,
     })
 }
 
+/// The channel key function `k` fires with Ctrl / Alt: its key as Key Assignment set it (World.chat_keys; S, L, T,
+/// P, U, X, Q by default), none while Key Assignment is open (flag 0x10).
+fn chat_key(w: &World, k: egui::Key) -> Option<u8> {
+    if w.config.as_ref().is_some_and(key_assigning) {
+        return None;
+    }
+    chat_key_of(w.chat_keys, input::egui_dik(k)?)
+}
+
+/// The channel key function a DIK code fires, given each one's key (CHAT_KEYS order): the last that matches.
+fn chat_key_of(keys: [u8; 7], dik: u8) -> Option<u8> {
+    CHAT_KEYS.iter().zip(keys).filter(|&(_, key)| key != 0 && key == dik).map(|(&id, _)| id).next_back()
+}
+
+/// A channel key function fired: its text before the line's body (FUN_101afb40), or the assist key's step.
+fn chat_key_fire(w: &mut World, id: u8) {
+    match chat_text(id) {
+        Some(p) => chat_prefix(w, p),
+        None => assist_key(w),
+    }
+}
+
+/// Key function 0xb4 (config 0x86, Q; entry +0x1ffc of FUN_101af710's table): two texts, "/assiste " then
+/// "/assistj " (Japanese the other way round; German and French as English only with the European flag, lang::files).
+fn assist_texts(l: crate::dat::items::Lang) -> [&'static str; 2] {
+    match l {
+        crate::dat::items::Lang::Ja => ["/assistj ", "/assiste "],
+        _ => ["/assiste ", "/assistj "],
+    }
+}
+
+/// FUN_101af4f0 with FUN_101af5b0: the text key function 0xb4 takes next. Typing in an assist mode (FUN_101b9c10:
+/// the line's mode 0xe / 0xf) steps to the other one, wrapping after the second; otherwise the last one stays.
+fn assist_step(last: u8, typing: bool, mode: u8) -> u8 {
+    if typing && matches!(mode, 0xe | 0xf) { (last + 1) % 2 } else { last }
+}
+
+/// Key function 0xb4: its text before the line's body, as FUN_101afb40 puts the other channel keys'.
+fn assist_key(world: &mut World) {
+    let mode = chatctrl::line_mode(&world.chat_input, world.chat_mode);
+    world.assist_key = assist_step(world.assist_key, world.typing, mode);
+    chat_prefix(world, assist_texts(crate::dat::lang::files())[world.assist_key as usize]);
+}
+
 fn swallow_shortcut_text(pending: &mut Option<egui::Key>, event: &egui::Event) -> bool {
     match event {
-        egui::Event::Text(text) => pending.take().is_some_and(|key| text.eq_ignore_ascii_case(key.name())),
+        egui::Event::Text(text) => pending.take().is_some_and(|key| text.eq_ignore_ascii_case(key.symbol_or_name())),
         egui::Event::Key { pressed: true, .. } => {
             *pending = None;
             false
@@ -2906,6 +2954,7 @@ fn world_hud(
     } else {
         input
     };
+    jobpoints::track(world, gu, for_bars.pointer);
     let taken = scrollbar::frame(gu, world, for_bars);
     let input = if over_mod { input } else { taken.as_ref().unwrap_or(input) };
     // Enter on itemctrl / moneyctr is message 5 on the cursor child the mouse left there (winhits::ctr_enter).
@@ -3140,7 +3189,7 @@ fn world_hud(
                 fep::insert(world, &t);
             }
             // egui turns Ctrl+C / Ctrl+X into Copy / Cut instead of key events. In the chat line they copy / cut the
-            // selection (ours; Ctrl+V pastes through egui-winit's clipboard), else /check and the /linkshell2 line.
+            // selection (ours; Ctrl+V pastes through egui-winit's clipboard), else /check and X's channel key.
             // The chat line's selection first, then the modern chat window's selected lines (chatsel.rs).
             egui::Event::Copy if world.typing && fep::selection(world).is_some() => {
                 world.copied = fep::selected_text(world)
@@ -3152,7 +3201,13 @@ fn world_hud(
                 world.copied = fep::selected_text(world);
                 fep::delete_selection(world);
             }
-            egui::Event::Cut if !event::cinema(world) => chat_prefix(world, "/linkshell2 "),
+            // Ctrl+X without a selection: whatever channel key X is assigned to (/linkshell2 by default).
+            egui::Event::Cut
+                if !event::cinema(world)
+                    && let Some(id) = chat_key(world, egui::Key::X) =>
+            {
+                chat_key_fire(world, id)
+            }
             egui::Event::Key { key, physical_key, pressed: true, modifiers, .. } => match key {
                 // Ours: an open modern right-click menu has its keys (modern/ctxmenu.rs reads them from egui), so they
                 // reach nothing under it (Enter would target the nearest, Escape the target, the chat line send).
@@ -3210,9 +3265,10 @@ fn world_hud(
                 k if (modifiers.ctrl || modifiers.alt)
                     && !opened
                     && !event::cinema(world)
-                    && let Some(p) = chat_shortcut(*k) =>
+                    && !numpad
+                    && let Some(id) = chat_key(world, *k) =>
                 {
-                    chat_prefix(world, p);
+                    chat_key_fire(world, id);
                     swallow_text = modifiers.alt.then_some(*k);
                     keys.clear();
                 }
@@ -3525,7 +3581,9 @@ fn world_hud(
                 _ if world.unity.is_some() => unity::key(world, gu, *key, modifiers.ctrl || modifiers.alt),
                 _ if world.pupequip.is_some() => equipwin::pup_key(world, gu, *key),
                 _ if world.merits_ui.is_some() => merits::key(world, gu, *key),
-                _ if world.jp_ui.is_some() => jobpoints::key(world, *key, modifiers.ctrl || modifiers.alt),
+                _ if world.jp_ui.is_some() => {
+                    jobpoints::key(world, *key, modifiers.ctrl || modifiers.alt, winhits::shown(gu))
+                }
                 _ if world.ae_ui.is_some() => aepoints::key(world, *key, modifiers.ctrl || modifiers.alt),
                 _ if world.cel_ui.is_some() => {
                     if celestite::event_key(*key) {
@@ -4845,11 +4903,17 @@ fn world_hud(
     winhits::clear(world);
     // The map's windows were drawn above (MapWin::draw).
     if let Some(m) = &world.map {
-        for (name, frame, kids) in m.drawn.borrow().iter() {
+        for (name, frame, kids, _) in m.drawn.borrow().iter() {
             winhits::record_all(world, gu, name, *frame, kids);
         }
     }
     gu.clear_disabled_parts();
+    // The map's disabled children (map0's Wide Scan, mapscan's Track, mapv2's View) are drawn by hand: no hand there.
+    if let Some(m) = &world.map {
+        for (name, _, _, off) in m.drawn.borrow().iter() {
+            gu.mark_disabled(name, off);
+        }
+    }
     for (k, n) in ["menu    raid1", "menu    raid2"].iter().enumerate() {
         if st.alliance[k].is_some() {
             blockers.extend(gu.window_rect(n, sw, sh));
@@ -8260,6 +8324,10 @@ struct World {
     hud_top: hudtop::HudTop,
     /// Who sent us tells, most recent first (Ctrl+R).
     tells: Vec<String>,
+    /// Key function 0xb4's text (its entry +0x104, FUN_101af4f0): 0 or 1 of `assist_texts`.
+    assist_key: u8,
+    /// The channel keys' Ctrl / Alt DIK codes (CHAT_KEYS order; Input::ctrl_key after Key Assignment), 0 for none.
+    chat_keys: [u8; 7],
     /// Battle message table, names and colours (loaded in the background).
     battle: Option<Arc<crate::dat::battle::BattleText>>,
     /// Melee results waiting for the attacker's hit.
@@ -11115,6 +11183,8 @@ impl App {
                             log2_up: false,
                             hud_top: Default::default(),
                             tells: Vec::new(),
+                            assist_key: 0,
+                            chat_keys: [0; 7],
                             battle: None,
                             pending: Vec::new(),
                             rounds: HashMap::new(),
@@ -12683,8 +12753,10 @@ impl App {
                     if let (Some(m), Some(dats)) = (world.msgshift.clone(), world.index.clone()) {
                         std::thread::spawn(move || m.installed(&dats, zone));
                     }
-                    // FUN_1018b500 -> FUN_1001e4f0: the view shake stops at a zone load.
+                    // FUN_1018b500 -> FUN_1001e4f0: the view shake stops at a zone load, and a camera path's roll
+                    // and focal go.
                     world.camst.shake = camera::Shake::default();
+                    camera::scene_reset(world);
                     // FUN_10093720: the zone load clears the once-a-zone sound reset; it runs when the player's model
                     // is up (below), or at an event end before that.
                     world.sound_reset = false;
@@ -14275,12 +14347,20 @@ impl App {
         for op in std::mem::take(&mut world.effects.env_ops) {
             event::env_op(world, op);
         }
-        for name in std::mem::take(&mut world.effects.event_path_stops) {
-            world.screen.stop_path(String::from_utf8_lossy(&name.to_le_bytes()).trim_end_matches('\0'));
-        }
         for c in std::mem::take(&mut world.effects.event_cameras) {
-            if let Some(index) = world.index.clone() {
-                world.screen.fx_camera(&index, c);
+            match c {
+                crate::fx::CameraOp::Start(c) => {
+                    if let Some(index) = world.index.clone() {
+                        world.screen.fx_camera(&index, c);
+                    }
+                }
+                crate::fx::CameraOp::Stop(name) => world.screen.fx_stop(name),
+            }
+        }
+        // FUN_1003c8a0 -> FUN_10085310: a camera op forces every actor's next pose (+0xa04).
+        if std::mem::take(&mut world.effects.camera_cuts) > 0 {
+            for a in world.actors.values_mut() {
+                a.anim_force = true;
             }
         }
         for (id, _, ticks) in std::mem::take(&mut world.effects.locks) {
@@ -15340,6 +15420,7 @@ impl App {
             target::step_camera(world, ticks, turn, rise);
         }
         camera::step(world, dt, &cam_in);
+        event::game_camera(world);
         let in_event = event::active(world);
         // FUN_100adf70: the "Screen shaking" filter is off while the player is busy, not only in an event.
         world.effects.busy = textcmd::busy(world);
@@ -15501,6 +15582,12 @@ impl App {
         });
         if let Phase::World(w) = &self.phase {
             self.input.assign(&w.game);
+        }
+        let chat_keys = CHAT_KEYS.map(|id| self.input.ctrl_key(id as usize));
+        if let Phase::World(w) = &mut self.phase {
+            w.chat_keys = chat_keys;
+        }
+        if let Phase::World(w) = &self.phase {
             self.input.context = key_context(w);
             // Not with the UI hidden: the search gets no events then. Ours: the Settings window's search opens the same way.
             f.typing = text_field_open(w)
@@ -17048,16 +17135,50 @@ impl App {
                                 .enumerate()
                                 .map(|(i, r)| (CHILD[i], r))
                                 .collect();
-                            // The shared window steps (winhits::takes); a click picks the cursor's button.
-                            for (m, r) in &rects {
-                                if !config_open && input.pointer.is_some_and(|p| inside(r, p)) {
+                            // The shared window steps (winhits::takes); a click picks the cursor's button. Classic:
+                            // on loby2win's child boxes (FUN_1011a140, header offsets in) with the held step on its
+                            // frame (FUN_1011a0a0); modern: on the buttons as drawn.
+                            let title_win = (!self.cfg.modern_ui && !window_over).then(|| {
+                                let kids = lu.title_boxes(sw, sh, logos);
+                                let frame = lu.window_rect("menu    loby2win", sw, sh).unwrap_or_default();
+                                winhits::LobbyFocus::new(lu, "menu    loby2win", frame, &kids)
+                            });
+                            let hits: Vec<(usize, [f32; 4])> = match &title_win {
+                                Some(t) => t.children.iter().map(|&(id, r)| (CHILD[id as usize - 1], r)).collect(),
+                                None => rects.clone(),
+                            };
+                            // Classic: the first child whose box holds the pointer, both ends in (FUN_1011a140).
+                            let classic_hit = title_win
+                                .as_ref()
+                                .zip(input.pointer)
+                                .and_then(|(t, p)| t.child(p))
+                                .map(|id| CHILD[id as usize - 1]);
+                            for (m, r) in &hits {
+                                let on = match &title_win {
+                                    Some(_) => classic_hit == Some(*m),
+                                    None => input.pointer.is_some_and(|p| inside(r, p)),
+                                };
+                                if !config_open && on {
                                     let at = *menu;
-                                    if winhits::takes(lu, "lobby title", *m as u16 + 1, true) && at != *m {
+                                    let frame = match (&title_win, input.pointer) {
+                                        (Some(t), Some(p)) => t.in_frame(p),
+                                        _ => true,
+                                    };
+                                    if winhits::takes(lu, "lobby title", *m as u16 + 1, frame) && at != *m {
                                         *menu = *m;
                                     } else if input.released && at == *m {
                                         chosen = Some(*m);
                                     }
+                                    break;
                                 }
+                            }
+                            // The release over no button (FUN_1015f420 on loby2win, the focused window): SE 0004.
+                            if input.released
+                                && let Some(p) = input.pointer
+                                && winhits::lobby_release_off(lu, title_win.as_ref(), p)
+                                && let Some(a) = self.audio.as_mut()
+                            {
+                                a.ui(crate::audio::Ui::Error);
                             }
                             let child_enabled = CHILD.map(|k| enabled[k]);
                             let shown = CHILD[*menu];
@@ -17657,7 +17778,7 @@ impl App {
                         let status_line = (!status.is_empty()).then_some(status.as_str());
                         // Modern: the panels draw the steps and prompts; their mouse acts as retail's below.
                         let modern_ui = self.cfg.modern_ui;
-                        let (rects, ptr) = if modern_ui {
+                        let ptr = if modern_ui {
                             creator::draw_modern(gu, &view, sw, sh);
                             let page = creator::Page {
                                 view: &view,
@@ -17668,18 +17789,11 @@ impl App {
                                 free: !busy,
                             };
                             let m = self.modern.get_or_insert_with(|| modern::Modern::new(ctx));
-                            (
-                                Vec::new(),
-                                m.creator_screen(
-                                    ctx,
-                                    gu,
-                                    [screen_size[0], screen_size[1]],
-                                    self.cfg.modern_scale,
-                                    &page,
-                                ),
-                            )
+                            m.creator_screen(ctx, gu, [screen_size[0], screen_size[1]], self.cfg.modern_scale, &page)
                         } else {
-                            (creator::draw_ui(gu, &view, sw, sh, status_line, None), creator::Pointer::default())
+                            // The classic mouse hits the focused window as laid out (winhits::LobbyFocus) below.
+                            creator::draw_ui(gu, &view, sw, sh, status_line, None);
+                            creator::Pointer::default()
                         };
                         let pointer = input.pointer.filter(|_| !busy);
                         let mut check = false;
@@ -17717,51 +17831,77 @@ impl App {
                                 }
                                 answer = answer.or(ptr.yes.1);
                             }
-                        } else if let Some((text, _)) = &self.creator_ok {
-                            if let Some(r) = gu.ok_window(text, sw, sh)
-                                && pointer.is_some_and(|p| inside(&r, p))
-                            {
-                                gu.hover.set(true);
-                                ok |= input.clicked;
-                            }
-                        } else if let Some(ws) = self.creator_world.as_mut().filter(|_| step == 5) {
-                            // worldsel's rows: a row takes the cursor by winhits::takes (0001), a click on the cursor's
-                            // row is Enter (inf: the generic list).
-                            if let Some(p) = pointer
-                                && let Some(i) = rects.iter().position(|r| inside(r, p))
-                            {
-                                let on = ws.top + i == ws.cursor;
-                                if winhits::takes(gu, "creator worldsel", i as u16 + 1, true) && ws.hover(i) {
-                                    world_se.push(crate::audio::Ui::Cursor);
-                                } else if input.released
-                                    && on
-                                    && let creator::WorldAct::Sound(s) = ws.pick()
+                        } else {
+                            // The focused window (FUN_1015f920 opens each step's window with the focus): its hit
+                            // boxes take the shared window steps (winhits::takes), the held step inside its frame
+                            // (FUN_1011a0a0), and a release over none of its children buzzes (FUN_1015f420).
+                            let focus = if let Some((text, _)) = &self.creator_ok {
+                                gu.ok_win(text, sw, sh)
+                                    .map(|w| winhits::LobbyFocus::new(gu, "menu    ok", w.frame, &w.children))
+                            } else if let Some(ws) = self.creator_world.as_ref().filter(|_| step == 5) {
+                                // worldsel (menu_worldsel_fn), then chmkpass over it for the pass; both 8 down.
+                                let name = if ws.pass.is_some() { "menu    chmkpass" } else { "menu    worldsel" };
+                                winhits::LobbyFocus::layout_off(gu, name, sw, sh, (0.0, 8.0))
+                            } else if step < 7 {
+                                (!(step == 5 && name_hidden))
+                                    .then(|| winhits::LobbyFocus::layout(gu, STEPS[step].0, sw, sh))
+                                    .flatten()
+                            } else if step == 7 {
+                                gu.yes_no_win(&select::register_text(gu, new_name), self.creator_yes, true, sw, sh)
+                                    .map(|w| winhits::LobbyFocus::new(gu, "menu    ptc6yesn", w.frame, &w.children))
+                            } else {
+                                None
+                            };
+                            let hit =
+                                pointer.zip(focus.as_ref()).and_then(|(p, f)| f.child(p).map(|c| (c, f.in_frame(p))));
+                            if self.creator_ok.is_some() {
+                                if let Some((1, _)) = hit {
+                                    gu.hover.set(true);
+                                    ok |= input.released;
+                                }
+                            } else if let Some(ws) = self.creator_world.as_mut().filter(|_| step == 5) {
+                                // worldsel's rows: a row takes the cursor by winhits::takes (0001), a click on the
+                                // cursor's row is Enter (inf: the generic list).
+                                if ws.pass.is_none()
+                                    && let Some((c, frame)) = hit
+                                    && ws.top + (c as usize) <= ws.rows.len()
                                 {
-                                    world_se.push(s);
+                                    let i = c as usize - 1;
+                                    let on = ws.top + i == ws.cursor;
+                                    if winhits::takes(gu, "creator worldsel", c, frame) && ws.hover(i) {
+                                        world_se.push(crate::audio::Ui::Cursor);
+                                    } else if input.released
+                                        && on
+                                        && let creator::WorldAct::Sound(s) = ws.pick()
+                                    {
+                                        world_se.push(s);
+                                    }
                                 }
-                            }
-                        } else if step < 7 {
-                            if let Some(p) = pointer
-                                && let Some(i) = rects.iter().position(|r| inside(r, p))
+                            } else if step < 7 {
+                                // The step's rows (children 1..n; its page arrows are hit but not taken here).
+                                if let Some((c, frame)) = hit.filter(|h| (h.0 as usize) <= n) {
+                                    let (i, at) = (c as usize - 1, sel);
+                                    if winhits::takes(gu, "creator step", c, frame) && at != i {
+                                        sel = i;
+                                    } else if input.released && at == i {
+                                        next = true;
+                                    }
+                                }
+                            } else if step == 7
+                                && let Some((id, frame)) = hit.filter(|h| h.0 <= 2)
                             {
-                                let at = sel;
-                                if winhits::takes(gu, "creator step", i as u16 + 1, true) && at != i {
-                                    sel = i;
-                                } else if input.released && at == i {
-                                    next = true;
+                                let on = (id == 1) == self.creator_yes;
+                                if winhits::takes(gu, "creator yes no", id, frame) && !on {
+                                    self.creator_yes = id == 1;
+                                } else if input.released && on {
+                                    answer = Some(id == 1);
                                 }
                             }
-                        } else if step == 7
-                            && let Some(children) =
-                                gu.yes_no_window(&select::register_text(gu, new_name), self.creator_yes, true, sw, sh)
-                            && let Some(p) = pointer
-                            && let Some(&(id, _)) = children.iter().find(|(_, r)| inside(r, p))
-                        {
-                            let on = (id == 1) == self.creator_yes;
-                            if winhits::takes(gu, "creator yes no", id, true) && !on {
-                                self.creator_yes = id == 1;
-                            } else if input.released && on {
-                                answer = Some(id == 1);
+                            if input.released
+                                && let Some(p) = pointer
+                                && winhits::lobby_release_off(gu, focus.as_ref(), p)
+                            {
+                                world_se.push(crate::audio::Ui::Error);
                             }
                         }
                         match step {
@@ -23138,7 +23278,8 @@ mod tests {
         ] {
             let mut pending = None;
             assert!(!swallow_shortcut_text(&mut pending, &shortcut_key(key, egui::Modifiers::ALT)));
-            let mut line = format!("{}{}", chat_shortcut(key).unwrap(), strip_channel(typed));
+            let id = if key == egui::Key::L { 0x3e } else { 0x3c };
+            let mut line = format!("{}{}", chat_text(id).unwrap(), strip_channel(typed));
             pending = Some(key);
             if !swallow_shortcut_text(&mut pending, &egui::Event::Text(text.into())) {
                 line.push_str(text);
@@ -23146,6 +23287,38 @@ mod tests {
             assert_eq!(line, expected);
             assert_eq!(pending, None);
         }
+    }
+
+    /// Key function 0xb4 (FUN_101af4f0 / FUN_101af5b0): English "/assiste " first, Japanese "/assistj "; pressed again
+    /// on an assist line the other one, then back; not typing (or on another channel) the last one stays.
+    #[test]
+    fn assist_key_texts() {
+        use crate::dat::items::Lang;
+        assert_eq!(assist_texts(Lang::En), ["/assiste ", "/assistj "]);
+        assert_eq!(assist_texts(Lang::Ja), ["/assistj ", "/assiste "]);
+        assert_eq!(assist_texts(Lang::De)[0], "/assiste ");
+        let mode = |l: &str| chatctrl::line_mode(l, 2);
+        assert_eq!(assist_step(0, false, mode("")), 0);
+        assert_eq!(assist_step(0, true, mode("/assiste hi")), 1);
+        assert_eq!(assist_step(1, true, mode("/assistj hi")), 0);
+        assert_eq!(assist_step(1, true, mode("/say hi")), 1);
+        assert_eq!(assist_step(1, false, mode("/assistj hi")), 1);
+        assert_eq!(strip_channel("/assiste hello"), "hello");
+    }
+
+    /// Channel keys by their assigned keys (CHAT_KEYS order): the defaults, a key moved to another channel, a cleared
+    /// one; an Alt + comma binding swallows its ",".
+    #[test]
+    fn chat_keys_by_binding() {
+        let defaults = [0x1f, 0x26, 0x14, 0x19, 0x16, 0x2d, 0x10];
+        assert_eq!(chat_key_of(defaults, 0x1f), Some(0x3c));
+        assert_eq!(chat_key_of(defaults, 0x10), Some(0xb4));
+        let moved = [0, 0x26, 0x14, 0x19, 0x16, 0x2d, 0x1f];
+        assert_eq!(chat_key_of(moved, 0x1f), Some(0xb4));
+        assert_eq!(chat_key_of(moved, 0x10), None);
+        assert_eq!(chat_key_of(moved, 0), None);
+        let mut pending = Some(egui::Key::Comma);
+        assert!(swallow_shortcut_text(&mut pending, &egui::Event::Text(",".into())));
     }
 
     #[test]

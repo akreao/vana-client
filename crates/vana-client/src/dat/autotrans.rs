@@ -160,6 +160,21 @@ fn fold_cmp(a: &[u8], b: &[u8], n: usize, t: &[u8; 0x42]) -> i32 {
     0
 }
 
+/// FUN_101c9d00(a, b, 0): the whole strings char by char through DAT_1037e358; true when no char differs (accented
+/// letters stay apart, case does not count).
+pub fn order_eq(a: &[u8], b: &[u8]) -> bool {
+    let (mut i, mut j) = (0, 0);
+    while byte(a, i) != 0 || byte(b, j) != 0 {
+        let (x, k) = fold(&FOLD_ORDER, a, i);
+        let (y, l) = fold(&FOLD_ORDER, b, j);
+        if x != y {
+            return false;
+        }
+        (i, j) = (i + k, j + l);
+    }
+    true
+}
+
 /// _strncmp.
 fn strncmp(a: &[u8], b: &[u8], n: usize) -> i32 {
     for i in 0..n {
@@ -690,7 +705,13 @@ impl Dictionary {
                 }
             }
             let n = names?;
-            return if key { n.key_item(id).map(|x| x.bare) } else { n.item_name(id) };
+            // Kind 0x13: the key item's name with its first char up (FUN_10155af0 -> FUN_1025d720); kind 7: the item
+            // record's name as it is (FUN_1015d210 +0x1b4).
+            return if key {
+                n.key_item(id).and_then(|x| super::case::cap_first_str(&x.bare, usize::MAX))
+            } else {
+                n.item_name(id)
+            };
         }
         let g = &self.groups[*self.by_id.get(&hi)?];
         if lo == 0 {

@@ -1030,6 +1030,11 @@ impl GameUi {
         screens::title_button_rects(&self.data.lobby, w, h, Self::shift(owned))
     }
 
+    /// loby2win's child boxes at their places (`screens::title_child_boxes`), child ids 1..5.
+    pub fn title_boxes(&self, w: f32, h: f32, owned: u32) -> Vec<(u16, [f32; 4])> {
+        screens::title_child_boxes(&self.data.lobby, w, h, Self::shift(owned))
+    }
+
     pub fn text_width(&self, s: &str) -> f32 {
         if let Some(runs) = icon_runs(s) {
             return runs
@@ -1645,13 +1650,14 @@ impl GameUi {
     }
 
     /// ptc6yesn (draw FUN_10231f50), centred: the text in the frame rect with x0 + 0x30 (all but Japanese) and 28 px
-    /// off the bottom, Yes / No (children 1 / 2), the warning icon (child 3) unless hidden. Returns the Yes / No rects.
-    pub fn yes_no_window(&mut self, text: &str, yes: bool, icon: bool, w: f32, h: f32) -> Option<Vec<(u16, [f32; 4])>> {
+    /// off the bottom, Yes / No (children 1 / 2), the warning icon (child 3) unless hidden. Returns the window (its
+    /// frame and every child drawn).
+    pub fn yes_no_win(&mut self, text: &str, yes: bool, icon: bool, w: f32, h: f32) -> Option<LobbyWin> {
         let hide: &[u16] = if icon { &[] } else { &[3] };
         let win = self.lobby_window("menu    ptc6yesn", w, h, true, Some(if yes { 1 } else { 2 }), true, hide)?;
         let r = Self::clamp_rect(win.frame, w, h);
         self.text_block(text, [r[0] + 48.0, r[1], r[2], r[3] - 28.0]);
-        Some(win.children.into_iter().filter(|(id, _)| *id <= 2).collect())
+        Some(win)
     }
 
     /// Ours: the yes / no window's warning icon (ptc6yesn child 3's sprite) at (x, y), for a warning next to a label.
@@ -1670,10 +1676,15 @@ impl GameUi {
 
     /// menu ok (FUN_102319a0), centred: the text in the frame rect, 28 px off the bottom, and its OK child.
     pub fn ok_window(&mut self, text: &str, w: f32, h: f32) -> Option<[f32; 4]> {
+        self.ok_win(text, w, h)?.children.first().map(|c| c.1)
+    }
+
+    /// `ok_window` with its frame.
+    pub fn ok_win(&mut self, text: &str, w: f32, h: f32) -> Option<LobbyWin> {
         let win = self.lobby_window("menu    ok", w, h, true, Some(1), true, &[])?;
         let r = Self::clamp_rect(win.frame, w, h);
         self.text_block(text, [r[0], r[1], r[2], r[3] - 28.0]);
-        win.children.first().map(|c| c.1)
+        Some(win)
     }
 
     /// What an FFXI error code shows (FUN_10017310 / FUN_10017380): "Error code: FFXI-%04d" (group 7 id 1), then for
@@ -2639,6 +2650,14 @@ impl GameUi {
         self.data.lobby.menu(name).map_or(Vec::new(), |m| {
             m.elements.iter().skip(1).map(|e| [e.x as f32, e.y as f32, e.w as f32, e.h as f32]).collect()
         })
+    }
+
+    /// Children of window `name` in state 5 that the window draws by hand (not through `disabled_children`): the
+    /// pointer over them is no hand all the same (FUN_1011a140's out flag).
+    pub fn mark_disabled(&mut self, name: &str, off: &[u16]) {
+        if !off.is_empty() {
+            self.off_parts.entry(name.to_string()).or_default().extend_from_slice(off);
+        }
     }
 
     /// Child `id` of window `name` was drawn in state 5 (disabled_children): the pointer over it is no hand.

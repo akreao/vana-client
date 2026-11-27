@@ -126,6 +126,8 @@ pub struct Item {
     pub name: String,
     /// English only (FUN_1014fda0): article type 0 "a", 1 "an", 2 "pair of", 3 "suit of".
     pub article: u32,
+    /// The log names (English, German, French; empty in Japanese): what FUN_1015b4f0 shows and its plural. German
+    /// ones are declined in the nominative with no article (dat::grammar).
     pub singular: String,
     pub plural: String,
     pub description: String,
@@ -353,6 +355,24 @@ pub fn parse(r: &[u8], kind: Kind, lang: Lang, wide: bool) -> Item {
             it.singular = text(f.get(2));
             it.plural = text(f.get(3));
         }
+        // FUN_1015d3d0 makes the German and French name objects only when the field count is exact (the descriptions
+        // after 8 / 5 fields): FUN_1015ec00 and FUN_1015ecd0. The log name is what FUN_1015b4f0 shows (vt+0x20 with
+        // no article in the nominative, vt+0x1c), the plural vt+0x18 / the plural field.
+        let num = |i: usize| if let Some(Field::Num(n)) = f.get(i) { *n } else { 0 };
+        match lang {
+            Lang::De if f.len() == 8 + descs && kind != Kind::Monster => {
+                use super::grammar::{DeItem, NONE, bytes, text as back};
+                let (s, p) = (bytes(&text(f.get(4))), bytes(&text(f.get(7))));
+                let n = DeItem::new(num(1), num(2), num(3), &s, num(5), num(6), &p);
+                it.singular = back(&n.display(NONE, 0));
+                it.plural = back(&n.plural(NONE, 0));
+            }
+            Lang::Fr if f.len() == 5 + descs && kind != Kind::Monster => {
+                it.singular = text(f.get(3));
+                it.plural = text(f.get(4));
+            }
+            _ => {}
+        }
         if descs > 0 && f.len() > descs {
             it.description = f[f.len() - descs..].iter().map(|x| text(Some(x))).collect::<Vec<_>>().join("\n");
         }
@@ -364,6 +384,30 @@ pub fn parse(r: &[u8], kind: Kind, lang: Lang, wide: bool) -> Item {
         }
     }
     it
+}
+
+/// DAT_10664118 (set by FUN_101c9f20 for the language): whether `typed` names the item, as /equip and /item find
+/// theirs (FUN_1007b276, FUN_101f12d0, FUN_101f1630). Japanese the short name byte for byte (FUN_101ca100), English
+/// the short or the log name in any case (FUN_101ca150, _stricmp), German and French the same through FUN_101c9d00
+/// (FUN_101ca190).
+pub fn named(lang: Lang, typed: &str, it: &Item) -> bool {
+    use super::font::encode_sjis;
+    // A letter typed as Unicode Latin-1 (U+00C0..U+00FF but × and ÷, which Shift-JIS has: a keyboard's or a paste's
+    // accents) is the game's 0x85 row
+    // (0x85 0x9F..0xDE, the letter - 0x21), the bytes the game's own text and keyboard hold.
+    let t: Vec<u8> = typed
+        .chars()
+        .flat_map(|c| match c as u32 {
+            l @ 0xc0..=0xff if l != 0xd7 && l != 0xf7 => vec![0x85, (l - 0x21) as u8],
+            _ => encode_sjis(c.encode_utf8(&mut [0; 4])),
+        })
+        .collect();
+    let (short, log) = (encode_sjis(&it.name), encode_sjis(&it.singular));
+    match lang {
+        Lang::Ja => t == short,
+        Lang::En => t.eq_ignore_ascii_case(&short) || t.eq_ignore_ascii_case(&log),
+        Lang::De | Lang::Fr => super::autotrans::order_eq(&t, &short) || super::autotrans::order_eq(&t, &log),
+    }
 }
 
 impl Item {
@@ -594,7 +638,8 @@ impl Items {
         self.recent.lock().map(|r| r.slots.iter().filter(|s| s.0 != 0).cloned().collect()).unwrap_or_default()
     }
 
-    /// The item's noun for message text (`names::item_noun`; the bare name outside English), read once. No slot of
+    /// The item's noun for message text (`names::item_noun`; German and French their log names, Japanese the bare
+    /// name), read once. No slot of
     /// the record cache: message text reads records through the raw record pool (30261006_0 FUN_100be6a0 ->
     /// FUN_1015b9e0).
     pub fn noun(&self, id: u32) -> Option<super::names::Noun> {
@@ -603,6 +648,7 @@ impl Items {
         }
         let n = self.peek(id).map(|it| match self.lang {
             Lang::En => super::names::item_noun(it),
+            Lang::De | Lang::Fr if !it.singular.is_empty() => super::names::log_noun(it.singular, it.plural),
             _ => super::names::plain(it.name),
         });
         if let Ok(mut c) = self.nouns.lock() {
@@ -619,6 +665,26 @@ impl Items {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// DAT_10664118's rules: Japanese exact, English any case on either name, German and French through
+    /// FUN_101c9d00 with accents typed as Unicode taken as the game's 0x85 row.
+    #[test]
+    fn typed_names() {
+        use crate::dat::font::decode_sjis;
+        let it = Item {
+            name: "Ep. bronze".into(),
+            singular: decode_sjis(b"\x85\xc8p\x85\xc8e de bronze"),
+            ..Default::default()
+        };
+        assert!(named(Lang::Fr, "épée de bronze", &it));
+        assert!(named(Lang::Fr, "ÉPÉE DE BRONZE", &it));
+        assert!(named(Lang::Fr, "ep. BRONZE", &it));
+        assert!(!named(Lang::Fr, "epee de bronze", &it));
+        assert!(named(Lang::En, "EP. BRONZE", &it));
+        assert!(named(Lang::Ja, "Ep. bronze", &it) && !named(Lang::Ja, "ep. bronze", &it));
+        let times = Item { name: "2×3".into(), ..Default::default() };
+        assert!(named(Lang::Ja, "2×3", &times));
+    }
 
     /// FUN_1015b5c0: a new id takes the next slot round robin, from slot 1; a held id takes none; names stop at 30
     /// bytes.

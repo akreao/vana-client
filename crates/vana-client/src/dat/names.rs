@@ -194,6 +194,25 @@ impl Names {
         })
     }
 
+    /// A title in a grammatical gender (FUN_10158450 through FUN_101585a0 / FUN_101586f0): German fields 1 / 3
+    /// declined with no article in the nominative (FUN_10259ce0, shown by FUN_10259d40 -> FUN_10259840 into `size`
+    /// bytes), French fields 2 / 5 as they are (FUN_1025a090 / FUN_1025a100), Japanese and English the first text.
+    pub fn title_of(&self, id: u32, female: bool, size: usize) -> Option<String> {
+        let f = self.titles.fields(id as usize)?;
+        let at = |i: usize| match f.get(i) {
+            Some(Field::Text(s)) => Some(s.clone()),
+            _ => None,
+        };
+        match self.lang {
+            Lang::De => {
+                let s = super::grammar::bytes(&at(if female { 3 } else { 1 })?);
+                Some(super::grammar::text(&super::grammar::decline_buffer(size, super::grammar::NONE, 0, &s)))
+            }
+            Lang::Fr => at(if female { 5 } else { 2 }),
+            _ => self.titles.text(id as usize),
+        }
+    }
+
     /// A spell's description (FUN_1022bf80), for the magic list's help bar.
     pub fn spell_description(&self, id: u32) -> Option<String> {
         self.spell_texts.as_ref()?.text(id as usize)
@@ -231,8 +250,8 @@ impl Names {
         self.key_items.fields(*self.key_index.get(&id)?)
     }
 
-    /// The key item table in file order (FUN_1022a360's walk): (id, the list name: English field 4, else the first
-    /// text); '-' headers have id 0.
+    /// The key item table in file order (FUN_1022a360's walk): (id, the list name: English field 4, German and French
+    /// their shown names (FUN_10155880), else the first text); '-' headers have id 0.
     pub fn key_item_list(&self) -> Vec<(u32, String)> {
         (0..self.key_items.len())
             .filter_map(|i| {
@@ -240,6 +259,8 @@ impl Names {
                 let Field::Num(id) = f.first()? else { return None };
                 let name = if self.lang == Lang::En {
                     text_at(f, 4)
+                } else if let Some((name, _)) = european_key_item(self.lang, f) {
+                    name
                 } else {
                     f.iter()
                         .find_map(|x| if let Field::Text(s) = x { Some(s.clone()) } else { None })
@@ -267,9 +288,37 @@ fn text_at(f: &[Field], i: usize) -> String {
     }
 }
 
-/// A name with no English grammar (other languages): every form is the name.
+/// A name with no English grammar (Japanese): every form is the name.
 pub(super) fn plain(name: String) -> Noun {
     Noun { bare: name.clone(), singular: name.clone(), plural: name, an: false, singular_an: false, mode: 3 }
+}
+
+/// A German or French name's log forms (dat::grammar) as a noun: no English article.
+pub(super) fn log_noun(singular: String, plural: String) -> Noun {
+    Noun { bare: singular.clone(), singular, plural, an: false, singular_an: false, mode: 3 }
+}
+
+/// A German or French key item's (shown name, plural) (FUN_10155670): German fields 2 (whole), 4 / 5 / 7 declined in
+/// the nominative with no article (FUN_10155880 -> vt+0x20; vt+0x18), French fields 5 / 6 / 9 (vt+0x1c; vt+0x10).
+fn european_key_item(lang: Lang, f: &[Field]) -> Option<(String, String)> {
+    use super::grammar::{DeKeyItem, FrKeyItem, NONE, bytes, text};
+    let raw = |i: usize| bytes(&text_at(f, i));
+    match lang {
+        Lang::De => {
+            let k = DeKeyItem {
+                whole: matches!(f.get(2), Some(Field::Num(n)) if *n != 0),
+                singular: raw(4),
+                plural: raw(5),
+                rest: raw(7),
+            };
+            Some((text(&k.display(NONE, 0)), text(&k.plural(NONE, 0))))
+        }
+        Lang::Fr => {
+            let k = FrKeyItem { singular: raw(5), plural: raw(6), rest: raw(9) };
+            Some((text(&k.display()), text(&k.plural())))
+        }
+        _ => None,
+    }
 }
 
 /// An item's English noun (FUN_1014fda0 and its vtable 0x10329b1c): "pair of" / "suit of" singulars, a / an.
@@ -342,6 +391,9 @@ impl NameSource for Names {
 
     fn key_item(&self, id: u32) -> Option<Noun> {
         let f = self.key_item_fields(id)?;
+        if let Some((name, plural)) = european_key_item(self.lang, f) {
+            return Some(log_noun(name, plural));
+        }
         if self.lang != Lang::En {
             let name = f
                 .iter()
@@ -391,7 +443,7 @@ impl NameSource for Names {
     }
 
     fn title(&self, id: u32) -> Option<String> {
-        self.titles.text(id as usize)
+        self.title_of(id, false, 0x80)
     }
 
     fn weather(&self, id: u32, adjective: bool) -> Option<String> {
@@ -491,5 +543,33 @@ mod tests {
         assert_eq!(n.key_item(1).map(|k| k.singular), Some("Zeruhn report".to_string()));
         let ls = n.item(513).expect("linkshell");
         assert_eq!((ls.bare.as_str(), ls.an), ("linkshell", false));
+    }
+
+    /// German and French names from the installed files (skipped without them): key items (FUN_10155670), items
+    /// (FUN_1015ec00 / FUN_1015ecd0), titles (FUN_10158450), as FUN_10155880 / FUN_1015b4f0 / FUN_101586f0 show them.
+    #[test]
+    fn european_names() {
+        use crate::dat::font::encode_sjis as b;
+        let Ok(index) = DatIndex::open(&crate::config::Config::load().ffxi_dir()) else { return };
+        let (Ok(de), Ok(fr)) = (Names::load(&index, Lang::De), Names::load(&index, Lang::Fr)) else { return };
+        let key = |n: &Names, id| n.key_item(id).map(|k| (b(&k.singular), b(&k.plural))).unwrap();
+        // "blau\x01 S\x85\xc3uretester\x05": the adjective takes the masculine noun's strong ending.
+        assert_eq!(key(&de, 3).0, b"blauer S\x85\xc3uretester");
+        // Whole names show field 7 alone ("alt\x01 Stiefel\x0f" after field 4 "Paar"); the plural is field 5 (empty
+        // here, so no space) then field 7.
+        assert_eq!(key(&de, 198), (b"alte Stiefel".to_vec(), b"alte Stiefel".to_vec()));
+        assert_eq!(key(&de, 37).0, b"1. dunkle Mana-Kugel");
+        assert!(de.key_item_list().iter().any(|(id, name)| *id == 3 && b(name) == b"blauer S\x85\xc3uretester"));
+        assert_eq!(key(&fr, 1).0, b"rapport de Zeruhn");
+        let item = |n: &Names, id| n.items.peek(id).map(|it| (b(&it.singular), b(&it.plural))).unwrap();
+        assert_eq!(item(&de, 0x5a), (b"rostiger Eimer".to_vec(), b"rostige Eimer".to_vec()));
+        assert_eq!(item(&de, 0xdf).0, b"Aquarium (Fluss)");
+        assert_eq!(item(&de, 0x2200).0, b"Bismut-Barren");
+        assert_eq!(item(&fr, 0x2200), (b"lingot de bismuth".to_vec(), b"lingots de bismuth".to_vec()));
+        assert_eq!(de.items.noun(0x5a).map(|n| n.bare).as_deref(), Some("rostiger Eimer"));
+        assert_eq!(de.title_of(1, false, 0x80).map(|t| b(&t)), Some(b"Fodderchief-Pl\x85\xdbnderer".to_vec()));
+        assert_eq!(fr.title_of(1, false, 0x80).as_deref(), Some("Rosseur de Fodderchief"));
+        assert_eq!(fr.title_of(1, true, 0x80).as_deref(), Some("Rosseuse de Fodderchief"));
+        assert_eq!(de.title_of(1, true, 0x80).map(|t| b(&t)), Some(b"Fodderchief-Pl\x85\xdbndererin".to_vec()));
     }
 }
