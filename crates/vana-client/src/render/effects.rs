@@ -497,8 +497,10 @@ struct GpuMesh {
     groups: Vec<(Option<(usize, usize)>, std::ops::Range<u32>, bool)>,
     mmb: bool,
     dist: Vec<std::ops::Range<u32>>,
-    /// Flat (render/reflect.rs is_flat): it may be water, which reflections check per vertex (`water`).
-    flat: bool,
+    /// Flat (render/reflect.rs is_flat): it may be water, which reflections check per vertex (`water`). Then, in its
+    /// own space, the farthest any vertex lies from its origin across x/z (what a sheet of water covers) and the
+    /// vertices' mean height (the sheet's plane).
+    flat: Option<(f32, f32)>,
 }
 
 /// Whether an effect mesh (triangle list) lies flat in its own space: nearly all of its area faces straight up or
@@ -2155,7 +2157,10 @@ impl EffectsGpu {
         for t in groups.iter().filter_map(|g| g.0) {
             self.texture(gpu, fx, t);
         }
-        let flat = is_flat(&m.verts);
+        let flat = is_flat(&m.verts).then(|| {
+            let reach = m.verts.iter().map(|v| v.pos[0].hypot(v.pos[2])).fold(0.0, f32::max);
+            (reach, m.verts.iter().map(|v| v.pos[1]).sum::<f32>() / m.verts.len() as f32)
+        });
         self.meshes[id as usize] = Some(GpuMesh { vb, groups, mmb: m.mmb, dist: m.dist.clone(), flat });
     }
 
@@ -2463,7 +2468,28 @@ impl EffectsGpu {
         let mut class = 2usize;
         let mut bound: Option<(bool, usize, bool)> = None;
         let mut next_break = 0;
-        for (key, e) in fx.draw_items_keyed() {
+        let mut items = fx.draw_items_keyed();
+        // Water reflections (ours): the reflected water sheets first, so what stands over them is not covered by the
+        // reflection where retail's order draws a sheet after it (Port San d'Oria's sea is keyed to draw last; a
+        // canal sheet's origin can lie nearer than a home point's crystal over its far part). Off: retail's order.
+        if let Some(w) = self.water.as_ref() {
+            let elem = |e: u32| {
+                (e & crate::fx::TRAIL_ITEM == 0).then(|| fx.elems.get(e as usize).and_then(|c| c.as_ref())).flatten()
+            };
+            items = crate::render::reflect::water_first(
+                items,
+                |e| {
+                    let c = elem(e).filter(|c| !stages.spec.contains_key(&e) && fx.zone_owned(c.inst))?;
+                    let Draw::Mesh(id) = c.draw else { return None };
+                    let (reach, ly) = self.meshes.get(id as usize)?.as_ref()?.flat?;
+                    let b = c.back?;
+                    let plane = b.world + glam::Vec3::Y * ly * b.scale.y;
+                    w.surface(plane.y, eye.y).then(|| (plane, reach * b.scale.x.abs().max(b.scale.z.abs())))
+                },
+                |e| elem(e).and_then(|c| c.back).map(|b| b.world),
+            );
+        }
+        for (key, e) in items {
             // Another transparent thing farther than this item: it goes first, outside the pass.
             while let Some(i) = break_before(breaks, next_break, key) {
                 drop(pass);
@@ -2714,7 +2740,9 @@ impl EffectsGpu {
                     // nearer draws.
                     let near_level =
                         |w: &crate::render::reflect::FxWater| c.back.is_none_or(|b| w.near_level(b.world.y));
-                    if let Some(wr) = self.water.as_ref().filter(|w| m.flat && near_level(w) && fx.zone_owned(c.inst)) {
+                    if let Some(wr) =
+                        self.water.as_ref().filter(|w| m.flat.is_some() && near_level(w) && fx.zone_owned(c.inst))
+                    {
                         drop(pass);
                         let mut wp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("effects water reflection"),
