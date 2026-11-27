@@ -2364,6 +2364,10 @@ pub fn label(c: u8) -> (&'static str, usize) {
 /// Runs a command; returns false when it is not implemented.
 pub(super) fn choose(w: &mut World, c: u8) -> bool {
     let target = w.target.and_then(|t| w.entities.get(&t).map(|e| (t, e.index)));
+    // The menu's engage and disengage are ours: the server's 0x058 or let-go after them is not its auto-target.
+    if matches!(c, cmd::ATTACK | cmd::DISENGAGE | mon::ATTACK | mon::DISENGAGE) {
+        super::target::asked(w);
+    }
     match (c, target) {
         (cmd::ATTACK, Some((t, i))) => send(w, NetCommand::Act { target: t, index: i, action: 2 }),
         // Case 0x12: the sub-target prompt over monsters (FUN_10159440 flags 0x20), then "/attack <id>" of the pick.

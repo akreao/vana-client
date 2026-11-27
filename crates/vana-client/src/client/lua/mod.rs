@@ -320,6 +320,9 @@ pub struct Host {
     ui_events: Vec<(String, String, window::Event)>,
     /// Events for one mod (its settings changed), delivered in the mod phase: (mod, name, arguments).
     mod_events: Vec<(String, &'static str, Vec<serde_json::Value>)>,
+    /// Mods turned on outside the mod phase (the Mods window, a character or job switch): their folders, loaded in the
+    /// next mod phase, where their entry file and `load` can read the game UI's data as at the start.
+    pending_loads: Vec<PathBuf>,
     /// Where the mods' canvases were last drawn (the modern UI), for a HUD drag let go over one.
     canvases: Vec<CanvasAt>,
     /// The canvas a HUD drag is over now: (mod, window, canvas, the dragged element).
@@ -1012,6 +1015,7 @@ impl Host {
         self.started = false;
         self.prev = None;
         self.events.clear();
+        self.pending_loads.clear();
     }
 
     /// `/lua ...`: list, load, unload, reload, run, set.
@@ -1316,6 +1320,8 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
     let bind_lines;
     {
         let w: &World = w;
+        // The mods turned on since the last mod phase.
+        host.load_pending(Some(w), &mut out);
         host.watch_upkeep(Some(w), &mut out);
         bind_lines = input::run_binds(&mut host, w, &mut out);
         // Lines typed for mods.
@@ -3386,6 +3392,26 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// A mod turned on outside the mod phase waits for it: queued once, loaded there (a failure reported), skipped if it
+    /// is running by then.
+    #[test]
+    fn mods_turned_on_load_in_the_mod_phase() {
+        let mut host = Host::default();
+        let (running, missing) = (PathBuf::from("running-mod"), PathBuf::from("no-such-mod-folder"));
+        let m = manifest::Manifest { id: "running".into(), ..Default::default() };
+        host.vms.push(Vm::new(m, running.clone(), vm::Source::Dir(running.clone())).unwrap());
+        host.load_later(running.clone());
+        host.load_later(missing.clone());
+        host.load_later(missing.clone());
+        assert_eq!(host.pending_loads, vec![running, missing]);
+        let mut out = Vec::new();
+        host.load_pending(None, &mut out);
+        assert!(host.pending_loads.is_empty());
+        assert_eq!(host.vms.len(), 1);
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert!(out[0].0.starts_with("Mod no-such-mod-folder: "), "{out:?}");
+    }
+
     /// A /lua line as the host reads one, whatever its spaces, slashes or case.
     #[test]
     fn lua_lines() {
@@ -4091,15 +4117,36 @@ impl Host {
             match (want, self.named(&r.name)) {
                 (true, None) => {
                     log::info!("lua mod {}: on for {character} {}", r.name, job.unwrap_or("?"));
-                    if let Err(e) = self.load(Some(w), dir) {
-                        log::warn!("lua mod {}: {e}", r.name);
-                    }
+                    self.load_later(dir);
                 }
                 (false, Some(k)) => {
                     log::info!("lua mod {}: off for {character} {}", r.name, job.unwrap_or("?"));
                     self.unload(Some(w), k);
                 }
+                (false, None) => self.pending_loads.retain(|d| *d != dir),
                 _ => {}
+            }
+        }
+    }
+
+    /// Queues the mod in `dir` for the next mod phase (`pending_loads`).
+    fn load_later(&mut self, dir: PathBuf) {
+        if !self.pending_loads.contains(&dir) {
+            self.pending_loads.push(dir);
+        }
+    }
+
+    /// Loads the mods queued by `load_later` (in the mod phase, with the game UI's data lent); a failure goes to the chat
+    /// log, as at the start.
+    fn load_pending(&mut self, w: Option<&World>, out: &mut Vec<(String, [u8; 4])>) {
+        for dir in std::mem::take(&mut self.pending_loads) {
+            if self.vms.iter().any(|v| v.dir == dir) {
+                continue;
+            }
+            if let Err(e) = self.load(w, dir.clone()) {
+                let name = dir.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                log::warn!("lua mod {name}: {e}");
+                out.push((format!("Mod {name}: {e}"), ERROR));
             }
         }
     }
@@ -4116,12 +4163,12 @@ impl Host {
         if key == ENABLED {
             let k = self.named(id);
             match (value.as_bool() == Some(true), k) {
-                (true, None) => {
-                    if let Err(e) = self.load(Some(w), folder_of(&mods_dir(), id)) {
-                        log::warn!("lua mod {id}: {e}");
-                    }
-                }
+                (true, None) => self.load_later(folder_of(&mods_dir(), id)),
                 (false, Some(k)) => self.unload(Some(w), k),
+                (false, None) => {
+                    let dir = folder_of(&mods_dir(), id);
+                    self.pending_loads.retain(|d| *d != dir);
+                }
                 _ => {}
             }
             return;
