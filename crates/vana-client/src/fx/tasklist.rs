@@ -21,8 +21,17 @@
 //!   update at once; a task made in that first update leaves the walk's next before the loop's task, which then
 //!   runs again in the same frame.
 //!
-//! Only schedulers and the entity loop's task are kept for good. The other tasks (holds, drives, generators, sounds...) update in their own
-//! passes; here a task an op makes is a node for the rest of the walk, so that the walk's next goes where retail's goes.
+//! - A generator's task (vtable 0x1032c654, update +0x24 FUN_10054220 -> FUN_100496f0(0), the emissions) is made by
+//!   FUN_100531d0 (base constructor, then the attached kinds to the front of bucket 9, FUN_100749b0(9), the unattached
+//!   ones 0, 0xe, 0xf and 0x14 before the running task, FUN_10074a00) or by FUN_10053370 (always before the running
+//!   task). Either deletes the generator's old task first (+0xa8, vtable +0x18).
+//! - Op 0x75's timed hide (FUN_10061960, vtable 0x1032ce08) is a child left after the running task (FUN_10074790);
+//!   its update (FUN_100619d0) counts the frame's ticks down and under 0.0 deletes it, and its destructor
+//!   (FUN_10061920) shows the weapon (FUN_100d5f10, which starts the glow).
+//!
+//! Kept for good: the schedulers, the entity loop's task, the generators' tasks and op 0x75's timers. The other tasks
+//! (holds, drives, sounds...) update in their own passes; here a task an op makes is a node for the rest of the walk,
+//! so that the walk's next goes where retail's goes.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Node {
@@ -33,6 +42,19 @@ pub enum Node {
     Anchor(u8),
     /// The entity loop's task (FUN_100106c0 -> FUN_10096640).
     Entity,
+    /// A generator's task, by its instance's start serial (`Instance::started`).
+    Gen(u32),
+    /// Op 0x75's timed hide (FUN_10061960), by its own number.
+    Timer(u64),
+}
+
+/// How a generator's task is linked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GenLink {
+    /// FUN_100531d0: an attached generator's to the front of bucket 9, an unattached one's before the running task.
+    Start { attached: bool },
+    /// FUN_10053370: before the running task.
+    Before,
 }
 
 /// How a task that is not a scheduler is linked when made.
@@ -40,8 +62,8 @@ pub enum Node {
 pub enum Made {
     /// Left after the running task (FUN_10074740 / FUN_10074790 and nothing more): holds, drives, ramps, sounds, dolls.
     After,
-    /// Then moved: before the running task or into a bucket (generators, their elements, op 0x80's task, op 0xa6's
-    /// fade). The walk's next is the running task's next.
+    /// Then moved: before the running task or into a bucket (op 0x80's task, op 0xa6's fade). The walk's next is the
+    /// running task's next.
     Moved,
 }
 
@@ -50,6 +72,8 @@ const BUCKETS: u8 = 16;
 const SCHED_BUCKET: u8 = 9;
 /// The bucket the entity loop's task is put at the front of (FUN_100749b0(0xd) at 0x100142e6).
 const ENTITY_BUCKET: u8 = 13;
+/// The bucket every element is put at the front of (FUN_1004e8d0 0x100511a4, DAT_10353710).
+pub const ELEM_BUCKET: u8 = 0xb;
 
 #[derive(Debug)]
 pub struct TaskList {
@@ -57,6 +81,8 @@ pub struct TaskList {
     running: Option<Node>,
     next: Option<Node>,
     others: u64,
+    /// The last place `pos` found.
+    hint: std::cell::Cell<usize>,
     /// A walk is in (FUN_10074c30).
     pub walking: bool,
 }
@@ -65,13 +91,21 @@ impl Default for TaskList {
     fn default() -> Self {
         let mut nodes: Vec<Node> = (0..BUCKETS).map(Node::Anchor).collect();
         nodes.insert(ENTITY_BUCKET as usize + 1, Node::Entity);
-        Self { nodes, running: None, next: None, others: 0, walking: false }
+        Self { nodes, running: None, next: None, others: 0, hint: Default::default(), walking: false }
     }
 }
 
 impl TaskList {
+    /// Where `n` is: next to the last place found first (a walk steps to the next node), else a scan.
     fn pos(&self, n: Node) -> Option<usize> {
-        self.nodes.iter().position(|&x| x == n)
+        let h = self.hint.get();
+        if let Some(i) = [h + 1, h, h.wrapping_sub(1)].into_iter().find(|&i| self.nodes.get(i) == Some(&n)) {
+            self.hint.set(i);
+            return Some(i);
+        }
+        let i = self.nodes.iter().position(|&x| x == n)?;
+        self.hint.set(i);
+        Some(i)
     }
 
     fn succ(&self, n: Node) -> Option<Node> {
@@ -126,6 +160,30 @@ impl TaskList {
         self.link_before_running(n);
     }
 
+    /// A generator's task (FUN_100531d0 / FUN_10053370): the old one deleted, the new one linked after the running
+    /// task by the base constructor, then moved.
+    pub fn new_generator(&mut self, serial: u32, how: GenLink) {
+        let n = Node::Gen(serial);
+        self.unlink(n);
+        self.link_after_running(n);
+        match how {
+            GenLink::Start { attached: true } => self.bucket(n, SCHED_BUCKET),
+            GenLink::Start { attached: false } | GenLink::Before => self.link_before_running(n),
+        }
+    }
+
+    /// FUN_10053370 inside an element's update: before that element, which sits in bucket 0xb behind the walk. The
+    /// elements are no nodes of ours, so the task goes to the front of bucket 0xb *(inf: in front of the running
+    /// element)*.
+    pub fn new_generator_in_elem(&mut self, serial: u32) {
+        self.bucket(Node::Gen(serial), ELEM_BUCKET);
+    }
+
+    /// Op 0x75's timer (FUN_10061960 -> FUN_10074790): after the running task, and the walk's next.
+    pub fn new_timer(&mut self, id: u64) {
+        self.link_after_running(Node::Timer(id));
+    }
+
     /// A copy of a scheduler (FUN_10074920): linked after the running task only.
     pub fn new_copy(&mut self, uid: u64) {
         self.link_after_running(Node::Task(uid));
@@ -174,13 +232,14 @@ impl TaskList {
         n
     }
 
-    /// Drops what no longer stands for a task: the other tasks and the schedulers not in `live`. A dropped task does
-    /// nothing in the walk, which goes on to its next as retail's unlink would have sent it.
-    pub fn purge(&mut self, live: &std::collections::HashSet<u64>) {
+    /// Drops what no longer stands for a task: the other tasks and the schedulers, generators and timers `live`
+    /// does not keep. A dropped task does nothing in the walk, which goes on to its next as retail's unlink would
+    /// have sent it.
+    pub fn purge(&mut self, live: impl Fn(Node) -> bool) {
         let keep = |n: &Node| match *n {
-            Node::Task(u) => live.contains(&u),
             Node::Other(_) => false,
             Node::Anchor(_) | Node::Entity => true,
+            n => live(n),
         };
         if self.running.is_some_and(|r| !keep(&r)) || self.next.is_some_and(|n| !keep(&n)) {
             return;
