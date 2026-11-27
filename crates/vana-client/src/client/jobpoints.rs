@@ -463,11 +463,10 @@ pub(super) fn bar(w: &mut World, m: super::scrollbar::Msg) -> bool {
     let Some(t) = w.jp_tables.clone() else { return false };
     let Some(u) = w.jp_ui.as_mut() else { return false };
     match u.page.as_mut() {
-        // The bar is the mouse's: the pointer shown.
+        // The pointer as `track` saw it this frame.
         Some(p) => {
             let lens = lens(p, &t);
             let mut snd = Vec::new();
-            p.l.shown = true;
             let moved = p.l.rows(m, lens, &mut snd);
             w.sounds.extend(snd);
             moved
@@ -583,6 +582,24 @@ pub(super) fn set_row(w: &mut World, k: usize) -> bool {
 pub(super) fn set_page(w: &mut World, pg: usize) {
     if w.jp_ui.as_ref().and_then(|u| u.page.as_ref()).is_some_and(|p| p.l.page != pg) {
         key(w, egui::Key::ArrowRight, false, false);
+    }
+}
+
+/// The mouse routine's hit for jbpcat each frame (mouse +0x4e, and +0x52 while shown: the child under the pointer, -1
+/// off the children, the bars included), before the bars take the frame's messages and the pointer.
+/// With merityn up the hit is its own, not jbpcat's: kept as it was.
+pub fn track(w: &mut World, gu: &GameUi, p: Option<(f32, f32)>) {
+    if w.modern || w.confirm.is_some() || w.jp_ui.as_ref().is_none_or(|u| u.page.is_none()) {
+        return;
+    }
+    let shown = super::winhits::shown(gu);
+    let child =
+        p.and_then(|p| super::winhits::child_under(w, PAGE, p, 1..=CHILDREN, super::winhits::parts(gu, PAGE)).0);
+    if let Some(pg) = w.jp_ui.as_mut().and_then(|u| u.page.as_mut()) {
+        pg.l.shown = shown;
+        if shown {
+            pg.l.ptr = child;
+        }
     }
 }
 
@@ -879,5 +896,28 @@ mod tests {
         assert_eq!((l.top[0], l.arrow, l.index()), (14, Some(11), 24));
         l.rows(super::super::scrollbar::Msg::Down, LENS, &mut snd);
         assert_eq!((l.top[0], l.arrow, l.cursor[0]), (15, None, 24));
+    }
+
+    /// Ten categories (most jobs): both arrows' indexes are past the count, so the clamp and message 9 keep the
+    /// cursor on the arrow; the page comes back on the arrow (index 11 -> child 12, no message 9: the same child) and
+    /// a category takes it back with SE 0001 (the last cursor is the arrow's).
+    #[test]
+    fn ten_categories() {
+        let lens = [10, 20];
+        let mut l = List::new();
+        let mut snd = Vec::new();
+        (l.shown, l.ptr) = (true, Some(12));
+        l.put(12, lens, &mut snd);
+        l.clamp(lens, &mut snd);
+        assert_eq!(l.arrow, Some(12));
+        for _ in 0..2 {
+            l.clamp(lens, &mut snd);
+            l.turn(lens, &mut snd);
+        }
+        assert_eq!((l.page, l.cursor, l.top, l.arrow, l.last), (0, [11, 11], [0, 0], Some(12), 12));
+        assert!(snd.is_empty());
+        l.ptr = Some(3);
+        l.put(3, lens, &mut snd);
+        assert_eq!((l.arrow, l.keys, l.cursor[0], snd), (None, true, 2, vec![SE]));
     }
 }

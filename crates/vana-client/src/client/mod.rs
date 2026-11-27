@@ -2906,6 +2906,7 @@ fn world_hud(
     } else {
         input
     };
+    jobpoints::track(world, gu, for_bars.pointer);
     let taken = scrollbar::frame(gu, world, for_bars);
     let input = if over_mod { input } else { taken.as_ref().unwrap_or(input) };
     // Enter on itemctrl / moneyctr is message 5 on the cursor child the mouse left there (winhits::ctr_enter).
