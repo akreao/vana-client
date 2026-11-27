@@ -4,6 +4,7 @@
 
 use super::game_ui::{GameUi, WHITE};
 use super::ground::Ground;
+use super::winhits::LobbyFocus;
 use crate::audio::Ui as Se;
 use crate::dat::character::{Character as Model, Look, load_character};
 use crate::dat::weather::{Lighting, ZoneWeather};
@@ -598,6 +599,8 @@ struct Rects {
     list: Vec<[f32; 4]>,
     list_area: [f32; 4],
     children: Vec<(u16, [f32; 4])>,
+    /// The focused window as drawn (dbnamese, chfwin, chswin, ptc6yesn, ok or chmkname): its frame and hit boxes.
+    focus: Option<crate::client::winhits::LobbyFocus>,
 }
 
 pub struct SelectUi {
@@ -700,6 +703,13 @@ impl SelectUi {
         self.rects = draw(gu, self, list, chars, deleting, w, h, status);
         if let Some(p) = input.pointer {
             self.mouse(gu, p, input, list, chars, deleting, &mut out);
+            // The release over no child of the focused window (FUN_1015f420): SE 0004.
+            if input.clicked
+                && !input.busy
+                && crate::client::winhits::lobby_release_off(gu, self.rects.focus.as_ref(), p)
+            {
+                out.sounds.push(Se::Error);
+            }
         }
         out
     }
@@ -938,15 +948,19 @@ impl SelectUi {
         deleting: bool,
         out: &mut Out,
     ) {
-        // The cursor moves by the shared window steps (winhits::takes); a click acts on the cursor's row or child.
+        // The cursor moves by the shared window steps (winhits::takes) on the focused window's hit boxes, the held
+        // step inside its frame (FUN_1011a0a0); a click acts on the cursor's row or child.
         use crate::client::winhits::takes;
+        let Some(win) = self.rects.focus.clone() else { return };
+        let in_frame = win.in_frame(p);
         match self.focus.clone() {
             Focus::List => {
-                let Some(i) = self.rects.list.iter().position(|r| inside(r, p)) else { return };
+                let Some(c) = win.child(p) else { return };
+                let i = c as usize - 1;
                 if input.moved || input.clicked {
                     out.input = true;
                 }
-                if takes(gu, "lobby list", i as u16 + 1, inside(&self.rects.list_area, p)) && i != self.cursor {
+                if takes(gu, "lobby list", c, in_frame) && i != self.cursor {
                     out.input = true;
                     self.move_cursor(i, out);
                 } else if input.clicked && i == self.cursor && !input.busy {
@@ -954,7 +968,8 @@ impl SelectUi {
                 }
             }
             focus => {
-                let Some(&(c, _)) = self.rects.children.iter().find(|(_, r)| inside(r, p)) else { return };
+                // Yes / No only on the prompt (its icon, child 3, is hit but moves nothing here).
+                let Some(c) = win.child(p).filter(|&c| self.rects.children.iter().any(|k| k.0 == c)) else { return };
                 let enter = || egui::Key::Enter;
                 let (name, on) = match focus {
                     Focus::Options(k) => ("lobby options", c == k),
@@ -962,8 +977,7 @@ impl SelectUi {
                     Focus::Prompt(_, yes) => ("lobby prompt", (c == 1) == yes),
                     _ => ("lobby", true),
                 };
-                // The child boxes stand in for the window frame (ours keeps no frame for them).
-                let moves = takes(gu, name, c, true) && !on;
+                let moves = takes(gu, name, c, in_frame) && !on;
                 match focus {
                     Focus::Options(_) if moves => {
                         out.sounds.push(Se::Cursor);
@@ -1161,6 +1175,7 @@ fn draw(
         && let Some(win) = gu.lobby_window("menu    chfwin", w, h, false, options, options.is_some(), &[])
         && options.is_some()
     {
+        rects.focus = Some(LobbyFocus::new(gu, "menu    chfwin", win.frame, &win.children));
         rects.children = win.children;
     }
     let used: Vec<bool> = (0..SLOTS).map(|i| i < list.entries.len()).collect();
@@ -1185,26 +1200,36 @@ fn draw(
     }
     counts(gu, list, w);
     match &st.focus {
+        // dbnamese's frame is the 640 x 480 its open (FUN_10242f20) gives it with FUN_1011ba30.
+        Focus::List => {
+            let kids: Vec<(u16, [f32; 4])> = list_rects.iter().enumerate().map(|(i, r)| (i as u16 + 1, *r)).collect();
+            let frame = [w - 640.0, h - 480.0, 640.0, 480.0];
+            rects.focus = Some(LobbyFocus::new(gu, "menu    dbnamese", frame, &kids));
+        }
         Focus::Slots(_, k) => {
             if let Some(win) = gu.lobby_window("menu    chswin", w, h, false, Some(*k), true, &[]) {
+                rects.focus = Some(LobbyFocus::new(gu, "menu    chswin", win.frame, &win.children));
                 rects.children = win.children;
             }
         }
         Focus::Prompt(p, yes) => {
             let name = list.get(chars, st.cursor).map_or("", |c| c.name.as_str());
             let icon = !matches!(p, Prompt::Settings { .. });
-            if let Some(c) = gu.yes_no_window(&prompt_text(gu, p, name), *yes, icon, w, h) {
-                rects.children = c;
+            if let Some(win) = gu.yes_no_win(&prompt_text(gu, p, name), *yes, icon, w, h) {
+                rects.focus = Some(LobbyFocus::new(gu, "menu    ptc6yesn", win.frame, &win.children));
+                rects.children = win.children.into_iter().filter(|(id, _)| *id <= 2).collect();
             }
         }
         Focus::Ok(text, _) => {
-            if let Some(c) = gu.ok_window(text, w, h) {
-                rects.children = vec![(1, c)];
+            if let Some(win) = gu.ok_win(text, w, h) {
+                rects.focus = Some(LobbyFocus::new(gu, "menu    ok", win.frame, &win.children));
+                rects.children = win.children;
             }
         }
         Focus::Rename(name) => {
             gu.menu("menu    chmkname", w, h, 0);
             gu.name_entry(name, true, w, h);
+            rects.focus = LobbyFocus::layout(gu, "menu    chmkname", w, h);
         }
         _ => {}
     }

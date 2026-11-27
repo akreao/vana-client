@@ -212,6 +212,72 @@ pub fn release_off_child(w: &World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32)
     child.is_none()
 }
 
+/// A lobby screen's focused window as drawn this frame (the title's loby2win, character select's dbnamese, chfwin,
+/// chswin, the yes / no and ok windows, the creator's steps): its frame (window +0x3a .. +0x40, which the held step
+/// tests, FUN_1011a0a0) and every child FUN_1011a140 hits, each box moved by its header offset (+0xe, +0x10). A
+/// disabled child (state 5) is hit like any other; one in state 0x10 (hidden) is left out by the caller.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LobbyFocus {
+    pub frame: [f32; 4],
+    pub children: Vec<(u16, [f32; 4])>,
+}
+
+impl LobbyFocus {
+    /// `children` at their places (as `LobbyWin` gives them) moved by window `name`'s header offsets.
+    pub fn new(gu: &GameUi, name: &str, frame: [f32; 4], children: &[(u16, [f32; 4])]) -> Self {
+        let part = parts(gu, name);
+        let children = children
+            .iter()
+            .filter_map(|&(id, r)| part(id).map(|(ox, oy)| (id, [r[0] + ox, r[1] + oy, r[2], r[3]])))
+            .collect();
+        LobbyFocus { frame, children }
+    }
+
+    /// Window `name` at its layout place (the frame by `GameUi::window_rect`, the children at the window position):
+    /// for the windows a lobby screen draws with no record of its own. None while it opens (state 0xe: no mode 2).
+    pub fn layout(gu: &GameUi, name: &str, sw: f32, sh: f32) -> Option<Self> {
+        Self::layout_off(gu, name, sw, sh, (0.0, 0.0))
+    }
+
+    /// `layout` moved by `off`, as `GameUi::lobby_window_off` draws it.
+    pub fn layout_off(gu: &GameUi, name: &str, sw: f32, sh: f32, off: (f32, f32)) -> Option<Self> {
+        let (x, y) = gu.window_xy(name, sw, sh)?;
+        let [fx, fy, fw, fh] = gu.window_rect(name, sw, sh)?;
+        let (x, y) = (x + off.0, y + off.1);
+        let kids: Vec<(u16, [f32; 4])> = gu
+            .menu_def(name)?
+            .elements
+            .iter()
+            .skip(1)
+            .map(|e| (e.id, [x + e.x as f32, y + e.y as f32, e.w as f32, e.h as f32]))
+            .collect();
+        Some(Self::new(gu, name, [fx + off.0, fy + off.1, fw, fh], &kids))
+    }
+
+    /// The first child whose box holds `p` (both ends in), as FUN_1011a140.
+    pub fn child(&self, p: (f32, f32)) -> Option<u16> {
+        self.children.iter().find(|c| inside(c.1, p)).map(|c| c.0)
+    }
+
+    /// The held step's frame test (FUN_1011a0a0, both ends in).
+    pub fn in_frame(&self, p: (f32, f32)) -> bool {
+        inside(self.frame, p)
+    }
+}
+
+/// The left release on a lobby screen (FUN_1015f420, the same window manager frame as in the world): with the
+/// pointer shown (mouse mode 2: the focused window `win`, not opening) and no child of it under the pointer, SE 0004
+/// (FUN_10037c50). Mouse +0x87 (rem4line, the map's marker cursor) is never set there, and no lobby window ours draws
+/// has a scroll bar to press (+0x86). A left drag stays mode 2 there (mode 5 is the right button's drag,
+/// FUN_10126600; mode 4, FUN_101264d0, only in the world), so a drag's release buzzes too.
+pub fn lobby_release_off(gu: &GameUi, win: Option<&LobbyFocus>, p: (f32, f32)) -> bool {
+    release_off(gu.ptr_hover.borrow().hidden, win, p)
+}
+
+fn release_off(hidden: bool, win: Option<&LobbyFocus>, p: (f32, f32)) -> bool {
+    win.is_some_and(|w| !hidden && w.child(p).is_none())
+}
+
 /// The generic handler on the focused window: a child under the pointer takes the cursor by `takes` (SE 0001), a
 /// click (the release, FUN_1015f420) on the cursor's child is Enter and on another child nothing, a right click on the window Escape (ours only over it; retail's message 6 takes any right
 /// click, FUN_1015def0). `key` is the window's key handler.
@@ -467,6 +533,79 @@ pub fn ctr(
 mod tests {
     use super::*;
     use egui::Key as K;
+
+    /// FUN_1015f420 on a lobby window: a release over a child (a disabled one or one outside the frame too, as the
+    /// prompt's Yes / No and the creator's page arrows) is no miss; one over none of them buzzes, inside the frame or
+    /// out; nothing with the pointer hidden or no window focused (opening).
+    #[test]
+    fn lobby_release_buzzes_off_the_children() {
+        // ptc6yesn-like: frame (256, 128) 512 x 144; Yes / No with header offset (0, -3) already in; the icon.
+        let win = LobbyFocus {
+            frame: [256.0, 128.0, 512.0, 144.0],
+            children: vec![
+                (1, [232.0, 243.0, 118.0, 22.0]),
+                (2, [360.0, 243.0, 118.0, 22.0]),
+                (3, [32.0, 144.0, 32.0, 32.0]),
+            ],
+        };
+        assert!(!release_off(false, Some(&win), (300.0, 250.0)));
+        assert!(!release_off(false, Some(&win), (232.0, 243.0)));
+        assert!(!release_off(false, Some(&win), (478.0, 265.0)));
+        // The icon sits outside the frame and is still a child.
+        assert_eq!(win.child((40.0, 150.0)), Some(3));
+        assert!(!win.in_frame((40.0, 150.0)));
+        assert!(!release_off(false, Some(&win), (40.0, 150.0)));
+        // Between Yes and No, and elsewhere in the frame or off it: SE 0004.
+        assert!(release_off(false, Some(&win), (355.0, 250.0)));
+        assert!(release_off(false, Some(&win), (500.0, 140.0)));
+        assert!(release_off(false, Some(&win), (900.0, 700.0)));
+        assert!(!release_off(true, Some(&win), (900.0, 700.0)));
+        assert!(!release_off(false, None, (900.0, 700.0)));
+        // The frame test of the held step: both ends in.
+        assert!(win.in_frame((256.0, 128.0)) && win.in_frame((768.0, 272.0)) && !win.in_frame((768.5, 272.0)));
+    }
+
+    /// loby2win's open (FUN_10241450): each child box is the layout box scaled by (W / 1024, H / 768), truncated;
+    /// child 1, the cursor at the open, is read a pixel up-left first (needs the game's files).
+    #[test]
+    fn title_boxes_scale_the_layout() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else { return };
+        let Ok(data) = super::super::game_ui::GameUiData::load(&index, &dll) else { return };
+        let gu = GameUi::new(data);
+        // With an expansion logo owned the art is not shifted.
+        let b = gu.title_boxes(1280.0, 720.0, 2);
+        // Layout: children 1..5 at (354, 443 + 28 k) 143 x 24 (Back 4 below Config 5); offsets (0, -3).
+        assert_eq!(b[0], (1, [441.0, 414.0, 178.0, 22.0]));
+        assert_eq!(b[1], (2, [442.0, 441.0, 178.0, 22.0]));
+        assert_eq!(b[3], (4, [442.0, 520.0, 178.0, 22.0]));
+        let f = LobbyFocus::new(&gu, "menu    loby2win", [0.0; 4], &b);
+        assert_eq!(f.child((500.0, 438.0)), Some(2));
+        assert_eq!(f.child((500.0, 462.0)), None);
+    }
+
+    /// The creator's step windows: their rows (the labels `screens::push_menu` highlights by order) are children
+    /// 1..n in layout order, so a hit child id - 1 is the row the draw highlights (needs the game's files).
+    #[test]
+    fn creator_rows_are_the_first_children() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else { return };
+        let Ok(data) = super::super::game_ui::GameUiData::load(&index, &dll) else { return };
+        let gu = GameUi::new(data);
+        for (name, n) in crate::client::creator::STEPS {
+            let m = gu.menu_def(name).unwrap();
+            let labels: Vec<u16> = m
+                .elements
+                .iter()
+                .skip(1)
+                .filter(|c| c.refs.iter().find(|r| r.kind == 0).is_some_and(|r| r.lib.ends_with("windowps")))
+                .map(|c| c.id)
+                .collect();
+            assert_eq!(labels, (1..=n as u16).collect::<Vec<_>>(), "{name}");
+        }
+    }
 
     /// FUN_1011a140: the first child in order whose box (moved by its header offset, both ends in) holds the mouse;
     /// a child in state 0x10 (the caption of a window with registry flag 0x200000) is passed over.
