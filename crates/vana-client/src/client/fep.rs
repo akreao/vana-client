@@ -632,17 +632,43 @@ pub(super) fn pointer(w: &mut World, gu: &GameUi, p: Option<(f32, f32)>, release
     let (child, on) = super::winhits::child_under(w, WINDOW, p, 1..=8, super::winhits::parts(gu, WINDOW));
     let Some(c) = child else { return };
     let takes = super::winhits::takes(gu, WINDOW, c, on);
-    if released && c == cursor {
-        key(w, egui::Key::Enter, false);
-    } else if c != cursor && takes {
-        let Some(f) = w.fep.as_mut() else { return };
-        f.win.cursor.set(c);
-        let was = f.sel;
-        hover_step(f, c);
-        // win_fep_v28: a selection other than the last update's plays SE 0001 (FUN_10037b30).
-        if f.sel != was {
-            w.sounds.push(Se::Cursor as u32);
+    match act(cursor, c, released, takes) {
+        Act::Enter => {
+            key(w, egui::Key::Enter, false);
         }
+        Act::Step => {
+            let Some(f) = w.fep.as_mut() else { return };
+            f.win.cursor.set(c);
+            let was = f.sel;
+            hover_step(f, c);
+            // win_fep_v28: a selection other than the last update's plays SE 0001 (FUN_10037b30).
+            if f.sel != was {
+                w.sounds.push(Se::Cursor as u32);
+            }
+        }
+        Act::None => {}
+    }
+}
+
+/// What the mouse on child `c` does this frame, the window's cursor on `cursor`.
+#[derive(Debug, PartialEq)]
+enum Act {
+    /// The release on the cursor's child: message 5, the list's Enter.
+    Enter,
+    /// The hover or held step (`takes`) onto another child: the cursor goes there, message 9.
+    Step,
+    None,
+}
+
+/// FUN_1015f420 runs before the hover: a release on the cursor's child is Enter, on another child nothing; then a
+/// child other than the cursor's that the hover or the held button takes moves the cursor.
+fn act(cursor: u16, c: u16, released: bool, takes: bool) -> Act {
+    if released && c == cursor {
+        Act::Enter
+    } else if c != cursor && takes {
+        Act::Step
+    } else {
+        Act::None
     }
 }
 
@@ -740,6 +766,17 @@ mod tests {
         let mut f = list(10, 9);
         hover_step(&mut f, 1);
         assert_eq!(f.sel, 6);
+    }
+
+    /// A release on another row than the cursor's puts nothing in (the hover may still step to it); the release on
+    /// the cursor's row is Enter.
+    #[test]
+    fn release_enters_only_on_the_cursor() {
+        assert_eq!(act(3, 5, true, true), Act::Step);
+        assert_eq!(act(3, 5, true, false), Act::None);
+        assert_eq!(act(5, 5, true, true), Act::Enter);
+        assert_eq!(act(5, 5, false, true), Act::None);
+        assert_eq!(act(3, 5, false, true), Act::Step);
     }
 
     #[test]
