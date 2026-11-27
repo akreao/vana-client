@@ -1890,6 +1890,13 @@ impl Effects {
         }
     }
 
+    /// The scene load's part for a scene that stays loaded (FUN_1018c970: FUN_1018d0b0(0), then FUN_1018cad0 ->
+    /// FUN_1018cbf0 -> FUN_10189fe0): the tag table back at 0 and no weather object.
+    pub fn reset_weather(&mut self) {
+        self.end_weathers();
+        self.weather_table = 0;
+    }
+
     /// A weather object's destructor (FUN_1018c1c0): its generators stop and lose their elements (FUN_1018c180 on
     /// each whose +0x64 is the object), then every task of a scheduler under its folder is deleted (FUN_10056eb0,
     /// 0x1018c2da).
@@ -1899,6 +1906,8 @@ impl Effects {
                 self.kill(i);
             }
         }
+        // By folder, not by object: a newer object made from the same folder (a blend back to it, FUN_1018c3b0
+        // deleting this one when that blend is over) loses its schedulers' tasks too, as in retail.
         if let Some(l) = self.zone_lib {
             for n in self.schedulers_under(l, w.folder) {
                 self.kill_tasks((l, n), None);

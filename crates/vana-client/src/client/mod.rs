@@ -12671,6 +12671,13 @@ impl App {
                     } else if world.loading.is_none() && world.zone_uploading.is_none() {
                         world.downloading = None;
                     }
+                    if current {
+                        // The scene stays loaded here, but retail's zone-in loads it again (FUN_10094190 ->
+                        // FUN_1018c970): the tag table is back at 0, the weather objects are deleted and the
+                        // zone-in's weather is made.
+                        world.effects.reset_weather();
+                        world.effects.set_weather(crate::dat::weather::weather_tag(weather), 0.0);
+                    }
                 }
                 NetEvent::Entity(e) => {
                     charreq(world, &e);
