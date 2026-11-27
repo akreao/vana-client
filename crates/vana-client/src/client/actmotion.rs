@@ -933,7 +933,8 @@ pub(super) fn update(w: &mut World, dt: f32) {
         }
         start_ready(w, id, &index, &ch, &base);
         // FUN_1008e9a0 -> FUN_1008b460: while the entity's busy count is up (+0x11c, FUN_10083320) the machine returns
-        // 0 at its top, so no draw, sheathe or state change happens until every hold on the actor is over.
+        // 0 at its top, so no draw, sheathe or state change happens until every hold on the actor is over. The
+        // machine's schedulers are the entity loop's (Effects::in_loop).
         let busy = super::combat::held(w, id);
         let a = w.actors.get_mut(&id).unwrap();
         a.battle.machine_call(busy);
@@ -948,7 +949,7 @@ pub(super) fn update(w: &mut World, dt: f32) {
             a.battle.leaving = true;
             a.battle.frames = 0;
             log::info!("actor {id:#x}: disengaged, sheathing");
-            w.effects.on_scheduler_alone(id, KLBT);
+            w.effects.in_loop(|fx| fx.on_scheduler_alone(id, KLBT));
             a.drawn = false;
             a.status_blank();
             for n in 0..2 {
@@ -957,12 +958,12 @@ pub(super) fn update(w: &mut World, dt: f32) {
             let out = ch.pc.as_ref().map(|pc| crate::dat::motionfile::draw_scheduler(pc, true));
             match out {
                 Some(n) if start(a, &ch, &n, &base) => {
-                    fx_too(&mut w.effects, id, &n);
+                    w.effects.in_loop(|fx| fx_too(fx, id, &n));
                     a.battle.out = Some(n);
                 }
                 _ => a.play = None,
             }
-            w.effects.on_scheduler(id, id, HWAT);
+            w.effects.in_loop(|fx| fx.on_scheduler(id, id, HWAT));
         } else if !want.is_empty() && want != a.battle.on {
             // FUN_100d12d0: "in N" starts once the files are in, for its motions and its holds alike.
             let fx_ready = w.effects.libs_ready(&want);
@@ -987,7 +988,7 @@ pub(super) fn update(w: &mut World, dt: f32) {
                             "actor {id:#x}: draw {name:?}, carry bones pinned at ticks {:?}",
                             a.draw_pins.as_ref().map(|d| &d.1)
                         );
-                        fx_too(&mut w.effects, id, &name);
+                        w.effects.in_loop(|fx| fx_too(fx, id, &name));
                     }
                 }
             }
@@ -998,7 +999,7 @@ pub(super) fn update(w: &mut World, dt: f32) {
             // took them off.)*
             a.battle.wait = true;
             log::info!("actor {id:#x}: left the engaged status");
-            w.effects.on_scheduler_alone(id, BNTG);
+            w.effects.in_loop(|fx| fx.on_scheduler_alone(id, BNTG));
         }
         // State 5 / 7 (the machine's second call of the sheathe's frame, FUN_1008e9a0): FUN_100d44b0(1) takes the
         // battle files off the list once no `waot` runs on the actor. A dual wield "out0" starts one at its first

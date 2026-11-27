@@ -94,7 +94,8 @@ fn skip_ticks(now: u32, start: u32) -> i32 {
     if elapsed < 600 { 0 } else { elapsed }
 }
 
-/// FUN_10097a80: `elapsed = now - start` in ticks (start 0: now); under 600 from the first op, else caught up.
+/// FUN_10097a80: `elapsed = now - start` in ticks (start 0: now); under 600 from the first op, else caught up. Its
+/// callers FUN_1008c6c0 and FUN_1008f740 are inside the entity loop (Effects::in_loop).
 fn start_seq(w: &mut World, id: u32, start: u32) {
     let Some(a) = w.ships.actors.get(&id) else { return };
     let Some(name) = sequence(a.state) else {
@@ -108,7 +109,8 @@ fn start_seq(w: &mut World, id: u32, start: u32) {
         a.state,
         String::from_utf8_lossy(&name.to_le_bytes())
     );
-    w.effects.start_sequence(id, a.file, name, skip);
+    let file = a.file;
+    w.effects.in_loop(|fx| fx.start_sequence(id, file, name, skip));
 }
 
 /// Per frame, after the net events and doors: models to load for new ship entities (and rebuilt ones), gone ones

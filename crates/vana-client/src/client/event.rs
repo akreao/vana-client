@@ -1698,7 +1698,9 @@ impl Host for LiveHost<'_> {
                     // FUN_100940b0: the weather's effects switch at once too.
                     if wt != 0xff {
                         self.st.weather = Some(wt as u16);
-                        self.w.effects.set_weather(crate::dat::weather::weather_tag(wt as u16), 0.0);
+                        let tag = self.w.effects.weather_tag(wt as u16);
+                        self.w.effects.set_weather(tag, 0.0);
+                        self.w.weather_off = false;
                     }
                 }
             }
@@ -1722,13 +1724,16 @@ impl Host for LiveHost<'_> {
             Effect::Op { op: op @ (0x78 | 0xc9), .. } => {
                 self.st.clock = None;
                 if op == 0x78 {
-                    let wt = self.w.weather;
-                    let off = self.w.weather_chain.last().is_some_and(|c| c.0 != wt);
+                    // FUN_100940b0 -> FUN_1018d0e0: the server's number through the tag table in force.
+                    let tag = self.w.effects.weather_tag(self.w.weather);
+                    let tag4 = crate::dat::generator::fourcc(tag);
+                    let off = self.w.weather_chain.last().is_none_or(|c| c.0 != tag4);
                     if off {
-                        self.w.weather_chain = vec![(wt, Instant::now(), 0.0)];
+                        self.w.weather_chain = vec![(tag4, Instant::now(), 0.0)];
                     }
                     if self.st.weather.take().is_some() || off {
-                        self.w.effects.set_weather(crate::dat::weather::weather_tag(wt), 0.0);
+                        self.w.effects.set_weather(tag, 0.0);
+                        self.w.weather_off = false;
                     }
                 }
             }
@@ -1738,13 +1743,9 @@ impl Host for LiveHost<'_> {
             Effect::Op { op: 0xae, sub: Some(0), args, .. } => {
                 if let (Some(wt), Some(t)) = (Self::arg_int(&args, 0), Self::arg_int(&args, 1)) {
                     let (wt, secs) = (wt as u16, t.max(0) as f32 / 25.0);
-                    if self.w.weather_chain.last().is_none_or(|c| c.0 != wt) {
-                        if secs <= 0.0 {
-                            self.w.weather_chain.clear();
-                        }
-                        self.w.weather_chain.push((wt, Instant::now(), secs));
-                    }
-                    self.w.effects.set_weather(crate::dat::weather::weather_tag(wt), secs);
+                    let tag = self.w.effects.weather_tag(wt);
+                    weather_object(self.w, crate::dat::generator::fourcc(tag), secs);
+                    self.w.effects.set_weather(tag, secs);
                 }
             }
             // FUN_100b6950 / 6a00 / 69b0 / 6980 / 6a30: the event's door state (+0x174) for the bound actor.
@@ -1793,9 +1794,12 @@ impl Host for LiveHost<'_> {
                     self.action_file(kind, id as u32, self.wid(*a), self.wid(*b));
                 }
             }
-            // FUN_100b8b20: the player runs file 0x13f8 + val's "main" on itself.
+            // FUN_100b8b20: the player runs file 0x13f8 + val's "main" on itself, when its model is up (+0x120 bit 9,
+            // 0x100b8b35); the op is passed either way.
             Effect::Op { op: 0x7d, args, .. } => {
-                if let Some(id) = Self::arg_int(&args, 0) {
+                if let Some(id) = Self::arg_int(&args, 0)
+                    && self.modelled(PLAYER)
+                {
                     let me = crate::fx::sched::Who::Actor(self.w.my_id);
                     self.w.effects.on_event_scheduler(0x13f8 + id as u32, u32::from_le_bytes(*b"main"), me, me);
                 }
@@ -2224,10 +2228,9 @@ impl Host for LiveHost<'_> {
             // FUN_10178780: a sub-area load is running.
             // FUN_100b8630 (0x98): ends the frame while one runs (DAT_10631f24 +0x44).
             Busy::Op { op: 0x75 | 0x98, .. } => self.w.sub.loading.is_some() || self.w.sub.asked.is_some(),
-            // Op 0xb6 sub 0x10: until the player's model is up.
-            Busy::Op { op: 0xb6, sub: Some(0x10), .. } => {
-                self.w.actors.get(&self.w.my_id).is_none_or(|a| a.character.is_none())
-            }
+            // Op 0xb6 sub 0x10 (FUN_100b1150 0x100b19ef): until the player's model is up (+0x120 bit 9), so also
+            // while an unload mark keeps it freed.
+            Busy::Op { op: 0xb6, sub: Some(0x10), .. } => !self.w.my_model_up(),
             Busy::Op { op: 0x99 | 0x63 | 0x9b, actor, .. } | Busy::Op { op: 0x59, sub: Some(6), actor } => {
                 let id = self.wid(*actor);
                 self.w.actors.get(&id).is_some_and(super::actmotion::emoting)
@@ -2247,8 +2250,14 @@ impl Host for LiveHost<'_> {
         id == self.w.my_id || self.w.entities.contains_key(&id)
     }
 
+    /// +0x120 bit 9. FUN_10092900 clears it with the model FUN_10095900 frees for an unload mark (an actor the event
+    /// neither binds nor reserves, under its Mode's filter or the server's hide / sleep bits): `World::unloaded`
+    /// holds the others', our own keeps its entry and has the mark (`World::unload_marks`).
     fn modelled(&self, actor: u32) -> bool {
-        self.st.models.on() && self.ready(actor)
+        let id = self.wid(actor);
+        let freed =
+            if id == self.w.my_id { self.w.unload_marks.contains(&id) } else { self.w.unloaded.contains_key(&id) };
+        self.st.models.on() && self.ready(actor) && !freed
     }
 
     fn name(&self, actor: u32) -> String {
@@ -2583,13 +2592,15 @@ fn first_waiting(
 /// +0x120 bit 9: the model is up. Entities that carry no look have no model to wait for, and a model that
 /// failed to load counts as loaded (inferred: retail has every model).
 ///
-/// A model FUN_10095900 freed (`World::unloaded`) is not up: the walk's bit 8 on the actor ends its unload mark and
-/// the loader makes it again, which the start waits for.
+/// A model FUN_10095900 freed (`World::unloaded`; our own keeps its entry and has the mark, `World::unload_marks`) is
+/// not up: the walk's bit 8 on the actor ends its unload mark and the loader makes it again, which the start waits
+/// for.
 ///
 /// `queued`: actors whose first look this frame's updates brought; the loader makes their model records after the
 /// check, so until then they have a model to wait for, not none.
 fn has_model(w: &World, id: u32, queued: &HashSet<u32>) -> bool {
     !w.unloaded.contains_key(&id)
+        && !(id == w.my_id && w.unload_marks.contains(&id))
         && match w.actors.get(&id) {
             Some(a) => a.character.is_some() || a.failed,
             None => !queued.contains(&id),
@@ -3069,14 +3080,22 @@ fn finish(w: &mut World, live: Box<Live>) {
     cancel_queues(w);
     // FUN_100ae3f0 -> FUN_100ba080: op 0x97's gusts back as they were.
     w.wind.restore();
-    // FUN_100acf20: first person as it was before the event.
-    w.camst.first = live.st.first_saved;
+    // FUN_100ae960 -> FUN_100ae9b0(DAT_1035dfa0): first person as it was before the event, when our model is up
+    // (+0x120 bit 9; with none FUN_100a8cc0 is not called and the view stays as the event left it).
+    if w.my_model_up() {
+        w.camst.first = live.st.first_saved;
+    }
     // FUN_100ae960 (0x100ae98b): the status icons back after op 0x46 sub 1 hid them.
     w.buffs_hidden = false;
     // Op 0x77's weather without its 0x78: the lighting goes back with the event, so the effects do too.
     if live.st.weather.is_some() {
-        let wt = w.weather;
-        w.effects.set_weather(crate::dat::weather::weather_tag(wt), 0.0);
+        let tag = w.effects.weather_tag(w.weather);
+        w.effects.set_weather(tag, 0.0);
+        // A weather object stands again where op 0x7e deleted them all during the hold.
+        if w.weather_chain.is_empty() {
+            w.weather_chain.push((crate::dat::generator::fourcc(tag), Instant::now(), 0.0));
+        }
+        w.weather_off = false;
     }
     // FUN_100ae3f0 (0x100ae452) with flag 0x8000 (LSB GROUND_SNAP_ON_END): an actor's place (+4 and the server's
     // +0x24) becomes where its model is (+0x44) with the height put back on the floor: a player character's by
@@ -3186,8 +3205,9 @@ fn finish(w: &mut World, live: Box<Live>) {
     if live.st.bound.contains(&w.my_id) {
         w.self_lock = Some(300.0);
     }
-    // (DAT_1046df04 | Mode) & 1: the camera goes back behind the player (FUN_1001d950).
-    if live.st.flags() & 1 != 0 {
+    // (DAT_10481aac | Mode) & 1: the camera goes back behind the player (FUN_10021680 on our model), when we have
+    // one (FUN_100ae3f0 0x100ae776: our +0xa0, none while an unload mark has freed it).
+    if live.st.flags() & 1 != 0 && w.my_model_up() {
         let dir = w.net.me.lock().map(|m| m.dir).unwrap_or(0);
         let f = super::forward_from_dir(dir);
         super::camera::face(w, f.x.atan2(f.z));
@@ -3567,10 +3587,39 @@ pub fn weather(w: &World) -> u16 {
     w.event.as_ref().and_then(|l| l.st.weather).unwrap_or(w.weather)
 }
 
-/// Scheduler ops 0x7c / 0x7d (fx::EnvOp) on the clock and weather op 0x77 holds.
+/// FUN_10188ac0 on the client's copy of the weather objects (`World::weather_chain`, the env's side of them): a new
+/// one for `tag` unless the newest has it, blended in over `secs`; with no blend time the older ones go at once.
+pub fn weather_object(w: &mut World, tag: [u8; 4], secs: f32) {
+    if w.weather_chain.last().is_none_or(|c| c.0 != tag) {
+        if secs <= 0.0 {
+            w.weather_chain.clear();
+        }
+        w.weather_chain.push((tag, Instant::now(), secs));
+    }
+    w.weather_off = false;
+}
+
+/// An event's scene load (ops 0x34 / 0x35, FUN_1018c970) on the client's copy of the weather objects: the tag table
+/// is back at 0, so a second-table tag goes back to the first table's, and a weather object stands again (`tag`'s)
+/// where op 0x7e had deleted them all.
+pub fn weather_reloaded(w: &mut World, tag: &str) {
+    use crate::dat::weather::{WEATHER_TAGS, table_find};
+    for c in w.weather_chain.iter_mut() {
+        if let Some(n) = table_find(1, c.0) {
+            c.0 = crate::dat::generator::fourcc(WEATHER_TAGS[n as usize]);
+        }
+    }
+    if w.weather_chain.is_empty() {
+        w.weather_chain.push((crate::dat::generator::fourcc(tag), Instant::now(), 0.0));
+    }
+    w.weather_off = false;
+}
+
+/// The client's side of scheduler ops 0x7c / 0x7d / 0x7e / 0xae (fx::EnvOp): the clock, the env's weather objects and
+/// the static env. The weather's generators and schedulers changed inside the op (Effects::change_weather).
 pub fn env_op(w: &mut World, op: crate::fx::EnvOp) {
     match op {
-        // FUN_1018c210: hour, minute and second of `v`, the day kept. Outside an event ours runs on the server's.
+        // FUN_1018d7e0: hour, minute and second of `v`, the day kept. Outside an event ours runs on the server's.
         crate::fx::EnvOp::Clock(v) => match w.event.as_mut() {
             Some(l) => {
                 let held = l.st.clock;
@@ -3580,31 +3629,28 @@ pub fn env_op(w: &mut World, op: crate::fx::EnvOp) {
             }
             None => log::debug!("scheduler op 0x7d (time {v}) outside an event: not applied"),
         },
-        // FUN_101874f0 with keep 0: a new tag kills the old weather's effects at once; the env blends over `blend`
-        // clock units (1500 a second).
-        crate::fx::EnvOp::Weather { tag, blend } => {
-            let name = String::from_utf8_lossy(&tag.to_le_bytes()).trim_end_matches('\0').to_string();
-            let secs = blend.max(0) as f32 / 1500.0;
-            match crate::dat::weather::WEATHER_TAGS.iter().position(|t| *t == name) {
-                Some(n) => {
-                    let n = n as u16;
-                    match w.event.as_mut().filter(|l| l.st.weather.is_some()) {
-                        Some(l) => l.st.weather = Some(n),
-                        None if w.weather_chain.last().is_none_or(|c| c.0 != n) => {
-                            if secs <= 0.0 {
-                                w.weather_chain.clear();
-                            }
-                            w.weather_chain.push((n, Instant::now(), secs));
-                        }
-                        None => {}
-                    }
-                }
-                None => log::debug!("scheduler op 0x7c: weather {name:?} has no number"),
+        // FUN_10188ac0 made a weather object for `tag`. While op 0x77 holds a weather the hold takes it, as a number
+        // of the tag table in force (a tag the table lacks is left to the hold's number).
+        crate::fx::EnvOp::Weather { tag, seconds } => {
+            let table = w.effects.weather_table();
+            match w.event.as_mut().filter(|l| l.st.weather.is_some()) {
+                Some(l) => match crate::dat::weather::table_find(table, tag) {
+                    Some(n) => l.st.weather = Some(n),
+                    None => log::debug!(
+                        "scheduler weather {:?} under op 0x77's hold is not in tag table {table}",
+                        String::from_utf8_lossy(&tag)
+                    ),
+                },
+                None => weather_object(w, tag, seconds),
             }
-            w.effects.set_weather(&name, 0.0);
-            w.static_env = None;
+            w.weather_off = false;
         }
-        crate::fx::EnvOp::Static(e) => w.static_env = Some(e),
+        // FUN_1018c5e0: the block is the static env from now on, and no weather object is left.
+        crate::fx::EnvOp::Static(e) => {
+            w.static_env = Some(e);
+            w.weather_chain.clear();
+            w.weather_off = true;
+        }
     }
 }
 
@@ -4297,29 +4343,43 @@ pub fn talk_with(w: &mut World, target: u32, param: u32) -> bool {
         return true;
     }
     let Some(e) = w.entities.get(&target) else { return false };
-    // UniqueNo high byte: NPCs only; a model on the target (+0x120 bit 9); not hidden by the server.
-    // A door's XiDoorActor counts as its model.
-    if target >> 24 == 0 || e.index == 0 || !(w.actors.contains_key(&target) || e.door != 0) || e.server_hidden() {
+    if e.index == 0 {
         return false;
+    }
+    // FUN_1007bf30 in its order (30261102_0). A UniqueNo with no high byte (a player character, 0x1007bfbe): system
+    // message 9 as for a target out of range (LAB_1007c0ec), and the call succeeds.
+    if target >> 24 == 0 {
+        super::textcmd::system_line(w, 9);
+        return true;
     }
     // An index past 0x6ff (pets, trusts) only when talkable (+0x12c bit 30: 0x00E @0x28 bit 6).
     if e.index > 0x6ff && !e.marks.npc_pet {
         return false;
     }
-    // Not while invisible (own +0x128 bit 6 = 0x037 flags1 bit 15): system message 0xac.
-    if w.my_plate.invisible {
-        super::textcmd::system_line(w, 0xac);
+    // 0x1007bfe3: our own model must be up (+0x120 bit 9): nothing while an unload mark has freed it. Then the
+    // target's (0x1007bfff); a door's XiDoorActor counts as its model.
+    if !w.my_model_up() || !(w.actors.contains_key(&target) || e.door != 0) {
         return false;
     }
-    // LAB_1007c0ec: system message 9 "Target out of range." (FUN_100a1ab0, file 7031).
+    // 0x1007c01a: a target whose model is hidden (model +0xb2, the hide pass's bits) is out of range.
+    if hides(w, target) {
+        super::textcmd::system_line(w, 9);
+        return true;
+    }
+    // Not while invisible (own +0x128 bit 6 = 0x037 flags1 bit 15): system message 0xac; the call succeeds.
+    if w.my_plate.invisible {
+        super::textcmd::system_line(w, 0xac);
+        return true;
+    }
+    // LAB_1007c0ec: system message 9 "Target out of range." (FUN_100a1ab0, file 7031) past 6.0 (0x1032df50).
     if (e.pos - w.pos).length() > TALK_RANGE {
         super::textcmd::system_line(w, 9);
-        return false;
+        return true;
     }
     if matches!(e.motion.status, 2 | 3) {
         return false;
     }
-    let index = e.index;
+    let (index, free) = (e.index, e.marks.talk_free);
     let mut body = super::net::action_body(target, index, 0);
     body[8..12].copy_from_slice(&param.to_le_bytes());
     let _ = w.net.commands.send(NetCommand::Packet { id: 0x01A, body });
@@ -4328,7 +4388,10 @@ pub fn talk_with(w: &mut World, target: u32, param: u32) -> bool {
     if !matches!(w.my_motion.status, 2 | 3) {
         w.talked_index = index;
     }
-    w.control_lock = Some((Instant::now(), target));
+    // 0x1007c16d: control locks (DAT_104840c8) unless the target carries +0x128 bit 5.
+    if !free {
+        w.control_lock = Some((Instant::now(), target));
+    }
     log::info!("talk to {target:#x} ({index}), parameter {param}");
     true
 }

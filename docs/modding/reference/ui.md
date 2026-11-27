@@ -512,7 +512,7 @@ redraws it with the new elements; the values you give (`at`, `text`, `open` and 
 | `width` | `number` | `366` in the classic UI, `360` in the modern UI | The window's width. In the classic UI it is in the classic UI's units (those of `x` and `y`); in the modern UI it is in the modern UI's points. `0` gives the default. |
 | `help` | `string` | `""` | Help text for the window (see [Tips and help](#tips-and-help)). |
 | `elements` | `table` | `{}` | The elements, top to bottom (see [Window elements](#window-elements)). |
-| `hud` | `boolean` | `false` | A HUD window: it never takes the keys, not from `ui.open` and not from a click. Clicks on its controls still act. |
+| `hud` | `boolean` | `false` | A HUD window: it never takes the keys, not from `ui.open` and not from a click. Clicks on its controls still act. In the classic UI it stands with the HUD, under the game's windows and the Config screens, and takes no clicks where one of them is over it (unless it is `modal` or opened at an anchor). |
 | `frame` | `boolean` | `true` | `false` draws the window without its frame. |
 | `x`, `y` | `number` | none | The window's top left corner in the classic UI, in its units. Give both, or neither. Without them, windows are placed one below and right of the other from the top left. The modern UI places its windows itself and does not use these. |
 | `modal` | `boolean` | `false` | While a modal window is open it keeps the keys and is the only mod window the pointer reaches; other mod windows cannot take the keys from it. It is centred on the screen (in the classic UI, at `x`, `y` when given). A click outside it does not close it. |

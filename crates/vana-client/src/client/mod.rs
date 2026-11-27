@@ -588,7 +588,8 @@ fn res_rdy(w: &mut World) {
     } else {
         w.res_rdy.kings.len() >= w.res_rdy.send_count as usize || ticks >= 600.0
     };
-    if go {
+    // FUN_100882d0 (0x100882e2): only once our model is up (+0x120 bit 9), each frame until then.
+    if go && w.my_model_up() {
         w.res_rdy.sent = true;
         let body = net::action_body(w.my_id, w.my_index, 0x14);
         let _ = w.net.commands.send(NetCommand::Packet { id: 0x01A, body });
@@ -4635,6 +4636,9 @@ fn world_hud(
         regime::draw(gu, &mut world.regime, sw);
     }
     skillchain::draw(gu, &mut world.skillchain, sw);
+    // The mods' HUD and edge windows stand with the Timers' dock, under the HUD and every window (World::over_mod_hud).
+    let mod_hud = if world.modern { Vec::new() } else { lua::draw_classic(gu, world, true) };
+    let mod_hud_from = gu.drawn_count();
     let slots = gu.hud(sw, sh, &st);
 
     // Target cursor (FUN_10149900): anc_l at the target's point, 6 frames of 4 ticks, tint 0xe0808080;
@@ -5200,17 +5204,19 @@ fn world_hud(
     if let Some(s) = world.settings.as_ref().filter(|_| !world.modern) {
         blockers.push(s.draw(gu, sw, sh));
     }
-    // The Lua mods' windows (the modern UI draws them as panels).
+    // The Lua mods' other windows (the modern UI draws them as panels): their managers, popups and modal ones.
     if !world.modern {
-        blockers.extend(lua::draw_classic(gu, world));
+        blockers.extend(lua::draw_classic(gu, world, false));
         blockers.extend(voicechat::draw_classic(gu, world, sw, sh));
     }
     // The game's windows drawn from here on are over the mods' (World::above_mods).
     let above_from = gu.drawn_count();
-    // The map covers the screen (mapframe takes the mouse), as does cnqframe.
-    if world.map.is_some() || world.cnq.is_some() {
+    // The map covers the screen (mapframe takes the mouse), as does cnqframe. Both draw under the mods' HUD layer,
+    // so this one keeps the mouse off the world only (not off that layer).
+    let map_at = (world.map.is_some() || world.cnq.is_some()).then(|| {
         blockers.push([0.0, 0.0, sw, sh]);
-    }
+        blockers.len() - 1
+    });
     // The choice menu (FUN_100b0960).
     if let Some(c) = event::choice(world).filter(|_| !world.modern) {
         let options: Vec<String> = c.options.iter().map(|o| o.1.clone()).collect();
@@ -5698,6 +5704,18 @@ fn world_hud(
     // The Timers window under every other window: its clicks only where none is over it.
     let ours_from = blockers.len();
     world.above_mods = gu.drawn_since(above_from);
+    // All drawn after the mods' HUD layer (not the minimap nor the map, under it), then the layer itself under Timers'
+    // clicks.
+    let mut over = gu.drawn_since(mod_hud_from);
+    over.extend(
+        blockers
+            .iter()
+            .enumerate()
+            .filter(|(k, r)| world.minimap_rect != Some(**r) && map_at != Some(*k))
+            .map(|x| *x.1),
+    );
+    world.over_mod_hud = over;
+    blockers.extend(mod_hud);
     blockers.extend(timers::pointer(world, gu, input.pointer, input.clicked, &blockers));
     blockers.extend(regime::pointer(world, gu, input.pointer, input.clicked, &blockers));
     blockers.extend(skillchain::pointer(world, gu, input.pointer, input.clicked, &blockers));
@@ -8582,14 +8600,17 @@ struct World {
     /// The chat line's history (kept on the App between logins).
     line_hist: linehist::LineHistory,
     weather: u16,
-    /// The weather objects, oldest first (FUN_1018a7a0 links the previous newest as the child): weather, when it came
-    /// and its blend time (0x057 @0x0a Vana minutes x 2.4 s; 0 for the base).
-    weather_chain: Vec<(u16, Instant, f32)>,
+    /// The weather objects, oldest first (FUN_1018bd70 links the previous newest as the child): the weather's tag,
+    /// when it came and its blend time (0x057 @0x0a Vana minutes x 2.4 s; 0 for the base).
+    weather_chain: Vec<([u8; 4], Instant, f32)>,
+    /// Scheduler op 0x7e deleted every weather object (FUN_1018c5e0 -> FUN_10189fe0) and none was made since: the
+    /// scene is lit by the static env alone.
+    weather_off: bool,
     /// The ground's wetness in the rain (render/rain.rs), followed whether Wet Ground is on or not; a new login starts
     /// it afresh.
     wetness: crate::render::rain::Wetness,
-    /// Scheduler op 0x7e's env (fx::EnvOp::Static), used where the zone has no env for the weather; a 0x7c or a
-    /// zone change drops it.
+    /// Scheduler op 0x7e's env (fx::EnvOp::Static), retail's static env DAT_1065dc10: what the scene is lit by with
+    /// no weather object (`weather_off`) or where the zone has no env for the weather. A zone change drops it.
     static_env: Option<crate::dat::weather::Env>,
     zone_weather: Option<crate::dat::weather::ZoneWeather>,
     /// FUN_10187720's eased lights: the zone's, each area's (by sub-area or zone, 4cc), and the time not yet stepped
@@ -8749,6 +8770,9 @@ struct World {
     release_drag: bool,
     /// The game's windows drawn over the mods' last frame (their frames): the mouse there is theirs, not a mod's.
     above_mods: Vec<[f32; 4]>,
+    /// The game's windows and the HUD drawn over the mods' HUD layer last frame (lua::hud_layer, drawn with the Timers'
+    /// dock): the mouse there is theirs, not those windows'.
+    over_mod_hud: Vec<[f32; 4]>,
     /// The ops' shared extdata buffer (DAT_104886bc).
     event_ext: [u8; 24],
     event_mem: crate::event_vm::Memory,
@@ -8784,6 +8808,9 @@ struct World {
     audio_cmds: Vec<(i32, f32, f32)>,
     /// DAT_104804c3: the per-zone sound-level reset has run, so the event end doesn't restore levels (batch 6 item 18).
     sound_reset: bool,
+    /// FUN_10096640's DAT_1048909e, inverted: the zone-in's camera placement on our model is still to come (our model
+    /// was not up when the zone settled).
+    zone_cam_owed: bool,
     /// Chat call sounds to play (FUN_100380f0, at the op 0x69 mask 0x10 level), the call's task, and what the audio
     /// says of it: the call level is on (DAT_10351710), the call's voice still plays.
     call_sounds: Vec<u32>,
@@ -9148,6 +9175,15 @@ impl World {
     /// the old ground must not settle or move us meanwhile).
     fn in_scene(&self) -> bool {
         self.zone == Some(self.pos_zone) && self.loading.is_none()
+    }
+
+    /// Our own actor's +0x120 bit 9 and +0xa0: its model is made. FUN_10092900 clears both when FUN_10095900 frees
+    /// the model for an unload mark (`event::unload_models`: ours keeps its entry, so the mark says it), and
+    /// FUN_1008f740 sets them again the frame the mark is gone. A model that failed to load counts as made, as for
+    /// an event's actors (`event::has_model`). Addresses are 30261102_0.
+    fn my_model_up(&self) -> bool {
+        !self.unload_marks.contains(&self.my_id)
+            && self.actors.get(&self.my_id).is_some_and(|a| a.character.is_some() || a.failed)
     }
 
     /// FUN_10118870: the cursor child a window opened by name starts on (the one it last had; 1 the first time).
@@ -11277,6 +11313,7 @@ impl App {
                             client_version: self.cfg.client_version.clone(),
                             weather: 1,
                             weather_chain: Vec::new(),
+                            weather_off: false,
                             wetness: Default::default(),
                             static_env: None,
                             zone_weather: None,
@@ -11422,6 +11459,7 @@ impl App {
                             ctr_hold: Default::default(),
                             release_drag: false,
                             above_mods: Vec::new(),
+                            over_mod_hud: Vec::new(),
                             event_ext: [0; 24],
                             event_mem: Default::default(),
                             event_end_at: None,
@@ -11443,6 +11481,7 @@ impl App {
                             bid: Default::default(),
                             audio_cmds: Vec::new(),
                             sound_reset: false,
+                            zone_cam_owed: false,
                             call_sounds: Vec::new(),
                             call: None,
                             call_heard: (true, false),
@@ -11763,7 +11802,9 @@ impl App {
                         world.lamps = Default::default();
                         if let Some(l) = fx {
                             world.effects.load_area(l);
-                            world.effects.set_weather(crate::dat::weather::weather_tag(event::weather(world)), 0.0);
+                            let tag = world.effects.weather_tag(event::weather(world));
+                            world.effects.set_weather(tag, 0.0);
+                            event::weather_reloaded(world, tag);
                         }
                         if let Some(gfx) = &self.gfx {
                             world.effects.reg.light_keys = geometry.light_keys.clone();
@@ -12036,7 +12077,8 @@ impl App {
                         world.effects.set_index(index);
                     }
                     world.effects.load_zone(z);
-                    world.effects.set_weather(crate::dat::weather::weather_tag(world.weather), 0.0);
+                    let tag = world.effects.weather_tag(world.weather);
+                    world.effects.set_weather(tag, 0.0);
                 }
                 world.lamps = Default::default();
                 world.zone_lines = scene
@@ -12256,7 +12298,9 @@ impl App {
             w.area_ease.clear();
             if let Some(l) = fx {
                 w.effects.switch_zone(l, true);
-                w.effects.set_weather(crate::dat::weather::weather_tag(event::weather(w)), 0.0);
+                let tag = w.effects.weather_tag(event::weather(w));
+                w.effects.set_weather(tag, 0.0);
+                event::weather_reloaded(w, tag);
             }
             if let Some(r) = &w.renderer {
                 w.effects.reg.light_keys = r.light_keys.clone();
@@ -12594,7 +12638,10 @@ impl App {
                         world.ko_deadline = (game_time as u64 + (dead_counter / 60) as u64).saturating_sub(360);
                     }
                     world.weather = weather;
-                    world.weather_chain = vec![(weather, Instant::now(), 0.0)];
+                    // The zone-in's scene load (FUN_1018c970) puts the tag table back to 0 first.
+                    let tag = crate::dat::generator::fourcc(crate::dat::weather::weather_tag(weather));
+                    world.weather_chain = vec![(tag, Instant::now(), 0.0)];
+                    world.weather_off = false;
                     world.static_env = None;
                     // The zone teardown closes the credits roll too.
                     world.credits = None;
@@ -12641,6 +12688,7 @@ impl App {
                     // FUN_10093720: the zone load clears the once-a-zone sound reset; it runs when the player's model
                     // is up (below), or at an event end before that.
                     world.sound_reset = false;
+                    world.zone_cam_owed = true;
                     let f = forward_from_dir(dir);
                     camera::face(world, f.x.atan2(f.z));
                     world.my_id = char_id;
@@ -12681,6 +12729,13 @@ impl App {
                         }
                     } else if world.loading.is_none() && world.zone_uploading.is_none() {
                         world.downloading = None;
+                    }
+                    if current {
+                        // The scene stays loaded here, but retail's zone-in loads it again (FUN_10094190 ->
+                        // FUN_1018c970): the tag table is back at 0, the weather objects are deleted and the
+                        // zone-in's weather is made.
+                        world.effects.reset_weather();
+                        world.effects.set_weather(crate::dat::weather::weather_tag(weather), 0.0);
                     }
                 }
                 NetEvent::Entity(e) => {
@@ -13356,18 +13411,14 @@ impl App {
                     entry_name,
                 ),
                 NetEvent::Weather(w, minutes) => {
-                    // FUN_101874f0: a new weather object only for a new number; it blends from the current mix over
-                    // the change's time, at once with none (the chain goes).
+                    // FUN_1009f2f0 -> FUN_10188ac0: a new weather object only for a new tag (the number through the
+                    // tag table in force, FUN_1018d0e0); it blends from the current mix over the change's time, at
+                    // once with none (the chain goes). One Vana'diel minute is 2.4 s (u16 @0x0a x 3600 units).
                     let secs = minutes as f32 * 2.4;
-                    if world.weather_chain.last().is_none_or(|c| c.0 != w) {
-                        if secs <= 0.0 {
-                            world.weather_chain.clear();
-                        }
-                        world.weather_chain.push((w, Instant::now(), secs));
-                    }
+                    let tag = world.effects.weather_tag(w);
+                    event::weather_object(world, crate::dat::generator::fourcc(tag), secs);
                     world.weather = w;
-                    // One Vana'diel minute is 2.4 s (FUN_101804d0's duration is u16 @0x0a x 3600 units).
-                    world.effects.set_weather(crate::dat::weather::weather_tag(w), minutes as f32 * 2.4);
+                    world.effects.set_weather(tag, secs);
                 }
                 NetEvent::Assist { player, target: t } => target::assist(world, player, t),
                 // FUN_10098710: tables 0..7 only; the owned bits, then the seen bits (keyitems::Seen).
@@ -13978,13 +14029,15 @@ impl App {
         for (id, name) in stops {
             world.effects.stop_actor_scheduler(id, u32::from_le_bytes(name));
         }
+        // Both inside the entity loop (FUN_1008e9a0 -> FUN_1008c480; FUN_1008f740 -> FUN_1008ef60): the schedulers
+        // start at the loop's task in the walk (Effects::in_loop).
         for (id, sub) in inits {
             log::debug!(target: "motion", "actor {id:#x}: scheduler init (sub-animation {sub})");
-            world.effects.on_init(id, sub);
+            world.effects.in_loop(|fx| fx.on_init(id, sub));
         }
         for (id, name) in starts {
             log::debug!(target: "motion", "actor {id:#x}: scheduler {}", String::from_utf8_lossy(&name));
-            world.effects.on_scheduler(id, id, u32::from_le_bytes(name));
+            world.effects.in_loop(|fx| fx.on_scheduler(id, id, u32::from_le_bytes(name)));
         }
         for id in ins {
             wepfx::start_in(world, id);
@@ -14587,11 +14640,17 @@ impl App {
             world.lift_wait = None;
         }
         let lift_wait = world.lift_wait.is_some_and(|t| t.elapsed().as_secs_f32() < 10.0);
+        // FUN_1008abe0 state 1 (0x1008ad3c): the zone-in's fade in ('fdi0') starts only once our model is up (+0x120
+        // bit 9), so not while an unload mark keeps it freed (our hide or sleep bit with no event). The state is
+        // entered only without a zone-in event (FUN_10093db0), and left for good at that point (`sound_reset`).
+        let model_wait =
+            !world.sound_reset && world.event.is_none() && world.event_pending.is_none() && !world.my_model_up();
         let ready = world.zoning_since.is_none()
             && world.in_scene()
             && world.renderer.is_some()
             && world.zone_uploading.is_none()
-            && !lift_wait;
+            && !lift_wait
+            && !model_wait;
         // A zone change's fade to black runs to the end before the new zone fades in.
         let target = if ready && !world.unsettled && world.zone_hold.is_none() { 0.0 } else { 1.0 };
         if target > world.fade {
@@ -14610,6 +14669,16 @@ impl App {
             // player, now that the zone collision is in (ours; retail places it once, FUN_10021680).
             let yaw = world.yaw;
             camera::face(world, yaw);
+            if world.my_model_up() {
+                world.zone_cam_owed = false;
+            }
+        }
+        // FUN_10096640 (0x10096676, once a zone: DAT_1048909e): the camera goes behind us the frame our model is up
+        // (+0x120 bit 9, FUN_10021680 on the model), so after an unload mark that held it at the zone-in is gone.
+        if world.zone_cam_owed && !world.unsettled && world.in_scene() && world.my_model_up() {
+            world.zone_cam_owed = false;
+            let yaw = world.yaw;
+            camera::face(world, yaw);
         }
         // FUN_1008abe0 (once a zone, DAT_104804c3), at the point the player's model is ready: the ambient to full at
         // once, the world and interface effects over 30 ticks. The stream is left alone. A zone-in cutscene already
@@ -14618,6 +14687,7 @@ impl App {
         if !world.unsettled
             && world.event.is_none()
             && world.event_pending.is_none()
+            && world.my_model_up()
             && !std::mem::replace(&mut world.sound_reset, true)
         {
             world.audio_cmds.push((4, 1.0, 0.0));
@@ -15471,11 +15541,12 @@ impl App {
         garden::update(world, dt);
         // The map window's keys and animations (FUN_101ef0a0); it goes once its fade-out ends, reopening the main menu
         // it came from (LAB_101faff0).
+        // Not a press a classic mod window holds (a hotbar slot dragged over the map).
         let k = self.ui_k;
         let drag = self
             .press_at
             .zip(self.last_cursor)
-            .filter(|_| self.left_down)
+            .filter(|_| self.left_down && !(!world.modern && lua::holds_pointer(world)))
             .map(|(a, b)| ((b.0 - a.0) as f32 * k.0, (b.1 - a.1) as f32 * k.1));
         // Cursor mode's mouse (FUN_101ef0a0): the pointer while shown (mouse +0x4e) and the window active. After a
         // cursor move hid it, it shows again once it is more than 2 px from where it was hidden in all (CursorMoved
@@ -20592,29 +20663,30 @@ fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &Worl
         if let Some(k) = w.weather_chain.iter().rposition(|c| c.2 <= 0.0 || c.1.elapsed().as_secs_f32() >= c.2) {
             w.weather_chain.drain(..k);
         }
-        let chain: Vec<(&str, f32)> = match ev_weather {
-            Some(x) => vec![(crate::dat::weather::weather_tag(x), 1.0)],
-            None if w.weather_chain.is_empty() => vec![(crate::dat::weather::weather_tag(w.weather), 1.0)],
+        let tag_of = |t: &[u8; 4]| String::from_utf8_lossy(t).trim_end_matches('\0').to_string();
+        let chain: Vec<(String, f32)> = match ev_weather {
+            // No weather object since op 0x7e (FUN_10188a70 finds none at the zone object's +0x10): the env pointer
+            // stays on the static block.
+            _ if w.weather_off => Vec::new(),
+            Some(x) => vec![(w.effects.weather_tag(x).to_string(), 1.0)],
+            None if w.weather_chain.is_empty() => vec![(w.effects.weather_tag(w.weather).to_string(), 1.0)],
             None => w
                 .weather_chain
                 .iter()
-                .map(|c| {
-                    (
-                        crate::dat::weather::weather_tag(c.0),
-                        if c.2 <= 0.0 { 1.0 } else { (c.1.elapsed().as_secs_f32() / c.2).min(1.0) },
-                    )
-                })
+                .map(|c| (tag_of(&c.0), if c.2 <= 0.0 { 1.0 } else { (c.1.elapsed().as_secs_f32() / c.2).min(1.0) }))
                 .collect(),
         };
         let mix = |a: &dyn Fn(&str) -> Option<crate::dat::weather::Env>| -> Option<crate::dat::weather::Env> {
-            let mut env = a(chain[0].0)?;
-            for &(tag, t) in &chain[1..] {
+            let mut env = a(&chain.first()?.0)?;
+            for (tag, t) in chain.iter().skip(1) {
                 if let Some(e) = a(tag) {
-                    env = crate::dat::weather::Env::lerp(&env, &e, t);
+                    env = crate::dat::weather::Env::lerp(&env, &e, *t);
                 }
             }
             Some(env)
         };
+        // FUN_1018c5e0 (0x1018c65e) points every area object's env at the static block too.
+        let off = w.weather_off.then(|| crate::dat::weather::Env::scene(None, w.static_env));
         // FUN_10187720 once a 2-tick retail frame (stock 30 fps), held between them.
         w.light_acc += dt * 60.0;
         let mut steps = 0;
@@ -20665,7 +20737,7 @@ fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &Worl
             .into_iter()
             .flat_map(|zw| zw.areas.iter())
             .chain(sub_areas)
-            .filter_map(|(&id, a)| Some((id, mix(&|t| a.at(t, minute))?.area_light())))
+            .filter_map(|(&id, a)| Some((id, off.or_else(|| mix(&|t| a.at(t, minute)))?.area_light())))
             .collect();
         // Scenery areas (FUN_101889c0 finds the area object by 4cc, the sub-area's after the zone's), each
         // with its eased light.
@@ -20673,7 +20745,9 @@ fn world_lighting(cx: &WorldDraw, w: &mut World, r: &mut ZoneRenderer, wf: &Worl
         let mut lights = Vec::with_capacity(keys.len());
         for k in keys {
             let sub = w.sub.weather.as_ref().and_then(|s| s.areas.get(&k));
-            let e = sub.or_else(|| zw.and_then(|zw| zw.areas.get(&k))).and_then(|a| mix(&|t| a.at(t, minute)));
+            let e = sub
+                .or_else(|| zw.and_then(|zw| zw.areas.get(&k)))
+                .and_then(|a| off.or_else(|| mix(&|t| a.at(t, minute))));
             lights.push(e.map(|e| step(w.area_ease.entry((sub.is_some(), k)).or_default(), &e)));
         }
         r.set_area_lights(lights);
@@ -20823,12 +20897,9 @@ fn pose_actors(gfx: &Gfx, fg: &mut FrameGpu, w: &mut World, r: &mut ZoneRenderer
     // FUN_10188a50: the gusts, every frame in retail (30 fps); ours on the cloth's 30 Hz clock.
     w.wind.advance(dt);
     let wind = (w.wind.tick, w.wind.dir, w.wind.strength);
-    // FUN_100cd040's fishing fade needs our drawobj (FUN_101cc4f0) and our place.
-    let (fish, my_pos) = (
-        fishing::any_fishing_status(w.my_motion.status)
-            && w.actors.get(&w.my_id).is_some_and(|a| a.character.is_some()),
-        w.pos,
-    );
+    // FUN_100cd040's fishing fade needs our model (0x100cd231: our +0xa0, none while an unload mark has freed it)
+    // and our place.
+    let (fish, my_pos) = (fishing::any_fishing_status(w.my_motion.status) && w.my_model_up(), w.pos);
     let put_away: HashSet<u32> = w.actors.keys().copied().filter(|id| fishrod::put_away(w, *id)).collect();
     for (id, a) in w.actors.iter_mut() {
         // A changed look goes up in the background; the swap is one frame, the old model drawn till then.

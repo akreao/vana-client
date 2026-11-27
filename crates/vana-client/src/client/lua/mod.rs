@@ -4628,11 +4628,18 @@ pub(super) fn window_key(w: &mut World, key: egui::Key, shift: bool) -> bool {
     true
 }
 
-/// The open mod windows in the classic UI, cascaded from the Config pages' place; their rects.
-pub(super) fn draw_classic(gu: &mut super::game_ui::GameUi, w: &World) -> Vec<[f32; 4]> {
+/// A classic window of the HUD layer, drawn with the Timers' dock under the HUD and every game window: a HUD or edge
+/// window that is not modal and not opened at an anchor. The others (a mod's manager, a popup) stay over them.
+fn hud_layer(win: &window::Window) -> bool {
+    win.hud && !win.modal && win.anchor.is_none()
+}
+
+/// The open mod windows in the classic UI of one layer (`hud`: hud_layer's), cascaded from the Config pages' place;
+/// their rects.
+pub(super) fn draw_classic(gu: &mut super::game_ui::GameUi, w: &World, hud: bool) -> Vec<[f32; 4]> {
     let mut out = Vec::new();
     for (v, id, x, y) in classic_places(w) {
-        if let Some(win) = w.lua.vms[v].st.borrow().windows.iter().find(|x| x.id == id) {
+        if let Some(win) = w.lua.vms[v].st.borrow().windows.iter().find(|x| x.id == id && hud_layer(x) == hud) {
             // Its opacity (per-window opacity), over the whole window.
             let o = w.lua.window_opacity(&w.window_opacity, &format!("mod:{}:{id}", w.lua.vms[v].manifest.id));
             gu.opacity((o < 1.0).then_some(o));
@@ -4838,10 +4845,10 @@ impl Host {
     }
 }
 
-/// The classic places of the open windows, in draw order (cascaded from the Config pages' place; modal ones last,
-/// centred, or at their anchor kept on screen).
+/// The classic places of the open windows, in draw order (cascaded from the Config pages' place; the HUD layer's
+/// first, modal ones last, centred, or at their anchor kept on screen).
 fn classic_places(w: &World) -> Vec<(usize, String, f32, f32)> {
-    let (mut out, mut modal) = (Vec::new(), Vec::new());
+    let (mut hud, mut out, mut modal) = (Vec::new(), Vec::new(), Vec::new());
     if w.lua.all_hidden.get() {
         return out;
     }
@@ -4873,22 +4880,45 @@ fn classic_places(w: &World) -> Vec<(usize, String, f32, f32)> {
                 (None, None) if win.modal => {
                     modal.push((v, win.id.clone(), ((sw - ww) / 2.0).max(0.0), ((sh - wh) / 2.0).max(0.0)))
                 }
-                (None, Some((x, y))) => out.push((v, win.id.clone(), x, y)),
+                (None, Some((x, y))) => {
+                    if hud_layer(win) { &mut hud } else { &mut out }.push((v, win.id.clone(), x, y))
+                }
                 (None, None) => {
-                    out.push((v, win.id.clone(), 16.0 + 24.0 * k, 48.0 + 24.0 * k));
+                    let at = (v, win.id.clone(), 16.0 + 24.0 * k, 48.0 + 24.0 * k);
+                    if hud_layer(win) { &mut hud } else { &mut out }.push(at);
                     k += 1.0;
                 }
             }
         }
     }
-    out.extend(modal);
-    out
+    hud.extend(out);
+    hud.extend(modal);
+    hud
+}
+
+/// The classic places the pointer at `p` can reach: the HUD layer's windows not where a game window or the HUD is over
+/// them (World::over_mod_hud), unless a press or a drag on one already holds the pointer.
+fn pointer_places(w: &World, p: (f32, f32)) -> Vec<(usize, String, f32, f32)> {
+    let mut places = classic_places(w);
+    let r = |r: &[f32; 4]| p.0 >= r[0] && p.1 >= r[1] && p.0 < r[0] + r[2] && p.1 < r[1] + r[3];
+    if w.over_mod_hud.iter().any(r) {
+        places.retain(|(v, id, _, _)| {
+            w.lua.vms[*v]
+                .st
+                .borrow()
+                .windows
+                .iter()
+                .find(|x| x.id == *id)
+                .is_none_or(|win| !hud_layer(win) || win.drag.is_some() || win.press.is_some())
+        });
+    }
+    places
 }
 
 /// The wheel on the classic mod windows: an open dropdown's list under the pointer scrolls `notches` (up positive);
 /// with 0, only whether one is there. True when one is.
 pub(super) fn wheel_classic(w: &World, p: (f32, f32), notches: i32) -> bool {
-    let mut places = classic_places(w);
+    let mut places = pointer_places(w, p);
     if let Some((k, mid)) = w.lua.modal() {
         places.retain(|(v, id, _, _)| *v == k && *id == mid);
     }
@@ -4906,7 +4936,12 @@ pub(super) fn wheel_classic(w: &World, p: (f32, f32), notches: i32) -> bool {
 /// The pointer over any open classic mod window (an open dropdown's list included): drawn over the game's windows,
 /// the mouse there is the mod's alone.
 pub(super) fn over_classic(w: &World, p: (f32, f32)) -> bool {
-    classic_places(w).iter().any(|(v, id, x, y)| {
+    under_any(w, &pointer_places(w, p), p)
+}
+
+/// The pointer over one of `places`' windows (an open dropdown's list included).
+fn under_any(w: &World, places: &[(usize, String, f32, f32)], p: (f32, f32)) -> bool {
+    places.iter().any(|(v, id, x, y)| {
         w.lua.vms[*v].st.borrow().windows.iter().find(|win| win.id == *id).is_some_and(|win| {
             let (ww, wh) = win.classic_reach();
             p.0 >= *x && p.1 >= *y && p.0 < x + ww && p.1 < y + wh
@@ -4917,15 +4952,18 @@ pub(super) fn over_classic(w: &World, p: (f32, f32)) -> bool {
 /// A classic mod window holds the pointer: a press or a canvas drag on it goes on until the button comes up, wherever
 /// the pointer is.
 pub(super) fn holds_pointer(w: &World) -> bool {
-    w.lua
-        .vms
-        .iter()
-        .any(|vm| vm.st.borrow().windows.iter().any(|win| win.open && (win.drag.is_some() || win.press.is_some())))
+    // Not while the mods' windows are hidden (/lua hide): none is drawn or routed, a press under way left behind.
+    !w.lua.all_hidden.get()
+        && w.lua
+            .vms
+            .iter()
+            .any(|vm| vm.st.borrow().windows.iter().any(|win| win.open && (win.drag.is_some() || win.press.is_some())))
 }
 
-/// A classic mod window or a recorded game window under the pointer, drawn over the HUD there.
+/// A classic mod window or a recorded game window under the pointer, drawn over the HUD there (a HUD-layer window a
+/// game window covers too: something is over the HUD).
 pub(super) fn covers_hud(w: &World, p: (f32, f32)) -> bool {
-    over_classic(w, p)
+    under_any(w, &classic_places(w), p)
         || w.win_hits.borrow().iter().any(|h| {
             let r = h.1;
             p.0 >= r[0] && p.1 >= r[1] && p.0 <= r[0] + r[2] && p.1 <= r[1] + r[3]
@@ -4962,16 +5000,25 @@ pub(super) fn pointer_classic(
     right: bool,
     held: (bool, bool, bool),
 ) -> bool {
-    let mut places = classic_places(w);
-    // A canvas the pointer has left (its window not under it now): its 'leave'.
+    let mut places = pointer_places(w, p);
+    // A canvas the pointer has left (its window not under it now, or a window over it there): its 'leave'.
     let mut left = Vec::new();
-    for (v, id, x, y) in &places {
+    for (v, id, x, y) in &classic_places(w) {
         let vm = &w.lua.vms[*v];
+        let reached = places.iter().any(|q| q.0 == *v && q.1 == *id);
         let mut st = vm.st.borrow_mut();
+        // A click on a window over it closes its open dropdown, as a click off it does.
+        if !reached
+            && (clicked || right)
+            && let Some(win) = st.windows.iter_mut().find(|x| x.id == *id)
+            && let Some(d) = win.drop_open()
+        {
+            win.drop_close(d);
+        }
         if let Some(win) = st.windows.iter_mut().find(|x| x.id == *id && x.hovered.is_some()) {
             // With an open dropdown's list hanging below it.
             let (ww, wh) = win.classic_reach();
-            if p.0 < *x || p.1 < *y || p.0 >= x + ww || p.1 >= y + wh {
+            if !reached || p.0 < *x || p.1 < *y || p.0 >= x + ww || p.1 >= y + wh {
                 left.extend(win.hover_off().into_iter().map(|e| (vm.manifest.id.clone(), id.clone(), e)));
             }
         }
@@ -5004,15 +5051,7 @@ pub(super) fn pointer_classic(
         }
     }
     // A mod window or a recorded game window under the pointer, over the HUD there (canvas drags report it).
-    let covered = places.iter().any(|(v, id, x, y)| {
-        w.lua.vms[*v].st.borrow().windows.iter().find(|win| win.id == *id).is_some_and(|win| {
-            let (ww, wh) = win.classic_reach();
-            p.0 >= *x && p.1 >= *y && p.0 < x + ww && p.1 < y + wh
-        })
-    }) || w.win_hits.borrow().iter().any(|h| {
-        let r = h.1;
-        p.0 >= r[0] && p.1 >= r[1] && p.0 <= r[0] + r[2] && p.1 <= r[1] + r[3]
-    });
+    let covered = covers_hud(w, p);
     if let Some(k) = holder {
         let keep = places.swap_remove(k);
         // The others still close an open dropdown on a click off them.

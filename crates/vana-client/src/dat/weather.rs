@@ -223,7 +223,10 @@ impl ZoneWeather {
                         // Only direct children of weat/<tag>, not sub-folders such as "indo".
                         first.get_or_insert_with(tag);
                         keys.entry(tag()).or_default().push((m, e));
-                    } else if n == 3 && WEATHER_TAGS.contains(&stack[2].0.as_str()) {
+                    } else if n == 3
+                        && (WEATHER_TAGS.contains(&stack[2].0.as_str())
+                            || WEATHER_TAGS_1.contains(&stack[2].0.as_str()))
+                    {
                         area_first.entry(stack[1].1).or_insert_with(tag);
                         areas.entry(stack[1].1).or_default().entry(tag()).or_default().push((m, e));
                     }
@@ -551,7 +554,32 @@ pub const WEATHER_TAGS: [&str; 20] = [
 ];
 
 pub fn weather_tag(number: u16) -> &'static str {
-    WEATHER_TAGS.get(number as usize).copied().unwrap_or("suny")
+    table_tag(0, number)
+}
+
+/// The zone object's second tag table (0x10378cd0, picked by scheduler op 0xae through FUN_1018d0b0): the same
+/// twenty weathers under their second folder names.
+pub const WEATHER_TAGS_1: [&str; 20] = [
+    "fin1", "sun1", "clo1", "mis1", "dry1", "hea1", "rai1", "squ1", "dus1", "san1", "win1", "sto1", "sno1", "bli1",
+    "thd1", "bol1", "aur1", "lig1", "fog1", "dar1",
+];
+
+/// FUN_1018d0e0: entry `number` of tag table `table` (0x10378c80, then 0x10378cd0 right behind it, so table 0 read
+/// past its twenty entries gives table 1's; past both, where retail reads other data, `suny`).
+pub fn table_tag(table: u8, number: u16) -> &'static str {
+    let i = usize::from(table.min(1)) * 20 + usize::from(number);
+    WEATHER_TAGS.iter().chain(&WEATHER_TAGS_1).nth(i).copied().unwrap_or("suny")
+}
+
+/// The index of `tag` among table `table`'s twenty.
+pub fn table_find(table: u8, tag: [u8; 4]) -> Option<u16> {
+    let t: &[&str; 20] = if table == 1 { &WEATHER_TAGS_1 } else { &WEATHER_TAGS };
+    t.iter().position(|x| x.as_bytes() == tag).map(|i| i as u16)
+}
+
+/// FUN_1018d0f0: the index of `tag` in table `table`, 0 when it is not there.
+pub fn table_index(table: u8, tag: [u8; 4]) -> u16 {
+    table_find(table, tag).unwrap_or(0)
 }
 
 /// Minute of the Vana'diel day from 0x00A's GameTime (Earth seconds since the Vana'diel epoch) plus

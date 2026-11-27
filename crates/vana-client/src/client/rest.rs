@@ -28,7 +28,7 @@ fn status_of(w: &World, id: u32) -> u8 {
 }
 
 /// The scheduler `name` from the actor's files, its motions here and the rest (holds, locks) in fx. False when the
-/// actor has no model or no such scheduler yet.
+/// actor has no model or no such scheduler yet. FUN_1008b460 starts it, inside the entity loop (Effects::in_loop).
 fn play(w: &mut World, id: u32, name: &str) -> bool {
     let Some(ch) = w.actors.get(&id).and_then(|a| a.character.clone()) else { return false };
     let base = super::actmotion::status_motion(w, id, &ch);
@@ -36,7 +36,7 @@ fn play(w: &mut World, id: u32, name: &str) -> bool {
     if !super::actmotion::start(a, &ch, name, &base) {
         return false;
     }
-    super::actmotion::fx_too(&mut w.effects, id, name);
+    w.effects.in_loop(|fx| super::actmotion::fx_too(fx, id, name));
     true
 }
 

@@ -1728,6 +1728,10 @@ impl Runtime {
                 });
                 if busy { self.yield_(v) } else { self.adv(v, 15) }
             }
+            // FUN_100b6440 (0x100b6454): with our own model not up (+0x120 bit 9: an area load's ops 0x34 / 0x35, or
+            // an unload mark on a player the event does not bind) no sub runs and the op is passed as 2 bytes,
+            // whatever the sub's length (sub 2 is 4 bytes, sub 3 is 8: the script goes on inside the operands).
+            0x46 if !host.modelled(PLAYER) => self.adv(v, 2),
             0x46 => {
                 match sub {
                     Some(0) | Some(1) => {
@@ -3727,6 +3731,42 @@ mod tests {
             log.iter().filter(|e| matches!(e, Effect::ActorFade { .. })).count()
         };
         let (with, without) = (fades(true), fades(false));
+        assert!(with > 0 && without == 0, "{with} {without}");
+    }
+
+    /// Op 0x46 (FUN_100b6440 0x100b6454) with our own model not up (+0x120 bit 9): no sub runs and the op is passed as
+    /// 2 bytes, so sub 2's operand (here an event_end) is the next op. With the model sub 2 is 4 bytes.
+    #[test]
+    fn follow_camera_op_needs_our_model() {
+        struct Modelless(Scripted);
+        impl Host for Modelless {
+            fn effect(&mut self, e: Effect) {
+                self.0.effect(e)
+            }
+            fn modelled(&self, _actor: u32) -> bool {
+                false
+            }
+        }
+        // follow_camera 2 (query into the operand's variable); scheduler guard 1; event_end.
+        let code = vec![0x46, 0x02, 0x21, 0x00, 0x5f, 0x01, 0x21, 0x00];
+        let actor = 0x010e_601b;
+        let guards = |modelled: bool| {
+            let blocks = vec![event::Block { actor, events: vec![(1, 0)], consts: vec![], code: code.clone() }];
+            let start = Start { zone: 230, event: 1, target: actor, ..Default::default() };
+            let mut host = Modelless(Scripted::new(&[]));
+            if modelled {
+                let mut rt = Runtime::start(blocks, None, start, Memory::default(), &mut host.0);
+                run_scripted(&mut rt, &mut host.0, 60).expect("finished");
+            } else {
+                let mut rt = Runtime::start(blocks, None, start, Memory::default(), &mut host);
+                for _ in 0..60 {
+                    rt.tick(&mut host, 1.0);
+                }
+                assert!(rt.done(), "the operand's event_end ran");
+            }
+            host.0.log.iter().filter(|e| matches!(e, Effect::Op { op: 0x5f, .. })).count()
+        };
+        let (with, without) = (guards(true), guards(false));
         assert!(with > 0 && without == 0, "{with} {without}");
     }
 

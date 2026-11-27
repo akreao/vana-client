@@ -138,6 +138,9 @@ pub struct Marks {
     pub charm: bool,
     pub trust: bool,
     pub npc_pet: bool,
+    /// 0x00E only (FUN_1009b550, mask 0x04): Flags1 u32 @0x20 bit 20, or always with @0x28 bit 0 (a trust): actor
+    /// +0x128 bit 5. A talk sent to it does not lock control (FUN_1007bf30 0x1007c16d).
+    pub talk_free: bool,
     /// u8 @0x28 bit 3 (entity +0x12f bit 0): LSB sets it for a monster still with HP in its death animation.
     pub death_flag: bool,
     pub b2b1: bool,
@@ -1766,6 +1769,7 @@ fn entity(p: &SubPacket, kind: EntityKind) -> EntityUpdate {
                 charm: p.u8(0x27) & 0x08 != 0,
                 trust: p.u8(0x28) & 0x01 != 0,
                 npc_pet: p.u8(0x28) & 0x40 != 0,
+                talk_free: !pc && (p.u32(0x20) >> 20 & 1 != 0 || p.u8(0x28) & 0x01 != 0),
                 death_flag: p.u8(0x28) & 0x08 != 0,
                 b2b1: p.u8(0x2B) & 0x02 != 0,
                 alleg: p.u8(0x29),

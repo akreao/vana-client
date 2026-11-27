@@ -61,6 +61,8 @@ pub(super) struct Pending {
     pub event: bool,
     /// An `init` start's wanted sub-animation (on_init).
     pub init_sub: Option<u8>,
+    /// Asked by the entity loop (`Effects::in_loop`): it starts at the loop's task in the walk.
+    pub looped: bool,
 }
 
 /// A doll (CXiDollActor, FUN_100abea0): the actor's placement and its 48 points when a scheduler froze it. Ops
@@ -333,6 +335,7 @@ impl Effects {
                 seq: None,
                 event: false,
                 init_sub: None,
+                looped: self.asking,
             }),
             3..=6 | 0xb | 0xd..=0xf => {
                 let anim = a.targets.first().and_then(|t| t.results.first()).map_or(0, |r| r.animation as u32);
@@ -362,6 +365,7 @@ impl Effects {
                     seq: None,
                     event: false,
                     init_sub: None,
+                    looped: self.asking,
                 });
             }
             7..=0xa | 0xc => {
@@ -388,6 +392,7 @@ impl Effects {
                     seq: None,
                     event: false,
                     init_sub: None,
+                    looped: self.asking,
                 });
             }
             _ => {}
@@ -423,6 +428,7 @@ impl Effects {
                 seq: None,
                 event: false,
                 init_sub: None,
+                looped: self.asking,
             });
         }
         if arg != 0 {
@@ -453,6 +459,7 @@ impl Effects {
             seq: None,
             event: true,
             init_sub: None,
+            looped: self.asking,
         });
     }
 
@@ -513,6 +520,7 @@ impl Effects {
             seq: None,
             event: false,
             init_sub: None,
+            looped: self.asking,
         });
     }
 
@@ -542,6 +550,7 @@ impl Effects {
             seq: None,
             event: false,
             init_sub: None,
+            looped: self.asking,
         });
     }
 
@@ -734,6 +743,7 @@ impl Effects {
             seq: None,
             event: false,
             init_sub: None,
+            looped: self.asking,
         });
     }
 
@@ -756,14 +766,60 @@ impl Effects {
         }
     }
 
-    /// Starts waiting for files, when they are in.
-    pub(super) fn run_pending(&mut self, f: &Frame, actors: &dyn Actors) {
-        self.run_furniture(actors);
-        // Records an action printed with no actor view at hand (it ended outside the update).
-        for (a, k, which) in std::mem::take(&mut self.late_prints) {
-            self.print_record(&a, k, which, Some(actors));
+    /// What `ask` asks to start is the entity loop's: FUN_10096640 (the update of the task made at 0x100142b0, vtable
+    /// 0x1032acfc +0x20 = FUN_100106c0) starts it from inside the walk, so the scheduler is linked right before the
+    /// loop's task (FUN_10075120 with it running) and takes its first update there. The starts read in the loop:
+    /// - FUN_1008e9a0 -> FUN_1008c480 (0x1008c598): `init`, `inte` on status 0x22, `hen0` (vtable +0x298 =
+    ///   FUN_100cee40 -> FUN_10056c70) and `!in?` (FUN_100cf060 -> FUN_100cef00).
+    /// - FUN_1008e9a0 -> FUN_1008c6c0: the status change's `bton` / `ntob`, the status' own name (`dead`, `sdep`,
+    ///   `fsh?`...), `ntoe` / `eton`, a door's open and close (FUN_100ad1e0 / FUN_100ad270), a model actor's
+    ///   sequence (FUN_10097a80 -> FUN_100c4730 -> FUN_10056c70, or FUN_10056b20 caught up).
+    /// - FUN_1008e9a0 -> FUN_1008b460 (the actor's machine): `res0` / `res2`, `sit0` / `sit2`, `chi2`, `coff`,
+    ///   `bntg`, `klbt`, `hwat`, the draw and the sheathe.
+    /// - FUN_10094190 / FUN_10095900 -> FUN_1008f740 (a model made): FUN_1008ef60's `ini<n>`, FUN_10097a80's
+    ///   sequence.
+    ///
+    /// A packet's start is not: FUN_100daf30 dispatches them after the walk (FUN_10001b50), with no task running.
+    pub fn in_loop<R>(&mut self, ask: impl FnOnce(&mut Self) -> R) -> R {
+        let was = std::mem::replace(&mut self.asking, true);
+        let r = ask(self);
+        self.asking = was;
+        r
+    }
+
+    /// How often the entity loop's task ran in this tick's walk (0 with no walk). Past 1, a start of its made a task
+    /// in its first update and left the walk's next before the loop's task: retail runs FUN_10096640 again with
+    /// the same ticks (FUN_10014cf0). The client's actor pass does not take that second run yet (queue row 211), so
+    /// only the tests read it.
+    #[cfg(test)]
+    pub fn loop_runs(&self) -> u32 {
+        self.loop_runs
+    }
+
+    /// The entity loop's task in the walk (FUN_100106c0): what the loop asked to start starts now, with the loop's
+    /// task as the running one. A second run in the same walk finds nothing new to start.
+    fn loop_task(&mut self, f: &Frame, actors: &dyn Actors) {
+        self.loop_runs += 1;
+        if self.loop_runs == 1 {
+            self.run_pending(f, actors, true);
+        } else {
+            log::debug!("effects: the entity loop's task runs again ({})", self.loop_runs);
         }
-        let list = std::mem::take(&mut self.pending);
+    }
+
+    /// Starts waiting for files, when they are in: the entity loop's (`looped`) at its task in the walk, the others
+    /// before the walk.
+    pub(super) fn run_pending(&mut self, f: &Frame, actors: &dyn Actors, looped: bool) {
+        if !looped {
+            self.run_furniture(actors);
+            // Records an action printed with no actor view at hand (it ended outside the update).
+            for (a, k, which) in std::mem::take(&mut self.late_prints) {
+                self.print_record(&a, k, which, Some(actors));
+            }
+        }
+        let (list, rest): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.pending).into_iter().partition(|p| p.looped == looped);
+        self.pending = rest;
         for mut p in list {
             p.age += f.dt;
             // FUN_100a9230 -> FUN_100d25e0: a skeleton caster (any actor with a model) takes weapon skills from its race
@@ -1122,6 +1178,7 @@ impl Effects {
                 d.points.get(0x2b).copied().flatten()
             );
         }
+        self.loop_runs = 0;
         if walk {
             self.walk(&Frame { dt: self.walk_ticks, ..*f }, actors);
         }
@@ -1129,7 +1186,7 @@ impl Effects {
     }
 
     /// FUN_10074c30's walk over retail's one task list (tasklist.rs), one retail frame (`f.dt` its ticks): each node
-    /// in list order, the walk's next taken before the node's update. A task an op's new scheduler makes in that
+    /// in list order (the schedulers and the entity loop's task), the walk's next taken before the node's update. A task an op's new scheduler makes in that
     /// scheduler's first update leaves the walk's next in front of the running task, which then runs again.
     fn walk(&mut self, f: &Frame, actors: &dyn Actors) {
         self.purge_list();
@@ -1137,8 +1194,10 @@ impl Effects {
         let mut cur = self.list.head();
         while let Some(n) = cur {
             self.list.step(n);
-            if let tasklist::Node::Task(uid) = n {
-                self.walk_task(uid, f, actors);
+            match n {
+                tasklist::Node::Task(uid) => self.walk_task(uid, f, actors),
+                tasklist::Node::Entity => self.loop_task(f, actors),
+                _ => {}
             }
             cur = self.list.advance();
         }
@@ -2019,6 +2078,7 @@ impl Effects {
                     seq: None,
                     event: false,
                     init_sub: None,
+                    looped: self.asking,
                 });
                 Flow::Next
             }
@@ -2510,19 +2570,56 @@ impl Effects {
                 }
                 Flow::Next
             }
+            // 0x10057fdf: FUN_1018c970(u32 @8) loads scene u32 @8 as a zone-in does (the tag table back to 0, the old
+            // scene's weather objects deleted, FUN_1018cad0). Only the title's and the character creator's movies hold
+            // it (files 23..26, census `weather_op_census`), which client/flyover.rs plays; no file the game loads
+            // into this list does.
+            0x7b => Flow::Next,
+            // 0x1005801e: FUN_10188ac0(4cc @8, the op's duration, 0), with a zone object (DAT_1065dcbc). The duration
+            // (i16 @6) is the second argument, which FUN_10188ac0 hands to the linked object's call and never reads;
+            // the third, the blend time, is 0, so the older weather objects go at once. All inside the op: the old
+            // generators and schedulers end, the new folder's schedulers start with their first update, its
+            // generators start.
             0x7c => {
-                self.env_ops.push(super::EnvOp::Weather { tag: op.u32_at(8), blend: op.u16_at(6) as i16 });
+                let tag = op.u32_at(8).to_le_bytes();
+                if self.change_weather(tag, 0.0, Some(actors)) {
+                    self.env_ops.push(super::EnvOp::Weather { tag, seconds: 0.0 });
+                }
                 Flow::Next
             }
             0x7d => {
                 self.env_ops.push(super::EnvOp::Clock(op.u32_at(8)));
                 Flow::Next
             }
+            // 0x10058469: the scoped 0x2f block (FUN_10072290) + 0x30 to FUN_1018c5e0: copied over the static env,
+            // then FUN_10189fe0 deletes every weather object (their generators and schedulers end inside the op) and
+            // each zone object's env pointer goes to the static block (FUN_10189690). No block: nothing.
             0x7e => {
                 if let Some(r) = scope(self, 0x2f)
                     && let Some(e) = crate::dat::weather::Env::parse(self.reg.libs[r.0].data(r.1))
                 {
+                    self.end_weathers();
                     self.env_ops.push(super::EnvOp::Static(e));
+                }
+                Flow::Next
+            }
+            // 0x1005d01f: the weather tag table. i = the newest weather object's tag in the table in force
+            // (FUN_10189680, FUN_1018d0f0: 0 when it is not there or there is no object); the table becomes u32 @8
+            // (FUN_1018d0b0: above 1 is 0); then FUN_10188ac0(the new table's tag i, 0, trunc(f32 @0xc x 3600)): the
+            // same weather under the other table's folder, blended in over f32 @0xc Vana'diel minutes (3600 clock
+            // units each, 1500 a second), at once with 0. The doors of the Silver Sea ferries (158 / 159) and of the
+            // Remnants (173..177) hold it.
+            0xae => {
+                let i = self.weather_now().map_or(0, |t| crate::dat::weather::table_index(self.weather_table, t));
+                self.weather_table = if op.u32_at(8) <= 1 { op.u32_at(8) as u8 } else { 0 };
+                let tag = crate::dat::generator::fourcc(self.weather_tag(i));
+                // FUN_1018d210: a time above 0x6f3c9000 (360 days) wraps into 1..=0x6f3c9000.
+                const YEAR: i32 = 0x6f3c_9000;
+                let units = (f32::from_bits(op.u32_at(0xc)) * 3600.0) as i32;
+                let units = if units > YEAR { (units - 1) % YEAR + 1 } else { units };
+                let seconds = units as f32 / 1500.0;
+                if self.change_weather(tag, seconds, Some(actors)) {
+                    self.env_ops.push(super::EnvOp::Weather { tag, seconds });
                 }
                 Flow::Next
             }
@@ -2868,6 +2965,7 @@ impl Effects {
                     seq: None,
                     event: false,
                     init_sub: None,
+                    looped: self.asking,
                 });
                 Flow::Next
             }
@@ -3043,6 +3141,7 @@ impl Effects {
             seq: Some(skip),
             event: false,
             init_sub: None,
+            looped: self.asking,
         });
     }
 
@@ -4623,7 +4722,10 @@ mod tests {
         let mut fx = Effects::new();
         fx.set_index(index.clone());
         fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
+        // DAT 27 comes in on a thread; a file that does not load in 10 s fails the test.
+        let asked = std::time::Instant::now();
         while fx.reg.lib_of(27).is_none() {
+            assert!(asked.elapsed().as_secs() < 10, "DAT 27 did not load");
             fx.poll_loads();
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
@@ -4709,6 +4811,69 @@ mod tests {
         assert_eq!(*actors.asked.borrow(), [(0, 0), (1, 0)]);
         assert_eq!(numbers(&fx).len(), 2);
         assert_eq!(fx.action_prints.len(), 2);
+    }
+
+    /// Row 187: a start the entity loop asks for (`in_loop`) runs at the loop's task in the walk (FUN_100106c0 ->
+    /// FUN_10096640): its scheduler is linked right before that task, in bucket 13, where a start from outside the
+    /// walk goes before bucket 9. When its first update makes a task the loop's task runs again in that walk; a
+    /// later start of the loop's that makes none puts the walk's next back (one run). The new scheduler takes the
+    /// frame's ticks once either way.
+    #[test]
+    fn entity_loop_starts_run_at_its_task() {
+        use tasklist::Node;
+        let name = |n: &[u8; 4]| u32::from_le_bytes(*n);
+        let (makes, plain) = (name(b"make"), name(b"plin"));
+        // (the loop's runs in the first walk and in the second, where the first start's task sits, its countdowns)
+        let run = |names: &[u32], looped: bool| -> ([u32; 2], bool, [f32; 2]) {
+            let lib = sched_lib(
+                1,
+                &[
+                    (makes, vec![sop(0x72, 0, 0, 0), sop(0x01, 50, 0, 0), sop(0x00, 0, 0, 0)]),
+                    (plain, vec![sop(0x01, 50, 0, 0), sop(0x00, 0, 0, 0)]),
+                ],
+            );
+            let mut fx = Effects::new();
+            fx.reg.add(lib);
+            for &n in names {
+                if looped {
+                    fx.in_loop(|fx| fx.on_event_scheduler(1, n, Who::None, Who::None));
+                } else {
+                    fx.on_event_scheduler(1, n, Who::None, Who::None);
+                }
+            }
+            let f = ticks_frame(RETAIL_FRAME);
+            let first = |fx: &Effects| {
+                let named = |t: &Task| fx.reg.libs[t.res.0].tree.nodes[t.res.1].name == names[0].to_le_bytes();
+                fx.tasks.iter().flatten().find(|t| named(t)).map(|t| (t.uid, t.countdown)).unwrap()
+            };
+            fx.tick(&f, &Two);
+            let (runs, (uid, left)) = (fx.loop_runs(), first(&fx));
+            let at = |n: Node| fx.list.nodes().iter().position(|&x| x == n).unwrap();
+            let in_13 = at(Node::Anchor(13)) < at(Node::Task(uid)) && at(Node::Task(uid)) < at(Node::Entity);
+            assert_eq!(in_13, !(at(Node::Task(uid)) < at(Node::Anchor(9))));
+            fx.tick(&f, &Two);
+            ([runs, fx.loop_runs()], in_13, [left, first(&fx).1])
+        };
+        let left = [48.0, 46.0];
+        assert_eq!(run(&[makes], true), ([2, 1], true, left));
+        assert_eq!(run(&[plain], true), ([1, 1], true, left));
+        assert_eq!(run(&[makes, plain], true), ([1, 1], true, left));
+        assert_eq!(run(&[plain, makes], true), ([2, 1], true, left));
+        // Outside the walk: before bucket 9, and nothing for the loop's task to run again for.
+        assert_eq!(run(&[makes], false), ([1, 1], false, left));
+        // A sequence that replaces one still waiting for its file (start_sequence drops the old request first) is
+        // the loop's too.
+        let mut fx = Effects::new();
+        for n in [makes, plain] {
+            fx.in_loop(|fx| fx.start_sequence(HUME, 1, n, 0.0));
+        }
+        assert_eq!(fx.pending.iter().map(|p| (p.name, p.looped)).collect::<Vec<_>>(), [(plain, true)]);
+        // A tick of ours with no walk (half a retail frame): the loop's task did not run.
+        let mut fx = Effects::new();
+        fx.tick(&ticks_frame(1.0), &Two);
+        assert_eq!(fx.loop_runs(), 1);
+        fx.tick(&ticks_frame(1.0), &Two);
+        assert_eq!(fx.loop_runs(), 0);
     }
 
     /// Row 181: ops 0x7f (FUN_100613d0's ramp on actor1) and 0x04 (FUN_1003c8a0's camera task) make a task, so either
@@ -4849,6 +5014,185 @@ mod tests {
         // An invisible actor's show is the glow off.
         let (counts, names, _) = run(wep_op(0x75, false, 0, 0), true, true);
         assert_eq!((counts.as_slice(), names), (&[8.0, 6.0, 4.0, 2.0, 98.0, 96.0][..], vec!["!w02".to_string()]));
+    }
+
+    /// A resource of a made-up scene file: a folder, a scheduler (looping: self-starting) or a 0x2f env block.
+    enum Res {
+        Folder(&'static [u8; 4], Vec<Res>),
+        Sched(&'static [u8; 4], Vec<SOp>, bool),
+        Env(&'static [u8; 4]),
+    }
+
+    fn res_dat(items: &[Res], dat: &mut Vec<u8>) {
+        let head = |name: &[u8; 4], units: u32, kind: u8| {
+            let mut h = vec![0u8; 16];
+            h[..4].copy_from_slice(name);
+            h[4..8].copy_from_slice(&((units << 7) | u32::from(kind)).to_le_bytes());
+            h
+        };
+        for r in items {
+            match r {
+                Res::Folder(name, inner) => {
+                    dat.extend(head(name, 1, kind::FOLDER));
+                    res_dat(inner, dat);
+                    dat.extend(head(b"end ", 1, kind::END));
+                }
+                Res::Sched(name, ops, looping) => {
+                    let mut chunk = vec![0; 0x30];
+                    chunk[0x24..0x28].copy_from_slice(&0x30u32.to_le_bytes());
+                    for op in ops {
+                        chunk.extend(&op.raw);
+                    }
+                    if *looping {
+                        // The end stream: an op 0x01, then the end.
+                        let at = chunk.len() as u32;
+                        chunk[0x28..0x2c].copy_from_slice(&at.to_le_bytes());
+                        chunk.extend([1, 2, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0]);
+                    }
+                    chunk.resize(chunk.len().next_multiple_of(16), 0);
+                    let h = head(name, chunk.len() as u32 / 16, kind::SCHEDULER);
+                    chunk[..16].copy_from_slice(&h);
+                    dat.extend(chunk);
+                }
+                Res::Env(name) => {
+                    dat.extend(head(name, 12, 0x2f));
+                    dat.extend(vec![0u8; 0xb0]);
+                }
+            }
+        }
+    }
+
+    /// Row 188: the weather ops change the weather objects inside the op. Op 0x7c (FUN_10188ac0 with no blend
+    /// time; its duration is never read): the old folder's tasks end, the new folder's self-starting scheduler starts
+    /// and takes its first update there, so a task it makes runs the op's scheduler again in the same walk. A tag the
+    /// file lacks takes `suny`, whose name is then the tag in force. Op 0x7e with its block deletes every weather
+    /// object; without it nothing changes. Op 0xae swaps the tag table and makes the same weather's other folder,
+    /// blended over f32 @0xc Vana'diel minutes (the older object stays) or at once with 0.
+    #[test]
+    fn weather_ops_change_the_weather_inside_the_op() {
+        use crate::fx::EnvOp;
+        let fc = crate::dat::generator::fourcc;
+        let table_op = |table: u32, minutes: f32| {
+            let mut raw = vec![0u8; 16];
+            (raw[0], raw[1]) = (0xae, 4);
+            raw[8..12].copy_from_slice(&table.to_le_bytes());
+            raw[12..16].copy_from_slice(&minutes.to_le_bytes());
+            SOp { code: 0xae, wait: 0, dur: 0, raw }
+        };
+        let name_op = |code: u8, dur: i16, name: &[u8; 4]| sop(code, 0, dur, u32::from_le_bytes(*name));
+        struct Out {
+            counts: Vec<f32>,
+            live: Vec<String>,
+            env: Vec<String>,
+            now: Option<[u8; 4]>,
+            objects: usize,
+            table: u8,
+        }
+        let run = |ops: Vec<SOp>, makes: bool| -> Out {
+            let body = |first: bool| {
+                let mut o = if first && makes { vec![sop(0x72, 0, 0, 0)] } else { Vec::new() };
+                o.extend([sop(0x01, 50, 0, 0), sop(0x00, 0, 0, 0)]);
+                o
+            };
+            let mut dat = Vec::new();
+            res_dat(
+                &[
+                    Res::Sched(
+                        b"prnt",
+                        [vec![sop(0x01, 10, 0, 0)], ops, vec![sop(0x01, 100, 0, 0), sop(0, 0, 0, 0)]].concat(),
+                        false,
+                    ),
+                    Res::Env(b"s101"),
+                    Res::Folder(
+                        b"weat",
+                        vec![
+                            Res::Folder(b"suny", vec![Res::Sched(b"sunA", body(false), true)]),
+                            Res::Folder(b"rain", vec![Res::Sched(b"raiA", body(true), true)]),
+                            Res::Folder(b"sun1", vec![Res::Sched(b"su1A", body(true), true)]),
+                        ],
+                    ),
+                ],
+                &mut dat,
+            );
+            let mut fx = Effects::new();
+            let l = fx.load_zone(Library::load(900, dat).unwrap());
+            fx.set_weather("suny", 0.0);
+            let r = (l, fx.reg.libs[l].tree.nodes.iter().position(|n| &n.name == b"prnt").unwrap());
+            let ops = fx.sched_ops(r);
+            fx.tasks.push(Some(Task::new(r, ops, Who::None, Who::None, None, 1.0)));
+            let f = ticks_frame(RETAIL_FRAME);
+            let actors = Armed { invisible: false };
+            let (mut counts, mut env) = (Vec::new(), Vec::new());
+            for _ in 0..6 {
+                fx.tick(&f, &actors);
+                for e in fx.env_ops.drain(..) {
+                    env.push(match e {
+                        EnvOp::Weather { tag, seconds } => format!("{} {seconds}", String::from_utf8_lossy(&tag)),
+                        EnvOp::Static(_) => "static".into(),
+                        EnvOp::Clock(_) => "clock".into(),
+                    });
+                }
+                let named = |t: &Task| &fx.reg.libs[t.res.0].tree.nodes[t.res.1].name == b"prnt";
+                counts.push(fx.tasks.iter().flatten().find(|t| named(t)).map_or(-1.0, |t| t.countdown));
+            }
+            let mut live: Vec<String> = fx
+                .tasks
+                .iter()
+                .flatten()
+                .map(|t| String::from_utf8_lossy(&fx.reg.libs[t.res.0].tree.nodes[t.res.1].name).into_owned())
+                .filter(|n| n != "prnt")
+                .collect();
+            live.sort();
+            live.dedup();
+            Out { counts, live, env, now: fx.weather_now(), objects: fx.weathers.len(), table: fx.weather_table() }
+        };
+        // Op 0x7c: `rain`'s scheduler makes a task in its first update, inside the op: the scheduler runs again in
+        // frame 5's walk. The duration (200 here) blends nothing.
+        let o = run(vec![name_op(0x7c, 200, b"rain")], true);
+        assert_eq!(o.counts, [8.0, 6.0, 4.0, 2.0, 98.0, 96.0]);
+        assert_eq!(
+            (o.live, o.env, o.now, o.objects),
+            (vec!["raiA".to_string()], vec!["rain 0".to_string()], Some(fc("rain")), 1)
+        );
+        assert_eq!(run(vec![name_op(0x7c, 0, b"rain")], false).counts, [8.0, 6.0, 4.0, 2.0, 100.0, 98.0]);
+        // The tag in force: nothing.
+        let o = run(vec![name_op(0x7c, 0, b"suny")], true);
+        assert_eq!((o.live, o.env.len(), o.objects), (vec!["sunA".to_string()], 0, 1));
+        // A tag the file lacks: `suny`'s folder again, and `suny` is the tag in force, so a second ask does it again.
+        let o = run(vec![name_op(0x7c, 0, b"snow"), name_op(0x7c, 0, b"snow")], true);
+        assert_eq!((o.live, o.env, o.now), (vec!["sunA".to_string()], vec!["snow 0".to_string(); 2], Some(fc("suny"))));
+        // Op 0x7e: with its block no weather object is left; with none nothing changes.
+        let o = run(vec![name_op(0x7e, 0, b"s101")], true);
+        assert_eq!((o.live, o.env, o.now, o.objects), (Vec::<String>::new(), vec!["static".to_string()], None, 0));
+        let o = run(vec![name_op(0x7e, 0, b"s999")], true);
+        assert_eq!((o.live, o.env.len(), o.now), (vec!["sunA".to_string()], 0, Some(fc("suny"))));
+        // After it the same tag makes an object again.
+        let o = run(vec![name_op(0x7e, 0, b"s101"), name_op(0x7c, 0, b"suny")], true);
+        assert_eq!(
+            (o.live, o.env, o.objects),
+            (vec!["sunA".to_string()], vec!["static".to_string(), "suny 0".to_string()], 1)
+        );
+        // Op 0xae: table 1's folder of the weather in force, over 30 Vana'diel minutes (72 s) beside the old object;
+        // every `weat` scheduler's tasks end at once all the same, and the new one's first update is inside the op.
+        let o = run(vec![table_op(1, 30.0)], true);
+        assert_eq!(o.counts, [8.0, 6.0, 4.0, 2.0, 98.0, 96.0]);
+        assert_eq!(
+            (o.live, o.env, o.now, o.objects, o.table),
+            (vec!["su1A".to_string()], vec!["sun1 72".to_string()], Some(fc("sun1")), 2, 1)
+        );
+        // And back at once; a table above 1 is table 0.
+        let o = run(vec![table_op(1, 0.0), table_op(0, 0.0)], true);
+        assert_eq!(
+            (o.live, o.env, o.now, o.objects, o.table),
+            (vec!["sunA".to_string()], vec!["sun1 0".to_string(), "suny 0".to_string()], Some(fc("suny")), 1, 0)
+        );
+        let o = run(vec![table_op(1, 0.0), table_op(2, 0.0)], true);
+        assert_eq!((o.now, o.table), (Some(fc("suny")), 0));
+        // The table in force names the server's weather numbers (FUN_1018d0e0).
+        let mut fx = Effects::new();
+        assert_eq!((fx.weather_tag(6), fx.weather_tag(26)), ("rain", "rai1"));
+        fx.weather_table = 1;
+        assert_eq!((fx.weather_tag(6), fx.weather_tag(26)), ("rai1", "suny"));
     }
 
     /// Op 0x2e (dur 30): the root holds while its counter is not below 0, so the restart comes on the 31st frame;
@@ -6810,6 +7154,72 @@ mod auto_tests {
 
     fn frame(dayfrac: f32) -> Frame {
         Frame { dayfrac, eye: Vec3::new(0.0, -2.0, -10.0), ..super::tests::ticks_frame(crate::fx::RETAIL_FRAME) }
+    }
+
+    /// DAT 158 (a Silver Sea ferry): the door `_1m6`'s `evst` holds op 0xae (table 1, 30 Vana'diel minutes) and its
+    /// `eved` op 0xae (table 0, 30). From `suny`, `evst` makes `sun1`'s object beside the old one, with that folder's
+    /// generators; `eved` makes `suny`'s again; `ints` (table 1, no time) deletes the others at once.
+    #[test]
+    fn ferry_door_swaps_the_weather_table() {
+        let Some(index) = index() else { return };
+        let Ok(bytes) = index.read(158) else { return };
+        let mut fx = Effects::new();
+        fx.set_index(index.clone());
+        fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
+        let l = fx.load_zone(Library::load(158, bytes).unwrap());
+        fx.set_weather("suny", 0.0);
+        let play = |fx: &mut Effects, name: &str| {
+            let r = (l, sched(&fx.reg.libs[l], &["door", "_1m6"], name));
+            let i = fx.spawn_task(r, Who::None, Who::None, None, 1.0, None);
+            fx.run_new(i, &crate::fx::NoActors);
+            fx.env_ops.drain(..).filter(|e| matches!(e, crate::fx::EnvOp::Weather { .. })).count()
+        };
+        let owned = |fx: &Effects| {
+            let newest = fx.weathers.last().map(|w| w.serial);
+            fx.insts.iter().flatten().filter(|x| matches!(x.owner, Owner::Weather(s) if Some(s) == newest)).count()
+        };
+        assert_eq!((fx.weather_now(), fx.weather_table(), fx.weather_tag(1)), (Some(fourcc("suny")), 0, "suny"));
+        assert_eq!(play(&mut fx, "evst"), 1);
+        assert_eq!((fx.weather_now(), fx.weather_table(), fx.weathers.len()), (Some(fourcc("sun1")), 1, 2));
+        assert_eq!((fx.weathers[1].duration, owned(&fx), fx.weather_tag(1)), (72.0, 1, "sun1"));
+        assert_eq!(play(&mut fx, "eved"), 1);
+        assert_eq!((fx.weather_now(), fx.weather_table(), fx.weathers.len()), (Some(fourcc("suny")), 0, 3));
+        assert_eq!(play(&mut fx, "ints"), 1);
+        assert_eq!((fx.weather_now(), fx.weather_table(), fx.weathers.len()), (Some(fourcc("sun1")), 1, 1));
+        // The same table and weather again: nothing.
+        assert_eq!(play(&mut fx, "ints"), 0);
+    }
+
+    /// FUN_1018cbb0: a weather made under a roof passes its camera emitters by (FUN_1018c020), and leaving the roof
+    /// starts them (FUN_10188bb0 -> FUN_1018c0b0), as many as the weather has in the open. On the first of zones
+    /// 100..126 whose rain, snow, dust or sand has such emitters.
+    #[test]
+    fn leaving_cover_starts_the_passed_by_emitters() {
+        let Some(index) = index() else { return };
+        let count = |fx: &Effects| fx.insts.iter().flatten().filter(|x| matches!(x.owner, Owner::Weather(_))).count();
+        let load = |file: u32, tag: &str, covered: bool| {
+            let mut fx = Effects::new();
+            fx.set_index(index.clone());
+            fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
+            fx.load_zone(Library::load(file, index.read(file).ok()?).ok()?);
+            fx.set_covered(covered);
+            fx.set_weather(tag, 0.0);
+            Some(fx)
+        };
+        let found = (100..=126).flat_map(|z| ["rain", "snow", "dust", "sand"].map(|t| (z, t))).find_map(|(z, tag)| {
+            let file = crate::dat::zone::file_id(z);
+            let open = count(&load(file, tag, false)?);
+            let fx = load(file, tag, true)?;
+            (count(&fx) < open).then_some((fx, open, z, tag))
+        });
+        let Some((mut fx, open, z, tag)) = found else { panic!("no zone with roofed weather emitters") };
+        println!("zone {z} {tag}: {} under the roof, {open} in the open", count(&fx));
+        fx.set_covered(false);
+        assert_eq!(count(&fx), open);
+        // Under the roof again they stop (their elements go), and come back without a second copy.
+        fx.set_covered(true);
+        fx.set_covered(false);
+        assert_eq!(count(&fx), open);
     }
 
     /// FUN_1018b500: the load runs the zone file's `@ini` at once. Escha - Zi'Tah (83923) and Ru'Aun (83924) fix the

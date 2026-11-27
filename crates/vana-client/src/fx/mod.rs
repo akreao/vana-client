@@ -404,15 +404,18 @@ pub struct Knock {
     pub count: u8,
 }
 
-/// Scheduler ops for the zone environment (FUN_10057fb0), applied by the client.
+/// Scheduler ops on the zone environment (FUN_10057fb0), for the client's side of them: the weather objects themselves
+/// (their generators and schedulers) change inside the op, in `Effects`.
 #[derive(Clone, Copy, Debug)]
 pub enum EnvOp {
-    /// Case 0x7c: FUN_101874f0(4cc @8, i16 @6 clock units, 0): the weather becomes `tag`, blended over `blend`.
-    Weather { tag: u32, blend: i16 },
-    /// Case 0x7d: FUN_1018c210(u32 @8): the clock's time of day (216000 units an hour), its day kept.
+    /// Cases 0x7c (0x1005801e) and 0xae (0x1005d01f): FUN_10188ac0 made a weather object for `tag`, blended in over
+    /// `seconds` (0: the older ones went at once).
+    Weather { tag: [u8; 4], seconds: f32 },
+    /// Case 0x7d: FUN_1018d7e0(u32 @8): the clock's time of day (216000 units an hour), its day kept.
     Clock(u32),
-    /// Case 0x7e (0x10058469): the scoped 0x2f block 4cc @8 becomes the env (FUN_1018b010); each frame
-    /// FUN_101874a0 puts a weather object's own back over it, so it holds only where the zone has none for the weather.
+    /// Case 0x7e (0x10058469): the scoped 0x2f block 4cc @8 is copied over the static env DAT_1065dc10
+    /// (FUN_1018c5e0 -> FUN_1018bd30) and every weather object is deleted (FUN_10189fe0), so the scene is lit by the
+    /// block until a weather object with an env of its own is made.
     Static(crate::dat::weather::Env),
 }
 
@@ -1072,6 +1075,8 @@ pub struct Effects {
     /// Weather objects (YmCombineWeather), oldest first.
     weathers: Vec<WeatherSet>,
     weather_serial: u32,
+    /// The zone object's weather tag table (+0x1d8): 0 = `fine` ..., 1 = `fin1` ... (scheduler op 0xae).
+    weather_table: u8,
     tasks: Vec<Option<sched::Task>>,
     /// The tasks being run, outermost first (their slots are empty meanwhile; a task an op creates runs inside its
     /// creator's step).
@@ -1107,6 +1112,10 @@ pub struct Effects {
     walk_ticks: f32,
     walk_owed: f32,
     walk_serial: u32,
+    /// How often the entity loop's task ran in this tick's walk (`loop_runs`).
+    loop_runs: u32,
+    /// Inside `in_loop`: the starts asked now are the entity loop's (`Pending::looped`).
+    asking: bool,
     vana_seen: bool,
     /// The zone object's fixed sky time and sun tilt (W+0x1c8 / +0x1cc): cleared at every scene load, set by
     /// scheduler ops 0xc0 / 0xc3 (the zone's `@ini`).
@@ -1304,10 +1313,12 @@ pub struct Effects {
     solo: Option<u32>,
 }
 
-/// One weather's generators (FUN_10183780): its tag, crossfade length and what is left of it (seconds).
+/// One weather object (FUN_1018bd70): its folder (+0xc) and that folder's tag (+0x10: `suny` when the asked one is
+/// missing), its crossfade length and what is left of it (seconds).
 struct WeatherSet {
     serial: u32,
     tag: [u8; 4],
+    folder: usize,
     duration: f32,
     remaining: f32,
 }
@@ -1344,6 +1355,7 @@ impl Effects {
             part_free: vec![(0, MAX_PARTS as u32)],
             weathers: Vec::new(),
             weather_serial: 0,
+            weather_table: 0,
             tasks: Vec::new(),
             stepping: Vec::new(),
             list: Default::default(),
@@ -1366,6 +1378,8 @@ impl Effects {
             walk_ticks: RETAIL_FRAME,
             walk_owed: 0.0,
             walk_serial: 0,
+            loop_runs: 0,
+            asking: false,
             vana_seen: false,
             leaked: Vec::new(),
             models: HashMap::new(),
@@ -1544,6 +1558,8 @@ impl Effects {
                 }
             }
             self.weathers.clear();
+            // FUN_1018c970 (the scene load) -> FUN_1018d0b0(0).
+            self.weather_table = 0;
             self.wading.clear();
             self.foot_folder.clear();
             self.sub_lib = None;
@@ -1563,6 +1579,7 @@ impl Effects {
         }
         self.leaked.clear();
         self.weathers.clear();
+        self.weather_table = 0;
         self.wading.clear();
         self.foot_folder.clear();
         self.tasks.clear();
@@ -1765,30 +1782,110 @@ impl Effects {
         }
     }
 
-    /// FUN_101804d0 / FUN_10183780: the zone's `weat/<tag>` generators start (fallback `suny`, then `weat`
-    /// itself) and crossfade with the current set over `seconds` (op 0x50 reads the weight); the same tag does
-    /// nothing, and 0 seconds replaces the old set at once.
+    /// The weather becomes `tag` from outside the task walk (the zone-in, s2c 0x057, the event ops): FUN_10188ac0
+    /// with `seconds` as its blend time. The new folder's schedulers take their first update at the next walk here
+    /// (retail's take it inside the call).
     pub fn set_weather(&mut self, tag: &str, seconds: f32) {
-        let Some(l) = self.zone_lib else { return };
-        let tag4 = crate::dat::generator::fourcc(tag);
-        if self.weathers.last().is_some_and(|w| w.tag == tag4) {
-            return;
-        }
-        if seconds <= 0.0 {
-            self.drop_weathers(usize::MAX);
-        }
+        self.change_weather(crate::dat::generator::fourcc(tag), seconds, None);
+    }
+
+    /// FUN_1018d0e0: the tag of weather `number` in the zone object's table (+0x1d8).
+    pub fn weather_tag(&self, number: u16) -> &'static str {
+        crate::dat::weather::table_tag(self.weather_table, number)
+    }
+
+    /// The tag table in force (the zone object's +0x1d8): 0 or 1.
+    pub fn weather_table(&self) -> u8 {
+        self.weather_table
+    }
+
+    /// The newest weather object's tag (FUN_10189680), None with no object.
+    pub fn weather_now(&self) -> Option<[u8; 4]> {
+        self.weathers.last().map(|w| w.tag)
+    }
+
+    /// FUN_100724c0 for a folder: the first one named `name` in file order in `base`'s subtree, `base` itself
+    /// included; the whole file with no base.
+    fn first_folder(&self, l: usize, base: Option<usize>, name: [u8; 4]) -> Option<usize> {
         let tree = &self.reg.libs[l].tree;
-        let named = |parent: Option<usize>, n: &str| {
-            let n = crate::dat::generator::fourcc(n);
-            tree.nodes
-                .iter()
-                .enumerate()
-                .find(|(_, x)| x.kind == kind::FOLDER && x.name == n && (parent.is_none() || x.parent == parent))
-                .map(|(i, _)| i)
+        let inside = |mut i: usize, f: usize| loop {
+            if i == f {
+                return true;
+            }
+            match tree.nodes[i].parent {
+                Some(p) => i = p,
+                None => return false,
+            }
         };
-        let Some(weat) = named(None, "weat") else { return };
-        // FUN_1018a7a0: neither the tag nor `suny`: nothing starts and nothing is killed.
-        let Some(folder) = named(Some(weat), tag).or_else(|| named(Some(weat), "suny")) else { return };
+        (0..tree.nodes.len()).find(|&i| {
+            tree.nodes[i].kind == kind::FOLDER && tree.nodes[i].name == name && base.is_none_or(|b| inside(i, b))
+        })
+    }
+
+    /// The schedulers under folder `f` of library `l`, in file order (FUN_100742b0 kind 7).
+    fn schedulers_under(&self, l: usize, f: usize) -> Vec<usize> {
+        let tree = &self.reg.libs[l].tree;
+        let under = |mut i: usize| loop {
+            match tree.nodes[i].parent {
+                Some(p) if p == f => return true,
+                Some(p) => i = p,
+                None => return false,
+            }
+        };
+        (0..tree.nodes.len()).filter(|&n| tree.nodes[n].kind == kind::SCHEDULER && under(n)).collect()
+    }
+
+    /// FUN_10188ac0(tag, _, blend): with no blend time and another tag in force every weather object is deleted
+    /// first; then, unless the newest object's tag is `tag`, a new one is made (FUN_1018bd70). True when either
+    /// happened. `now`: inside a scheduler's op, where the new schedulers take their first update at once
+    /// (FUN_10056b80 -> FUN_100748c0).
+    ///
+    /// The object's folder (FUN_1018bd70, 0x1018bdb3..0x1018be46): the file's first `weat` folder, then the first
+    /// folder named `tag` inside it, else the first named `suny`; with no `weat` the whole file is searched. Neither
+    /// found: the object is left out of the list (no weather in force). The found folder's name is the object's tag,
+    /// so after a fall back to `suny` the asked tag makes a new object again and `suny` does not.
+    ///
+    /// Then, in this order: every task of a scheduler under `weat` is deleted (FUN_10056eb0, 0x1018be53); the
+    /// folder's self-starting schedulers start (FUN_10056e80, 0x1018beea); the object is linked as the newest
+    /// (0x1018bf26); the folder's generators with flag 0x1000 start (FUN_1018c020 -> FUN_100531d0, 0x1018bf5c), each
+    /// one's task moved before the running task or to the front of bucket 9.
+    pub(super) fn change_weather(&mut self, tag: [u8; 4], seconds: f32, now: Option<&dyn Actors>) -> bool {
+        // 0x10188ac6: no file (+0x14), nothing.
+        let Some(l) = self.zone_lib else { return false };
+        let mut changed = false;
+        if seconds <= 0.0 && self.weather_now() != Some(tag) {
+            changed = true;
+            self.end_weathers();
+        }
+        if self.weather_now() == Some(tag) {
+            return changed;
+        }
+        let fc = crate::dat::generator::fourcc;
+        let weat = self.first_folder(l, None, fc("weat"));
+        let Some(folder) = self.first_folder(l, weat, tag).or_else(|| self.first_folder(l, weat, fc("suny"))) else {
+            return true;
+        };
+        let found = self.reg.libs[l].tree.nodes[folder].name;
+        if let Some(weat) = weat {
+            for n in self.schedulers_under(l, weat) {
+                self.kill_tasks((l, n), None);
+            }
+        }
+        let autos: Vec<usize> = self
+            .schedulers_under(l, folder)
+            .into_iter()
+            .filter(|&n| crate::dat::sched::auto_start(self.reg.libs[l].data(n)))
+            .collect();
+        for n in autos {
+            let i = self.spawn_task((l, n), sched::Who::None, sched::Who::None, None, 1.0, None);
+            if let Some(actors) = now {
+                self.run_new(i, actors);
+            }
+        }
+        self.weather_serial += 1;
+        let serial = self.weather_serial;
+        self.weathers.push(WeatherSet { serial, tag: found, folder, duration: seconds, remaining: seconds });
+        let tree = &self.reg.libs[l].tree;
         let within = |mut i: usize| loop {
             match tree.nodes[i].parent {
                 Some(p) if p == folder => return true,
@@ -1803,32 +1900,56 @@ impl Effects {
             .filter(|g| g.flags & 0x1000 != 0 && within(g.node) && !(covered && roofed(g)))
             .map(|g| g.node)
             .collect();
-        self.weather_serial += 1;
-        let serial = self.weather_serial;
-        log::info!("effects: weather {tag} over {seconds:.0} s: {} generators", gens.len());
+        log::info!(
+            "effects: weather {} over {seconds:.0} s: {} generators",
+            String::from_utf8_lossy(&found).trim_end_matches('\0'),
+            gens.len()
+        );
         for node in gens {
-            if let Some(i) = self.start((l, node), Owner::Weather(serial))
-                && let Some(x) = self.insts[i].as_mut()
-            {
-                x.weather = if seconds > 0.0 { 0.0 } else { 1.0 };
+            if let Some(i) = self.start((l, node), Owner::Weather(serial)) {
+                // FUN_100531d0: the generator's task, moved (FUN_10074a00 / FUN_100749b0(9)).
+                self.list.made(tasklist::Made::Moved);
+                if let Some(x) = self.insts[i].as_mut() {
+                    x.weather = if seconds > 0.0 { 0.0 } else { 1.0 };
+                }
             }
         }
-        self.weathers.push(WeatherSet { serial, tag: tag4, duration: seconds, remaining: seconds });
-        // Its schedulers switch at once: every task of a `weat` scheduler ends, then the folder's self-starting ones.
-        let tree = &self.reg.libs[l].tree;
-        let under = |mut i: usize, f: usize| loop {
-            match tree.nodes[i].parent {
-                Some(p) if p == f => return true,
-                Some(p) => i = p,
-                None => return false,
-            }
-        };
-        let old: Vec<usize> =
-            (0..tree.nodes.len()).filter(|&n| tree.nodes[n].kind == kind::SCHEDULER && under(n, weat)).collect();
-        for n in old {
-            self.kill_tasks((l, n), None);
+        true
+    }
+
+    /// FUN_10189fe0 (and FUN_10188ac0's loop at 0x10188b10): every weather object is deleted, the ones behind the
+    /// newest first and the newest last.
+    pub fn end_weathers(&mut self) {
+        while !self.weathers.is_empty() {
+            let k = self.weathers.len().saturating_sub(2);
+            let w = self.weathers.remove(k);
+            self.end_weather(w);
         }
-        self.start_auto(l, Some(folder));
+    }
+
+    /// The scene load's part for a scene that stays loaded (FUN_1018c970: FUN_1018d0b0(0), then FUN_1018cad0 ->
+    /// FUN_1018cbf0 -> FUN_10189fe0): the tag table back at 0 and no weather object.
+    pub fn reset_weather(&mut self) {
+        self.end_weathers();
+        self.weather_table = 0;
+    }
+
+    /// A weather object's destructor (FUN_1018c1c0): its generators stop and lose their elements (FUN_1018c180 on
+    /// each whose +0x64 is the object), then every task of a scheduler under its folder is deleted (FUN_10056eb0,
+    /// 0x1018c2da).
+    fn end_weather(&mut self, w: WeatherSet) {
+        for i in 0..self.insts.len() {
+            if self.insts[i].as_ref().is_some_and(|x| x.owner == Owner::Weather(w.serial)) {
+                self.kill(i);
+            }
+        }
+        // By folder, not by object: a newer object made from the same folder (a blend back to it, FUN_1018c3b0
+        // deleting this one when that blend is over) loses its schedulers' tasks too, as in retail.
+        if let Some(l) = self.zone_lib {
+            for n in self.schedulers_under(l, w.folder) {
+                self.kill_tasks((l, n), None);
+            }
+        }
     }
 
     /// The zone's ambient loop (FUN_10189ca0 via FUN_1018a220, played by FUN_10036170): a SeSep (type 0x3d) under the
@@ -1890,8 +2011,10 @@ impl Effects {
         sound::sesep(lib.data(node)).map(|(se, _)| se)
     }
 
-    /// FUN_101845c0: on a change, covered stops the transient weather emitters that spawn at the camera (op-1
-    /// flags 4 or 0x4000000: rain, snow, dust) and kills their elements (FUN_10183b90); uncovered starts them again.
+    /// FUN_1018cbb0: on a change, covered stops the transient weather emitters that spawn at the camera (op-1
+    /// flags 4 or 0x4000000: rain, snow, dust) and kills their elements (FUN_10188b90 -> FUN_1018c130 ->
+    /// FUN_1018c180); uncovered starts them again (FUN_10188bb0 -> FUN_1018c0b0 -> FUN_100531d0), for every weather
+    /// object: also the ones a weather made under the roof passed by (FUN_1018c020).
     pub fn set_covered(&mut self, covered: bool) {
         if covered == self.covered {
             return;
@@ -1920,18 +2043,52 @@ impl Effects {
                 x.emitted = 0;
             }
         }
+        let Some(l) = self.zone_lib.filter(|_| !covered) else { return };
+        // FUN_1018c0b0 walks each object's folder: flag 0x1000, not running, not static, op-1 flag 4 or 0x4000000.
+        // A static emitter with flag 0x4000000 that FUN_1018c020 passed by under the roof is not among them: retail
+        // leaves it off until the weather is made again.
+        for k in 0..self.weathers.len() {
+            let (serial, folder) = (self.weathers[k].serial, self.weathers[k].folder);
+            let tree = &self.reg.libs[l].tree;
+            let within = |mut i: usize| loop {
+                match tree.nodes[i].parent {
+                    Some(p) if p == folder => return true,
+                    Some(p) => i = p,
+                    None => return false,
+                }
+            };
+            let missing: Vec<usize> = self.reg.libs[l]
+                .gens
+                .iter()
+                .filter(|g| {
+                    let transient = !(g.flags & 0x400 != 0 || g.template().is_some_and(|o| o.i16_at(0x22) == 0));
+                    g.flags & 0x1000 != 0 && transient && roofed(g) && within(g.node)
+                })
+                .map(|g| g.node)
+                .filter(|&n| !self.insts.iter().flatten().any(|x| x.owner == Owner::Weather(serial) && x.src == (l, n)))
+                .collect();
+            // The object's blend weight, as weather_step sets it.
+            let newest = self.weathers.last().map_or((serial, 1.0), |w| {
+                (w.serial, if w.duration > 0.0 { (w.duration - w.remaining) / w.duration } else { 1.0 })
+            });
+            let weight = if serial == newest.0 { newest.1 } else { 1.0 - newest.1 };
+            for n in missing {
+                if let Some(i) = self.start((l, n), Owner::Weather(serial)) {
+                    self.list.made(tasklist::Made::Moved);
+                    if let Some(x) = self.insts[i].as_mut() {
+                        x.weather = weight;
+                    }
+                }
+            }
+        }
     }
 
-    /// FUN_10183bd0 for the oldest `n` weather sets: their elements go now.
+    /// The oldest `n` weather objects are deleted (a blend that is over deletes the objects behind it).
     fn drop_weathers(&mut self, n: usize) {
         let n = n.min(self.weathers.len());
-        let gone: Vec<u32> = self.weathers.drain(..n).map(|w| w.serial).collect();
-        for i in 0..self.insts.len() {
-            if let Some(Owner::Weather(s)) = self.insts[i].as_ref().map(|x| x.owner)
-                && gone.contains(&s)
-            {
-                self.kill(i);
-            }
+        let gone: Vec<WeatherSet> = self.weathers.drain(..n).collect();
+        for w in gone {
+            self.end_weather(w);
         }
     }
 
@@ -2214,7 +2371,7 @@ impl Effects {
         self.run_equip(actors);
         if walk {
             // Retail starts what it was asked once a frame, before the walk.
-            self.run_pending(&Frame { dt: self.walk_ticks, ..*f }, actors);
+            self.run_pending(&Frame { dt: self.walk_ticks, ..*f }, actors, false);
         }
         self.step_tasks(f, walk, actors);
         self.step_drives(f, actors);
@@ -3569,10 +3726,14 @@ fn folder_of(lib: &lib::Library, rain: bool) -> Option<usize> {
     lib.tree.nodes.iter().position(|n| n.kind == kind::FOLDER && n.name == w)
 }
 
-/// Op-1 flags 4 (camera-relative) or 0x4000000 (spawned in view space): stopped under a roof (LAB_10183a30 /
-/// LAB_10183b40).
+/// FUN_1018c020 (0x1018c042) under a roof (the zone object's +0x1bc): a weather generator does not start when its
+/// op 1 has flag 0x4000000 (spawned in view space), or flag 4 (camera-relative) unless it is static (FUN_100539e0:
+/// generator flag 0x400, or op 1's life 0).
 fn roofed(g: &crate::dat::generator::Generator) -> bool {
-    g.template().is_some_and(|o| o.u32(1) & 0x400_0004 != 0)
+    g.template().is_some_and(|o| {
+        let f = o.u32(1);
+        f & 0x400_0000 != 0 || (f & 4 != 0 && !(g.flags & 0x400 != 0 || o.i16_at(0x22) == 0))
+    })
 }
 
 /// FUN_10052eb0 / FUN_1003afd0 for the modes the zone uses; actor modes come with the battle triggers.
