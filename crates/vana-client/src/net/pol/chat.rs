@@ -635,12 +635,21 @@ impl Chat {
     /// closes it.
     pub fn keep_alive(mut self) {
         std::thread::spawn(move || {
-            while let Ok(l) = self.read_line() {
-                if l.as_deref().is_some_and(|l| command(l) == b"PING") && self.send_line("PONG a").is_err() {
-                    break;
+            // A read failing as unreachable has already closed the connection (Linux: tcp_write_err -> tcp_done), so a
+            // drop of the link is not waited out here; the line says why it closed.
+            let why = loop {
+                match self.read_line() {
+                    Ok(l) => {
+                        if l.as_deref().is_some_and(|l| command(l) == b"PING")
+                            && let Err(e) = self.send_line("PONG a")
+                        {
+                            break e;
+                        }
+                    }
+                    Err(e) => break e,
                 }
-            }
-            log::info!("PlayOnline: the chat connection closed");
+            };
+            log::info!("PlayOnline: the chat connection closed ({why:#})");
         });
     }
 }
