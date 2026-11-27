@@ -493,6 +493,28 @@ mod tests {
         assert_eq!(f.child((500.0, 462.0)), None);
     }
 
+    /// The creator's step windows: their rows (the labels `screens::push_menu` highlights by order) are children
+    /// 1..n in layout order, so a hit child id - 1 is the row the draw highlights (needs the game's files).
+    #[test]
+    fn creator_rows_are_the_first_children() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let Ok(dll) = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())) else { return };
+        let Ok(data) = super::super::game_ui::GameUiData::load(&index, &dll) else { return };
+        let gu = GameUi::new(data);
+        for (name, n) in crate::client::creator::STEPS {
+            let m = gu.menu_def(name).unwrap();
+            let labels: Vec<u16> = m
+                .elements
+                .iter()
+                .skip(1)
+                .filter(|c| c.refs.iter().find(|r| r.kind == 0).is_some_and(|r| r.lib.ends_with("windowps")))
+                .map(|c| c.id)
+                .collect();
+            assert_eq!(labels, (1..=n as u16).collect::<Vec<_>>(), "{name}");
+        }
+    }
+
     /// FUN_1011a140: the first child in order whose box (moved by its header offset, both ends in) holds the mouse;
     /// a child in state 0x10 (the caption of a window with registry flag 0x200000) is passed over.
     #[test]

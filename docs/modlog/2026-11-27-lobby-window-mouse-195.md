@@ -31,8 +31,9 @@ dbnamese open and the registry entries checked in Rizin.
 - loby2win's child boxes (FUN_10241450, 0x1024151b..0x1024157d): each child's box (FUN_10119d90) scaled by
   (W / 1024, H / 768) with `__ftol` of the scaled left / top and width / height. FUN_10119d90 is asked with the
   cursor's nudge: child 1, the cursor at the open (cursor_start under registry flag 0x10000) with window +0x63 = 1 from
-  the constructor, is read a pixel up-left first. The buttons are drawn at these places (FUN_10241640), and the hit
-  test adds each child's header offset (0, -3).
+  the constructor, is read a pixel up-left first, and keeps that box. The draw (FUN_10241640) starts from these
+  scaled boxes and nudges the cursor's button again each frame, after the scale; the hit test adds each child's
+  header offset (0, -3).
 
 Ours:
 - `winhits::LobbyFocus` is a lobby screen's focused window as drawn: its frame and its children's hit boxes (header

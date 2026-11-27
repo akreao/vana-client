@@ -17057,8 +17057,18 @@ impl App {
                                 Some(t) => t.children.iter().map(|&(id, r)| (CHILD[id as usize - 1], r)).collect(),
                                 None => rects.clone(),
                             };
+                            // Classic: the first child whose box holds the pointer, both ends in (FUN_1011a140).
+                            let classic_hit = title_win
+                                .as_ref()
+                                .zip(input.pointer)
+                                .and_then(|(t, p)| t.child(p))
+                                .map(|id| CHILD[id as usize - 1]);
                             for (m, r) in &hits {
-                                if !config_open && input.pointer.is_some_and(|p| inside(r, p)) {
+                                let on = match &title_win {
+                                    Some(_) => classic_hit == Some(*m),
+                                    None => input.pointer.is_some_and(|p| inside(r, p)),
+                                };
+                                if !config_open && on {
                                     let at = *menu;
                                     let frame = match (&title_win, input.pointer) {
                                         (Some(t), Some(p)) => t.in_frame(p),
@@ -17069,7 +17079,6 @@ impl App {
                                     } else if input.released && at == *m {
                                         chosen = Some(*m);
                                     }
-                                    // The first child in order takes the pointer (FUN_1011a140).
                                     break;
                                 }
                             }
