@@ -4709,7 +4709,7 @@ From the party spec (scratchpad party/SPEC.md; current addresses).
   0..5, other numbers 6..11 then 12..17; leaders per party (flag 4) and the alliance leader (flag 8); "ptw0" iff our
   party has no leader, else "ptwN". Our slot 0 too takes its party number and leader bits from record 0's +0x34
   (written by 0x0C8 as for anyone), not from our GAttr G+0x97f8: we stay in slot 0, but a table-only change
-  (trusts) changes its party number and leader bits, so the window can go from ptw0 to ptwN.
+  can change its party number or leader bits (calling trusts sets our leader bit 4: ptw0 to ptw3).
 - F1 / F7 (0x46 / 0x4c) target ourselves (we are an ordinary entity in retail); F2..F6 (0x47..0x4b) slots 1..5, F11
   (0x53) slot 6, F12 (0x54) slot 12 (FUN_102033c0: used, in our zone, no marker, model loaded; no distance). A re-pick
   of the same target plays "0010" again. Lock-on refuses self; Enter on self opens playermo.
