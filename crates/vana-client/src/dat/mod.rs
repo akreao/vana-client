@@ -220,6 +220,7 @@ pub mod event_ops;
 pub mod font;
 pub mod furniture;
 pub mod generator;
+pub mod grammar;
 pub mod items;
 pub mod journal;
 pub mod lang;
