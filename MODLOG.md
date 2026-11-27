@@ -25070,8 +25070,10 @@ Settings > Graphics > Upscaling (config `upscaler` 0 off / 1 FSR / 2 external, `
   dropped on our side, and its let-go (status 1 -> 0) about 0.3 s before the target shows dead. So the order of
   0x058 / status / death cannot be relied on.
 - client/target.rs: candidates are monsters within 30 claimed by us, a party or alliance member or our pet, or
-  unclaimed and facing one of us (0x00E facetarget), alive, targetable, with a model; the nearest within 90 degrees of
-  our heading, else the nearest behind (front_first).
+  unclaimed and either facing one of us (0x00E facetarget) or engaged (status 1); alive, targetable, with a model;
+  the nearest within 90 degrees of our heading, else the nearest behind (front_first). In a client log of a pull where
+  nothing is claimed (Dynamis), every monster of the pull had claim 0 and face target 0, so without the engaged rule
+  no candidate was found.
   - An 0x058 while engaged that we did not ask for (no /attack or /attackoff in the last 2 s): the server's auto-target;
     when the closest is another, c2s 0x01A category 0x0f to it instead, and the server's pick is not taken.
   - The server lets us go unasked: c2s 0x01A category 0x02 (engage) on the closest at once (its dead target showed

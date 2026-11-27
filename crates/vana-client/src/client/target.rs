@@ -1197,8 +1197,8 @@ fn fightable(w: &World, id: u32, e: &super::Entity) -> bool {
         && w.actors.get(&id).is_some_and(|a| a.gpu.is_some())
 }
 
-/// The closest monster within 30 fighting us, our party or our pet (claimed by one of us, or unclaimed and facing
-/// one of us), but `skip`: the closest within 90 degrees of our heading, else the closest behind.
+/// The closest monster within 30 that we may fight (`ours`), but `skip`: the closest within 90 degrees of our heading,
+/// else the closest behind.
 fn closest(w: &World, skip: Option<u32>, why: Option<&str>) -> Option<u32> {
     let mut side: Vec<u32> = w.party.members().map(|m| m.id).collect();
     side.push(w.my_id);
@@ -1208,7 +1208,8 @@ fn closest(w: &World, skip: Option<u32>, why: Option<&str>) -> Option<u32> {
         side.push(pet);
     }
     let faces_us = |i: u16| i == w.my_index || w.entity_at(i).is_some_and(|(k, _)| side.contains(&k));
-    let ours = |e: &super::Entity| if e.claim != 0 { side.contains(&e.claim) } else { e.face != 0 && faces_us(e.face) };
+    let ours =
+        |e: &super::Entity| ours(e.claim, |c| side.contains(&c), e.face != 0 && faces_us(e.face), e.motion.status);
     let dir = super::event::rad_of(w.net.me.lock().map_or(0, |m| m.dir));
     let near = w.entities.iter().filter(|&(&id, e)| Some(id) != skip && ours(e) && fightable(w, id, e));
     let pick = front_first(w.pos, dir, near.map(|(&id, e)| (id, e.pos)));
@@ -1243,6 +1244,13 @@ fn closest(w: &World, skip: Option<u32>, why: Option<&str>) -> Option<u32> {
         );
     }
     pick
+}
+
+/// A monster we may fight next: claimed by us, a party or alliance member or our pet; or unclaimed and either facing
+/// one of us or engaged (status 1). Where nothing is claimed (Dynamis), the claim and the face target were 0 on every
+/// monster of a pull, so an engaged one counts. Another's claim never does.
+fn ours(claim: u32, side: impl Fn(u32) -> bool, faces_us: bool, status: u8) -> bool {
+    if claim != 0 { side(claim) } else { faces_us || status == 1 }
 }
 
 /// The nearest within CLOSEST_RANGE and 90 degrees of heading `dir` (dir_from_forward's: 0 east, a quarter turn
@@ -1522,6 +1530,16 @@ pub fn locked_step(pos: Vec3, target: Vec3, fwd: f32, side: f32, dist: f32) -> V
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn closest_candidates() {
+        let side = |c: u32| c == 7;
+        assert!(super::ours(7, side, false, 0), "claimed by our side");
+        assert!(!super::ours(9, side, true, 1), "another's claim, even engaged and facing us");
+        assert!(super::ours(0, side, true, 0), "unclaimed, facing us");
+        assert!(super::ours(0, side, false, 1), "unclaimed and engaged (a pull where nothing is claimed)");
+        assert!(!super::ours(0, side, false, 0), "unclaimed and idle");
+    }
+
     #[test]
     fn closest_front_first() {
         use glam::Vec3;
