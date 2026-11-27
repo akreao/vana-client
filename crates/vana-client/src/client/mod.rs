@@ -2168,11 +2168,23 @@ fn chat_text(id: u8) -> Option<&'static str> {
 /// The channel key function `k` fires with Ctrl / Alt: its key as Key Assignment set it (World.chat_keys; S, L, T,
 /// P, U, X, Q by default), none while Key Assignment is open (flag 0x10).
 fn chat_key(w: &World, k: egui::Key) -> Option<u8> {
-    let dik = input::egui_dik(k)?;
     if w.config.as_ref().is_some_and(key_assigning) {
         return None;
     }
-    CHAT_KEYS.iter().zip(w.chat_keys).filter(|&(_, key)| key == dik).map(|(&id, _)| id).next_back()
+    chat_key_of(w.chat_keys, input::egui_dik(k)?)
+}
+
+/// The channel key function a DIK code fires, given each one's key (CHAT_KEYS order): the last that matches.
+fn chat_key_of(keys: [u8; 7], dik: u8) -> Option<u8> {
+    CHAT_KEYS.iter().zip(keys).filter(|&(_, key)| key != 0 && key == dik).map(|(&id, _)| id).next_back()
+}
+
+/// A channel key function fired: its text before the line's body (FUN_101afb40), or the assist key's step.
+fn chat_key_fire(w: &mut World, id: u8) {
+    match chat_text(id) {
+        Some(p) => chat_prefix(w, p),
+        None => assist_key(w),
+    }
 }
 
 /// Key function 0xb4 (config 0x86, Q; entry +0x1ffc of FUN_101af710's table): two texts, "/assiste " then
@@ -2199,7 +2211,7 @@ fn assist_key(world: &mut World) {
 
 fn swallow_shortcut_text(pending: &mut Option<egui::Key>, event: &egui::Event) -> bool {
     match event {
-        egui::Event::Text(text) => pending.take().is_some_and(|key| text.eq_ignore_ascii_case(key.name())),
+        egui::Event::Text(text) => pending.take().is_some_and(|key| text.eq_ignore_ascii_case(key.symbol_or_name())),
         egui::Event::Key { pressed: true, .. } => {
             *pending = None;
             false
@@ -3176,7 +3188,7 @@ fn world_hud(
                 fep::insert(world, &t);
             }
             // egui turns Ctrl+C / Ctrl+X into Copy / Cut instead of key events. In the chat line they copy / cut the
-            // selection (ours; Ctrl+V pastes through egui-winit's clipboard), else /check and the /linkshell2 line.
+            // selection (ours; Ctrl+V pastes through egui-winit's clipboard), else /check and X's channel key.
             // The chat line's selection first, then the modern chat window's selected lines (chatsel.rs).
             egui::Event::Copy if world.typing && fep::selection(world).is_some() => {
                 world.copied = fep::selected_text(world)
@@ -3188,7 +3200,13 @@ fn world_hud(
                 world.copied = fep::selected_text(world);
                 fep::delete_selection(world);
             }
-            egui::Event::Cut if !event::cinema(world) => chat_prefix(world, "/linkshell2 "),
+            // Ctrl+X without a selection: whatever channel key X is assigned to (/linkshell2 by default).
+            egui::Event::Cut
+                if !event::cinema(world)
+                    && let Some(id) = chat_key(world, egui::Key::X) =>
+            {
+                chat_key_fire(world, id)
+            }
             egui::Event::Key { key, physical_key, pressed: true, modifiers, .. } => match key {
                 // Ours: an open modern right-click menu has its keys (modern/ctxmenu.rs reads them from egui), so they
                 // reach nothing under it (Enter would target the nearest, Escape the target, the chat line send).
@@ -3246,12 +3264,10 @@ fn world_hud(
                 k if (modifiers.ctrl || modifiers.alt)
                     && !opened
                     && !event::cinema(world)
+                    && !numpad
                     && let Some(id) = chat_key(world, *k) =>
                 {
-                    match chat_text(id) {
-                        Some(p) => chat_prefix(world, p),
-                        None => assist_key(world),
-                    }
+                    chat_key_fire(world, id);
                     swallow_text = modifiers.alt.then_some(*k);
                     keys.clear();
                 }
@@ -23212,6 +23228,21 @@ mod tests {
         assert_eq!(assist_step(1, true, mode("/say hi")), 1);
         assert_eq!(assist_step(1, false, mode("/assistj hi")), 1);
         assert_eq!(strip_channel("/assiste hello"), "hello");
+    }
+
+    /// Channel keys by their assigned keys (CHAT_KEYS order): the defaults, a key moved to another channel, a cleared
+    /// one; an Alt + comma binding swallows its ",".
+    #[test]
+    fn chat_keys_by_binding() {
+        let defaults = [0x1f, 0x26, 0x14, 0x19, 0x16, 0x2d, 0x10];
+        assert_eq!(chat_key_of(defaults, 0x1f), Some(0x3c));
+        assert_eq!(chat_key_of(defaults, 0x10), Some(0xb4));
+        let moved = [0, 0x26, 0x14, 0x19, 0x16, 0x2d, 0x1f];
+        assert_eq!(chat_key_of(moved, 0x1f), Some(0xb4));
+        assert_eq!(chat_key_of(moved, 0x10), None);
+        assert_eq!(chat_key_of(moved, 0), None);
+        let mut pending = Some(egui::Key::Comma);
+        assert!(swallow_shortcut_text(&mut pending, &egui::Event::Text(",".into())));
     }
 
     #[test]
