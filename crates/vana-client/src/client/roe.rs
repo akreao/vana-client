@@ -209,9 +209,13 @@ pub fn timed_seen(w: &mut World) {
     w.roe_timed = id;
 }
 
+/// Table 0x1035c53c: the "New Challenge" file past 0xaf0 by language (ja, en, de, fr); German and French take the
+/// English one with the European flag (FUN_10087230).
+const NEW_CHALLENGE: [u32; 4] = [0x396, 0x396, 0x398, 0x397];
+
 /// FUN_10087230 each frame: once the zone is in, no event runs and our model is up (+0x120 bit 9, 0x1008723c: not
-/// while an unload mark has freed it), "New Challenge" (file 0xaf0 + 0x396, en / ja; fr 0x397, de 0x398: table
-/// 0x1035c53c) `main` on us, with no text.
+/// while an unload mark has freed it), "New Challenge" (file 0xaf0 + NEW_CHALLENGE[language]) `main` on us, with no
+/// text.
 pub fn new_challenge(w: &mut World) {
     if !w.new_challenge || !w.in_scene() || w.zone_uploading.is_some() || super::event::active(w) || !w.my_model_up() {
         return;
@@ -219,7 +223,8 @@ pub fn new_challenge(w: &mut World) {
     w.new_challenge = false;
     log::info!("RoE: New Challenge, limited-time record {}", w.roe_timed);
     let me = crate::fx::sched::Who::Actor(w.my_id);
-    w.effects.on_event_scheduler(0xaf0 + 0x396, u32::from_le_bytes(*b"main"), me, me);
+    let file = 0xaf0 + NEW_CHALLENGE[crate::dat::lang::files() as usize];
+    w.effects.on_event_scheduler(file, u32::from_le_bytes(*b"main"), me, me);
 }
 
 fn objective(w: &World, id: u16) -> Option<std::sync::Arc<Objective>> {

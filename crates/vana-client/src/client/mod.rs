@@ -2161,6 +2161,28 @@ fn chat_shortcut(k: egui::Key) -> Option<&'static str> {
     })
 }
 
+/// Key function 0xb4 (config 0x86, Q; entry +0x1ffc of FUN_101af710's table): two texts, "/assiste " then
+/// "/assistj " (Japanese the other way round; German and French as English only with the European flag, lang::files).
+fn assist_texts(l: crate::dat::items::Lang) -> [&'static str; 2] {
+    match l {
+        crate::dat::items::Lang::Ja => ["/assistj ", "/assiste "],
+        _ => ["/assiste ", "/assistj "],
+    }
+}
+
+/// FUN_101af4f0 with FUN_101af5b0: the text key function 0xb4 takes next. Typing in an assist mode (FUN_101b9c10:
+/// the line's mode 0xe / 0xf) steps to the other one, wrapping after the second; otherwise the last one stays.
+fn assist_step(last: u8, typing: bool, mode: u8) -> u8 {
+    if typing && matches!(mode, 0xe | 0xf) { (last + 1) % 2 } else { last }
+}
+
+/// Key function 0xb4: its text before the line's body, as FUN_101afb40 puts the other channel keys'.
+fn assist_key(world: &mut World) {
+    let mode = chatctrl::line_mode(&world.chat_input, world.chat_mode);
+    world.assist_key = assist_step(world.assist_key, world.typing, mode);
+    chat_prefix(world, assist_texts(crate::dat::lang::files())[world.assist_key as usize]);
+}
+
 fn swallow_shortcut_text(pending: &mut Option<egui::Key>, event: &egui::Event) -> bool {
     match event {
         egui::Event::Text(text) => pending.take().is_some_and(|key| text.eq_ignore_ascii_case(key.name())),
@@ -3214,6 +3236,11 @@ fn world_hud(
                 {
                     chat_prefix(world, p);
                     swallow_text = modifiers.alt.then_some(*k);
+                    keys.clear();
+                }
+                egui::Key::Q if (modifiers.ctrl || modifiers.alt) && !opened && !event::cinema(world) => {
+                    assist_key(world);
+                    swallow_text = modifiers.alt.then_some(egui::Key::Q);
                     keys.clear();
                 }
                 egui::Key::R if (modifiers.ctrl || modifiers.alt) && (world.typing || !event::cinema(world)) => {
@@ -8260,6 +8287,8 @@ struct World {
     hud_top: hudtop::HudTop,
     /// Who sent us tells, most recent first (Ctrl+R).
     tells: Vec<String>,
+    /// Key function 0xb4's text (its entry +0x104, FUN_101af4f0): 0 or 1 of `assist_texts`.
+    assist_key: u8,
     /// Battle message table, names and colours (loaded in the background).
     battle: Option<Arc<crate::dat::battle::BattleText>>,
     /// Melee results waiting for the attacker's hit.
@@ -11115,6 +11144,7 @@ impl App {
                             log2_up: false,
                             hud_top: Default::default(),
                             tells: Vec::new(),
+                            assist_key: 0,
                             battle: None,
                             pending: Vec::new(),
                             rounds: HashMap::new(),
@@ -23143,6 +23173,23 @@ mod tests {
             assert_eq!(line, expected);
             assert_eq!(pending, None);
         }
+    }
+
+    /// Key function 0xb4 (FUN_101af4f0 / FUN_101af5b0): English "/assiste " first, Japanese "/assistj "; pressed again
+    /// on an assist line the other one, then back; not typing (or on another channel) the last one stays.
+    #[test]
+    fn assist_key_texts() {
+        use crate::dat::items::Lang;
+        assert_eq!(assist_texts(Lang::En), ["/assiste ", "/assistj "]);
+        assert_eq!(assist_texts(Lang::Ja), ["/assistj ", "/assiste "]);
+        assert_eq!(assist_texts(Lang::De)[0], "/assiste ");
+        let mode = |l: &str| chatctrl::line_mode(l, 2);
+        assert_eq!(assist_step(0, false, mode("")), 0);
+        assert_eq!(assist_step(0, true, mode("/assiste hi")), 1);
+        assert_eq!(assist_step(1, true, mode("/assistj hi")), 0);
+        assert_eq!(assist_step(1, true, mode("/say hi")), 1);
+        assert_eq!(assist_step(1, false, mode("/assistj hi")), 1);
+        assert_eq!(strip_channel("/assiste hello"), "hello");
     }
 
     #[test]

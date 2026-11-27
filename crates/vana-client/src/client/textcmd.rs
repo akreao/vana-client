@@ -1665,22 +1665,19 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             }
             Ok(())
         }
-        // FUN_10079b30: an item name between languages (letters J 0, E 1, G 2, F 3; ours English): one letter is the
-        // target, two are from and to; c2s 0x02B {From, To, 0, Name[64]}; s2c 0x047 answers (translate_result).
+        // FUN_10079b30: an item name between languages; c2s 0x02B {From, To, 0, Name[64]}; s2c 0x047 answers
+        // (translate_result). No letters: from and to the client's language; one letter: from it to the letter; two:
+        // from and to. Both with the European flag read German and French as English (lang::files()).
         id::TRANSLATE => {
             if !(2..=3).contains(&args.len()) {
                 return Err(());
             }
-            let lang = |c: char| match c.to_ascii_uppercase() {
-                'J' => 0,
-                'G' => 2,
-                'F' => 3,
-                _ => 1,
-            };
-            let (from, to) = match args.get(2).map(|s| s.chars().collect::<Vec<char>>()) {
-                Some(l) if l.len() == 2 => (lang(l[0]), lang(l[1])),
-                Some(l) if l.len() == 1 => (1, lang(l[0])),
-                _ => (1, 1),
+            let own = crate::dat::lang::files() as u8;
+            let letter = |c| translate_letter(c, crate::dat::lang::files(), crate::dat::lang::european_as_english());
+            let (from, to) = match args.get(2).map(|s| s.bytes().collect::<Vec<u8>>()) {
+                Some(l) if l.len() < 2 => (own, letter(l.first().copied().unwrap_or(0))),
+                Some(l) => (letter(l[0]), letter(l[1])),
+                None => (own, own),
             };
             let mut b = vec![0u8; 0x44];
             (b[0], b[1]) = (from, to);
@@ -2222,6 +2219,20 @@ fn attack(w: &mut World, args: &[String], mode: Mode) -> Done {
 /// Table 0x1036f7a8 {group, id, slot}: slot name id -> equipment slot, group 0x17's rows (0..15) and group 0x18's
 /// (the same, then ear1, ear2, ring1, ring2).
 const SLOT_OF: [u8; 20] = [0, 1, 2, 3, 4, 9, 11, 12, 5, 6, 13, 14, 15, 10, 7, 8, 11, 12, 13, 14];
+
+/// FUN_10079c10: a /translate letter as a language. The letters are the first bytes of messages 0xc 0x5e..0x61 and
+/// their lower case (+0x20): J, E, G, F in the English file. G and F are German and French only without the European
+/// flag; any other letter (and G / F with it) is the client's language, read as English for German and French with
+/// the flag (lang::files()).
+fn translate_letter(c: u8, files: crate::dat::items::Lang, european: bool) -> u8 {
+    match (c.to_ascii_uppercase(), european) {
+        (b'J', _) => 0,
+        (b'E', _) => 1,
+        (b'G', false) => 2,
+        (b'F', false) => 3,
+        _ => files as u8,
+    }
+}
 
 /// The bags /equip looks in, and its third argument's choices ("0" inventory, "1" wardrobe 8, "2".."8" 10..16).
 const EQUIP_BAGS: [u8; 9] = [0, 8, 10, 11, 12, 13, 14, 15, 16];
@@ -3333,6 +3344,16 @@ fn bstpet_named(w: &World, word: &str) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FUN_10079c10: J / E always, G / F only without the European flag, anything else the client's language.
+    #[test]
+    fn translate_letters() {
+        use crate::dat::items::Lang;
+        assert_eq!(b"jEgF".map(|c| translate_letter(c, Lang::En, false)), [0, 1, 2, 3]);
+        assert_eq!(translate_letter(b'x', Lang::Fr, false), 3);
+        assert_eq!(b"GFx".map(|c| translate_letter(c, Lang::En, true)), [1, 1, 1]);
+        assert_eq!(translate_letter(b'x', Lang::Ja, true), 0);
+    }
 
     #[test]
     fn quoted_tokens() {
