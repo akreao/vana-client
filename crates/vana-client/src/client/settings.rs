@@ -1542,9 +1542,10 @@ impl SettingsUi {
         for (i, r) in self.rows().iter().enumerate().skip(top).take(ROWS) {
             let y = Self::TOP + PITCH * (i - top) as f32 + 14.0;
             // conf2win's two 88-px and conf3win's three 64-px columns; a caption that does not fit (12 px of the
-            // button are its ends) widens every button of the row, from the bullets' column.
-            let need =
-                r.choices.iter().map(|c| super::super::render::screens::label_width(&c.1) + 12.0).fold(0.0, f32::max);
+            // button are its ends) lays the row out from the bullets' column, each button as wide as its caption.
+            let widths: Vec<f32> =
+                r.choices.iter().map(|c| (super::super::render::screens::label_width(&c.1) + 12.0).ceil()).collect();
+            let need = widths.iter().copied().fold(0.0, f32::max);
             match Self::ctl(r) {
                 Ctl::Buttons(n) if n <= 2 && need <= 88.0 => {
                     for (c, x) in WIDE.iter().enumerate().take(n) {
@@ -1557,15 +1558,42 @@ impl SettingsUi {
                     }
                 }
                 Ctl::Buttons(n) => {
-                    let w = need.ceil();
-                    for c in 0..n {
-                        out.push((i + 1, c, [WIDE_X + (w + 8.0) * c as f32, y, w, 16.0]));
+                    for (c, b) in Self::fit_row(&widths[..n.min(widths.len())]).into_iter().enumerate() {
+                        out.push((i + 1, c, [b.0, y, b.1, 16.0]));
                     }
                 }
                 Ctl::Slider => out.push((i + 1, 0, [SLIDER_X, y, SLIDER_W, 16.0])),
             }
         }
         out
+    }
+
+    /// A row of buttons too wide for the columns, as (x, width): each at least 64 px and as wide as its caption, 8 px
+    /// apart from the bullets' column; a row that would pass the scroll bar's column has its gaps, then its buttons,
+    /// narrowed to fit.
+    fn fit_row(widths: &[f32]) -> Vec<(f32, f32)> {
+        let n = widths.len();
+        if n == 0 {
+            return Vec::new();
+        }
+        let room = W - 16.0 - WIDE_X;
+        let mut ws: Vec<f32> = widths.iter().map(|w| w.max(64.0)).collect();
+        let sum: f32 = ws.iter().sum();
+        let gaps = (n - 1) as f32;
+        let gap = if gaps > 0.0 { ((room - sum) / gaps).clamp(2.0, 8.0) } else { 0.0 };
+        let over = sum + gap * gaps - room;
+        if over > 0.0 {
+            let k = (sum - over) / sum;
+            ws.iter_mut().for_each(|w| *w = (*w * k).floor());
+        }
+        let mut x = WIDE_X;
+        ws.into_iter()
+            .map(|w| {
+                let b = (x, w);
+                x += w + gap;
+                b
+            })
+            .collect()
     }
 
     /// The pointer: controls follow it; a click is Enter, on a slider it sets the stop under the pointer.
@@ -1725,7 +1753,10 @@ impl SettingsUi {
     /// The bar's message (a row, a page, the thumb's place) on a long page: the rows scroll and the hand stays on its
     /// line, as the Config pages' lists do. True when the page moved.
     pub fn bar(&mut self, m: super::scrollbar::Msg) -> bool {
-        if self.on_mods() || self.edit {
+        if self.on_mods() {
+            return self.mods_bar(m);
+        }
+        if self.edit {
             return false;
         }
         let n = self.rows().len();
@@ -2281,6 +2312,22 @@ impl SettingsUi {
         out
     }
 
+    /// The DAT Packs and Mods pages' bar and the wheel: the list moves and the cursor with it (not while a pack is
+    /// held for a move).
+    fn mods_bar(&mut self, m: super::scrollbar::Msg) -> bool {
+        let n = self.mods_total();
+        let Some(ui) = self.mods_ui.as_mut().filter(|u| u.held.is_none()) else { return false };
+        let mut top = ui.top;
+        let mut at = self.row.checked_sub(1).unwrap_or(top);
+        let moved = super::scrollbar::rows_abs(m, &mut top, &mut at, n, super::modsui::VISIBLE);
+        ui.top = top;
+        if moved && self.row != 0 {
+            self.row = at + 1;
+            self.col = self.mods_marked().min(self.mods_cols(self.row).saturating_sub(1));
+        }
+        moved
+    }
+
     fn mods_draw(&self, gu: &mut GameUi, x: f32, y: f32) {
         const N: u32 = 0x8080_8080;
         const ON: u32 = 0x8080_5020;
@@ -2332,6 +2379,15 @@ impl SettingsUi {
         }
         if total > super::modsui::VISIBLE {
             gu.scroll_bar(
+                x + W - 12.0,
+                y + Self::TOP,
+                PITCH * super::modsui::VISIBLE as f32,
+                total,
+                super::modsui::VISIBLE,
+                top,
+            );
+            gu.bar_site(
+                super::scrollbar::Owner::Settings,
                 x + W - 12.0,
                 y + Self::TOP,
                 PITCH * super::modsui::VISIBLE as f32,
@@ -2705,6 +2761,43 @@ mod tests {
         ui.top.set(5);
         ui.key(egui::Key::Tab);
         assert_eq!(ui.top.get(), 0);
+    }
+
+    /// A row whose captions are too wide for the columns stays inside the frame, clear of the scroll bar.
+    #[test]
+    fn wide_rows_fit() {
+        let right = W - 16.0;
+        for widths in [vec![52.0, 70.0, 150.0], vec![160.0, 160.0, 160.0], vec![300.0, 40.0], vec![400.0]] {
+            let row = SettingsUi::fit_row(&widths);
+            assert_eq!(row.len(), widths.len());
+            assert!(row.windows(2).all(|p| p[0].0 + p[0].1 < p[1].0), "{row:?}");
+            assert!(row.iter().all(|b| b.0 >= WIDE_X && b.0 + b.1 <= right), "{row:?}");
+        }
+        // Room enough: each button as wide as its caption (64 at least), 8 apart.
+        assert_eq!(SettingsUi::fit_row(&[52.0, 70.0, 150.0]), vec![(32.0, 64.0), (104.0, 70.0), (182.0, 150.0)]);
+    }
+
+    /// The DAT Packs and Mods pages take the bar and the wheel: the list moves, the hand with it.
+    #[test]
+    fn mods_page_wheel() {
+        use super::super::scrollbar::Msg;
+        use crate::config::ModRef;
+        let c = Config::default();
+        let mut ui = SettingsUi::open(&c, [1280, 800]);
+        ui.s.mods = (0..12).map(|k| ModRef::new(&format!("p{k}"), true)).collect();
+        ui.lua_names = std::collections::HashSet::new();
+        ui.mods_ui = Some(super::super::modsui::Mods::empty());
+        (ui.tab, ui.row, ui.col) = (PACKS, 1, 0);
+        let top = |ui: &SettingsUi| ui.mods_ui.as_ref().unwrap().top;
+        assert!(ui.bar(Msg::Down));
+        assert_eq!((top(&ui), ui.row), (1, 2));
+        assert!(ui.bar(Msg::Set(5)));
+        assert_eq!(top(&ui), 5);
+        assert!(!ui.bar(Msg::Down));
+        assert!(ui.controls().iter().all(|c| c.0 > 5 && c.0 <= 12));
+        // Not while a pack is held for a move.
+        ui.mods_ui.as_mut().unwrap().held = Some(ui.s.mods.clone());
+        assert!(!ui.bar(Msg::Up));
     }
 
     #[test]
