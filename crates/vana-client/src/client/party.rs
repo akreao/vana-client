@@ -285,14 +285,16 @@ impl Roster {
         self.members().skip(1).any(|r| r.name.is_empty())
     }
 
-    /// FUN_10201fb0 / FUN_10202b80: the 18 window slots. Ours is slot 0 in party 0; members of our party number join
-    /// it, the first other number makes party 1 (slots 6..11), the next party 2 (12..17).
+    /// FUN_10205290 / FUN_10204190: the 18 window slots. Ours is slot 0 in party 0; members of our party number join
+    /// it, the first other number makes party 1 (slots 6..11), the next party 2 (12..17). Every slot, ours included,
+    /// takes its party number and leader bits from the record's flags (+0x34), which 0x0C8 writes too; our GAttr
+    /// (G+0x97f8, 0x0DD / 0x0E2 only) is not read here.
     pub fn slots(&self) -> Slots {
         let mut s = Slots::default();
         let mut parties: [Option<u32>; 3] = [None; 3];
         let mut counts = [0usize; 3];
-        for (k, r) in self.members().enumerate() {
-            let num = if k == 0 { self.own_flags & 3 } else { r.flags & 3 };
+        for r in self.members() {
+            let num = r.flags & 3;
             let p = match parties.iter().position(|n| *n == Some(num)) {
                 Some(p) => p,
                 None => match parties.iter().position(Option::is_none) {
@@ -306,11 +308,10 @@ impl Roster {
             if counts[p] >= 6 {
                 continue;
             }
-            let flags = if k == 0 { self.own_flags } else { r.flags };
-            if flags & 4 != 0 {
+            if r.flags & 4 != 0 {
                 s.leaders[p] = r.id;
             }
-            if flags & 8 != 0 {
+            if r.flags & 8 != 0 {
                 s.alliance_leader = r.id;
             }
             s.slots[p * 6 + counts[p]] = Some(r.clone());
@@ -459,6 +460,30 @@ mod tests {
         r.list(&listed(ME, 0x400, 0, 0, "Me"), ME, false);
         assert_eq!(r.members().count(), 1);
         assert_eq!(r.slots().window(), "menu    ptw0");
+    }
+
+    /// Calling trusts as retail sends it: a 0x0C8 per trust (us flagged leader) and a 0x0E2 about the trust only, never
+    /// a 0x0DD / 0x0E2 about us. The window is the party's, led by us, from our record's flags; our GAttr stays 0.
+    #[test]
+    fn trusts_from_the_table_alone() {
+        let mut r = Roster::default();
+        r.refresh_self(ME, 0x400, "Me", 288);
+        // Logged in solo: a 0x0E2 about us with GAttr 0.
+        r.list(&listed(ME, 0x400, 0, 288, "Me"), ME, true);
+        assert_eq!(r.slots().window(), "menu    ptw0");
+        r.table(&[(ME, 0x400, 4, 288), (0x1120000 | 0x9b5, 0x8b5, 0, 288)]);
+        r.list(&listed(0x1120000 | 0x9b5, 0x8b5, 0, 288, "Valaineral"), ME, true);
+        r.table(&[(ME, 0x400, 4, 288), (0x1120000 | 0x9b5, 0x8b5, 0, 288), (0x1120000 | 0x9b6, 0x8b6, 0, 288)]);
+        r.list(&listed(0x1120000 | 0x9b6, 0x8b6, 0, 288, "Kupipi"), ME, true);
+        let s = r.slots();
+        assert_eq!((s.window().as_str(), s.leaders[0], s.counts[0], s.state()), ("menu    ptw3", ME, 3, 4));
+        assert_eq!(r.own_flags, 0);
+        assert_eq!(r.party().count(), 3);
+        // The trusts go (an empty table): solo again.
+        r.table(&[]);
+        r.refresh_self(ME, 0x400, "Me", 288);
+        let s = r.slots();
+        assert_eq!((s.window().as_str(), s.leaders[0]), ("menu    ptw0", 0));
     }
 
     /// Event op 0xc2: members in their Mog House (MoghouseFlg) by record bit and by display slot; ours never counts.
