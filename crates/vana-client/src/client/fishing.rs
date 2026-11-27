@@ -169,7 +169,9 @@ pub fn on_fish(w: &mut World, p: FishParams) {
         special: p.special,
         gold: false,
     });
-    if p.sense & 2 != 0 {
+    // FUN_1009fd30 (0x1009fe62): `main` of file 0x389 on our model, when we have one (+0xa0: none while an unload
+    // mark has freed it).
+    if p.sense & 2 != 0 && w.my_model_up() {
         let me = Who::Actor(w.my_id);
         w.effects.on_event_scheduler(0xaf0 + 0x389, name(b"main"), me, me);
     }

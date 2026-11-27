@@ -1117,6 +1117,11 @@ pub fn on_effect(w: &mut World, id: u32, index: u16, effect: i16, kind: i8, stat
     w.synth.anims.insert(id, Anim { file, kind: kind.clamp(0, 2) as u8, timer: timer as f32, state: 0 });
     if id == w.my_id {
         w.my_motion.status = status as u8;
+        // FUN_1009f430 (0x1009f489): ours with our model up (+0x120 bit 9) gets FUN_100a6070(0): autorun and /follow
+        // end (the frame's walk prints "Follow canceled."). Not while an unload mark has freed our model.
+        if w.my_model_up() {
+            w.autorun = false;
+        }
     } else if let Some(e) = w.entities.get_mut(&id) {
         e.motion.status = status as u8;
     }
