@@ -497,8 +497,10 @@ struct GpuMesh {
     groups: Vec<(Option<(usize, usize)>, std::ops::Range<u32>, bool)>,
     mmb: bool,
     dist: Vec<std::ops::Range<u32>>,
-    /// Flat (render/reflect.rs is_flat): it may be water, which reflections check per vertex (`water`).
-    flat: bool,
+    /// Flat (render/reflect.rs is_flat): it may be water, which reflections check per vertex (`water`). Then, in its
+    /// own space, the farthest any vertex lies from its origin across x/z (what a sheet of water covers) and the
+    /// vertices' mean height (the sheet's plane).
+    flat: Option<(f32, f32)>,
 }
 
 /// Whether an effect mesh (triangle list) lies flat in its own space: nearly all of its area faces straight up or
@@ -1667,6 +1669,36 @@ impl EffectsGpu {
         }
     }
 
+    /// The frame's draw order with each item's sort key (Effects::draw_items_keyed). Water reflections (ours): the
+    /// reflected water sheets first (render/reflect.rs water_first), so what stands over them is not covered by the
+    /// reflection where retail's order draws a sheet after it (Port San d'Oria's sea is keyed to draw last; a canal
+    /// sheet's origin can lie nearer than a home point's crystal over its far part). Off: retail's order. The sheets
+    /// are the meshes the plain mesh draw reflects (flat, zone-owned, not specular), `eye` the camera's position.
+    fn draw_items(&self, fx: &Effects, eye: glam::Vec3) -> Vec<(f32, u32)> {
+        let items = fx.draw_items_keyed();
+        let Some(w) = self.water.as_ref() else { return items };
+        let elem = |e: u32| {
+            (e & crate::fx::TRAIL_ITEM == 0).then(|| fx.elems.get(e as usize).and_then(|c| c.as_ref())).flatten()
+        };
+        crate::render::reflect::water_first(
+            items,
+            |e| {
+                let c = elem(e).filter(|c| fx.zone_owned(c.inst))?;
+                let Draw::Mesh(id) = c.draw else { return None };
+                let m = self.meshes.get(id as usize)?.as_ref()?;
+                // stage_walk's specular draws (SpecGrouped / SpecFlat) take the specular path, not reflected.
+                if c.spec.is_some() && !m.mmb {
+                    return None;
+                }
+                let (reach, ly) = m.flat?;
+                let b = c.back?;
+                let plane = b.world + glam::Vec3::Y * ly * b.scale.y;
+                w.surface(plane.y, eye.y).then(|| (plane, reach * b.scale.x.abs().max(b.scale.z.abs())))
+            },
+            |e| elem(e).and_then(|c| c.back).map(|b| b.world),
+        )
+    }
+
     /// The frame's draw-order state (retail leaves these set from one draw to the next): stage 0's MIPFILTER per element
     /// (the Mip Mapping setting from the actor draw, NONE after a CMoDist / VuDist copy, TSS 0x10353028), each specular
     /// element's binding (MIPFILTER of stage 2 for the grouped path: the scenery pass's, 0x1017bb43; of stage 1 without
@@ -1674,14 +1706,13 @@ impl EffectsGpu {
     /// FUN_100412b0 never disables it) for the draws that read it without setting it: the no-groups specular path (TSS
     /// 0x103528f0) and the lens flare (FUN_1003ebf0, TSS 0x103520a8). D3a, D3b (DistMorph too), DamValue and grouped
     /// plain D3m draws (DistModel and a ground projection's image too) disable it; the others leave it.
-    fn stage_walk(&self, fx: &Effects) -> StageWalk {
+    fn stage_walk(&self, fx: &Effects, order: &[(f32, u32)]) -> StageWalk {
         let mesh = |id: u32| {
             self.meshes.get(id as usize).and_then(|m| m.as_ref()).map(|m| (m.mmb, m.groups.iter().any(|g| g.2)))
         };
-        let items: Vec<(u32, StageDraw)> = fx
-            .draw_items_keyed()
-            .into_iter()
-            .map(|(_, e)| e)
+        let items: Vec<(u32, StageDraw)> = order
+            .iter()
+            .map(|&(_, e)| e)
             .filter(|&e| e & crate::fx::TRAIL_ITEM == 0 && e < self.count)
             .filter_map(|e| {
                 let c = fx.elems[e as usize].as_ref()?;
@@ -2155,7 +2186,10 @@ impl EffectsGpu {
         for t in groups.iter().filter_map(|g| g.0) {
             self.texture(gpu, fx, t);
         }
-        let flat = is_flat(&m.verts);
+        let flat = is_flat(&m.verts).then(|| {
+            let reach = m.verts.iter().map(|v| v.pos[0].hypot(v.pos[2])).fold(0.0, f32::max);
+            (reach, m.verts.iter().map(|v| v.pos[1]).sum::<f32>() / m.verts.len() as f32)
+        });
         self.meshes[id as usize] = Some(GpuMesh { vb, groups, mmb: m.mmb, dist: m.dist.clone(), flat });
     }
 
@@ -2254,7 +2288,8 @@ impl EffectsGpu {
             let view = t.create_view(&wgpu::TextureViewDescriptor { format: Some(vf), ..Default::default() });
             Self::tex_group(&gpu.device, &self.tex_layout, &self.copy_sampler, &view)
         });
-        let stages = self.stage_walk(fx);
+        let items = self.draw_items(fx, cam.2);
+        let stages = self.stage_walk(fx, &items);
         for &k in stages.spec.values() {
             self.spec_group(gpu, fx, k);
         }
@@ -2463,7 +2498,7 @@ impl EffectsGpu {
         let mut class = 2usize;
         let mut bound: Option<(bool, usize, bool)> = None;
         let mut next_break = 0;
-        for (key, e) in fx.draw_items_keyed() {
+        for (key, e) in items {
             // Another transparent thing farther than this item: it goes first, outside the pass.
             while let Some(i) = break_before(breaks, next_break, key) {
                 drop(pass);
@@ -2714,7 +2749,9 @@ impl EffectsGpu {
                     // nearer draws.
                     let near_level =
                         |w: &crate::render::reflect::FxWater| c.back.is_none_or(|b| w.near_level(b.world.y));
-                    if let Some(wr) = self.water.as_ref().filter(|w| m.flat && near_level(w) && fx.zone_owned(c.inst)) {
+                    if let Some(wr) =
+                        self.water.as_ref().filter(|w| m.flat.is_some() && near_level(w) && fx.zone_owned(c.inst))
+                    {
                         drop(pass);
                         let mut wp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("effects water reflection"),

@@ -573,6 +573,8 @@ pub struct FxWater {
     pub group: wgpu::BindGroup,
     /// The zone's water heights, to skip meshes nowhere near one before drawing (the shader checks each vertex).
     pub heights: Vec<f32>,
+    /// The zone's water levels, for the meshes placed on one (`surface`).
+    pub levels: std::sync::Arc<Vec<Level>>,
 }
 
 /// An effect mesh whose origin is this far from every water height is not drawn again (its vertices could still
@@ -584,6 +586,37 @@ impl FxWater {
     pub fn near_level(&self, y: f32) -> bool {
         self.heights.iter().any(|h| (y - h).abs() <= FX_NEAR)
     }
+
+    /// Whether a flat effect mesh whose plane lies at height `y` is a water surface seen from above by an eye at
+    /// height `eye_y` (y grows downward): on a level, the eye over it (`water_first`).
+    pub fn surface(&self, y: f32, eye_y: f32) -> bool {
+        eye_y < y && self.levels.iter().any(|l| l.holds(y))
+    }
+}
+
+/// The effects' draw order with the water surfaces first: `surface` gives a reflected water sheet's plane (its origin
+/// at the sheet's height) and how far it reaches across x/z, `at` any item's place (None: unknown). Every point above
+/// such a plane lies in front of it along any ray from an eye above it, so the items not below a sheet (within its
+/// reach, more than LEVEL_TOL under it; y grows downward) draw after all the sheets. The sheets and the items below
+/// them keep their order among themselves (retail draws some under the sea after it, as Norg's mirrored lamps), and
+/// are keyed past every other transparent thing (render/effects.rs break_before), which then draws after them. Linear
+/// in the items times the sheets (a few).
+pub fn water_first(
+    items: Vec<(f32, u32)>,
+    surface: impl Fn(u32) -> Option<(Vec3, f32)>,
+    at: impl Fn(u32) -> Option<Vec3>,
+) -> Vec<(f32, u32)> {
+    let sheets: Vec<Option<(Vec3, f32)>> = items.iter().map(|&(_, e)| surface(e)).collect();
+    let planes: Vec<(Vec3, f32)> = sheets.iter().flatten().copied().collect();
+    if planes.is_empty() {
+        return items;
+    }
+    let under =
+        |p: Vec3| planes.iter().any(|(o, reach)| p.y > o.y + LEVEL_TOL && (p.x - o.x).hypot(p.z - o.z) <= *reach);
+    let (mut first, rest): (Vec<_>, Vec<_>) =
+        items.into_iter().zip(sheets).partition(|&((_, e), sheet)| sheet.is_some() || at(e).is_some_and(under));
+    first.iter_mut().for_each(|f| f.0.0 = f32::INFINITY);
+    first.into_iter().chain(rest).map(|(it, _)| it).collect()
 }
 
 pub struct Reflections {
@@ -1025,7 +1058,8 @@ impl Reflections {
         }
         let group = self.group(gpu, depth, Some(outs));
         let heights = self.levels.iter().map(|l| l.y).collect();
-        self.fx_pipes.clone().map(|pipes| FxWater { pipes, group, heights })
+        let levels = self.levels.clone();
+        self.fx_pipes.clone().map(|pipes| FxWater { pipes, group, heights, levels })
     }
 }
 
@@ -1056,6 +1090,27 @@ mod tests {
             cells: Vec::new(),
             grid: (0, 0),
         }
+    }
+
+    /// Water sheet 1 (y 0, reach 10) moves before the crystal 0 above it, keyed past the rest; the fish 2 under it
+    /// keeps its place after it, the lamp 3 beyond its reach and the trail 4 (no place) stay after.
+    #[test]
+    fn water_first_moves_sheets_before_what_stands_over_them() {
+        let items = vec![(9.0, 0), (5.0, 1), (4.0, 2), (3.0, 3), (2.0, 4)];
+        let at = |e: u32| match e {
+            0 => Some(Vec3::new(1.0, -2.0, 1.0)),
+            1 => Some(Vec3::ZERO),
+            2 => Some(Vec3::new(2.0, 3.0, 0.0)),
+            3 => Some(Vec3::new(30.0, 3.0, 0.0)),
+            _ => None,
+        };
+        let surface = |e: u32| (e == 1).then_some((Vec3::ZERO, 10.0));
+        let order = water_first(items.clone(), surface, at);
+        assert_eq!(order.iter().map(|o| o.1).collect::<Vec<_>>(), [1, 2, 0, 3, 4]);
+        assert!(order[..2].iter().all(|o| o.0 == f32::INFINITY));
+        assert_eq!(order[2..], [(9.0, 0), (3.0, 3), (2.0, 4)]);
+        // No sheet (reflections off, or the eye under the water): retail's order.
+        assert_eq!(water_first(items.clone(), |_| None, at), items);
     }
 
     fn flat(x: f32, y: f32) -> [Vec3; 3] {
