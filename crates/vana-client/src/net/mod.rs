@@ -7,6 +7,9 @@ pub mod profile;
 pub mod search;
 pub mod tls;
 
+/// How long a session waits for this computer's link to come back before it ends with the error.
+pub const LINK_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// A send or read failing because this computer's link is down for a while (Wi-Fi roaming or reconnecting, its address
 /// gone until DHCP renews it), not because of the far end: the sessions wait through it.
 pub fn link_down(e: &std::io::Error) -> bool {

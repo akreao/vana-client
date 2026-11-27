@@ -25068,5 +25068,7 @@ Settings > Graphics > Upscaling (config `upscaler` 0 off / 1 FSR / 2 external, `
 - net::link_down: unreachable network or host, network down, address not available, ENOBUFS (Windows WSAENOBUFS).
   The zone session counts such a send as a lost datagram (its unacked sub-packets go again in the next one, as after
   any loss) and such a read as a quiet one (sleeping its timeout, as the failure comes at once); one log line when the
-  link goes, one when it is back. The chat's keep-alive waits up to 120 s for it, then closes as before. Any other
-  error ends them as before. Not seen live yet: whether the server keeps the session through the gap.
+  link goes, one when it is back. After net::LINK_WAIT (120 s) down it ends with the error, as any other did at once.
+  Any other error ends it as before. Not seen live yet: whether the server keeps the session through the gap.
+- The PlayOnline chat is not waited for: a read on an established socket that fails as unreachable has already
+  closed it (Linux tcp_write_err -> tcp_done), so the next read returns 0. Its close line now names the error.

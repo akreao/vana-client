@@ -89,7 +89,7 @@ pub struct MapSession {
     /// Retail's simulated loss (DAT_104e1ca0 +0x184, FUN_100fa710 0x100fa7f1): the percentage of read datagrams thrown
     /// away, and the generator's state. Ours takes it from FFXI_NET_DROP, for testing the lag step.
     drop: (u32, u32),
-    /// Since when this computer's network has been down (sends failing as unreachable), for the log.
+    /// Since when this computer's link has been down (sends or reads failing as unreachable): the log, LINK_WAIT.
     down_since: Option<std::time::Instant>,
 }
 
@@ -362,16 +362,22 @@ impl MapSession {
                     log::warn!("map: the link is back after {:.1} s", t.elapsed().as_secs_f32());
                 }
             }
-            Err(e) if crate::net::link_down(&e) => {
-                if self.down_since.is_none() {
-                    log::warn!("map: the link is down ({e}); the session waits for it");
-                    self.down_since = Some(std::time::Instant::now());
-                }
-                return Ok(());
-            }
+            Err(e) if crate::net::link_down(&e) => return self.link_wait(e),
             Err(e) => return Err(e.into()),
         }
         self.bytes_out += dgram.len() as u64;
+        Ok(())
+    }
+
+    /// A link-down send or read: waited out up to LINK_WAIT from the first, then the error ends the session as any other.
+    fn link_wait(&mut self, e: std::io::Error) -> Result<()> {
+        let since = *self.down_since.get_or_insert_with(|| {
+            log::warn!("map: the link is down ({e}); the session waits for it");
+            std::time::Instant::now()
+        });
+        if since.elapsed() > crate::net::LINK_WAIT {
+            bail!("the link has been down for {} s: {e}", crate::net::LINK_WAIT.as_secs());
+        }
         Ok(())
     }
 
@@ -429,6 +435,7 @@ impl MapSession {
             Err(e) if e.raw_os_error() == Some(10040) => return Ok(None),
             // It fails at once rather than waiting: wait as a quiet read would.
             Err(e) if crate::net::link_down(&e) => {
+                self.link_wait(e)?;
                 std::thread::sleep(timeout);
                 return Ok(None);
             }
