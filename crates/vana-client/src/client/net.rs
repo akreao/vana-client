@@ -264,6 +264,8 @@ fn self_plate(p: &SubPacket) -> SelfPlate {
     let r = p.u8(0x5a);
     let extra = PlateExtra {
         ballista: p.u8(0x39),
+        // 0x037 does not write +0x130 bit 25.
+        bit0: false,
         trial: bit(f3, 1),
         job_master: p.u8(0x58) & 0x80 != 0,
         ranks: (r & 3) << 2 | (r >> 2 & 3),
@@ -285,11 +287,14 @@ fn self_plate(p: &SubPacket) -> SelfPlate {
     }
 }
 
-/// The rest of the plate's fields: u8 @0x32 (+0x294 Ballista info) and @0x33 bit 1 trial, bit 6 job master, bits 4..5 /
+/// The rest of the plate's fields: u8 @0x32 (+0x294 Ballista info) and @0x33 bit 0 (+0x130 bit 25), bit 1 trial, bit 6
+/// job master, bits 4..5 /
 /// 2..3 the Belligerency ranks (+0x13c bits 2..3 / 4..5), read on every 0x00D but a despawn; 0x037 has its places.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PlateExtra {
     pub ballista: u8,
+    /// @0x33 bit 0 (+0x130 bit 25): read on ourselves by the chat filter's claimed-monster test (FUN_100ad950).
+    pub bit0: bool,
     pub trial: bool,
     pub job_master: bool,
     /// +0x13c bits 2..5: bits 0..1 the gladiator rank, 2..3 the Monstrosity rank.
@@ -649,12 +654,16 @@ pub enum NetEvent {
         custom: [u32; 2],
         /// u16 @0x0c: the character's adventuring fellow by ActIndex (+0x2a0).
         fellow: u16,
+        /// u32 @0x10 bits 21..24 (+0x200) and 25..28 (+0x201): FUN_1009e370's bytes.
+        group: (u8, u8),
     },
     /// s2c 0x067 kind 3 (FUN_1009b4xx, 2019 asm 0x1009b6ad): ActIndex @6, id @8, the master's ActIndex u16 @0x0C.
     EntityMaster {
         index: u16,
         id: u32,
         master: u16,
+        /// u8 @0x13 low nibble (+0x200) and u32 @0x10 bits 28..31 (+0x201): FUN_1009e370's bytes.
+        group: (u8, u8),
     },
     /// s2c 0x11A (the answer to c2s 0x119): unlocked job emotes (u32 @4, bit job - 1) and chairs (u16 @8).
     EmoteUnlocks {
@@ -1786,6 +1795,7 @@ fn entity(p: &SubPacket, kind: EntityKind) -> EntityUpdate {
             let b = p.u8(0x33);
             PlateExtra {
                 ballista: p.u8(0x32),
+                bit0: b & 1 != 0,
                 trial: b & 2 != 0,
                 job_master: b & 0x40 != 0,
                 ranks: (b >> 4 & 3) | (b >> 2 & 3) << 2,
@@ -2743,9 +2753,12 @@ impl Session<'_> {
                 strings: vec![text(&p, 0x10, 16)],
                 ..Default::default()
             }))?,
-            0x067 if p.u8(4) & 0x3f == 3 => {
-                self.tx.send(NetEvent::EntityMaster { index: p.u16(6), id: p.u32(8), master: p.u16(0xc) })?
-            }
+            0x067 if p.u8(4) & 0x3f == 3 => self.tx.send(NetEvent::EntityMaster {
+                index: p.u16(6),
+                id: p.u32(8),
+                master: p.u16(0xc),
+                group: (p.u8(0x13) & 0xf, (p.u32(0x10) >> 28) as u8),
+            })?,
             0x067 if p.u8(4) == 2 => self.tx.send(NetEvent::CharSync {
                 id: p.u32(8),
                 owner: p.u32(0x20),
@@ -2755,6 +2768,7 @@ impl Session<'_> {
                 sync: p.u8(0x10),
                 custom: [p.u32(0x18), p.u32(0x1c)],
                 fellow: p.u16(0xc),
+                group: ((p.u32(0x10) >> 21 & 0xf) as u8, (p.u32(0x10) >> 25 & 0xf) as u8),
             })?,
             0x02E => self.tx.send(NetEvent::MogMenu)?,
             0x11A => self.tx.send(NetEvent::EmoteUnlocks { jobs: p.u32(4), chairs: p.u16(8) })?,

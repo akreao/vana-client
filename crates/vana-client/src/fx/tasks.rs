@@ -342,7 +342,7 @@ impl Effects {
                 let Some(base) = effect_base(a.category, anim) else {
                     let ctx = Some(ctx);
                     self.release(&ctx);
-                    self.end_action(&ctx);
+                    self.end_action(&ctx, None);
                     return;
                 };
                 // The generic file; run_pending swaps in the per-race files for a skeleton caster.
@@ -491,8 +491,9 @@ impl Effects {
         self.zone_lib.map(|l| self.reg.libs[l].file_id)
     }
 
-    /// FUN_1009e090's on-screen number: DAT 27's `damv` / `curv` / `misv` (kind 1 / 2 / 3) on (a1, a2) with the value
-    /// and the message colour 0xRRGGBB.
+    /// FUN_1009e090's on-screen number asked for outside the frame's update (the client's own melee line; a print
+    /// before DAT 27 is in): DAT 27's `damv` / `curv` / `misv` (kind 1 / 2 / 3) on (a1, a2) with the value and the
+    /// message colour 0xRRGGBB, started at the next update's start.
     pub fn on_damage_number(&mut self, kind: u8, a1: u32, a2: u32, value: i32, rgb: u32) {
         let name = match kind {
             1 => *b"damv",
@@ -640,7 +641,7 @@ impl Effects {
                     .is_some_and(|t| t.a1 == who && u32::from_le_bytes(libs[t.res.0].tree.nodes[t.res.1].name) == name)
             })
             .collect();
-        self.kill_slots(hit);
+        self.kill_slots(hit, None);
     }
 
     /// The actor's destructor (FUN_100c5c00 -> FUN_10082b10, its caster and target links): every scheduler task and
@@ -811,6 +812,10 @@ impl Effects {
     pub(super) fn run_pending(&mut self, f: &Frame, actors: &dyn Actors, looped: bool) {
         if !looped {
             self.run_furniture(actors);
+            // Records an action printed with no actor view at hand (it ended outside the update).
+            for (a, k, which) in std::mem::take(&mut self.late_prints) {
+                self.print_record(&a, k, which, Some(actors));
+            }
         }
         let (list, rest): (Vec<_>, Vec<_>) =
             std::mem::take(&mut self.pending).into_iter().partition(|p| p.looped == looped);
@@ -836,7 +841,7 @@ impl Effects {
                     self.pending.push(p);
                 } else {
                     self.release(&p.action);
-                    self.end_action(&p.action);
+                    self.end_action(&p.action, Some(actors));
                 }
                 continue;
             }
@@ -849,7 +854,7 @@ impl Effects {
                     None => {
                         log::debug!("effects: {caster:#x} has no actor, no main");
                         self.release(&p.action);
-                        self.end_action(&p.action);
+                        self.end_action(&p.action, Some(actors));
                         continue;
                     }
                     Some(false) if p.age < 600.0 => {
@@ -886,7 +891,7 @@ impl Effects {
                         });
                     if blocked && res.is_some() {
                         log::debug!("effects: main not started, a target's model is not in");
-                        self.end_action(&p.action);
+                        self.end_action(&p.action, Some(actors));
                         continue;
                     }
                     match res {
@@ -929,7 +934,7 @@ impl Effects {
                                 "effects: scheduler {} not found",
                                 String::from_utf8_lossy(&p.name.to_le_bytes())
                             );
-                            self.end_action(&p.action);
+                            self.end_action(&p.action, Some(actors));
                         }
                     }
                 }
@@ -939,7 +944,7 @@ impl Effects {
                     if p.name == MAIN {
                         self.release(&p.action);
                     }
-                    self.end_action(&p.action);
+                    self.end_action(&p.action, Some(actors));
                 }
             }
         }
@@ -956,19 +961,74 @@ impl Effects {
         self.releases.extend(a.records().iter().map(|r| r.0));
     }
 
-    /// FUN_1018c620: an action ending prints every record not printed yet.
-    fn end_action(&mut self, action: &Option<Rc<RefCell<ActionCtx>>>) {
-        let Some(a) = action else { return };
-        let mut a = a.borrow_mut();
-        if matches!(a.action.category, 1 | 2) {
+    /// FUN_1018dbf0: an action ending prints every record not printed yet (FUN_1018dde0 0x40 times), each with its
+    /// number started on the spot. `actors` is None where the action ends outside the frame's update.
+    fn end_action(&mut self, action: &Option<Rc<RefCell<ActionCtx>>>, actors: Option<&dyn Actors>) {
+        let Some(ctx) = action else { return };
+        if matches!(ctx.borrow().action.category, 1 | 2) {
             return;
         }
-        for k in 0..a.printed.len() {
-            if !a.printed[k] {
-                a.printed[k] = true;
-                self.action_prints.push((a.action.clone(), k, 0));
-            }
+        while self.print_next(ctx, actors) {}
+    }
+
+    /// FUN_1018dde0 (op 0x2b, and the action's end): the first record not printed yet prints its main message. The
+    /// record is marked, and remembered for op 0x71 (+10 = the count of records printed before it, which is its
+    /// index), after FUN_1009e090 returns. False when every record has printed.
+    fn print_next(&mut self, ctx: &Rc<RefCell<ActionCtx>>, actors: Option<&dyn Actors>) -> bool {
+        let (action, k) = {
+            let a = ctx.borrow();
+            let Some(k) = a.printed.iter().position(|p| !p) else { return false };
+            (a.action.clone(), k)
+        };
+        self.print_record(&action, k, 0, actors);
+        let mut a = ctx.borrow_mut();
+        a.printed[k] = true;
+        a.last = k;
+        true
+    }
+
+    /// FUN_1009e090: record `k`'s message `which` (0 main, 1 proc, 2 react). The number's scheduler starts here with
+    /// its first update at once (FUN_10056c70 at 0x1009e2a8 / 0x1009e2c3 / 0x1009e2de), before the line goes to the
+    /// log (FUN_100ad660 at 0x1009e35d; the client prints it after the walk, in the same frame, from the answer
+    /// taken here).
+    fn print_record(&mut self, action: &Action, k: usize, which: u32, actors: Option<&dyn Actors>) {
+        let Some(actors) = actors else {
+            self.late_prints.push((action.clone(), k, which));
+            return;
+        };
+        let p = actors.record_print(action, k, which);
+        if let Some(n) = p.number {
+            self.start_number(&n, actors);
         }
+        self.action_prints.push((action.clone(), k, which, p.line));
+    }
+
+    /// FUN_10056c70(actor1's model, actor2's model, 0, 0) on DAT 27's `damv` / `curv` / `misv`: no action and no
+    /// speed, linked before the running task, its first update at once (FUN_100748c0). Retail writes the value
+    /// (+0xa8) and the colour (+0xa4) once that returns (0x1009e31c / 0x1009e322); the number's element reads them when
+    /// it is made (FUN_10041f40), which is after. Ours fixes them on the generator at its start, so they are set first.
+    fn start_number(&mut self, n: &super::RecordNumber, actors: &dyn Actors) {
+        let name = match n.kind {
+            1 => *b"damv",
+            2 => *b"curv",
+            3 => *b"misv",
+            _ => return,
+        };
+        // DAT 27 is resident with DAT 0 (FUN_10072ed0); ours loads it on a thread, so a print before it is in waits
+        // for it as a pending start.
+        let Some(l) = self.reg.lib_of(27) else {
+            self.on_damage_number(n.kind, n.a1, n.a2, n.value, n.rgb);
+            return;
+        };
+        let Some(node) = self.reg.libs[l].find_global(kind::SCHEDULER, u32::from_le_bytes(name)) else { return };
+        // Not a task of the running task's event (no parent is passed).
+        let outer = std::mem::replace(&mut self.spawn_event, false);
+        let i = self.spawn_task((l, node), Who::Actor(n.a1), Who::Actor(n.a2), None, 1.0, None);
+        self.spawn_event = outer;
+        if let Some(Some(t)) = self.tasks.get_mut(i) {
+            t.num = Some((n.value, n.rgb));
+        }
+        _ = self.run_new(i, actors);
     }
 
     /// FUN_100cc970 (equipment part files, `parts`) and FUN_100cc440 (motion files newest first, then the model's),
@@ -1168,7 +1228,7 @@ impl Effects {
         // the task that started it), so it runs in this frame too.
         if t.dying {
             t.done = true;
-            self.settle(t, i);
+            self.settle(t, i, Some(actors));
             return;
         }
         // The update after the end op: the countdown is 0 and no op is left, FUN_10057c20 finds no loop, +0x145.
@@ -1206,7 +1266,7 @@ impl Effects {
                 t.countdown -= if t.vana { self.vana_dt } else { f.dt };
             }
             self.run_ready(i, &mut t, actors);
-            self.settle(t, i);
+            self.settle(t, i, Some(actors));
             self.stepping.pop();
         }
     }
@@ -1421,15 +1481,16 @@ impl Effects {
     }
 
     /// After a step: a task that ended wakes its parent and ends its action; one still running goes back in its slot.
-    fn settle(&mut self, t: Task, i: usize) {
+    fn settle(&mut self, t: Task, i: usize, actors: Option<&dyn Actors>) {
         if t.done {
             if let Some(p) = t.parent
                 && let Some(Some(pt)) = self.tasks.get_mut(p)
             {
                 pt.waiting = false;
             }
+            // FUN_1018e470: the last task that holds the action lets it go, and FUN_1018dbf0 prints what is left.
             if t.action.as_ref().is_some_and(|a| Rc::strong_count(a) == 1) {
-                self.end_action(&t.action);
+                self.end_action(&t.action, actors);
             }
         } else {
             self.tasks[i] = Some(t);
@@ -1462,7 +1523,7 @@ impl Effects {
         t.init_sub = t.init_sub.or(self.sub_now);
         self.first_update(i, &mut t, actors);
         let done = t.done;
-        self.settle(t, i);
+        self.settle(t, i, Some(actors));
         self.stepping.pop();
         done
     }
@@ -1647,7 +1708,7 @@ impl Effects {
                 let r = found.or_else(|| scope(self, kind::SCHEDULER));
                 if let Some(r) = r {
                     if op.code == 0x85 {
-                        self.kill_tasks(r, Some((t.a1, t.a2)));
+                        self.kill_tasks_in(r, Some((t.a1, t.a2)), Some(actors));
                     } else {
                         let i = self.spawn_task(r, a1, a2, t.action.clone(), t.speed, None);
                         self.run_new(i, actors);
@@ -1669,7 +1730,7 @@ impl Effects {
             }
             0x5f => {
                 if let Some(r) = scope(self, kind::SCHEDULER) {
-                    self.kill_tasks(r, None);
+                    self.kill_tasks_in(r, None, Some(actors));
                 }
                 Flow::Next
             }
@@ -2833,24 +2894,24 @@ impl Effects {
                 }
                 Flow::Next
             }
-            // FUN_1018c810: the first record not printed yet prints its main message.
-            0x2b if t.motions => {
-                if let Some(a) = &t.action {
-                    let mut a = a.borrow_mut();
-                    if let Some(k) = a.printed.iter().position(|p| !p) {
-                        a.printed[k] = true;
-                        a.last = k;
-                        self.action_prints.push((a.action.clone(), k, 0));
-                    }
+            // Case 0x2b (0x100593b4): with an action (task +0x90), FUN_1018dde0: the first record not printed yet
+            // prints its main message, its number started inside the op.
+            0x2b => {
+                if let Some(ctx) = t.action.clone() {
+                    self.print_next(&ctx, Some(actors));
                 }
                 Flow::Next
             }
-            // FUN_1018c870: message n (1 proc, 2 react) of the record op 0x2b printed last (`mprc`, `wapr`, `sb0?`,
-            // `dcnt`).
+            // Case 0x71 (0x100593d4): with an action, FUN_1018de40: message n (the op's u32 @8: 1 proc, 2 react; 0
+            // the main one again, anything else none) of the record op 0x2b printed last (+10; `mprc`, `wapr`,
+            // `sb0?`, `dcnt`).
             0x71 => {
-                if let Some(a) = &t.action {
-                    let a = a.borrow();
-                    self.action_prints.push((a.action.clone(), a.last, op.u32_at(8) as u8));
+                if let Some(ctx) = &t.action {
+                    let (action, last) = {
+                        let a = ctx.borrow();
+                        (a.action.clone(), a.last)
+                    };
+                    self.print_record(&action, last, op.u32_at(8), Some(actors));
                 }
                 Flow::Next
             }
@@ -2910,7 +2971,7 @@ impl Effects {
             }
             _ => {
                 // The motion-gated arms (client/combat.rs plays those) are not gaps.
-                if !matches!(op.code, 0x05 | 0x28 | 0x20 | 0x59 | 0x2b | 0x80 | 0x4a)
+                if !matches!(op.code, 0x05 | 0x28 | 0x20 | 0x59 | 0x80 | 0x4a)
                     && let Some(a) = self.reg.audit.as_mut()
                 {
                     *a.sched.entry(op.code).or_default() += 1;
@@ -3191,7 +3252,7 @@ impl Effects {
             t.walked = self.walk_serial;
         }
         t.done = ended;
-        self.settle(t, i);
+        self.settle(t, i, Some(actors));
         self.stepping.pop();
         ended
     }
@@ -3333,21 +3394,32 @@ impl Effects {
 
     /// FUN_10055f00 / FUN_10055f40: tasks running scheduler `r` (on one actor pair when given) end now.
     pub(super) fn kill_tasks(&mut self, r: Ref, pair: Option<(Who, Who)>) {
-        self.kill_tasks_where(|t| t.res == r && pair.is_none_or(|(a, b)| t.a1 == a && t.a2 == b));
+        self.kill_tasks_in(r, pair, None);
+    }
+
+    /// kill_tasks inside the frame's update (an op's kill): an action a deleted task was the last to hold prints
+    /// what it has left on the spot.
+    fn kill_tasks_in(&mut self, r: Ref, pair: Option<(Who, Who)>, actors: Option<&dyn Actors>) {
+        let slots: Vec<usize> = (0..self.tasks.len())
+            .filter(|&i| {
+                self.tasks[i].as_ref().is_some_and(|t| t.res == r && pair.is_none_or(|(a, b)| t.a1 == a && t.a2 == b))
+            })
+            .collect();
+        self.kill_slots(slots, actors);
     }
 
     /// Deletes the tasks `hit` picks through their destructor, as retail's kills do: each wakes a parent waiting on
     /// it (FUN_100574a0 -> FUN_10074a50) and ends its action, as a task that ran to its end does (settle).
     fn kill_tasks_where(&mut self, hit: impl Fn(&Task) -> bool) {
         let slots: Vec<usize> = (0..self.tasks.len()).filter(|&i| self.tasks[i].as_ref().is_some_and(&hit)).collect();
-        self.kill_slots(slots);
+        self.kill_slots(slots, None);
     }
 
-    fn kill_slots(&mut self, slots: Vec<usize>) {
+    fn kill_slots(&mut self, slots: Vec<usize>, actors: Option<&dyn Actors>) {
         for i in slots {
             if let Some(mut t) = self.tasks[i].take() {
                 t.done = true;
-                self.settle(t, i);
+                self.settle(t, i, actors);
             }
         }
     }
@@ -4515,6 +4587,230 @@ mod tests {
         // Started before frame 0's walk (8 left after its first update); the child starts in frame 4's walk.
         assert_eq!(run(false), [8.0, 6.0, 4.0, 2.0, 98.0, 96.0]);
         assert_eq!(run(true), [8.0, 6.0, 4.0, 2.0, 100.0, 98.0]);
+    }
+
+    /// FUN_1009e090's answers for the tests: a number (kind 1, value 100 + record, on the caster and the record's
+    /// target, swapped for a reaction) and the line, or neither; and what was asked.
+    struct Prints {
+        number: bool,
+        asked: RefCell<Vec<(usize, u32)>>,
+    }
+
+    impl Actors for Prints {
+        fn matrix(&self, id: u32) -> Option<Mat4> {
+            Two.matrix(id)
+        }
+        fn point(&self, id: u32, k: u16) -> Option<Vec3> {
+            Two.point(id, k)
+        }
+        fn scale(&self, id: u32) -> f32 {
+            Two.scale(id)
+        }
+        fn files(&self, id: u32) -> (Vec<u32>, Vec<u32>) {
+            Two.files(id)
+        }
+        fn hidden(&self, id: u32) -> bool {
+            Two.hidden(id)
+        }
+        fn models(&self) -> Vec<(u32, Vec<u32>)> {
+            Two.models()
+        }
+        fn record_print(&self, a: &Action, k: usize, which: u32) -> crate::fx::RecordPrint {
+            self.asked.borrow_mut().push((k, which));
+            if !self.number || which > 2 {
+                return Default::default();
+            }
+            let target = a.records()[k].0;
+            let (a1, a2) = if which == 2 { (target, a.actor) } else { (a.actor, target) };
+            crate::fx::RecordPrint {
+                number: Some(crate::fx::RecordNumber { kind: 1, a1, a2, value: 100 + k as i32, rgb: 0x10_20_30 }),
+                line: true,
+            }
+        }
+    }
+
+    /// An action of `n` records on ORC from HUME, and a task of scheduler `name` of file 1 that holds it.
+    fn action_task(fx: &mut Effects, name: u32, n: usize) -> Rc<RefCell<ActionCtx>> {
+        let action = Action {
+            actor: HUME,
+            category: 4,
+            arg: 1,
+            info: 0,
+            targets: vec![ActionTarget {
+                id: ORC,
+                results: vec![ActionResult { message: 2, value: 40, ..Default::default() }; n],
+            }],
+            seq: 0,
+        };
+        let ctx = Rc::new(RefCell::new(ActionCtx {
+            action,
+            cur: 0,
+            swing: None,
+            printed: vec![false; n],
+            client_swing: false,
+            last: 0,
+        }));
+        let l = fx.lib_for(1).unwrap();
+        let r = (l, fx.reg.libs[l].find_global(kind::SCHEDULER, name).unwrap());
+        let ops = fx.sched_ops(r);
+        fx.tasks.push(Some(Task::new(r, ops, Who::Actor(HUME), Who::Actor(ORC), Some(ctx.clone()), 1.0)));
+        ctx
+    }
+
+    /// The `damv` tasks: (actor1, actor2, number, countdown).
+    fn numbers(fx: &Effects) -> Vec<(Who, Who, Option<(i32, u32)>, f32)> {
+        let mut out: Vec<_> = fx
+            .tasks
+            .iter()
+            .flatten()
+            .filter(|t| fx.reg.libs[t.res.0].tree.nodes[t.res.1].name == *b"damv")
+            .map(|t| (t.a1, t.a2, t.num, t.countdown))
+            .collect();
+        out.sort_by_key(|n| n.2);
+        out
+    }
+
+    /// Row 189 (case 0x2b at 0x100593b4 -> FUN_1018dde0 -> FUN_1009e090 -> FUN_10056c70): the record's number starts
+    /// inside the op with its first update at once. `damv` here makes a task in that update, so the walk reaches the
+    /// printing task again (row 172): its countdown takes the frame's ticks twice. With no number (off the screen, a
+    /// model missing) nothing starts, and the line's answer still reaches the client.
+    #[test]
+    fn op_0x2b_starts_the_number_inside_the_op() {
+        let name = |n: &[u8; 4]| u32::from_le_bytes(*n);
+        let run = |number: bool| {
+            let ops = vec![sop(0x01, 10, 0, 0), sop(0x2b, 0, 0, 0), sop(0x01, 100, 0, 0), sop(0x00, 0, 0, 0)];
+            let mut fx = Effects::new();
+            fx.reg.add(sched_lib(1, &[(name(b"prnt"), ops)]));
+            fx.reg.add(sched_lib(
+                27,
+                &[(name(b"damv"), vec![sop(0x72, 0, 0, 0), sop(0x01, 50, 0, 0), sop(0x00, 0, 0, 0)])],
+            ));
+            let ctx = action_task(&mut fx, name(b"prnt"), 1);
+            let actors = Prints { number, asked: RefCell::new(Vec::new()) };
+            let f = ticks_frame(RETAIL_FRAME);
+            let mut out = Vec::new();
+            for frame in 0..6 {
+                fx.tick(&f, &actors);
+                // Nothing before the op's walk; in it, the task is there already, its first update done.
+                assert_eq!(numbers(&fx).len(), (number && frame >= 4) as usize, "frame {frame}");
+                let named = |t: &Task| fx.reg.libs[t.res.0].tree.nodes[t.res.1].name == *b"prnt";
+                out.push(fx.tasks.iter().flatten().find(|t| named(t)).map_or(-1.0, |t| t.countdown));
+            }
+            assert_eq!(*actors.asked.borrow(), [(0, 0)]);
+            assert_eq!(fx.action_prints.iter().map(|p| (p.1, p.2, p.3)).collect::<Vec<_>>(), [(0, 0, number)]);
+            assert!(fx.pending.is_empty());
+            assert_eq!((ctx.borrow().printed.clone(), ctx.borrow().last), (vec![true], 0));
+            (out, numbers(&fx))
+        };
+        let (countdowns, nums) = run(true);
+        assert_eq!(countdowns, [8.0, 6.0, 4.0, 2.0, 98.0, 96.0]);
+        // Started in frame 4's walk (48 left after its first update), one more walk since.
+        assert_eq!(nums, [(Who::Actor(HUME), Who::Actor(ORC), Some((100, 0x10_20_30)), 46.0)]);
+        let (countdowns, nums) = run(false);
+        assert_eq!(countdowns, [8.0, 6.0, 4.0, 2.0, 100.0, 98.0]);
+        assert!(nums.is_empty());
+    }
+
+    /// The same with the game's DAT 27: `damv` is a task after the op's walk, with no pending start, and the
+    /// generators its first update started carry the number.
+    #[test]
+    fn op_0x2b_starts_dat_27s_number() {
+        let cfg = crate::config::Config::load();
+        let Ok(index) = crate::dat::DatIndex::open(&cfg.ffxi_dir()) else { return };
+        let index = std::sync::Arc::new(index);
+        let name = |n: &[u8; 4]| u32::from_le_bytes(*n);
+        let mut fx = Effects::new();
+        fx.set_index(index.clone());
+        fx.set_global(Library::load(0, index.read(0).unwrap()).unwrap());
+        // DAT 27 comes in on a thread; a file that does not load in 10 s fails the test.
+        let asked = std::time::Instant::now();
+        while fx.reg.lib_of(27).is_none() {
+            assert!(asked.elapsed().as_secs() < 10, "DAT 27 did not load");
+            fx.poll_loads();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        fx.reg
+            .add(sched_lib(1, &[(name(b"prnt"), vec![sop(0x2b, 0, 0, 0), sop(0x01, 100, 0, 0), sop(0x00, 0, 0, 0)])]));
+        drop(action_task(&mut fx, name(b"prnt"), 1));
+        let actors = Prints { number: true, asked: RefCell::new(Vec::new()) };
+        fx.tick(&ticks_frame(RETAIL_FRAME), &actors);
+        assert!(fx.pending.is_empty());
+        let nums = numbers(&fx);
+        assert_eq!(
+            nums.iter().map(|n| (n.0, n.1, n.2)).collect::<Vec<_>>(),
+            [(Who::Actor(HUME), Who::Actor(ORC), Some((100, 0x10_20_30)))]
+        );
+        let dams: Vec<_> = fx.insts.iter().flatten().filter_map(|x| x.dam.as_ref()).collect();
+        assert!(!dams.is_empty());
+        assert!(dams.iter().all(|d| d.glyphs == [1, 0, 0] && d.rgb == 0x10_20_30));
+    }
+
+    /// FUN_1018de40 (case 0x71 at 0x100593d4): message n of the record op 0x2b printed last, a reaction's number on
+    /// (target, caster); n above 2 asks FUN_1009e090, which prints nothing. FUN_1018dbf0 at the action's end (the
+    /// last task that holds it deleted, in the walk): the records left print with their numbers on the spot.
+    #[test]
+    fn op_0x71_and_the_action_end_start_numbers() {
+        let name = |n: &[u8; 4]| u32::from_le_bytes(*n);
+        let ops = vec![
+            sop(0x2b, 0, 0, 0),
+            sop(0x2b, 0, 0, 0),
+            sop(0x71, 0, 0, 2),
+            sop(0x71, 0, 0, 3),
+            sop(0x01, 10, 0, 0),
+            sop(0x00, 0, 0, 0),
+        ];
+        let mut fx = Effects::new();
+        fx.reg.add(sched_lib(1, &[(name(b"prnt"), ops)]));
+        fx.reg.add(sched_lib(27, &[(name(b"damv"), vec![sop(0x01, 500, 0, 0), sop(0x00, 0, 0, 0)])]));
+        let ctx = action_task(&mut fx, name(b"prnt"), 4);
+        let actors = Prints { number: true, asked: RefCell::new(Vec::new()) };
+        let f = ticks_frame(RETAIL_FRAME);
+        fx.tick(&f, &actors);
+        assert_eq!(*actors.asked.borrow(), [(0, 0), (1, 0), (1, 2), (1, 3)]);
+        assert_eq!(ctx.borrow().printed, [true, true, false, false]);
+        let pair = |n: &(Who, Who, Option<(i32, u32)>, f32)| (n.0, n.1, n.2.map(|v| v.0));
+        let (h, o) = (Who::Actor(HUME), Who::Actor(ORC));
+        assert_eq!(
+            numbers(&fx).iter().map(pair).collect::<Vec<_>>(),
+            [(h, o, Some(100)), (h, o, Some(101)), (o, h, Some(101))]
+        );
+        drop(ctx);
+        // The task ends; two walks later it is deleted and the action prints records 2 and 3.
+        let before = fx.action_prints.len();
+        for _ in 0..12 {
+            fx.tick(&f, &actors);
+            if fx.action_prints.len() > before {
+                break;
+            }
+        }
+        assert_eq!(actors.asked.borrow()[4..], [(2, 0), (3, 0)]);
+        assert_eq!(
+            fx.action_prints.iter().map(|p| (p.1, p.2, p.3)).collect::<Vec<_>>()[before..],
+            [(2, 0, true), (3, 0, true)]
+        );
+        assert_eq!(numbers(&fx).iter().map(pair).collect::<Vec<_>>()[3..], [(h, o, Some(102)), (h, o, Some(103))]);
+        assert!(fx.pending.is_empty() && fx.late_prints.is_empty());
+    }
+
+    /// An action that ends where no actor view is at hand (a kill from outside the update) prints at the next
+    /// update's start.
+    #[test]
+    fn action_end_outside_the_update_prints_at_the_next() {
+        let name = |n: &[u8; 4]| u32::from_le_bytes(*n);
+        let mut fx = Effects::new();
+        fx.reg.add(sched_lib(1, &[(name(b"prnt"), vec![sop(0x01, 500, 0, 0), sop(0x00, 0, 0, 0)])]));
+        fx.reg.add(sched_lib(27, &[(name(b"damv"), vec![sop(0x01, 500, 0, 0), sop(0x00, 0, 0, 0)])]));
+        drop(action_task(&mut fx, name(b"prnt"), 2));
+        let actors = Prints { number: true, asked: RefCell::new(Vec::new()) };
+        let f = ticks_frame(RETAIL_FRAME);
+        fx.tick(&f, &actors);
+        fx.kill_tasks_where(|t| t.action.is_some());
+        assert!(fx.action_prints.is_empty() && actors.asked.borrow().is_empty());
+        assert_eq!(fx.late_prints.len(), 2);
+        fx.tick(&f, &actors);
+        assert_eq!(*actors.asked.borrow(), [(0, 0), (1, 0)]);
+        assert_eq!(numbers(&fx).len(), 2);
+        assert_eq!(fx.action_prints.len(), 2);
     }
 
     /// Row 187: a start the entity loop asks for (`in_loop`) runs at the loop's task in the walk (FUN_100106c0 ->

@@ -205,6 +205,31 @@ pub trait Actors {
     fn swings(&self, _id: u32, _moving: bool) -> Option<Vec<String>> {
         None
     }
+    /// FUN_1009e090's tests for record `k`'s message `which` (0 main, 1 proc, 2 react) of an action: whether its
+    /// number goes on screen and whether its line goes to the log.
+    fn record_print(&self, _a: &crate::net::action::Action, _k: usize, _which: u32) -> RecordPrint {
+        RecordPrint { number: None, line: true }
+    }
+}
+
+/// What FUN_1009e090 does with one message of a 0x028 record.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RecordPrint {
+    /// The on-screen number it starts (0x1009e22f..0x1009e322).
+    pub number: Option<RecordNumber>,
+    /// The log line prints (FUN_100ad660 at 0x1009e35d).
+    pub line: bool,
+}
+
+/// DAT 27's scheduler of a record's number: `damv` / `curv` / `misv` (kind 1 / 2 / 3, DAT_1047e2b8 / DAT_1047e2cc /
+/// DAT_1047e2d0) on (a1, a2), task +0xa8 the value and +0xa4 the message colour 0xRRGGBB.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RecordNumber {
+    pub kind: u8,
+    pub a1: u32,
+    pub a2: u32,
+    pub value: i32,
+    pub rgb: u32,
 }
 
 /// No actors (offscreen shots).
@@ -1162,8 +1187,12 @@ pub struct Effects {
     wading: HashMap<u32, Option<usize>>,
     /// Op 0x99: actor1's entity scale (+0x204).
     pub entity_scales: Vec<(u32, f32)>,
-    /// Messages that print now: (action, record, which: 0 main (op 0x2b, the action's end), 1 proc / 2 react (op 0x71)).
-    pub action_prints: Vec<(crate::net::action::Action, usize, u8)>,
+    /// Messages whose line the client prints after the walk: (action, record, which: 0 main (op 0x2b, the action's
+    /// end), 1 proc / 2 react (op 0x71), whether FUN_1009e090 prints the line). Their numbers have started already.
+    pub action_prints: Vec<(crate::net::action::Action, usize, u32, bool)>,
+    /// Records printed where no actor view was at hand (an action ended outside the frame's update): FUN_1009e090
+    /// runs for them at the next update's start.
+    late_prints: Vec<(crate::net::action::Action, usize, u32)>,
     /// Motion files to put on an actor's list (FUN_100d22a0 kind 6: weapon-skill files).
     pub motion_files: Vec<(u32, Vec<u32>)>,
     /// Op 0x05 motions found in their scheduler's file (FUN_10057000 case 5 looks there before the actor's
@@ -1389,6 +1418,7 @@ impl Effects {
             wading: HashMap::new(),
             entity_scales: Vec::new(),
             action_prints: Vec::new(),
+            late_prints: Vec::new(),
             motion_files: Vec::new(),
             effect_motions: Vec::new(),
             last_frame: None,
@@ -1559,6 +1589,7 @@ impl Effects {
         self.trails_dirty = true;
         self.dolls.clear();
         self.pending.clear();
+        self.late_prints.clear();
         self.furn_starts.clear();
         self.models.clear();
         self.shine.clear();
