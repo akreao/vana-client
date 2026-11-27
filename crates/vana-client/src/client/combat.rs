@@ -329,6 +329,9 @@ struct SavedLine {
     indent: bool,
     #[serde(default)]
     gm: bool,
+    /// The log's quotes (ChatLog::quotes); a save without it takes the chat flag.
+    #[serde(default)]
+    quotes: Option<bool>,
 }
 
 /// Lines a character's history keeps.
@@ -347,6 +350,7 @@ impl ChatLog {
                 chat: self.times[k].1,
                 indent: self.times[k].2,
                 gm: self.gm[k],
+                quotes: Some(self.quotes[k]),
             })
             .collect();
         if let Some(dir) = path.parent() {
@@ -369,7 +373,7 @@ impl ChatLog {
             self.gm.push(l.gm);
             self.who.push(None);
             self.marks.push(0);
-            self.quotes.push(l.chat);
+            self.quotes.push(l.quotes.unwrap_or(l.chat));
             self.lines.push((l.text, [b, g, r, a / 2 + a / 8]));
         }
         self.times.push((super::cfgapply::local_hms(), false, false));
@@ -2646,6 +2650,23 @@ fn send(w: &World, c: NetCommand) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A line printed with a mode word that leaves its quotes keeps that across the saved history.
+    #[test]
+    fn quotes_kept_across_history() {
+        let mut log = ChatLog::default();
+        log.push_mode("a \"b\"".into(), [0x80; 4], false, 1, false, None);
+        log.no_quotes_next();
+        log.push_mode("c \"d\"".into(), [0x80; 4], false, 0xcc, false, None);
+        log.push("e");
+        assert_eq!((log.quotes(0), log.quotes(1), log.quotes(2)), (true, false, false));
+        let path = std::env::temp_dir().join(format!("vana-quotes-{}.json", std::process::id()));
+        log.save(&path).unwrap();
+        let mut back = ChatLog::default();
+        back.restore(&path, "--");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!((back.quotes(0), back.quotes(1), back.quotes(2)), (true, false, false));
+    }
 
     /// A moving swing follows the move's quarter (FUN_100d46f0: 2 r, 3 b, 4 l, else f); standing keeps `ati?` first.
     #[test]
