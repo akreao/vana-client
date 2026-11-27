@@ -16,7 +16,10 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     let wide = 2.0 * KEY + 1.5 * GAP + 20.0;
     let width = 15.0 * KEY + 14.0 * GAP + 2.0 * GAP + wide + 24.0;
     // Over the chat window, centred, placed once as it opens (it stays put while it is up, as retail's).
-    let height = 5.0 * KEY + 4.0 * GAP + 56.0;
+    // The Japanese keyboard's tabs take a sixth row.
+    let tabs = swkbd::ja_tabs();
+    let rows_n = if tabs.is_some() { 6.0 } else { 5.0 };
+    let height = rows_n * KEY + (rows_n - 1.0) * GAP + 56.0;
     let (x, y) = w.swkbd.as_ref().map_or((0.0, 0.0), |live| {
         swkbd::place_once(live, || {
             let edge = m.chat_edge.get().filter(|c| !c.1).map_or(screen.max.y, |(r, _)| r.min.y).min(screen.max.y);
@@ -29,7 +32,7 @@ pub fn draw(p: &mut Panels, w: &mut World) {
     let font = FontId::proportional(m.theme.ui * 1.25);
     let small = FontId::proportional(m.theme.small);
     p.panel_at("keyboard", Some(Title { icon: None, text: "Keyboard", note: None, name: false }), width, at, |ui| {
-        let (area, _) = ui.allocate_exact_size(vec2(width - 24.0, 5.0 * KEY + 4.0 * GAP), Sense::hover());
+        let (area, _) = ui.allocate_exact_size(vec2(width - 24.0, rows_n * KEY + (rows_n - 1.0) * GAP), Sense::hover());
         let o = area.min;
         let mut key = |ui: &mut egui::Ui, id: u16, r: egui::Rect, label: &str, font: &FontId, lit: bool, off: bool| {
             let resp = ui.interact(r, egui::Id::unique(("swkbd key", id)), Sense::click());
@@ -55,12 +58,13 @@ pub fn draw(p: &mut Panels, w: &mut World) {
             let (label, inert) = swkbd::label(&k, i);
             key(ui, 8 + i as u16, r, &label, &font, false, inert);
         }
-        // The keys right of the grid, as retail's: Backspace and Config, then Tab, SHIFT, SPACE, Enter.
+        // The keys right of the grid, as retail's: Backspace and Config, then Tab, SHIFT, SPACE, Enter. In Japanese
+        // Config is child 0x54 (it is a row of the tabs below) and child 7 is Escape.
         let x = o.x + 15.0 * (KEY + GAP) + GAP;
         let half = (wide - GAP) / 2.0;
         let rows: [&[(u16, &str, f32)]; 5] = [
-            &[(6, "Back", half), (0x53, "Config", half)],
-            &[(7, "Tab", wide)],
+            if tabs.is_some() { &[(6, "Back", wide)] } else { &[(6, "Back", half), (0x53, "Config", half)] },
+            &[(7, if tabs.is_some() { "Esc" } else { "Tab" }, wide)],
             &[(0x55, "Shift", wide)],
             &[(0x56, "Space", wide)],
             &[(0x57, "Enter", wide)],
@@ -71,6 +75,14 @@ pub fn draw(p: &mut Panels, w: &mut World) {
                 let r = egui::Rect::from_min_size(pos2(kx, o.y + row as f32 * (KEY + GAP)), vec2(kw, KEY));
                 key(ui, id, r, label, &small, id == 0x55 && swkbd::shifted(&k), false);
                 kx += kw + GAP;
+            }
+        }
+        if let Some(tabs) = tabs {
+            let y = o.y + 5.0 * (KEY + GAP);
+            let tw = (15.0 * (KEY + GAP) - GAP - 4.0 * GAP) / 5.0;
+            for (n, (id, label)) in tabs.into_iter().enumerate() {
+                let r = egui::Rect::from_min_size(pos2(o.x + n as f32 * (tw + GAP), y), vec2(tw, KEY));
+                key(ui, id, r, label, &small, id == 4 && swkbd::shifted(&k), false);
             }
         }
     });

@@ -20898,7 +20898,9 @@ From the 30261006_0 decompile; ours in client/swkbd.rs (classic) and modern/keyb
   cursor child + the header's (14, 14) *(inf: the hand path was not traced for this window)*. Modern: a kit panel of
   48-point keys (the same pages, cursor and pad buttons; the European keys muted), centred over the chat window when it
   opens; the mouse hovers and clicks keys in both.
-- Not built: the Japanese keyboards (keypad, keypad2 / keypad3 / keyselec, edit mode), the lobby's (state 0x40) path.
+- The Japanese keyboard (keypad) and the other language reads: docs/modlog/2026-11-27-keyboard-language-196.md.
+- Not built: the Japanese composition (edit mode, keypad2 / keypad3), the compact keyboard (keyselec), the lobby's
+  (state 0x40) path.
 
 ## Enter on a trust, the action menu's layouts, ninja tools and bursts in the suggestions, the modern Update window (2026-11-03)
 
