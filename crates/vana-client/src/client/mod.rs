@@ -18542,6 +18542,7 @@ impl App {
                 .synth_events
                 .iter()
                 .any(|e| matches!(e, egui::Event::Key { key: egui::Key::Enter, pressed: true, .. }));
+            w.lua.synth_keys = self.synth_events.iter().any(|e| matches!(e, egui::Event::Key { .. }));
         }
         raw.events.append(&mut self.synth_events);
         self.numpad_presses.append(&mut self.numpad_synth);

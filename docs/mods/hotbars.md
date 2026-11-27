@@ -97,9 +97,10 @@ shared ones in `sticky.json` beside it, with ids `s1`, `s2`, ...; a slot names o
 
 Another mod can add macros to a library with `mods.call("hotbar", "import_macros", job, entries, shared)`: `job` the
 three letters (`"WHM"`), `entries` a list of `{name, lines}`, `shared` true for the shared library. A macro the same as
-one already there is skipped, so a second import adds nothing new. It returns how many were added and skipped, and why
-the file could not be saved (then none are kept). The Retail Macros mod uses it to turn a retail install's macro books
-into Hotbars macros.
+one already there is skipped, so a second import adds nothing new. `/lua` lines are left out (Hotbars would run them as
+your own lines), and a macro with nothing else is not added. It returns how many were added and skipped, why the file
+could not be saved (then none are kept), and how many `/lua` lines were left out. The Retail Macros mod uses it to turn
+a retail install's macro books into Hotbars macros.
 
 ## Commands
 

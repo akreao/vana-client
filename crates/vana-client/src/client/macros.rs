@@ -537,6 +537,15 @@ impl Macros {
     /// read as the game reads them (a bad record cleared), /lua lines left out. The files replaced go to
     /// backup/<unix seconds>/ first.
     pub fn import_books(&mut self, src: &Path, books: &[usize]) -> std::io::Result<Imported> {
+        // This character's own folder onto itself would only strip its /lua lines (links resolved, so another path to
+        // it is the same).
+        let same = |a: &Path, b: &Path| a.canonicalize().ok().zip(b.canonicalize().ok()).is_some_and(|(a, b)| a == b);
+        if same(src, &self.dir) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "that is this character's own macro folder",
+            ));
+        }
         self.save_set();
         let mut titles: Vec<[u8; 16]> = (0..BOOKS).map(default_name).collect();
         for (k, name) in ["mcr.ttl", "mcr_2.ttl"].iter().enumerate() {
@@ -865,6 +874,11 @@ mod tests {
         );
         // Book 1 (ours, not imported) keeps its macros.
         m.switch(0, 0);
+        assert_eq!(m.recs[0].title(), "Mine");
+        // Our own folder onto itself is refused, by its path or another one to it.
+        let own = m.dir().to_path_buf();
+        assert!(m.import_books(&own, &[0]).is_err());
+        assert!(m.import_books(&own.join("..").join(own.file_name().unwrap()), &[0]).is_err());
         assert_eq!(m.recs[0].title(), "Mine");
         let _ = std::fs::remove_dir_all(&game);
     }

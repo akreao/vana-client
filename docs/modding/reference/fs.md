@@ -400,7 +400,8 @@ fs.open_folder(path, reason, handler) -> nil
 
 Asks the player, in a window of the client's (the mod cannot change it or answer it), to let the mod read a folder
 and everything in it. `handler` gets true when the player allows it, false otherwise. A folder already allowed (or
-inside one) answers true at once.
+inside one) answers true at once. Its first button is Don't Allow, and keys a mod presses (`input.press`,
+`input.send`) are ignored while it has the focus, so only the player can allow.
 
 **Parameters**
 

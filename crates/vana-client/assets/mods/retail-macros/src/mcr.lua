@@ -3,6 +3,8 @@
 -- 20 records of 0x17c bytes: u32, six 61-byte lines, a 10-byte title; one with no NUL in its title's first 9 bytes or
 -- in a line is cleared, as the game does.
 
+local md5 = require("src.md5")
+
 local M = {}
 
 local HEADER = 0x18
@@ -11,10 +13,12 @@ M.BOOKS, M.SETS = 40, 10
 
 local function cstr(b) return (b:match("^([^\0]*)")) end
 
--- The payload of a container of `size` bytes, or nil.
+-- The payload of a container of `size` bytes whose MD5 matches, or nil (the client reads such a file as empty too).
 local function payload(raw, size)
   if type(raw) ~= "string" or #raw ~= HEADER + size or string.unpack("<I4", raw) ~= 1 then return nil end
-  return raw:sub(HEADER + 1)
+  local p = raw:sub(HEADER + 1)
+  if md5.sum(p) ~= raw:sub(9, HEADER) then return nil end
+  return p
 end
 
 local decode = function(b) return b end

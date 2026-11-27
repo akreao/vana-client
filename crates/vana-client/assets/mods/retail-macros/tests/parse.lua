@@ -1,9 +1,9 @@
 -- Retail Macros: the game's macro files read as the game reads them: titles (BookNN where none), sets of 20 records,
--- a damaged record cleared, a damaged or missing file nil, /lua lines told apart.
+-- a damaged record cleared, a damaged or missing file nil (its MD5 wrong too), /lua lines told apart.
 
 local mcr = require("src.mcr")
 
-local function container(p) return string.pack("<I4I4", 1, 0) .. string.rep("\0", 16) .. p end
+local function container(p) return string.pack("<I4I4", 1, 0) .. require("src.md5").sum(p) .. p end
 local function record(title, lines)
   local r = string.rep("\0", 4)
   for k = 1, 6 do
@@ -29,5 +29,15 @@ assert(not mcr.used(set[2]), "a title without a NUL in 9 bytes is not cleared")
 assert(not mcr.used(set[3]))
 assert(mcr.set(nil) == nil and mcr.set(container("short")) == nil, "a damaged file is read")
 assert(mcr.set(string.pack("<I4", 2) .. container(table.concat(recs)):sub(5)) == nil, "another version is read")
+-- A set whose MD5 does not match is damaged, as the client reads it.
+local good = container(table.concat(recs))
+assert(mcr.set(good:sub(1, 8) .. string.rep("\0", 16) .. good:sub(25)) == nil, "a set with a wrong MD5 is read")
+
+-- RFC 1321's vectors.
+local md5 = require("src.md5")
+local function hex(b) return (b:gsub(".", function(c) return ("%02x"):format(c:byte()) end)) end
+assert(hex(md5.sum("")) == "d41d8cd98f00b204e9800998ecf8427e")
+assert(hex(md5.sum("abc")) == "900150983cd24fb0d6963f7d28e17f72")
+assert(hex(md5.sum(string.rep("1234567890", 8))) == "57edf4a22be3c955ac49da2e2107b67a")
 
 assert(mcr.lua_line("/lua r hotbar") and mcr.lua_line("  //LUA load x") and not mcr.lua_line("/ma Cure <t>"))

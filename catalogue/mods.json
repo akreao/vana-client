@@ -1328,13 +1328,13 @@
       "files": [
         {
           "path": "init.lua",
-          "sha256": "6e987fdc1fe2795a9f918387577a06bc4816a3bfc50f3bdc8211bea31e669032",
-          "size": 6625,
+          "sha256": "029c42773c4099c5977e3639e2017decddc8b1fa21ff3f0d4f3d620b47a55471",
+          "size": 6684,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "a87fc24914251aac78c45f7f2caa43521a43a54c30c5513606e7032c1f7a9236",
+          "sha256": "7b78c4b0de9ebf5fd6bcac49ea56ce549f36f98f78fd8a010415a1d9e782475d",
           "size": 4415,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/mod.toml"
         },
@@ -1364,8 +1364,8 @@
         },
         {
           "path": "src/data.lua",
-          "sha256": "b5952ef8c82f977383b0102aeb4b02f933a125c74209b65650db333a4a97cc88",
-          "size": 29881,
+          "sha256": "0866463aa60cf291abc4e9de57044acbefbbc58e557c58f9489b6cc51976a401",
+          "size": 30468,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/data.lua"
         },
         {
@@ -1462,7 +1462,7 @@
       "id": "hotbar",
       "kind": "lua",
       "name": "Hotbars",
-      "version": "1.16.1"
+      "version": "1.16.2"
     },
     {
       "authors": [],
@@ -2648,21 +2648,27 @@
         },
         {
           "path": "mod.toml",
-          "sha256": "3dceae39aa636afb681611a90e057102173609f9a80412896b9a169eaf4c214a",
+          "sha256": "3a4338fea159dfbf7485597290ce81645ba6e5cb139be6226d71349720142b8e",
           "size": 499,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/retail-macros/mod.toml"
         },
         {
           "path": "src/mcr.lua",
-          "sha256": "88fdc6386772e6e92dcff3bdf3f4de41af24cf464ee43bdf7106f81f98b81416",
-          "size": 2405,
+          "sha256": "adccbae1c7b67835e776d97da658cd95e576cfb0bddc86a67eaab18a740e7ca0",
+          "size": 2571,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/retail-macros/src/mcr.lua"
+        },
+        {
+          "path": "src/md5.lua",
+          "sha256": "150099c20d2b6ce1d357f860cf8abe1e40c141cc55f17a6362db9f41748ccc14",
+          "size": 1532,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/retail-macros/src/md5.lua"
         }
       ],
       "id": "retail-macros",
       "kind": "lua",
       "name": "Retail Macros",
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "authors": [],

@@ -2,7 +2,7 @@
 -- by click; Copy to Macro Palettes hands the picked books to actions.macro_import; Send to Hotbars hands their macros,
 -- /lua lines left out, to Hotbars by the job each book names.
 
-local function container(p) return string.pack("<I4I4", 1, 0) .. string.rep("\0", 16) .. p end
+local function container(p) return string.pack("<I4I4", 1, 0) .. require("src.md5").sum(p) .. p end
 local function record(title, lines)
   local r = string.rep("\0", 4)
   for k = 1, 6 do

@@ -337,6 +337,8 @@ pub struct Host {
     pub(in crate::client) synth: Vec<input::Synth>,
     /// A mod pressed Enter this frame: a chat line it submits is the mod's, not the player's.
     pub(in crate::client) synth_enter: bool,
+    /// A mod pressed any key this frame: the client's own question (fs.open_folder) takes no keys then.
+    pub(in crate::client) synth_keys: bool,
     /// actions.choose's pick, held until the event's menu takes input (5 s at most).
     pub(in crate::client) choose: Option<(usize, std::time::Instant)>,
     /// Every loaded mod, for mods.list / call / emit.
@@ -4415,6 +4417,12 @@ pub(super) fn window_key(w: &mut World, key: egui::Key, shift: bool) -> bool {
     for vm in host.vms.iter().filter(|v| v.suspended.is_none()) {
         let mut st = vm.st.borrow_mut();
         if let Some(win) = st.windows.iter_mut().find(|w| w.open && w.focus) {
+            // A key a mod pressed never answers the client's question for the player (a real key the same frame
+            // goes too).
+            if win.id == api::CLIENT_ASK && host.synth_keys {
+                log::info!("{}: a pressed key ignored by the client's question", vm.manifest.id);
+                return true;
+            }
             let (ev, se) = win.key_mod(key, shift);
             hit = Some((vm.manifest.id.clone(), win.id.clone(), ev, se));
             break;

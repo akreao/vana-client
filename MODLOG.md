@@ -25116,3 +25116,10 @@ Settings > Graphics > Upscaling (config `upscaler` 0 off / 1 FSR / 2 external, `
   the player's id first), the 40 books with their macro counts, and copies the picked ones with macro_import or hands
   their macros to Hotbars (mods.call "hotbar" "import_macros", per job; the book title's job, else the main job).
   Not seen live: no retail install with macros on the test machine.
+- Review fixes (2026-11-27): the client's question (fs.open_folder) puts Don't Allow first and ignores every key
+  while a mod pressed one that frame (Lua `synth_keys`: `input.press` / `input.send` reach the focused mod window, so
+  a mod could answer for the player; a real key that frame goes too). The Lua reader checks the container's MD5 as
+  `macros::read_file` does (src/md5.lua, RFC 1321's vectors in the test): a set the client would read as empty is
+  damaged in the Books list too. `import_books` refuses this character's own folder (canonical paths), which only
+  stripped its `/lua` lines. Hotbars' `import_entries` drops `/lua` lines itself (any mod can call it) and returns how
+  many as a fourth value.

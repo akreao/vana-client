@@ -2194,7 +2194,7 @@ fn player(lua: &Lua) -> mlua::Result<Table> {
 }
 
 /// The client's own question in a mod's window list (fs.open_folder): the mod cannot change it or take its answer.
-const CLIENT_ASK: &str = "__client_ask";
+pub(super) const CLIENT_ASK: &str = "__client_ask";
 
 fn not_client_ask(id: &str) -> mlua::Result<()> {
     if id == CLIENT_ASK {

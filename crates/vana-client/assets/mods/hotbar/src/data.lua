@@ -504,14 +504,25 @@ end
 
 -- Macros another mod hands over ({ name, lines, icon? } each) into `main`'s library, or the shared one: each unless the
 -- same is there already. Returns how many were added and skipped, and why the save failed (then none are kept).
+-- A /lua line (a mod's own command) is never taken from another mod: Hotbars would run it as the player's line.
+local function lua_line(l) return type(l) == "string" and l:lower():match("^%s*/+lua") ~= nil end
+
 function M.import_entries(main, entries, shared)
   local have = {}
+  local dropped = 0
   for _, it in ipairs(M.library(main)) do
     if (it.sticky == true) == (shared == true) then have[#have + 1] = clean_entry(it.entry) end
   end
   local new = {}
   local skipped = 0
   for _, e in ipairs(is_table(entries) and entries or {}) do
+    if is_table(e) and is_table(e.lines) then
+      local kept = {}
+      for _, l in ipairs(e.lines) do
+        if lua_line(l) then dropped = dropped + 1 else kept[#kept + 1] = l end
+      end
+      e = { name = e.name, label = e.label, icon = e.icon, action = e.action, lines = kept }
+    end
     local c = is_table(e) and not is_table(e.group) and clean_entry(e) or nil
     if c and #c.lines > 0 then
       local dup = false
@@ -524,14 +535,14 @@ function M.import_entries(main, entries, shared)
       end
     end
   end
-  if #new == 0 then return 0, skipped end
+  if #new == 0 then return 0, skipped, nil, dropped end
   if shared then
     local _, why = with_sticky(function()
       for _, c in ipairs(new) do sticky.library[new_sticky_id()] = c end
       return true
     end)
-    if why then return 0, skipped, why end
-    return #new, skipped
+    if why then return 0, skipped, why, dropped end
+    return #new, skipped, nil, dropped
   end
   local lib = job_part(main, "library", true)
   local added = {}
@@ -543,9 +554,9 @@ function M.import_entries(main, entries, shared)
   local ok, err = M.save()
   if not ok then
     for _, id in ipairs(added) do lib[id] = nil end
-    return 0, skipped, tostring(err)
+    return 0, skipped, tostring(err), dropped
   end
-  return #new, skipped
+  return #new, skipped, nil, dropped
 end
 
 local function uses_in(main, id)

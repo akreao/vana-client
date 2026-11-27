@@ -1,5 +1,5 @@
 -- Hotbars: macros another mod hands over (import_macros) go into a job's library or the shared one, each unless the
--- same is there already; empty ones are left out; a failed save keeps none.
+-- same is there already; empty ones are left out; /lua lines never come in; a failed save keeps none.
 
 local files = {}
 local fail = false
@@ -34,3 +34,15 @@ added, skipped, why = data.import_entries("WHM", { e("Haste", '/ma "Haste" <t>')
 assert(added == 0 and why and why:find("disk full"), tostring(why))
 fail = false
 assert(#data.library("WHM") == 3, "the failed import left a macro behind")
+
+-- /lua lines are left out and counted; a macro of only /lua lines is not added.
+local d
+added, skipped, why, d = data.import_entries("WHM", { e("Load", "/lua load x", "//LUA unload y"),
+  e("Mixed", "  /lua run z", '/ma "Protect" <t>') })
+assert(added == 1 and d == 3 and why == nil, ("added %s, dropped %s, why %s"):format(added, d, tostring(why)))
+local mixed
+for _, it in ipairs(data.library("WHM")) do
+  if it.entry.name == "Mixed" then mixed = it.entry end
+  assert(it.entry.name ~= "Load", "a macro of only /lua lines was added")
+end
+assert(mixed and #mixed.lines == 1 and mixed.lines[1] == '/ma "Protect" <t>', json.encode(mixed))

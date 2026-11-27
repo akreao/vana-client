@@ -218,14 +218,15 @@ fn outside_fns(lua: &Lua, fs: &Table, mod_name: &str) -> mlua::Result<()> {
             }
             let shown = c.to_string_lossy().into_owned();
             // The client's question: the answer is the player's, recorded here before the mod hears it.
+            // "Don't Allow" first: an Enter the player did not mean refuses.
             let answer = lua.create_function(move |lua, k: Option<i64>| {
-                if k == Some(1) {
+                if k == Some(2) {
                     allow(lua, c.clone());
                 }
-                handler.call::<()>(k == Some(1))
+                handler.call::<()>(k == Some(2))
             })?;
             let text = format!("{name} asks to read this folder and everything in it:\n{shown}\n{reason}");
-            super::api::prompt_window(lua, text, vec!["Allow".into(), "Don't Allow".into()], answer)
+            super::api::prompt_window(lua, text, vec!["Don't Allow".into(), "Allow".into()], answer)
         })?,
     )?;
     fs.set(
