@@ -432,6 +432,11 @@ pub fn update_ref(
         return;
     }
     let dt = f.dt;
+    // Made behind the walk: its first update is the next frame's.
+    if e.0[w::CTRL] & ctl::LATE != 0 {
+        e.0[w::CTRL] = 0;
+        return;
+    }
     if e.0[w::CTRL] & ctl::LIFE_SET == 0 && e.f(w::MAX_LIFE) != 0.0 {
         e.set(w::LIFE, e.f(w::LIFE) - dt);
         if e.f(w::LIFE) < 1.0 {
