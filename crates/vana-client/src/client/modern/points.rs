@@ -186,11 +186,11 @@ pub(super) fn search_pick(w: &mut World, gu: Option<&GameUi>, k: usize) {
         }
         Some(1) => {
             jobpoints::set_job(w, k);
-            jobpoints::key(w, egui::Key::Enter, false);
+            jobpoints::key(w, egui::Key::Enter, false, false);
         }
         Some(2) => {
             jobpoints::set_row(w, k);
-            jobpoints::key(w, egui::Key::Enter, false);
+            jobpoints::key(w, egui::Key::Enter, false, false);
         }
         Some(3) => {
             aepoints::set_cat(w, k);
@@ -536,7 +536,7 @@ fn job_points(p: &mut Panels, w: &mut World) {
         jobpoints::set_page(w, k);
         return;
     }
-    let enter = |w: &mut World| jobpoints::key(w, egui::Key::Enter, false);
+    let enter = |w: &mut World| jobpoints::key(w, egui::Key::Enter, false, false);
     act(w, jobs, jobpoints::set_job, enter);
     act(w, page, jobpoints::set_row, enter);
 }

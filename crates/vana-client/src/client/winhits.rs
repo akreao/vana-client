@@ -129,6 +129,11 @@ pub fn frame(gu: &GameUi, down: bool, shown: bool) {
     gu.ptr_hover.borrow_mut().frame(down, shown);
 }
 
+/// The pointer shown this frame (mouse +0x4e).
+pub fn shown(gu: &GameUi) -> bool {
+    !gu.ptr_hover.borrow().hidden
+}
+
 /// The mouse on child `child` of window `name`, hit under the pointer this frame (`frame`: the pointer is inside the
 /// window's frame, FUN_1011a0a0). Whether the child takes the cursor (FUN_1011a240), by retail's two steps:
 /// - the hover (tail of FUN_101267f0, 0x10127220): every frame, with no frame test, the cursor moves only when the

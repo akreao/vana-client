@@ -2906,6 +2906,7 @@ fn world_hud(
     } else {
         input
     };
+    jobpoints::track(world, gu, for_bars.pointer);
     let taken = scrollbar::frame(gu, world, for_bars);
     let input = if over_mod { input } else { taken.as_ref().unwrap_or(input) };
     // Enter on itemctrl / moneyctr is message 5 on the cursor child the mouse left there (winhits::ctr_enter).
@@ -3525,7 +3526,9 @@ fn world_hud(
                 _ if world.unity.is_some() => unity::key(world, gu, *key, modifiers.ctrl || modifiers.alt),
                 _ if world.pupequip.is_some() => equipwin::pup_key(world, gu, *key),
                 _ if world.merits_ui.is_some() => merits::key(world, gu, *key),
-                _ if world.jp_ui.is_some() => jobpoints::key(world, *key, modifiers.ctrl || modifiers.alt),
+                _ if world.jp_ui.is_some() => {
+                    jobpoints::key(world, *key, modifiers.ctrl || modifiers.alt, winhits::shown(gu))
+                }
                 _ if world.ae_ui.is_some() => aepoints::key(world, *key, modifiers.ctrl || modifiers.alt),
                 _ if world.cel_ui.is_some() => {
                     if celestite::event_key(*key) {
