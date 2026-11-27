@@ -10325,7 +10325,8 @@ impl App {
             // FFXI_AUDIO_DEVICE overrides the config's device (test runs into a null sink).
             let device = std::env::var("FFXI_AUDIO_DEVICE").unwrap_or_else(|_| self.cfg.audio_device.clone());
             let (m, e) = self.volume_factors();
-            self.audio = crate::audio::Audio::open(self.cfg.ffxi_dir(), Some(&device), m, e);
+            // game_dir's sound files whatever the login (music_installed is their mask).
+            self.audio = crate::audio::Audio::open(self.cfg.main_ffxi_dir(), Some(&device), m, e);
             self.applied_volumes = Some(self.volume_sliders());
             if let Some(a) = self.audio.as_mut() {
                 a.max_se = self.cfg.tool("0029").clamp(1, 20);
