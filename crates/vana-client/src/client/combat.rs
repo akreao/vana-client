@@ -1550,7 +1550,8 @@ pub(super) fn sdep(w: &World, id: u32) -> bool {
 /// session state too. The server prints the defeat (0x029 #97 / #20).
 /// FUN_1008c6c0: the scheduler an applied status change runs: a model-id actor leaving battle `bton`, engaging
 /// `ntob`; a death the pick's (death_scheduler; its ded? / cor? are die()'s, so the task's motions are off), or
-/// `sdep` with its motions (vtable +0x298). Not done: fishing.
+/// `sdep` with its motions (vtable +0x298). Not done: fishing. FUN_1008e9a0 calls it, so the schedulers are the
+/// entity loop's (Effects::in_loop).
 pub(super) fn status_schedulers(
     fx: &mut crate::fx::Effects,
     actors: &std::collections::HashMap<u32, Actor>,
@@ -1563,21 +1564,23 @@ pub(super) fn status_schedulers(
         return;
     }
     let model = actors.get(&id).and_then(|a| a.character.as_ref()).is_some_and(|c| c.pc.is_none());
-    if model && old == 1 {
-        fx.on_scheduler(id, id, u32::from_le_bytes(*b"bton"));
-    }
-    if model && new == 1 {
-        fx.on_scheduler(id, id, u32::from_le_bytes(*b"ntob"));
-    }
-    if matches!(new, 2 | 3) && !matches!(old, 2 | 3) {
-        let name = death_scheduler(actors.get(&id).map_or(0, |a| a.death_pick), sdep);
-        let n = u32::from_le_bytes(name.as_bytes().try_into().unwrap());
-        if sdep {
-            fx.on_scheduler(id, id, n);
-        } else {
-            fx.on_scheduler_quiet(id, n);
+    fx.in_loop(|fx| {
+        if model && old == 1 {
+            fx.on_scheduler(id, id, u32::from_le_bytes(*b"bton"));
         }
-    }
+        if model && new == 1 {
+            fx.on_scheduler(id, id, u32::from_le_bytes(*b"ntob"));
+        }
+        if matches!(new, 2 | 3) && !matches!(old, 2 | 3) {
+            let name = death_scheduler(actors.get(&id).map_or(0, |a| a.death_pick), sdep);
+            let n = u32::from_le_bytes(name.as_bytes().try_into().unwrap());
+            if sdep {
+                fx.on_scheduler(id, id, n);
+            } else {
+                fx.on_scheduler_quiet(id, n);
+            }
+        }
+    });
 }
 
 pub(super) fn apply_status(w: &mut World, id: u32, status: u8) {

@@ -337,11 +337,12 @@ fn leave(w: &mut World, id: u32) {
         if mount && let Some(a) = w.actors.get_mut(&id) {
             (a.alpha, a.rgb, a.fade) = (0.0, [actmotion::OPAQUE; 3], None);
         }
-        actmotion::fx_too(&mut w.effects, id, "coff");
+        // FUN_1008b460 starts `coff` on both, inside the entity loop (Effects::in_loop).
+        w.effects.in_loop(|fx| actmotion::fx_too(fx, id, "coff"));
     }
     let base = actmotion::status_motion(w, animal_id, &ach);
     if w.actors.get_mut(&animal_id).is_some_and(|a| actmotion::start(a, &ach, "coff", &base)) {
-        actmotion::fx_too(&mut w.effects, animal_id, "coff");
+        w.effects.in_loop(|fx| actmotion::fx_too(fx, animal_id, "coff"));
     }
     log::info!("rider {id:#x}: dismount, coff {}", if started { "playing" } else { "missing" });
     if !started {

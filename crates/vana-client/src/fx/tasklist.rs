@@ -15,7 +15,13 @@
 //!   the walk's next. So a task made in that update leaves the walk's next before the task the walk is in, which then
 //!   runs again in the same frame.
 //!
-//! Only schedulers are kept for good. The other tasks (holds, drives, generators, sounds...) update in their own
+//! - The entity loop's task (vtable 0x1032acfc, made by menu_chdummy at 0x100142b0: FUN_10074740, then
+//!   FUN_100749b0(0xd)) sits at the front of bucket 13; its update (+0x20 FUN_100106c0) is FUN_10096640, every
+//!   actor's update. A scheduler that update starts is linked right before it, so in bucket 13, and takes its first
+//!   update at once; a task made in that first update leaves the walk's next before the loop's task, which then
+//!   runs again in the same frame.
+//!
+//! Only schedulers and the entity loop's task are kept for good. The other tasks (holds, drives, generators, sounds...) update in their own
 //! passes; here a task an op makes is a node for the rest of the walk, so that the walk's next goes where retail's goes.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,6 +31,8 @@ pub enum Node {
     /// Another task an op made, kept until the walk is over.
     Other(u64),
     Anchor(u8),
+    /// The entity loop's task (FUN_100106c0 -> FUN_10096640).
+    Entity,
 }
 
 /// How a task that is not a scheduler is linked when made.
@@ -40,6 +48,8 @@ pub enum Made {
 const BUCKETS: u8 = 16;
 /// The bucket a scheduler is linked before (DAT_1047e2f0 +0xd28) and a plain task into, when none is running.
 const SCHED_BUCKET: u8 = 9;
+/// The bucket the entity loop's task is put at the front of (FUN_100749b0(0xd) at 0x100142e6).
+const ENTITY_BUCKET: u8 = 13;
 
 #[derive(Debug)]
 pub struct TaskList {
@@ -53,7 +63,9 @@ pub struct TaskList {
 
 impl Default for TaskList {
     fn default() -> Self {
-        Self { nodes: (0..BUCKETS).map(Node::Anchor).collect(), running: None, next: None, others: 0, walking: false }
+        let mut nodes: Vec<Node> = (0..BUCKETS).map(Node::Anchor).collect();
+        nodes.insert(ENTITY_BUCKET as usize + 1, Node::Entity);
+        Self { nodes, running: None, next: None, others: 0, walking: false }
     }
 }
 
@@ -168,7 +180,7 @@ impl TaskList {
         let keep = |n: &Node| match *n {
             Node::Task(u) => live.contains(&u),
             Node::Other(_) => false,
-            Node::Anchor(_) => true,
+            Node::Anchor(_) | Node::Entity => true,
         };
         if self.running.is_some_and(|r| !keep(&r)) || self.next.is_some_and(|n| !keep(&n)) {
             return;
@@ -184,6 +196,12 @@ impl TaskList {
         }
     }
 
+    /// The whole list in walk order.
+    #[cfg(test)]
+    pub fn nodes(&self) -> &[Node] {
+        &self.nodes
+    }
+
     /// The schedulers in walk order.
     #[cfg(test)]
     pub fn tasks(&self) -> impl Iterator<Item = u64> + '_ {
@@ -195,8 +213,13 @@ impl TaskList {
 mod tests {
     use super::*;
 
-    /// Walks the list as FUN_10074c30 does; `upd` is each node's update.
-    fn walk(l: &mut TaskList, mut upd: impl FnMut(&mut TaskList, Node)) -> Vec<Node> {
+    /// Walks the list as FUN_10074c30 does; `upd` is each node's update. The entity loop's task is left out of what
+    /// is returned (walk_all keeps it).
+    fn walk(l: &mut TaskList, upd: impl FnMut(&mut TaskList, Node)) -> Vec<Node> {
+        walk_all(l, upd).into_iter().filter(|&n| n != Node::Entity).collect()
+    }
+
+    fn walk_all(l: &mut TaskList, mut upd: impl FnMut(&mut TaskList, Node)) -> Vec<Node> {
         let mut seen = Vec::new();
         let mut cur = l.head();
         while let Some(n) = cur {
@@ -208,6 +231,58 @@ mod tests {
             cur = l.advance();
         }
         seen
+    }
+
+    /// The entity loop's task is the first of bucket 13 (0x100142e6); a scheduler it starts sits right before it, a
+    /// later one between the two, and neither is walked in that frame.
+    #[test]
+    fn entity_loop_starts_go_before_it_in_bucket_13() {
+        let mut l = TaskList::default();
+        assert_eq!(l.pos(Node::Entity), l.pos(Node::Anchor(13)).map(|i| i + 1));
+        l.new_scheduler(1);
+        let mut once = true;
+        let seen = walk_all(&mut l, |l, n| {
+            if n == Node::Entity && std::mem::take(&mut once) {
+                for u in [2, 3] {
+                    l.new_scheduler(u);
+                    let s = l.enter(Node::Task(u));
+                    l.leave(s);
+                }
+            }
+        });
+        assert_eq!(seen, vec![Node::Task(1), Node::Entity]);
+        let i = |n| l.pos(n).unwrap();
+        assert!(i(Node::Task(1)) < i(Node::Anchor(9)));
+        assert!(i(Node::Anchor(13)) < i(Node::Task(2)));
+        assert_eq!([i(Node::Task(2)) + 1, i(Node::Task(3)) + 1], [i(Node::Task(3)), i(Node::Entity)]);
+    }
+
+    /// A start in the entity loop whose first update makes a task runs the loop's task again; a later start that
+    /// makes none puts the walk's next back after it (FUN_10075120's unlink of the new scheduler).
+    #[test]
+    fn entity_loop_runs_again_after_a_start_that_makes_a_task() {
+        for (how, later, runs) in
+            [(Made::After, false, 2), (Made::Moved, false, 2), (Made::After, true, 1), (Made::Moved, true, 1)]
+        {
+            let mut l = TaskList::default();
+            let mut once = true;
+            let seen = walk_all(&mut l, |l, n| {
+                if n == Node::Entity && std::mem::take(&mut once) {
+                    l.new_scheduler(1);
+                    let s = l.enter(Node::Task(1));
+                    l.made(how);
+                    l.leave(s);
+                    if later {
+                        l.new_scheduler(2);
+                        let s = l.enter(Node::Task(2));
+                        l.leave(s);
+                    }
+                }
+            });
+            assert_eq!(seen.iter().filter(|&&n| n == Node::Entity).count(), runs, "{how:?} later {later}");
+            // The started scheduler itself is not walked in that frame.
+            assert!(!seen.contains(&Node::Task(1)));
+        }
     }
 
     #[test]
