@@ -2463,7 +2463,20 @@ impl Effects {
         self.step_models(f, actors);
         self.step_decals(actors);
         let (voyage, sky) = (self.voyage, self.sky);
-        for i in 0..self.insts.len() {
+        // In walk order, as their emissions draw on the one random stream: the generators' tasks where the walk
+        // reached them, an element's clone inside its element's update (bucket 0xb, newest element first).
+        let mut order: Vec<usize> = (0..self.insts.len()).filter(|&i| self.insts[i].is_some()).collect();
+        order.sort_by_cached_key(|&i| {
+            let x = self.insts[i].as_ref();
+            match x.and_then(|x| x.driven) {
+                Some(e) => {
+                    let c = self.elems.get(e as usize).and_then(|c| c.as_ref());
+                    (self.elem_rank, std::cmp::Reverse(c.map(|c| self.run_order(c))))
+                }
+                None => (x.map_or(0, |x| x.rank), std::cmp::Reverse(None)),
+            }
+        });
+        for i in order {
             // A task linked behind the walk makes nothing until the next walk reaches it.
             let Some(inst) = self.insts[i].as_mut().filter(|x| !x.held && x.due) else { continue };
             attach(inst, f, voyage, sky);
@@ -2853,7 +2866,8 @@ impl Effects {
         // that is behind the walk (its first update the next frame).
         cpu.late = self.in_elem || self.emit_late;
         cpu.rank = if self.in_elem { self.elem_rank } else { self.emit_rank };
-        let first_run = !cpu.late && self.lives_done;
+        let late = cpu.late;
+        let first_run = !late && self.lives_done;
         if first_run {
             self.first_run.push((e, self.serial));
         }
@@ -2946,11 +2960,14 @@ impl Effects {
             x.live.push_back(e);
         }
         // One made by a generator's task after the lives gets its whole first update this frame (`first_run`): its
-        // life counted down on both sides, then drawn (FUN_10045a40). Else the CPU's lives ran before this spawn (or
-        // its first update is the next frame: `late`): the GPU skips its first decrement too, or it would run a
-        // frame's dt ahead and sample t >= 1 on the last frame (keys ending in a spike at 1.0 flash white). That
-        // frame's t = 0 sample is not drawn (ctl::BORN).
-        if !first_run {
+        // life counted down on both sides, then drawn (FUN_10045a40). One whose first update is the next frame
+        // (`late`) runs nothing in this one (ctl::LATE). Else the CPU's lives ran before this spawn: the GPU skips its
+        // first decrement too, or it would run a frame's dt ahead and sample t >= 1 on the last frame (keys ending in
+        // a spike at 1.0 flash white). That frame's t = 0 sample is not drawn (ctl::BORN).
+        if late {
+            // Behind the walk: nothing this frame on either side, a whole first update (drawn) the next.
+            elem.0[w::CTRL] |= ctl::LATE;
+        } else if !first_run {
             elem.0[w::CTRL] |= ctl::LIFE_SET | ctl::BORN;
         }
         self.writes.push(Write::Full(e, Box::new(elem)));

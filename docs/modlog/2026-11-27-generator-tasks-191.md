@@ -40,7 +40,11 @@ Ours:
 - Each element keeps where the walk was when retail made it (`ElemCpu::rank`: its generator's node, the running
   scheduler for an op's emission, bucket 0xb's anchor for one made inside an element's update) and `run_order` sorts by
   it. This replaces the inferred key by attach mode and start order. An element made from a node past bucket 0xb is
-  `late` (no life step, no kick, the GPU's first decrement skipped in the frame it is made).
+  `late`. A late element (this one, or one made inside an element's update) now runs nothing in the frame it is made,
+  on the GPU too (`ctl::LATE`: no life step, no update stream, not drawn), and its first update the next frame is a
+  whole one, drawn; the GPU had run its update stream at t = 0 that frame (`ctl::BORN`), one move ahead.
+- The generator pass runs the instances in walk order (by rank; an element's clone at bucket 0xb, newest element
+  first), not by slot, as their emissions draw on the one random stream.
 - Op 0x75's timer counts down at its node with the walk's ticks (`walk_timer`, was every tick of ours after the walk)
   and ends there; a scheduler that ends in its update ends its timers there too (`settle` -> `end_timers_of`). The
   show starts the glow inside fx (`glow_in_op`), so the client no longer makes that call (`WeaponOp::glow` is gone).

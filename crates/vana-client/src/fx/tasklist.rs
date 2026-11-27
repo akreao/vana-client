@@ -81,6 +81,8 @@ pub struct TaskList {
     running: Option<Node>,
     next: Option<Node>,
     others: u64,
+    /// The last place `pos` found.
+    hint: std::cell::Cell<usize>,
     /// A walk is in (FUN_10074c30).
     pub walking: bool,
 }
@@ -89,13 +91,21 @@ impl Default for TaskList {
     fn default() -> Self {
         let mut nodes: Vec<Node> = (0..BUCKETS).map(Node::Anchor).collect();
         nodes.insert(ENTITY_BUCKET as usize + 1, Node::Entity);
-        Self { nodes, running: None, next: None, others: 0, walking: false }
+        Self { nodes, running: None, next: None, others: 0, hint: Default::default(), walking: false }
     }
 }
 
 impl TaskList {
+    /// Where `n` is: next to the last place found first (a walk steps to the next node), else a scan.
     fn pos(&self, n: Node) -> Option<usize> {
-        self.nodes.iter().position(|&x| x == n)
+        let h = self.hint.get();
+        if let Some(i) = [h + 1, h, h.wrapping_sub(1)].into_iter().find(|&i| self.nodes.get(i) == Some(&n)) {
+            self.hint.set(i);
+            return Some(i);
+        }
+        let i = self.nodes.iter().position(|&x| x == n)?;
+        self.hint.set(i);
+        Some(i)
     }
 
     fn succ(&self, n: Node) -> Option<Node> {

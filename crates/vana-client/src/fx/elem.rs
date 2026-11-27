@@ -135,6 +135,9 @@ pub mod ctl {
     /// Spawned this frame: updated, not drawn, so the t = 0 key sample (a placeholder, as the Heavens Tower waterfalls'
     /// `tk01`) never shows. Inferred: FUN_10043ca0 counts the life down before sampling (MODLOG "Effect elements").
     pub const BORN: u32 = 2;
+    /// Made behind the walk (`ElemCpu::late`): its first update is the next frame, so this dispatch runs nothing (no
+    /// life step, no update stream, not drawn).
+    pub const LATE: u32 = 4;
 }
 
 pub const NONE: u32 = u32::MAX;
@@ -340,6 +343,7 @@ pub fn wgsl_consts() -> String {
         ("E_SERIAL", w::SERIAL),
         ("CTL_LIFE_SET", ctl::LIFE_SET as usize),
         ("CTL_BORN", ctl::BORN as usize),
+        ("CTL_LATE", ctl::LATE as usize),
         ("ST_BATCHED", st::BATCHED as usize),
         ("ST_HAS_RES", st::HAS_RES as usize),
         ("OUT_WORDS", OUT_WORDS),

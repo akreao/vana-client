@@ -3246,6 +3246,57 @@ mod tests {
         assert_eq!(shown, vec![(0.0, 1.0, 1.0), (1.0, 1.0, 0.0)]);
     }
 
+    /// An element made behind the walk (ctl::LATE, row 191) runs nothing in the frame it is made: no life step, no
+    /// update stream (op 0x01's move), not drawn. Its first update, the next frame, is a whole one and drawn.
+    #[test]
+    fn gpu_late_runs_nothing_first() {
+        let Ok(gpu) = Gpu::headless() else { return };
+        let eye = glam::Vec3::new(0.0, 0.0, -10.0);
+        let view = glam::camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::NEG_Y);
+        let mut view_rot = view;
+        view_rot.w_axis = glam::Vec4::W;
+        let f = Frame {
+            dt: 1.0,
+            seconds: 1.0 / 60.0,
+            dayfrac: 0.5,
+            view,
+            view_rot,
+            eye,
+            draw_distance: 2000.0,
+            area_light: glam::Vec3::ONE,
+            focal: 350.0,
+            moon_phase: 0,
+            weekday: 0,
+        };
+        let mut fx = Effects::new();
+        // Op 0x01: pos += (1, 0, 0) x dt.
+        fx.reg.ops = vec![0x01 | 4 << 8, 1f32.to_bits(), 0, 0, 0];
+        fx.reg.ops_dirty = true;
+        let mut el = Elem::default();
+        el.0[w::STATE] = crate::fx::elem::st::ALIVE;
+        el.0[w::COLOR] = 0x8080_8080;
+        el.0[w::STREAM] = 0;
+        el.0[w::SERIAL] = 1;
+        el.0[w::PARENT] = crate::fx::elem::NONE;
+        el.set(w::LIFE, 60.0);
+        el.set(w::MAX_LIFE, 60.0);
+        el.0[w::CTRL] = crate::fx::elem::ctl::LATE;
+        fx.writes.push(Write::Full(0, Box::new(el)));
+        fx.elems.push(None);
+        let mut eg = EffectsGpu::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb).unwrap();
+        let mut seen = Vec::new();
+        for _ in 0..2 {
+            let mut enc = gpu.device.create_command_encoder(&Default::default());
+            eg.update(&gpu, &mut enc, &mut fx, &f);
+            gpu.queue.submit([enc.finish()]);
+            gpu.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
+            let g = eg.read_elems(&gpu, 1);
+            let o = eg.read_outs(&gpu, 1);
+            seen.push((f32::from_bits(g[w::POS]), f32::from_bits(g[w::LIFE]), o[23]));
+        }
+        assert_eq!(seen, vec![(0.0, 60.0, 0.0), (1.0, 59.0, 1.0)]);
+    }
+
     /// A lit ground projection (op-1 flag 16, gaps item 126): the update pass keeps the local 3x3 in outs 32..40 for
     /// the image and writes FUN_100467e0's light direction (the travel direction through the view rotation) to
     /// 41..43; an unlit one leaves 41..43 alone.
