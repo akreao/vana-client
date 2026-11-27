@@ -58,27 +58,29 @@ impl DatIndex {
         if entries.is_empty() {
             bail!("no VTABLE.DAT under {}", ffxi_dir.display());
         }
-        let overlays = Self::overlays(&entries);
+        let overlays = Self::overlays(ffxi_dir, &entries);
         Ok(Self { root: ffxi_dir.to_path_buf(), entries, overlays })
     }
 
-    fn overlays(entries: &[(u8, u16)]) -> Option<std::sync::Arc<overlay::Overlays>> {
+    /// The enabled mods' files by this install's ids: one scan for each install (a server's own game folder has its
+    /// own file tables) while the enabled mods stay the same; every install shares the one mod list.
+    fn overlays(ffxi_dir: &Path, entries: &[(u8, u16)]) -> Option<std::sync::Arc<overlay::Overlays>> {
         use std::sync::{Arc, Mutex, OnceLock};
+        type Scan = (PathBuf, Vec<PathBuf>, Arc<overlay::Overlays>);
         let dirs = crate::config::enabled_mod_dirs();
         if dirs.is_empty() {
             return None;
         }
-        static SCANNED: OnceLock<Mutex<Option<(Vec<PathBuf>, Arc<overlay::Overlays>)>>> = OnceLock::new();
+        static SCANNED: OnceLock<Mutex<Vec<Scan>>> = OnceLock::new();
         let mut s = SCANNED.get_or_init(Default::default).lock().unwrap();
-        if let Some((d, o)) = s.as_ref()
-            && *d == dirs
-        {
+        if let Some((_, _, o)) = s.iter().find(|(r, d, _)| r == ffxi_dir && *d == dirs) {
             return Some(o.clone());
         }
         let ids: std::collections::HashMap<(u8, u16), u32> =
             entries.iter().enumerate().filter(|(_, e)| e.0 != 0).map(|(i, &e)| (e, i as u32)).collect();
         let o = Arc::new(overlay::Overlays::scan(&dirs, &ids, crate::config::merged_dir()));
-        *s = Some((dirs, o.clone()));
+        s.retain(|(r, _, _)| r != ffxi_dir);
+        s.push((ffxi_dir.to_path_buf(), dirs, o.clone()));
         Some(o)
     }
 
@@ -87,6 +89,11 @@ impl DatIndex {
         let mut index = Self::open(ffxi_dir)?;
         index.overlays = None;
         Ok(index)
+    }
+
+    /// The "FINAL FANTASY XI" folder it was opened on.
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 
     /// The folder that holds "FINAL FANTASY XI" (the PlayOnline Viewer's files sit beside it).

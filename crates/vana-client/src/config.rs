@@ -164,6 +164,11 @@ fn same_server(a: &str, b: &str) -> bool {
     a.trim().eq_ignore_ascii_case(b.trim())
 }
 
+/// A server's key in `server_game_dirs`: as same_server compares them.
+fn server_key(server: &str) -> String {
+    server.trim().to_ascii_lowercase()
+}
+
 /// What a server's rest ticks look like, as learnt (client/resttick.rs keeps it moving).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -192,6 +197,14 @@ pub struct Config {
     pub pol_id: String,
     /// Logins that worked, most recent first: the login screen's Server and Account lists (not retail).
     pub logins: Vec<SavedLogin>,
+    /// A server's own game folder (Account > Game files), by server name (trimmed, lowercase), for a server whose text
+    /// ids follow older or newer game files than `game_dir`'s, such as one that pins its own copy. Not retail, where
+    /// each server ships its install.
+    pub server_game_dirs: std::collections::BTreeMap<String, PathBuf>,
+    /// The game folder this login uses: its server's in `server_game_dirs`, none for `game_dir` (set by
+    /// enter_server_game_dir at login).
+    #[serde(skip)]
+    pub login_game_dir: Option<PathBuf>,
     /// The login screen's Remember password (not retail), and the password sealed for this server and account
     /// (secret.rs; hex, empty when none).
     pub remember_password: bool,
@@ -598,6 +611,8 @@ impl Default for Config {
             username: String::new(),
             pol_id: String::new(),
             logins: Vec::new(),
+            server_game_dirs: Default::default(),
+            login_game_dir: None,
             remember_password: false,
             saved_password: String::new(),
             trust_computer: false,
@@ -732,7 +747,7 @@ impl Config {
     /// The lobby version follows the game files, as retail's does: a patch applied here (crate::patch's stamp file)
     /// newer than the saved `client_version` replaces it. A newer or hand-written saved value stays. Whether it moved.
     pub fn follow_applied_version(&mut self) -> bool {
-        let Some(applied) = crate::patch::applied_version_cached(&self.ffxi_dir()) else { return false };
+        let Some(applied) = crate::patch::applied_version_cached(&self.main_ffxi_dir()) else { return false };
         match (crate::patch::version_key(&applied), crate::patch::version_key(&self.client_version)) {
             (Some(a), Some(saved)) if a > saved => {
                 log::info!("client version {} -> {applied} (game files patched)", self.client_version);
@@ -820,6 +835,39 @@ impl Config {
     /// Drops a saved login (with its password); with no account, every login of the server.
     pub fn forget_login(&mut self, server: &str, username: Option<&str>) {
         self.logins.retain(|l| !(same_server(&l.server, server) && username.is_none_or(|u| l.username == u)));
+        // The server's last login gone: its game folder too.
+        if !self.logins.iter().any(|l| same_server(&l.server, server)) {
+            self.server_game_dirs.remove(&server_key(server));
+        }
+    }
+
+    /// The server's own game folder (the one holding "FINAL FANTASY XI"), if it has one.
+    pub fn server_game_dir(&self, server: &str) -> Option<&std::path::Path> {
+        self.server_game_dirs.get(&server_key(server)).map(PathBuf::as_path)
+    }
+
+    /// Gives the server its own game folder; none: `game_dir` again.
+    pub fn set_server_game_dir(&mut self, server: &str, dir: Option<PathBuf>) {
+        match dir {
+            Some(d) => self.server_game_dirs.insert(server_key(server), d),
+            None => self.server_game_dirs.remove(&server_key(server)),
+        };
+    }
+
+    /// At login: the form's server's game folder (server_game_dirs, else `game_dir`) is the one ffxi_dir names from here
+    /// on. Err: that folder has no game files left.
+    pub fn enter_server_game_dir(&mut self) -> Result<(), String> {
+        let dir = self.server_game_dir(&self.server).map(PathBuf::from);
+        if let Some(d) = &dir
+            && !d.join("FINAL FANTASY XI").join("VTABLE.DAT").is_file()
+        {
+            return Err(format!(
+                "No game files in {}, this server's game folder: choose another in Account > Game files.",
+                d.display()
+            ));
+        }
+        self.login_game_dir = dir;
+        Ok(())
     }
 
     pub fn save(&self) -> Result<()> {
@@ -829,7 +877,13 @@ impl Config {
         Ok(())
     }
 
+    /// The game files in use: this login's server's own folder (login_game_dir), else `game_dir`'s.
     pub fn ffxi_dir(&self) -> PathBuf {
+        self.login_game_dir.as_ref().unwrap_or(&self.game_dir).join("FINAL FANTASY XI")
+    }
+
+    /// `game_dir`'s game files, whatever the login: the ones the updater patches and the first start installs.
+    pub fn main_ffxi_dir(&self) -> PathBuf {
         self.game_dir.join("FINAL FANTASY XI")
     }
 
@@ -1089,6 +1143,35 @@ mod tests {
         c.remember_login();
         let out = written(&c);
         assert!(kept(&serde_json::from_str(text).unwrap(), &out), "{out}");
+    }
+
+    /// A server's game folder: named by any spelling of the server, used from its login on (not saved as in use), a
+    /// folder without game files refused, and dropped with the server's last login.
+    #[test]
+    fn server_game_folder() {
+        let base = std::env::temp_dir().join(format!("vana-serverdir-{}", std::process::id()));
+        let own = base.join("own");
+        std::fs::create_dir_all(own.join("FINAL FANTASY XI")).unwrap();
+        let mut c = Config { game_dir: base.join("main"), server: " Catseye.example ".into(), ..Config::default() };
+        c.username = "u".into();
+        c.remember_login();
+        c.set_server_game_dir("catseye.EXAMPLE", Some(own.clone()));
+        assert_eq!(c.server_game_dir("Catseye.example"), Some(own.as_path()));
+        assert!(c.enter_server_game_dir().is_err_and(|e| e.contains("No game files")));
+        assert_eq!(c.ffxi_dir(), base.join("main").join("FINAL FANTASY XI"));
+        std::fs::write(own.join("FINAL FANTASY XI").join("VTABLE.DAT"), b"").unwrap();
+        assert_eq!(c.enter_server_game_dir(), Ok(()));
+        assert_eq!(c.ffxi_dir(), own.join("FINAL FANTASY XI"));
+        assert_eq!(c.main_ffxi_dir(), base.join("main").join("FINAL FANTASY XI"));
+        let out = written(&c);
+        assert!(out.get("login_game_dir").is_none() && out["server_game_dirs"]["catseye.example"].is_string(), "{out}");
+        // Another server: game_dir's files again.
+        c.server = "127.0.0.1".into();
+        assert_eq!(c.enter_server_game_dir(), Ok(()));
+        assert_eq!(c.ffxi_dir(), base.join("main").join("FINAL FANTASY XI"));
+        c.forget_login("CATSEYE.example", Some("u"));
+        assert!(c.server_game_dirs.is_empty());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// The real config (when there is one) loses nothing through a load and a save (read only).
