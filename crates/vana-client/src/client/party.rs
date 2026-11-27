@@ -285,10 +285,10 @@ impl Roster {
         self.members().skip(1).any(|r| r.name.is_empty())
     }
 
-    /// FUN_10205290 / FUN_10204190: the 18 window slots. Ours is slot 0 in party 0; members of our party number join
-    /// it, the first other number makes party 1 (slots 6..11), the next party 2 (12..17). Every slot, ours included,
-    /// takes its party number and leader bits from the record's flags (+0x34), which 0x0C8 writes too; our GAttr
-    /// (G+0x97f8, 0x0DD / 0x0E2 only) is not read here.
+    /// FUN_10203c80 / FUN_10202b80 (30261102: FUN_10205290 / FUN_10204190): the 18 window slots. Ours is slot 0 in
+    /// party 0; members of our party number join it, the first other number makes party 1 (slots 6..11), the next
+    /// party 2 (12..17). Every slot, ours included, takes its party number and leader bits from the record's flags
+    /// (+0x34), which 0x0C8 writes too; our GAttr (G+0x97f8, 0x0DD / 0x0E2 only) is not read here.
     pub fn slots(&self) -> Slots {
         let mut s = Slots::default();
         let mut parties: [Option<u32>; 3] = [None; 3];
