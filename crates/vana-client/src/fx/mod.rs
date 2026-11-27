@@ -2008,6 +2008,8 @@ impl Effects {
         }
         let Some(l) = self.zone_lib.filter(|_| !covered) else { return };
         // FUN_1018c0b0 walks each object's folder: flag 0x1000, not running, not static, op-1 flag 4 or 0x4000000.
+        // A static emitter with flag 0x4000000 that FUN_1018c020 passed by under the roof is not among them: retail
+        // leaves it off until the weather is made again.
         for k in 0..self.weathers.len() {
             let (serial, folder) = (self.weathers[k].serial, self.weathers[k].folder);
             let tree = &self.reg.libs[l].tree;
