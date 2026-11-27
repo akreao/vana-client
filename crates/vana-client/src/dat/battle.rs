@@ -343,7 +343,7 @@ impl BattleText {
     /// inferred: each word's first letter, as "Haste").
     pub fn status_title(&self, id: u16) -> String {
         let mut t = Self::msg_of(&self.statuses, id as i32);
-        apply_case(&mut t, 4);
+        word_capitals(&mut t);
         decode_sjis(&t)
     }
 
@@ -636,7 +636,9 @@ impl BattleText {
                     }
                     // Only a block that wrote text takes the case (FUN_100be760: FUN_10259f40 then +0xc = 0).
                     if out.len() > start {
-                        apply_case(&mut out[start..], std::mem::take(&mut case_mode));
+                        let t = super::case::apply_case(&out[start..], std::mem::take(&mut case_mode));
+                        out.truncate(start);
+                        out.extend(t);
                     }
                     2 + a as usize
                 }
@@ -806,31 +808,23 @@ impl BattleText {
     }
 }
 
-/// FUN_100c2bf0's modes on ASCII text: 1 the first letter upper case, 2 all upper, 3 all lower, 4 each word's first.
-fn apply_case(t: &mut [u8], mode: u8) {
+/// Each ASCII word's first letter up (status_title's inferred capitals; not a retail case mode).
+fn word_capitals(t: &mut [u8]) {
     let mut word_start = true;
-    let mut first = true;
     let mut i = 0;
     while i < t.len() {
         let c = t[i];
-        if c >= 0x80 {
-            i += 2;
-            (first, word_start) = (false, false);
-            continue;
-        }
         if c == 0x1e {
             i += 2;
             continue;
         }
-        match mode {
-            1 if first && c.is_ascii_alphabetic() => t[i] = c.to_ascii_uppercase(),
-            2 => t[i] = c.to_ascii_uppercase(),
-            3 => t[i] = c.to_ascii_lowercase(),
-            4 if word_start => t[i] = c.to_ascii_uppercase(),
-            _ => {}
+        if c >= 0x80 {
+            i += 2;
+            word_start = false;
+            continue;
         }
-        if c.is_ascii_alphabetic() {
-            first = false;
+        if word_start {
+            t[i] = c.to_ascii_uppercase();
         }
         word_start = c == b' ';
         i += 1;

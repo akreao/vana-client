@@ -30,6 +30,11 @@ pub struct ChatLog {
     /// Each line's print mark (record +0x12): 1 the open event message's page (rem4line), 2 a held chat line (the
     /// spool, config 0x34).
     marks: Vec<u8>,
+    /// Whether the log takes German's quotation marks on the line (FUN_10129090: its mode word's second byte has no
+    /// low five bits; chat lines have only 0x20 / 0x40 / 0x80 there, the group 7 / 9 printers 3).
+    quotes: Vec<bool>,
+    /// The next line printed is one whose mode word leaves its quotes (`no_quotes_next`).
+    quotes_off: bool,
     /// Lines changed in place (condensed battle lines) so far, and the lines of the last EDITED_KEPT of them, oldest
     /// first, so a log window rewraps only those.
     edits: u64,
@@ -129,6 +134,7 @@ impl ChatLog {
     }
 
     fn push_line(&mut self, mut s: String, mut colour: [u8; 4], chat: bool, indent: bool, mut mode: u16) {
+        let quotes = chat && !std::mem::take(&mut self.quotes_off);
         if let Some(f) = self.filter.clone() {
             match f(&s, mode) {
                 Filtered::Keep => {}
@@ -166,6 +172,7 @@ impl ChatLog {
         self.gm.push(false);
         self.who.push(None);
         self.marks.push(0);
+        self.quotes.push(quotes);
         self.lines.push((s, colour));
         self.trim();
     }
@@ -181,6 +188,7 @@ impl ChatLog {
         self.gm.drain(..DROP);
         self.who.drain(..DROP);
         self.marks.drain(..DROP);
+        self.quotes.drain(..DROP);
         self.base += DROP;
         self.restored = self.restored.saturating_sub(DROP);
         self.repeat = self.repeat.take().and_then(|(k, s, n)| Some((k.checked_sub(DROP)?, s, n)));
@@ -255,6 +263,17 @@ impl ChatLog {
     /// Line `k`'s print mark (0 none).
     pub fn mark(&self, k: usize) -> u8 {
         self.at(k).map_or(0, |i| self.marks[i])
+    }
+
+    /// Line `k` takes German's quotation marks in the log (FUN_10129090).
+    pub fn quotes(&self, k: usize) -> bool {
+        self.at(k).is_some_and(|i| self.quotes[i])
+    }
+
+    /// The next line is printed with a mode word whose second byte has low bits (3: the search comment, the group 7 /
+    /// 9 printers): the log leaves its quotes.
+    pub fn no_quotes_next(&mut self) {
+        self.quotes_off = true;
     }
 
     /// Marks the newest line.
@@ -350,6 +369,7 @@ impl ChatLog {
             self.gm.push(l.gm);
             self.who.push(None);
             self.marks.push(0);
+            self.quotes.push(l.chat);
             self.lines.push((l.text, [b, g, r, a / 2 + a / 8]));
         }
         self.times.push((super::cfgapply::local_hms(), false, false));
@@ -357,6 +377,7 @@ impl ChatLog {
         self.gm.push(false);
         self.who.push(None);
         self.marks.push(0);
+        self.quotes.push(false);
         self.lines.push((divider.to_string(), [0x60, 0x60, 0x60, 0x60]));
         self.repeat = None;
         self.restored = self.lines.len();

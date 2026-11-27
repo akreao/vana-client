@@ -358,7 +358,7 @@ pub fn request(wire: u8, payload: &[u8], session: u32, salt: u32) -> Vec<u8> {
     request_x(wire, payload, session, salt, 0)
 }
 
-/// [`request`] with the slot's extra word @0x0e (the auction list passes the client language, 1 English).
+/// [`request`] with the slot's extra word @0x0e (the auction list passes the client language, 0 Japanese .. 3 French).
 pub fn request_x(wire: u8, payload: &[u8], session: u32, salt: u32, extra: u16) -> Vec<u8> {
     let dlen = 0x10 + payload.len();
     let p = ((dlen + 0xb) / 0x40 + 1) * 0x40;

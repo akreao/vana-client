@@ -443,6 +443,11 @@ fn menu_rows(name: &str) -> &'static [(u16, Pick)] {
     }
 }
 
+/// The bid list query's language word (FUN_1020bfe0 case 5 -> FUN_100e2ac0, request @0x0e).
+fn list_lang() -> u16 {
+    crate::dat::lang::client() as u16
+}
+
 /// The plain rows of the other menus (auc1, auc3, auc4).
 fn plain_rows(name: &str) -> u16 {
     match name {
@@ -510,7 +515,9 @@ impl Auction {
     fn requery(&mut self, w: &World) {
         log::info!("auction: list of category {:#x}, condition {:?}", self.cat, self.cond);
         let payload = crate::net::search::ah_list_payload(self.cat as u16, market(w.zone), &self.cond);
-        self.query = Some((false, crate::net::search::ah_spawn(w.search_addr, 0x15, payload, 1)));
+        // The slot's word @0x0e: the client language (FUN_1020bfe0 case 5, DAT_10457bd8 +8 as a word; the European
+        // flag not applied).
+        self.query = Some((false, crate::net::search::ah_spawn(w.search_addr, 0x15, payload, list_lang())));
         self.layers.retain(|l| !matches!(l, Layer::List | Layer::History));
         self.list = Some(List::default());
         self.layers.push(Layer::List);
@@ -652,7 +659,7 @@ pub(super) fn index_build(w: &mut World) {
         }
     }
     let (tx, rx) = std::sync::mpsc::channel();
-    let (addr, market, path) = (w.search_addr, market(w.zone), cache_path(w));
+    let (addr, market, path, lang) = (w.search_addr, market(w.zone), cache_path(w), list_lang());
     // One connection for every category (LSB's search server closes a sixth session from one address, and counts a
     // finished one for some seconds); a dropped connection goes on from where it broke after a pause.
     std::thread::spawn(move || {
@@ -661,7 +668,7 @@ pub(super) fn index_build(w: &mut World) {
         for round in 0..4 {
             let payloads: Vec<Vec<u8>> =
                 left.iter().map(|&c| crate::net::search::ah_list_payload(c as u16, market, &[])).collect();
-            let replies = crate::net::search::ah_query_many(addr, 0x15, &payloads, 1);
+            let replies = crate::net::search::ah_query_many(addr, 0x15, &payloads, lang);
             let mut done = 0;
             for (r, &cat) in replies.into_iter().zip(&left) {
                 match r {

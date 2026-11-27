@@ -663,20 +663,18 @@ fn shown(w: &World, s: &Screen) -> Option<u16> {
     }
 }
 
-/// bluehelp's texts (LAB_10208d90): the singular name with its first letter upper-cased, an attachment's element
+/// bluehelp's texts (FUN_1020a3a0): the singular name with its first char up (FUN_1025d720), an attachment's element
 /// costs (that many gaiji EF 1F + e each), the description's lines.
 fn help_text(w: &World, id: u16) -> Option<(String, Vec<usize>, String)> {
     let it = w.item_info.as_ref()?.item(id)?;
-    let mut name: Vec<char> = it.singular.chars().collect();
-    if let Some(c) = name.first_mut() {
-        *c = c.to_ascii_uppercase();
-    }
+    // FUN_1020a3a0: the name with its first char up, under 0x80 bytes (FUN_1025d720).
+    let name = crate::dat::case::cap_first_str(&it.singular, 0x80).unwrap_or_default();
     let costs = if it.resource >= 2 {
         (0..8).flat_map(|e| std::iter::repeat_n(e, nibble(it.jobs, e) as usize)).collect()
     } else {
         Vec::new()
     };
-    Some((name.into_iter().collect(), costs, it.description.clone()))
+    Some((name, costs, it.description.clone()))
 }
 
 fn gaiji(e: usize) -> String {

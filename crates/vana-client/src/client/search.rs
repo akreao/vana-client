@@ -593,18 +593,19 @@ fn summary(w: &mut World, scope: Scope, total: usize, shown: usize) {
     }
 }
 
-/// FUN_101dd780's chat mode: 0xcc (the mode word {0xcc, 3}).
+/// FUN_101ded50's chat mode: 0xcc (the mode word {0xcc, 3}: the log adds no quotation marks of its own).
 const COMMENT_MODE: u8 = 0xcc;
 
-/// FUN_101dd780: nothing for an empty comment; else the header, then three 40-byte rows of the comment (trailing
-/// spaces cut, auto-translate expanded, control bytes as spaces, cut at 335 px with "..."). Not done: the profanity
-/// filter (FUN_101ba200, the PlayOnline engine) and the Japanese quote rewrite (FUN_10190140, language 2 only).
+/// FUN_101ded50: nothing for an empty comment; else the header, then three 40-byte rows of the comment (trailing
+/// spaces cut, auto-translate expanded, control bytes as spaces, cut at 335 px with "...", then German's quotation
+/// marks in its 0x52-byte buffer, FUN_10191710). Not done: the profanity filter (FUN_101ba200, the PlayOnline engine).
 fn print_comment(w: &mut World, text: &[u8], r: Option<&Record>, gu: Option<&super::game_ui::GameUi>) {
     let text = &text[..text.iter().position(|&b| b == 0).unwrap_or(text.len())];
     if text.is_empty() {
         return;
     }
     let Some(bt) = w.battle.clone() else { return };
+    w.chat.no_quotes_next();
     super::push_chat_mode(w, comment_header(&bt, r), COMMENT_MODE, 0);
     let mut buf = [0u8; 120];
     for (d, s) in buf.iter_mut().zip(text) {
@@ -615,7 +616,9 @@ fn print_comment(w: &mut World, text: &[u8], r: Option<&Record>, gu: Option<&sup
         let end = row.iter().rposition(|&b| b != b' ').map_or(0, |e| e + 1);
         let line = super::expand_phrases(w, &crate::dat::font::decode_sjis(&row[..end]));
         let line: String = line.chars().map(|c| if (c as u32) < 0x20 { ' ' } else { c }).collect();
-        super::push_chat_mode(w, cut_line(line, gu), COMMENT_MODE, 0);
+        let line = crate::dat::font::german_quotes_str(&cut_line(line, gu), 0x52).into_owned();
+        w.chat.no_quotes_next();
+        super::push_chat_mode(w, line, COMMENT_MODE, 0);
     }
 }
 

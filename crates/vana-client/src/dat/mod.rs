@@ -209,6 +209,7 @@ pub mod autotrans;
 pub mod battle;
 pub mod blumagic;
 pub mod bump;
+pub mod case;
 pub mod character;
 pub mod collision;
 pub mod cursor;
