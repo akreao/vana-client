@@ -1665,7 +1665,7 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             }
             Ok(())
         }
-        // FUN_10079b30: an item name between languages; c2s 0x02B {From, To, 0, Name[64]}; s2c 0x047 answers
+        // FUN_10079b30: an item name between languages; c2s 0x02B {From, To, 0, Name[0x40]}; s2c 0x047 answers
         // (translate_result). No letters: from and to the client's language; one letter: from it to the letter; two:
         // from and to. Both with the European flag read German and French as English (lang::files()).
         id::TRANSLATE => {
@@ -1673,7 +1673,19 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
                 return Err(());
             }
             let own = crate::dat::lang::files() as u8;
-            let letter = |c| translate_letter(c, crate::dat::lang::files(), crate::dat::lang::european_as_english());
+            // The letters: messages 0xc 0x5e..0x61's first bytes (J, E, G, F in English).
+            let mut letters = *b"JEGF";
+            if let Some(bt) = &w.battle {
+                for (k, l) in letters.iter_mut().enumerate() {
+                    if let Some(b) =
+                        bt.group12(0x5e + k).and_then(|t| crate::dat::font::encode_sjis(&t).first().copied())
+                    {
+                        *l = b;
+                    }
+                }
+            }
+            let letter =
+                |c| translate_letter(c, letters, crate::dat::lang::files(), crate::dat::lang::european_as_english());
             let (from, to) = match args.get(2).map(|s| s.bytes().collect::<Vec<u8>>()) {
                 Some(l) if l.len() < 2 => (own, letter(l.first().copied().unwrap_or(0))),
                 Some(l) => (letter(l[0]), letter(l[1])),
@@ -1681,9 +1693,8 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             };
             let mut b = vec![0u8; 0x44];
             (b[0], b[1]) = (from, to);
-            for (k, c) in args[1].bytes().take(0x3f).enumerate() {
-                b[4 + k] = c;
-            }
+            let name = translate_name(&args[1]);
+            b[4..4 + name.len()].copy_from_slice(&name);
             send(w, NetCommand::Packet { id: 0x02B, body: b });
             w.translating = true;
             Ok(())
@@ -2220,17 +2231,29 @@ fn attack(w: &mut World, args: &[String], mode: Mode) -> Done {
 /// (the same, then ear1, ear2, ring1, ring2).
 const SLOT_OF: [u8; 20] = [0, 1, 2, 3, 4, 9, 11, 12, 5, 6, 13, 14, 15, 10, 7, 8, 11, 12, 13, 14];
 
-/// FUN_10079c10: a /translate letter as a language. The letters are the first bytes of messages 0xc 0x5e..0x61 and
-/// their lower case (+0x20): J, E, G, F in the English file. G and F are German and French only without the European
-/// flag; any other letter (and G / F with it) is the client's language, read as English for German and French with
-/// the flag (lang::files()).
-fn translate_letter(c: u8, files: crate::dat::items::Lang, european: bool) -> u8 {
-    match (c.to_ascii_uppercase(), european) {
-        (b'J', _) => 0,
-        (b'E', _) => 1,
-        (b'G', false) => 2,
-        (b'F', false) => 3,
-        _ => files as u8,
+/// /translate's name (FUN_100ec3e0): the line's Shift-JIS bytes strncpy'd into the 0x40-byte field @8.
+fn translate_name(name: &str) -> Vec<u8> {
+    let mut b = crate::dat::font::encode_sjis(name);
+    b.truncate(0x40);
+    b
+}
+
+/// FUN_10079c10: a /translate letter as a language. `letters` are messages 0xc 0x5e..0x61's first bytes (Japanese,
+/// English, German, French), each also matched + 0x20. German and French count only without the European flag; any
+/// other letter (and theirs with it) is the client's language, English for German and French with the flag
+/// (`files`).
+fn translate_letter(c: u8, letters: [u8; 4], files: crate::dat::items::Lang, european: bool) -> u8 {
+    let is = |k: usize| c == letters[k] || c == letters[k].wrapping_add(0x20);
+    if is(0) {
+        0
+    } else if is(1) {
+        1
+    } else if !european && is(2) {
+        2
+    } else if !european && is(3) {
+        3
+    } else {
+        files as u8
     }
 }
 
@@ -3349,10 +3372,14 @@ mod tests {
     #[test]
     fn translate_letters() {
         use crate::dat::items::Lang;
-        assert_eq!(b"jEgF".map(|c| translate_letter(c, Lang::En, false)), [0, 1, 2, 3]);
-        assert_eq!(translate_letter(b'x', Lang::Fr, false), 3);
-        assert_eq!(b"GFx".map(|c| translate_letter(c, Lang::En, true)), [1, 1, 1]);
-        assert_eq!(translate_letter(b'x', Lang::Ja, true), 0);
+        let l = *b"JEGF";
+        assert_eq!(b"jEgF".map(|c| translate_letter(c, l, Lang::En, false)), [0, 1, 2, 3]);
+        assert_eq!(translate_letter(b'x', l, Lang::Fr, false), 3);
+        assert_eq!(b"GFx".map(|c| translate_letter(c, l, Lang::En, true)), [1, 1, 1]);
+        assert_eq!(translate_letter(b'x', l, Lang::Ja, true), 0);
+        assert_eq!(translate_letter(b'D', *b"JEDF", Lang::En, false), 2);
+        assert_eq!(translate_name("ポーション")[..2], [0x83, 0x7c]);
+        assert_eq!(translate_name(&"ア".repeat(40)).len(), 0x40);
     }
 
     #[test]

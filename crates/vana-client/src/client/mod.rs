@@ -2176,6 +2176,13 @@ fn assist_step(last: u8, typing: bool, mode: u8) -> u8 {
     if typing && matches!(mode, 0xe | 0xf) { (last + 1) % 2 } else { last }
 }
 
+/// Whether `k` is key function 0xb4's key: config 0x86's DIK code with Ctrl / Alt (Input::assign's slot 0, flag
+/// 0x10; Q by default), none when cleared or while Key Assignment is open.
+fn assist_bound(w: &World, k: egui::Key) -> bool {
+    let dik = (w.game.get(0x86) & 0xff) as u8;
+    dik != 0 && input::egui_dik(k) == Some(dik) && !w.config.as_ref().is_some_and(key_assigning)
+}
+
 /// Key function 0xb4: its text before the line's body, as FUN_101afb40 puts the other channel keys'.
 fn assist_key(world: &mut World) {
     let mode = chatctrl::line_mode(&world.chat_input, world.chat_mode);
@@ -3238,9 +3245,13 @@ fn world_hud(
                     swallow_text = modifiers.alt.then_some(*k);
                     keys.clear();
                 }
-                egui::Key::Q if (modifiers.ctrl || modifiers.alt) && !opened && !event::cinema(world) => {
+                k if (modifiers.ctrl || modifiers.alt)
+                    && !opened
+                    && !event::cinema(world)
+                    && assist_bound(world, *k) =>
+                {
                     assist_key(world);
-                    swallow_text = modifiers.alt.then_some(egui::Key::Q);
+                    swallow_text = modifiers.alt.then_some(*k);
                     keys.clear();
                 }
                 egui::Key::R if (modifiers.ctrl || modifiers.alt) && (world.typing || !event::cinema(world)) => {

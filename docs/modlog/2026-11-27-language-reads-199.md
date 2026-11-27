@@ -7,15 +7,16 @@
     (+0x1ffc of FUN_101af710's table, made by FUN_101af490) holds two texts, "/assiste " then "/assistj " (Japanese
     the other way round). FUN_101af4f0 with FUN_101af5b0 steps to the other text when the key is pressed while the
     line is in an assist mode (FUN_101b9c10: fep +0x2c is 0xe / 0xf), wrapping after the second; any other time the
-    last text stays. FUN_101afb40 puts it before the line's body as the other channel keys do. Ours: Ctrl / Alt + Q,
-    World.assist_key.
+    last text stays. FUN_101afb40 puts it before the line's body as the other channel keys do. Ours: Ctrl / Alt +
+    config 0x86's key (none while it is cleared or Key Assignment is open), World.assist_key.
   - The "New Challenge" scheduler (FUN_10087230): file 0xaf0 + table 0x1035c53c by language, 0x396 Japanese and
     English, 0x398 German, 0x397 French (roe.rs NEW_CHALLENGE; ours took 0x396 in every language).
   - /translate (FUN_10079b30, argument count _DAT_1047e640): no letters, from and to the client language; one letter,
     from the client language to it; two, from and to (later letters unread). A letter (FUN_10079c10) is the first
     byte of message 0xc 0x5e..0x61 or that + 0x20 (J, E, G, F in English): G / F only without the European flag; any
-    other letter is the client language (English for German and French with the flag). Ours sent English as the
-    source and English for an unknown letter.
+    other letter is the client language (English for German and French with the flag). FUN_100ec3e0: c2s 0x02B
+    @4 from, @5 to, @6 0, @8 the name strncpy'd into 0x40 bytes. Ours sent English as the source and for an unknown
+    letter, and the name as UTF-8; it now sends the Shift-JIS bytes and reads the letters from messages 0xc.
   - The server message request (FUN_100a30e0 -> FUN_100a3040): language 1 Japanese, 2 English, 3 German, 4 French;
     the pieces must carry the one asked for (FUN_100a2c30, +0x5b). Ours always asked for English.
 - Already built elsewhere: /itemsearch's byte (FUN_1007b0a0, row 198), the dictionary's compares and its `@` names

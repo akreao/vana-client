@@ -753,7 +753,7 @@ pub fn dik(code: KeyCode) -> Option<u8> {
 }
 
 /// The DirectInput code of an egui key (test drives; egui does not tell the numpad apart).
-fn egui_dik(key: egui::Key) -> Option<u8> {
+pub(super) fn egui_dik(key: egui::Key) -> Option<u8> {
     use egui::Key as E;
     Some(match key {
         E::Escape => 0x01,
