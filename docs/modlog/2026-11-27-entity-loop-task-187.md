@@ -58,7 +58,8 @@ Not built (new queue rows):
   the weather change's schedulers (`set_weather` starts them when asked, with no first update), a door's `ints` /
   `inte` and open / close, a model file's self-starting schedulers, `!in?` and the glows of FUN_100cf100 / FUN_100cf160
   (the equipment calls), the event ops' schedulers (the event's ops run inside FUN_1008e9a0), `hen0`, the fishing
-  statuses' `fsh?`, FUN_100c3cf0 / FUN_100c3d50.
+  statuses' `fsh?`, FUN_100c3cf0 / FUN_100c3d50, and the `init` ours starts on a /sitchair chair's model (its retail start
+  is not traced; ours starts it before the walk, so ahead of a `chi0` asked in the same frame).
 - 213: tasks that start schedulers from their own update, which ours starts before the walk: the 0x028 wait task
   (vtable 0x1032f7c0, FUN_100a9500: `main` once the caster and targets are in; made by the packet, so at the front
   of bucket 9) and a model's own task (FUN_100c63d0 -> FUN_100d1070: `spop`).
