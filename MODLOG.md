@@ -4707,7 +4707,8 @@ From the party spec (scratchpad party/SPEC.md; current addresses).
   sends it). 0x0DF (100e9cc0): HP / MP / TP / jobs of listed ids. A nameless member asks c2s 0x076 {u8 0}.
 - Slots DAT_10663ad8 (18 x 0x7c, FUN_10201fb0 / FUN_10202b80): self first in party 0, our party number's members
   0..5, other numbers 6..11 then 12..17; leaders per party (flag 4) and the alliance leader (flag 8); "ptw0" iff our
-  party has no leader, else "ptwN".
+  party has no leader, else "ptwN". Our slot 0 too takes its party number and leader bits from record 0's +0x34
+  (written by 0x0C8 as for anyone), not from our GAttr G+0x97f8: a table-only change (trusts) moves our slot.
 - F1 / F7 (0x46 / 0x4c) target ourselves (we are an ordinary entity in retail); F2..F6 (0x47..0x4b) slots 1..5, F11
   (0x53) slot 6, F12 (0x54) slot 12 (FUN_102033c0: used, in our zone, no marker, model loaded; no distance). A re-pick
   of the same target plays "0010" again. Lock-on refuses self; Enter on self opens playermo.
