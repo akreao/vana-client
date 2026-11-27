@@ -113,6 +113,11 @@ impl LobbyFx {
         self.fx.set_weather(tag, 0.0);
     }
 
+    /// A title movie's op 0x7e: every weather object goes, its generators and schedulers with it (FUN_10189fe0).
+    pub fn end_weather(&mut self) {
+        self.fx.end_weathers();
+    }
+
     /// Effect sounds since the last call, for the sound thread.
     pub fn take_sounds(&mut self) -> Vec<crate::fx::sound::SoundCmd> {
         std::mem::take(&mut self.fx.sound_cmds)
