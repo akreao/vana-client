@@ -7,6 +7,18 @@ pub mod profile;
 pub mod search;
 pub mod tls;
 
+/// How long a session waits for this computer's link to come back before it ends with the error.
+pub const LINK_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// A send or read failing because this computer's link is down for a while (Wi-Fi roaming or reconnecting, its address
+/// gone until DHCP renews it), not because of the far end: the sessions wait through it.
+pub fn link_down(e: &std::io::Error) -> bool {
+    use std::io::ErrorKind::{AddrNotAvailable, HostUnreachable, NetworkDown, NetworkUnreachable};
+    matches!(e.kind(), NetworkUnreachable | HostUnreachable | NetworkDown | AddrNotAvailable)
+        // ENOBUFS (Linux 105, Windows WSAENOBUFS 10055): the queue full while the link is down.
+        || matches!(e.raw_os_error(), Some(105 | 10055))
+}
+
 /// A TCP connection to `host:port` within 10 s in all, so an unreachable server fails in seconds rather than after the
 /// system's two-minute retries. Each address gets an even share of the time left (an IPv6 address that hangs leaves
 /// the IPv4 one its turn).
