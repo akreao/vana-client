@@ -1192,6 +1192,8 @@ fn handle(w: &mut World, cid: u16, args: &[String], line: &str, mode: Mode) -> D
             Ok(())
         }
         id::ASSIST => {
+            // Its 0x058 answer is ours, not the server's auto-target (target::asked).
+            target::asked(w);
             // FUN_1007aa30: nothing while engaged; never an error.
             if w.my_motion.status != 1
                 && let Some(t) = resolve(w, arg(1), true, false, mode)
