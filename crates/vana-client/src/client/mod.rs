@@ -10470,6 +10470,8 @@ impl App {
             log::info!("game files: {}", self.cfg.ffxi_dir().display());
             self.index = None;
             self.name_tables = None;
+            // The expansions this login's files hold (character select, the creator, the world).
+            self.installed = crate::dat::installed(&self.cfg.ffxi_dir());
         }
         if self.index.is_none() {
             self.index = Some(Arc::new(DatIndex::open(&self.cfg.ffxi_dir())?));
@@ -10884,6 +10886,10 @@ impl App {
             }
             Task::LoggedIn(Ok((lobby, chars)), _) | Task::Lobby(Ok((lobby, chars))) => {
                 self.status.clear();
+                // The login's game files from character select on: its expansions, models and text.
+                if let Err(e) = self.game_data() {
+                    log::warn!("game files: {e:#}");
+                }
                 // A login that worked: the password is remembered (sealed) or forgotten as the box says.
                 if let Phase::Login { password, pol_password, .. } = &self.phase
                     && !password.is_empty()
@@ -10948,6 +10954,11 @@ impl App {
             }
             Task::Selected(Ok(login)) => {
                 self.backdrop = None;
+                // The login's game files before anything of the world is read from them (a lobby mod may play from the
+                // title, where nothing has opened them yet).
+                if let Err(e) = self.game_data() {
+                    log::warn!("game files: {e:#}");
+                }
                 match crate::net::map::compress::Codec::from_ffximain(
                     &std::fs::read(crate::dat::ffximain(&self.cfg.ffxi_dir())).unwrap_or_default(),
                 ) {
