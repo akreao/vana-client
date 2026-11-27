@@ -1151,11 +1151,11 @@ impl Ground {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     /// A ground from quads (a b c d), each wound so its stored normal is on the `facing` side.
-    fn ground(quads: &[([Vec3; 4], Vec3)]) -> Ground {
+    pub(in crate::client) fn ground(quads: &[([Vec3; 4], Vec3)]) -> Ground {
         let mut tris = Vec::new();
         let mut normals = Vec::new();
         for &([a, b, c, d], facing) in quads {
