@@ -464,8 +464,9 @@ fn tag(w: &World, tag: &str, target_cmd: bool) -> Option<String> {
         }
         // Type 0xe: FUN_101f7600(1), worked out now (not the compass's cached suffix).
         "<pos>" => Some(super::map::grid_text(w, &w.map_regions)).filter(|g| !g.is_empty()),
-        // FUN_10076ff0 type 0x15: the tracked target's name from the zone NPC list.
-        "<scan>" => w.scan.tracking().and_then(|t| {
+        // FUN_10076ff0 type 0x15 (0x100771e1): the tracked target's name from the zone NPC list. Not in a target
+        // command, where the tag stays for the resolver (which wants the actor's model).
+        "<scan>" if !target_cmd => w.scan.tracking().and_then(|t| {
             w.npc_names.iter().find(|(id, _)| (*id & 0x3ff) as u16 == t.index & 0x3ff).map(|(_, n)| n.clone())
         }),
         _ => {

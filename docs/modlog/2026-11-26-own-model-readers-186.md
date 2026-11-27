@@ -65,6 +65,12 @@ Ours kept our model entry under the mark and tested it nowhere. Now:
   (the modern interface keeps its own `<ft>`, the focus target). `<scan>` as a target needs a model.
 - The pet row already drew its bar only with a model (`petrow::row`).
 
+Review (2026-11-26): the `<scan>` text (type 0x15) needs FUN_10076ff0's second argument (0x100771e1) like `<t>` and
+`<pet>`, so in a target command the tag is no longer replaced by the name and reaches the resolver's model test. A
+tracked actor with no model then falls through to the name search and the current target, as in FUN_1007a1c0
+(LAB_1007a375). The packet handlers read the last frame's marks, as retail's read the bit FUN_10095900 last left.
+The talk's test of the target's model stays the actor record (a record still loading counts).
+
 Still not built (queue rows 205..210):
 - 205: FUN_1008f200 (0x1008f21a; s2c 0x05B modes 0 / 1 / 5 / 7 about us): with no model the camera's eye (+0x44) and look (+0x50)
   both go to our place (FUN_1001e780 then FUN_1001e760) in place of FUN_10021680; ours still faces from behind.
