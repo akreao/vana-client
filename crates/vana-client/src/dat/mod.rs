@@ -69,8 +69,8 @@ impl DatIndex {
         Self { root: PathBuf::new(), entries: Vec::new(), overlays: None }
     }
 
-    /// The mods' files by this install's ids, scanned once per install (a server's own game folder has its own file
-    /// tables) and mod list.
+    /// The enabled mods' files by this install's ids: one scan for each install (a server's own game folder has its
+    /// own file tables) while the enabled mods stay the same; every install shares the one mod list.
     fn overlays(ffxi_dir: &Path, entries: &[(u8, u16)]) -> Option<std::sync::Arc<overlay::Overlays>> {
         use std::sync::{Arc, Mutex, OnceLock};
         type Scan = (PathBuf, Vec<PathBuf>, Arc<overlay::Overlays>);

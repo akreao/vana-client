@@ -9400,8 +9400,10 @@ pub struct App {
     monitors: Vec<(String, String)>,
     gpus: Vec<String>,
     index: Option<Arc<DatIndex>>,
-    /// Installed-content mask (ROM2..): title music and lobycwin's tracks (FUN_1023ae80).
+    /// Installed-content mask (ROM2..) of the game files in use (Config::ffxi_dir): logos, the creator, the world.
     installed: u32,
+    /// The same of game_dir's files, which sound plays from: title music and lobycwin's tracks (FUN_1023ae80).
+    music_installed: u32,
     keys_table: Option<Arc<zone::Keys>>,
     knock_table: Option<[[f32; 3]; 8]>,
     search_words: Option<Arc<crate::dat::tables::SearchWords>>,
@@ -9798,6 +9800,7 @@ impl App {
             nation: NationShow::default(),
             index: None,
             installed,
+            music_installed: installed,
             keys_table: None,
             knock_table: None,
             search_words: None,
@@ -10353,7 +10356,7 @@ impl App {
         if scene != self.music_scene {
             match scene {
                 MusicScene::Opening => a.play_music_now(opening::MUSIC),
-                MusicScene::Title => a.title_music(self.cfg.game.global.get(0xaf), self.installed),
+                MusicScene::Title => a.title_music(self.cfg.game.global.get(0xaf), self.music_installed),
                 // LAB_1022fedb: reaching the nation step plays 0x78 through the fade task; back on the dancer steps
                 // the race BGM returns when the performance wraps (FUN_10036a90).
                 MusicScene::Created => a.change_music(0x78, 0x7f, 0x7f, 0, 0, false),
@@ -10470,10 +10473,10 @@ impl App {
             log::info!("game files: {}", self.cfg.ffxi_dir().display());
             self.index = None;
             self.name_tables = None;
-            // The expansions this login's files hold (character select, the creator, the world).
-            self.installed = crate::dat::installed(&self.cfg.ffxi_dir());
         }
         if self.index.is_none() {
+            // The expansions these files hold (character select, the creator, the world).
+            self.installed = crate::dat::installed(&self.cfg.ffxi_dir());
             self.index = Some(Arc::new(DatIndex::open(&self.cfg.ffxi_dir())?));
             let dll = std::fs::read(crate::dat::ffximain(&self.cfg.ffxi_dir()))?;
             self.keys_table = Some(Arc::new(zone::Keys::from_ffximain(&dll)?));
@@ -16302,6 +16305,7 @@ impl App {
                     // Audio opened on the empty folder (and the title music failed): open it on the new files.
                     self.audio = None;
                     self.audio_tried = false;
+                    self.music_installed = crate::dat::installed(&self.cfg.main_ffxi_dir());
                     self.index = None;
                     self.keys_table = None;
                     self.game_ui_state = LoadState::Idle;
@@ -16635,6 +16639,7 @@ impl App {
                             // New and changed DATs: the next login opens the index again.
                             if out.reload {
                                 self.index = None;
+                                self.music_installed = crate::dat::installed(&self.cfg.main_ffxi_dir());
                                 // The next login sends the patched files' version.
                                 // At once: the restart below starts a client that reads it.
                                 if self.cfg.follow_applied_version()
@@ -17028,7 +17033,7 @@ impl App {
                             }
                             // lobycwin and our settings screen over the title; modern: both pages of one Config panel.
                             if let Some(c) = self.lobby_cfg.as_mut().filter(|_| modern_title) {
-                                c.owned = self.installed;
+                                c.owned = self.music_installed;
                                 if modern::lobby_config_settings(c) && self.lobby_settings.is_none() {
                                     let mut s = settings::SettingsUi::open(&self.cfg, window);
                                     s.monitors = self.monitors.clone();
@@ -17078,7 +17083,7 @@ impl App {
                                     save = true;
                                 }
                             } else if let Some(c) = self.lobby_cfg.as_mut() {
-                                c.owned = self.installed;
+                                c.owned = self.music_installed;
                                 if self.lobby_settings.is_none() {
                                     let mut outs = Vec::new();
                                     for ev in &input.events {
@@ -18233,7 +18238,7 @@ impl App {
             && let (Some(a), Phase::Characters { .. }) = (self.audio.as_mut(), &self.phase)
         {
             // FUN_1023ae50: a new title music choice starts at once.
-            a.title_music(self.lobby_values.get(0xaf), self.installed);
+            a.title_music(self.lobby_values.get(0xaf), self.music_installed);
         }
         if lobby_apply.volume {
             self.cfg.game.store(None, &self.lobby_values);
