@@ -548,6 +548,14 @@ mod tests {
         let ids: Vec<Option<u32>> = s.slots.iter().map(|m| m.as_ref().map(|m| m.id)).collect();
         assert_eq!((ids[0], ids[1], ids[6], ids[7], ids[12]), (Some(ME), Some(5), Some(2), Some(3), Some(4)));
         assert_eq!((s.leaders, s.alliance_leader), ([ME, 3, 4], ME));
+        // A table alone (no 0x0DD about us) moves us to party number 1 and the alliance lead to 3: the window follows
+        // our record, not the stale GAttr.
+        r.table(&[(ME, 0x400, 1, 230), (2, 1, 1, 230), (3, 2, 1 | 4 | 8, 230), (4, 3, 2 | 4, 230), (5, 4, 0, 230)]);
+        assert_eq!(r.own_flags, 0x0c);
+        let s = r.slots();
+        let ids: Vec<Option<u32>> = s.slots.iter().map(|m| m.as_ref().map(|m| m.id)).collect();
+        assert_eq!((ids[0], ids[1], ids[2], ids[6], ids[12]), (Some(ME), Some(2), Some(3), Some(4), Some(5)));
+        assert_eq!((s.leaders, s.alliance_leader), ([3, 4, 0], 3));
     }
 
     /// A +200 max HP buff wears off at 900 HP: 900 / 1200 was 75 %, the server now says 90 %.
