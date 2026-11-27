@@ -19802,6 +19802,11 @@ From the research notes:
   0xcb -205, 0xcc -204, 0xcd -206, above 0xdb -code, else -129; `Kicked by same NICK` -> -0x201 (POLCON_IDLE gives
   -0x40f); KILL -251. The Viewer closes the chat without QUIT; PONG and NOTICE lines are held about 1 s before
   sending.
+- What those codes mean (polerr.bin's labels, numbered in decimal): 201 a second sign-in with this ID, 202 the
+  password is wrong, 203 the POL ID is wrong, 204 the protocol version is too old, 205 three wrong passwords in a
+  row (no sign-in for a few minutes), 206 a POLPRO <-> IRC server error. So 0xca is a wrong PlayOnline password,
+  sent after the 300 greeting (seen in a sign-in log, 2026-11-25); the member login (SE ID) comes after the chat
+  and is not reached. chat.rs `error_text` words them.
 - RSA: two 128-bit primes (16 random bytes, b[0] |= 1, b[15] = (b[15] & 0x0f) | 0x80, the next prime with gcd(c - 1,
   0xffff) = 1), n always 255 bits, e = 0xffff never sent; one pair until the slots go. The unpad zeroes byte 30 (the
   block type, unchecked), then skips nonzero bytes from 29 down to a zero byte.
@@ -19820,7 +19825,7 @@ From the research notes:
   XORed with a pad from a GetTickCount-dependent offset of 0x10065e34; its NICK is command 0x28 (0x10016ae0); POLCON
   is connected in state 0x1e (0x1c in 1.18.00n). Open: whether a server checks the NICK token; whether greeting offset
   0x14 is the client's port as the server sees it; what numeric 001 carries; the keep-alive setting in a real Viewer;
-  the ERROR codes for a wrong password or a locked account; who opens 51241.
+  who opens 51241.
 - Profile service: the function table (GetCommonFunctionTable, IPOLCoreCom vtable slot 7: 0x1006dbe8 / 0x1006fbe8;
   index: 1.18.00n / 1.18.15e): 0xab / 0xac LoadHandleNameList 0/9 (1001de30, 1001de50 / 1001e470, 1001e490); 0xaf /
   0xb0 LoadCharacterList 1/3 (10024a80, 10022980 / 10023440, 10023460); 0xc3 / 0xc4 ChangeMyStatus 4/5 (1001d520,
@@ -25072,3 +25077,13 @@ Settings > Graphics > Upscaling (config `upscaler` 0 off / 1 FSR / 2 external, `
   Any other error ends it as before. Not seen live yet: whether the server keeps the session through the gap.
 - The PlayOnline chat is not waited for: a read on an established socket that fails as unreachable has already
   closed it (Linux tcp_write_err -> tcp_done), so the next read returns 0. Its close line now names the error.
+
+## Camera: the spring rests in front of a wall (ours, 2026-11-26)
+- Retail's free camera with a wall nearer than the spring's 3 behind the eye (MODLOG "Camera collision as retail"):
+  the spring pushes the eye out 12.5 % of the shortfall a tick, the look -> eye ray (A) finds nothing while the eye is
+  still in front of the wall, so it creeps up to the wall over a few ticks, crosses it, and (A) snaps it back to 0.5
+  in front. With a wall 2 back: 1.5, 1.69, 1.85, 2.0, then 1.5 again, every few ticks: the view bounces in and out
+  while standing still. Retail does the same at its 30 fps; ours ran it every 60 Hz tick.
+- Ours (camera.rs `spring`): a push stops 0.5 short of what the look -> pushed eye (+0.5) ray hits, where (A) would put
+  it, and never pulls in (that stays (A)'s). The eye settles there and stays. Test spring_rests_in_front_of_a_wall
+  (a wall 2 back: rests at 1.5; retail's spring in the same loop still saws by more than 0.3).

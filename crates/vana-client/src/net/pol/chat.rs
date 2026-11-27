@@ -388,6 +388,18 @@ fn command(line: &[u8]) -> &[u8] {
     s.split(|&c| c == b' ').next().unwrap_or(&[])
 }
 
+/// An ERROR line's code (byte 6 of its `(POL ...)` block): our words for polerr.bin's label, and polcore's number.
+fn error_text(code: u8) -> Option<(&'static str, u32)> {
+    Some(match code {
+        0xc9 => ("The PlayOnline ID is incorrect.", 203),
+        0xca => ("The PlayOnline password is incorrect.", 202),
+        0xcb => ("Three wrong passwords in a row: PlayOnline blocks sign-ins for a few minutes.", 205),
+        0xcc => ("PlayOnline refused this client's protocol version.", 204),
+        0xcd => ("PlayOnline could not reach its chat server. Try again later.", 206),
+        _ => return None,
+    })
+}
+
 /// What a refusal during sign-in means.
 fn refusal(body: &[u8]) -> Option<String> {
     let cmd = command(body);
@@ -399,7 +411,10 @@ fn refusal(body: &[u8]) -> Option<String> {
         // Found in the bytes: a lossy string's index is off by each invalid byte before it.
         if let Some(i) = body.windows(5).position(|w| w == b"(POL ") {
             let code = b32_decode(&body[i + 5..], 16).get(6).copied().unwrap_or(0);
-            return Some(format!("PlayOnline refused the sign-in (POL error {code:#x})."));
+            return Some(match error_text(code) {
+                Some((text, n)) => format!("{text} (POL-{n})"),
+                None => format!("PlayOnline refused the sign-in (POL error {code:#x})."),
+            });
         }
         return Some(format!("PlayOnline closed the connection: {text}"));
     }
@@ -654,6 +669,15 @@ mod tests {
     fn refusal_with_invalid_bytes() {
         assert!(refusal(b"ERROR \xff\xff\xff\xff (POL ").is_some());
         assert!(refusal(b"ERROR :Closing (POL NNNNNNNNNNNNNNNN)").unwrap().contains("POL error"));
+    }
+
+    /// The sign-in codes polcore maps: 0xca, a wrong PlayOnline password.
+    #[test]
+    fn refusal_codes() {
+        let mut block = [0u8; 10];
+        block[6] = 0xca;
+        let line = format!("ERROR :Closing (POL {})", b32_encode(&block));
+        assert_eq!(refusal(line.as_bytes()).unwrap(), "The PlayOnline password is incorrect. (POL-202)");
     }
 
     #[test]
