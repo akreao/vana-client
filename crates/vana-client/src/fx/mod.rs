@@ -330,6 +330,9 @@ pub struct ElemCpu {
     pub serial: u32,
     /// The tick it was made in (`Effects::ticks`): elements run newest first (`run_order`).
     pub born: u32,
+    /// Where the walk was when it was made (`Effects::visits`: its generator's task, the running scheduler, bucket
+    /// 0xb for one made inside an element's update).
+    pub rank: u32,
     /// Made inside an element's update (an end-stream burst, an element's clone): the factory puts it at the front
     /// of task bucket 0xb, behind the walk, so its first update is the next frame.
     pub late: bool,
@@ -524,17 +527,30 @@ pub struct Instance {
     pub area_light: Option<Vec3>,
     /// The damage number of the task that started it (gen +0x64 -> task +0xa8 / +0xa4); clones inherit it.
     pub dam: Option<DamValue>,
-    /// Its start in the serial order: the task list runs unattached generators in start order (FUN_10075120
-    /// appends).
+    /// Its start in the serial order; its task's node in the list (`tasklist::Node::Gen`).
     pub started: u32,
+    /// Its task's update is owed (the walk reached its node since it was linked, or it was linked ahead of the walk):
+    /// one linked behind the walk (before the running task, or in a bucket the walk has passed) makes nothing until
+    /// the next walk reaches it.
+    pub due: bool,
+    /// Where the last walk reached its task (`Effects::visits`): the elements it makes go to the front of bucket 0xb
+    /// in that order (`run_order`).
+    pub rank: u32,
+    /// Its task sits after bucket 0xb's anchor: what it makes is behind the walk, its first update the next frame.
+    pub past_elems: bool,
 }
 
-type RunKey = (u32, (u8, u32), u32);
+type RunKey = (u32, u32, u32);
 
-/// `Effects::run_order`'s key: the tick the element was made in, its generator's place in the walk (attach mode,
-/// start serial), its serial.
-fn run_key(born: u32, mode: u8, started: u32, serial: u32) -> RunKey {
-    (born, if matches!(mode, 0 | 0xe | 0xf | 0x14) { (0, started) } else { (1, !started) }, serial)
+/// `Effects::run_order`'s key: the tick the element was made in, where the walk was when it was made (`ElemCpu::rank`),
+/// its serial.
+fn run_key(born: u32, rank: u32, serial: u32) -> RunKey {
+    (born, rank, serial)
+}
+
+/// FUN_100531d0's test (0x10053318..0x10053343): attach modes 0, 0xe, 0xf and 0x14 are the unattached ones.
+fn attached_mode(mode: u8) -> bool {
+    !matches!(mode, 0 | 0xe | 0xf | 0x14)
 }
 
 /// Element update ops 0x33 / 0x46 (0x1004b604): a linked clone's matrix. Euler(element rotation), then for 0x33 the
@@ -738,15 +754,13 @@ struct ShineDrive {
 }
 
 /// Scheduler ops 0x75 / 0xa3 (FUN_100d60e0 hide, FUN_100d5f10 show) on actor1's `wepN` meshes, hide byte 0 / 1;
-/// a timed hide's end shows byte 0.
+/// a timed hide's end shows byte 0. The glow each starts was started in fx (`Effects::glow_in_op`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WeaponOp {
     pub actor: u32,
     pub n: u8,
     pub byte: u8,
     pub hide: bool,
-    /// The glow call is the client's to make; an op made it already (`Effects::glow_in_op`).
-    pub glow: bool,
 }
 
 pub use equip::{EquipCall, EquipState};
@@ -1160,6 +1174,8 @@ pub struct Effects {
     /// Ops 0x75 / 0xa3: an actor's `wepN` meshes hidden or shown.
     pub weapons: Vec<WeaponOp>,
     wep_timers: Vec<equip::WepTimer>,
+    /// The last op 0x75 timer's number (`equip::WepTimer::id`).
+    timer_ids: u64,
     /// fx/equip.rs: per actor, and the calls waiting to run.
     equip: HashMap<u32, EquipState>,
     equip_calls: Vec<(u32, EquipCall)>,
@@ -1297,6 +1313,15 @@ pub struct Effects {
     /// generators (`first_run`), as the walk reaches bucket 0xb after them.
     lives_done: bool,
     first_run: Vec<(u32, u32)>,
+    /// Nodes the walks have reached, counted (`Instance::rank`), and where the last walk reached bucket 0xb's anchor.
+    visits: u32,
+    elem_rank: u32,
+    /// The rank and the place behind bucket 0xb of what makes elements now (the running scheduler, the generator in
+    /// the generator pass): `ElemCpu::rank`, and `ElemCpu::late` for one behind the walk.
+    emit_rank: u32,
+    emit_late: bool,
+    /// Generator instances by start serial (`tasklist::Node::Gen`).
+    gen_at: HashMap<u32, usize>,
     /// Bumped whenever a ground projection's faces change (the renderer re-uploads them).
     pub decal_version: u64,
     /// Footstep dust to start next tick: generator and actor; actors that left a footprint.
@@ -1403,6 +1428,7 @@ impl Effects {
             status_restarts: Vec::new(),
             weapons: Vec::new(),
             wep_timers: Vec::new(),
+            timer_ids: 0,
             equip: HashMap::new(),
             equip_calls: Vec::new(),
             weapon_effect_off: false,
@@ -1475,6 +1501,11 @@ impl Effects {
             in_elem: false,
             lives_done: false,
             first_run: Vec::new(),
+            visits: 0,
+            elem_rank: 0,
+            emit_rank: 0,
+            emit_late: false,
+            gen_at: HashMap::new(),
             decal_version: 0,
             dust: Vec::new(),
             prints: Vec::new(),
@@ -1906,12 +1937,11 @@ impl Effects {
             gens.len()
         );
         for node in gens {
-            if let Some(i) = self.start((l, node), Owner::Weather(serial)) {
-                // FUN_100531d0: the generator's task, moved (FUN_10074a00 / FUN_100749b0(9)).
-                self.list.made(tasklist::Made::Moved);
-                if let Some(x) = self.insts[i].as_mut() {
-                    x.weather = if seconds > 0.0 { 0.0 } else { 1.0 };
-                }
+            // FUN_1018c020 -> FUN_100531d0: the generator's task, moved (FUN_10074a00 / FUN_100749b0(9)).
+            if let Some(i) = self.start((l, node), Owner::Weather(serial))
+                && let Some(x) = self.insts[i].as_mut()
+            {
+                x.weather = if seconds > 0.0 { 0.0 } else { 1.0 };
             }
         }
         true
@@ -2073,11 +2103,11 @@ impl Effects {
             });
             let weight = if serial == newest.0 { newest.1 } else { 1.0 - newest.1 };
             for n in missing {
-                if let Some(i) = self.start((l, n), Owner::Weather(serial)) {
-                    self.list.made(tasklist::Made::Moved);
-                    if let Some(x) = self.insts[i].as_mut() {
-                        x.weather = weight;
-                    }
+                // FUN_1018c0b0 -> FUN_100531d0.
+                if let Some(i) = self.start((l, n), Owner::Weather(serial))
+                    && let Some(x) = self.insts[i].as_mut()
+                {
+                    x.weather = weight;
                 }
             }
         }
@@ -2165,6 +2195,9 @@ impl Effects {
             area_light: None,
             dam: None,
             started: self.serial,
+            due: true,
+            rank: 0,
+            past_elems: false,
         };
         let i = match self.insts.iter().position(|x| x.is_none()) {
             Some(i) => {
@@ -2178,7 +2211,37 @@ impl Effects {
         };
         let v = self.by_src.entry(src).or_default();
         v.insert(v.partition_point(|&k| k < i), i);
+        self.gen_at.insert(self.serial, i);
+        self.link_gen(i, tasklist::GenLink::Start { attached: attached_mode(g.attach_mode()) });
         Some(i)
+    }
+
+    /// Instance `i`'s task made anew (FUN_100531d0 / FUN_10053370): its old one deleted, the new one linked. Inside a
+    /// walk or an element's update it is behind the walk unless the walk reaches it later (`Instance::due`).
+    pub(super) fn link_gen(&mut self, i: usize, how: tasklist::GenLink) {
+        let Some(x) = self.insts.get_mut(i).and_then(|x| x.as_mut()) else { return };
+        if self.in_elem {
+            self.list.new_generator_in_elem(x.started);
+        } else {
+            self.list.new_generator(x.started, how);
+        }
+        x.due = !(self.list.walking || self.in_elem);
+    }
+
+    /// An instance with no task of its own (an element's clone, FUN_100536c0 with its fourth argument 0 at
+    /// 0x1004ee86): it runs inside its element's update.
+    fn unlink_gen(&mut self, i: usize) {
+        let Some(x) = self.insts.get_mut(i).and_then(|x| x.as_mut()) else { return };
+        self.list.unlink(tasklist::Node::Gen(x.started));
+        x.due = true;
+    }
+
+    /// The walk reaches generator `serial`'s task: its update is owed, and what it makes goes where the walk is.
+    pub(super) fn visit_gen(&mut self, serial: u32, past_elems: bool) {
+        let rank = self.visits;
+        if let Some(x) = self.gen_at.get(&serial).and_then(|&i| self.insts.get_mut(i)).and_then(|x| x.as_mut()) {
+            (x.due, x.rank, x.past_elems) = (true, rank, past_elems);
+        }
     }
 
     /// FUN_100531d0 on a running instance: its clock and emissions from the start again (the start's matrix too), its
@@ -2194,6 +2257,8 @@ impl Effects {
             0x15 => Some(Mat4::from_cols(voyage.x_axis, voyage.y_axis, voyage.z_axis, glam::Vec4::W)),
             _ => None,
         };
+        let attached = attached_mode(x.mode);
+        self.link_gen(i, tasklist::GenLink::Start { attached });
     }
 
     fn alloc_slot(&mut self) -> u32 {
@@ -2234,6 +2299,8 @@ impl Effects {
     /// FUN_10052930(0): the instance and its elements go now.
     pub fn kill(&mut self, i: usize) {
         let Some(inst) = self.insts[i].take() else { return };
+        self.gen_at.remove(&inst.started);
+        self.list.unlink(tasklist::Node::Gen(inst.started));
         if let Some(v) = self.by_src.get_mut(&inst.src) {
             v.retain(|&k| k != i);
             if v.is_empty() {
@@ -2397,7 +2464,8 @@ impl Effects {
         self.step_decals(actors);
         let (voyage, sky) = (self.voyage, self.sky);
         for i in 0..self.insts.len() {
-            let Some(inst) = self.insts[i].as_mut().filter(|x| !x.held) else { continue };
+            // A task linked behind the walk makes nothing until the next walk reaches it.
+            let Some(inst) = self.insts[i].as_mut().filter(|x| !x.held && x.due) else { continue };
             attach(inst, f, voyage, sky);
             // Generator op 0x11: follow the actors every frame.
             if let Some(word) = inst.streams[0].iter().find(|o| o.code == 0x11).map(|o| o.u32(1))
@@ -2417,6 +2485,7 @@ impl Effects {
             // An element's clone runs inside that element's update (ops 0x25 / 0x33 / 0x46: FUN_1004a980 0x1004b5d0,
             // 0x1004b604 -> FUN_100496f0); a generator's own task runs before the elements (buckets 8 / 9).
             let in_elem = inst.driven.is_some();
+            (self.emit_rank, self.emit_late) = (inst.rank, inst.past_elems);
             let (m, a, b, wgt, ss, ms) =
                 (inst.matrix, inst.scale_a, inst.scale_b, inst.weather, inst.size_scaled, inst.mslot);
             self.put_slot(ms, m, a, b, wgt, ss);
@@ -2436,6 +2505,7 @@ impl Effects {
                 }
             }
         }
+        (self.emit_rank, self.emit_late) = (0, false);
         // The walk reaches bucket 0xb after the generators' tasks: what they made this frame runs its first update
         // now (FUN_10045a40 -> FUN_10044ae0: the life, then the update stream), the kicks of op 0x5f included.
         for (e, serial) in std::mem::take(&mut self.first_run) {
@@ -2621,13 +2691,11 @@ impl Effects {
 
     /// Where an element stands in retail's task walk, larger = earlier. The element factory moves every new element
     /// to the front of task bucket 0xb (FUN_1004e8d0 0x100511a4: FUN_100749b0(elem, DAT_10353710 = 0xb) ->
-    /// FUN_10074f80), so elements update newest first. Elements made in one frame come from generators the walk
-    /// reached in order: the unattached kinds (0, 0xe, 0xf, 0x14: FUN_100531d0 -> FUN_10075120, appended) in start
-    /// order, then the actor-attached ones (front of bucket 9), the last started first *(inf: an unattached generator
-    /// started by a running task goes just before that task instead)*.
+    /// FUN_10074f80), so elements update newest first. Ours makes a frame's elements in its own passes, so each
+    /// keeps where the walk was when retail would have made it (`ElemCpu::rank`: its generator's task in the list, the
+    /// running scheduler, bucket 0xb for one made in an element's update).
     fn run_order(&self, c: &ElemCpu) -> RunKey {
-        let (mode, started) = self.insts.get(c.inst).and_then(|x| x.as_ref()).map_or((0, 0), |x| (x.mode, x.started));
-        run_key(c.born, mode, started, c.serial)
+        run_key(c.born, c.rank, c.serial)
     }
 
     /// The CMoSkeletonElem models: actor id and whether its scheduler started (fx-shot's report).
@@ -2781,8 +2849,11 @@ impl Effects {
         cpu.inst = inst;
         cpu.serial = self.serial;
         cpu.born = self.ticks;
-        cpu.late = self.in_elem;
-        let first_run = !self.in_elem && self.lives_done;
+        // FUN_1004e8d0 puts it at the front of bucket 0xb: inside an element's update, or from a task past bucket 0xb,
+        // that is behind the walk (its first update the next frame).
+        cpu.late = self.in_elem || self.emit_late;
+        cpu.rank = if self.in_elem { self.elem_rank } else { self.emit_rank };
+        let first_run = !cpu.late && self.lives_done;
         if first_run {
             self.first_run.push((e, self.serial));
         }
@@ -2897,6 +2968,8 @@ impl Effects {
                     // 0x1004ee4a: +0x64 (the damage number) only from a parent that is a clone itself.
                     let dam = self.insts[inst].as_ref().filter(|x| x.clone).and_then(|x| x.dam.clone());
                     if let Some(ci) = self.start(src, Owner::Element(e as usize)) {
+                        // FUN_100536c0's fourth argument 0 (0x1004ee6d): no task; it runs in its element's update.
+                        self.unlink_gen(ci);
                         if let Some(x) = self.insts[ci].as_mut() {
                             x.parent_elem = Some(e);
                             x.driven = Some(e);
@@ -3038,6 +3111,10 @@ impl Effects {
         if new && let Some(x) = self.insts[ci].as_mut() {
             x.actors = actors;
         }
+        // A resource that runs only for bursts has no task until FUN_10053370 makes one (an end burst below).
+        if new && !end {
+            self.unlink_gen(ci);
+        }
         if end && self.is_static(src) {
             self.clear_elems(ci);
         }
@@ -3085,6 +3162,10 @@ impl Effects {
         let mut kept = None;
         // The parent is an argument of this one update; the per-frame task passes none (0x1005425e).
         let mut before = None;
+        if reset {
+            // FUN_10053370: the generator's task made anew, before the running task.
+            self.link_gen(i, tasklist::GenLink::Before);
+        }
         if let Some(x) = self.insts[i].as_mut() {
             before = Some(x.parent_elem);
             x.parent_elem = Some(e);
@@ -3766,15 +3847,14 @@ mod tests {
     use super::*;
 
     /// Retail's element walk (task bucket 0xb, each new element at its front): newest first. Within one tick the
-    /// generators ran unattached first in start order, then the attached ones newest first, so their elements come
-    /// in the reverse of that; a generator's burst, last made first.
+    /// elements were made where the walk reached what made them, so the later rank comes first; one generator's in
+    /// reverse order of making.
     #[test]
     fn elements_run_newest_first() {
-        // (born, generator mode, generator start serial, element serial), as the walk reaches them.
-        let walk =
-            [(9, 0, 5, 40), (8, 1, 3, 31), (8, 1, 3, 30), (8, 1, 7, 33), (8, 0, 6, 34), (8, 0xe, 2, 32), (7, 1, 3, 20)];
+        // (born, rank of what made it, element serial), as the walk reaches them.
+        let walk = [(9, 5, 40), (8, 9, 31), (8, 9, 30), (8, 7, 33), (8, 6, 34), (8, 2, 32), (7, 3, 20)];
         let mut sorted = walk;
-        sorted.sort_by_key(|&(b, m, st, se)| std::cmp::Reverse(run_key(b, m, st, se)));
+        sorted.sort_by_key(|&(b, r, se)| std::cmp::Reverse(run_key(b, r, se)));
         assert_eq!(sorted, walk);
     }
 
@@ -3782,7 +3862,7 @@ mod tests {
     /// elements newest first), keys below 0 last and the last inserted first, keys that are no number left out.
     #[test]
     fn table_ties_draw_as_inserted() {
-        let e = |born, serial| Some(run_key(born, 0, 1, serial));
+        let e = |born, serial| Some(run_key(born, 0, serial));
         let nodes = vec![
             (5000.0, e(1, 1), 1),
             (4000.0, e(1, 2), 2),

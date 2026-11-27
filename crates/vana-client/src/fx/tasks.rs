@@ -1188,27 +1188,49 @@ impl Effects {
     /// FUN_10074c30's walk over retail's one task list (tasklist.rs), one retail frame (`f.dt` its ticks): each node
     /// in list order (the schedulers and the entity loop's task), the walk's next taken before the node's update. A task an op's new scheduler makes in that
     /// scheduler's first update leaves the walk's next in front of the running task, which then runs again.
+    ///
+    /// Generators' tasks and op 0x75's timers are nodes too: a generator's update is owed from where the walk reaches
+    /// it (`Instance::due`), and what it makes goes to the front of bucket 0xb in walk order (`Instance::rank`), behind
+    /// the walk when its task is past bucket 0xb's anchor (`Instance::past_elems`).
     fn walk(&mut self, f: &Frame, actors: &dyn Actors) {
+        self.end_orphan_timers(actors);
         self.purge_list();
         self.list.walking = true;
+        let mut past = false;
         let mut cur = self.list.head();
         while let Some(n) = cur {
             self.list.step(n);
+            self.visits = self.visits.wrapping_add(1);
+            (self.emit_rank, self.emit_late) = (self.visits, past);
             match n {
                 tasklist::Node::Task(uid) => self.walk_task(uid, f, actors),
                 tasklist::Node::Entity => self.loop_task(f, actors),
+                tasklist::Node::Gen(serial) => self.visit_gen(serial, past),
+                tasklist::Node::Timer(id) => self.walk_timer(id, f, actors),
+                tasklist::Node::Anchor(tasklist::ELEM_BUCKET) => {
+                    past = true;
+                    self.elem_rank = self.visits;
+                }
                 _ => {}
             }
             cur = self.list.advance();
         }
         self.list.walking = false;
+        (self.emit_rank, self.emit_late) = (0, false);
         self.purge_list();
     }
 
     /// Drops the list's nodes of tasks that are gone (they would do nothing in the walk).
     fn purge_list(&mut self) {
         let live: std::collections::HashSet<u64> = self.tasks.iter().flatten().map(|t| t.uid).collect();
-        self.list.purge(&live);
+        let timers: std::collections::HashSet<u64> = self.wep_timers.iter().map(|t| t.id).collect();
+        let gens = &self.gen_at;
+        self.list.purge(|n| match n {
+            tasklist::Node::Task(u) => live.contains(&u),
+            tasklist::Node::Gen(s) => gens.contains_key(&s),
+            tasklist::Node::Timer(id) => timers.contains(&id),
+            _ => false,
+        });
         for t in self.tasks.iter().flatten() {
             self.list.adopt(t.uid);
         }
@@ -1289,7 +1311,6 @@ impl Effects {
     fn after_tasks(&mut self, f: &Frame, actors: &dyn Actors) {
         let live: Vec<u64> = self.tasks.iter().flatten().map(|t| t.uid).collect();
         self.step_shine(f.dt, &live);
-        self.step_wep_timers(f.dt, &live);
         // The hold sub-tasks end with their time or their task (its dtor deletes its children, FUN_10074890).
         self.held.clear();
         for (owner, id, kind, left) in std::mem::take(&mut self.task_holds) {
@@ -1483,6 +1504,10 @@ impl Effects {
     /// After a step: a task that ended wakes its parent and ends its action; one still running goes back in its slot.
     fn settle(&mut self, t: Task, i: usize, actors: Option<&dyn Actors>) {
         if t.done {
+            // Its children go with it (FUN_10074890): op 0x75's timers show their weapon now (FUN_10061920).
+            if let Some(a) = actors {
+                self.end_timers_of(t.uid, a);
+            }
             if let Some(p) = t.parent
                 && let Some(Some(pt)) = self.tasks.get_mut(p)
             {
@@ -2682,8 +2707,8 @@ impl Effects {
                     return Flow::Next;
                 };
                 let Some(f) = self.last_frame else { return Flow::Next };
-                // Generator tasks (FUN_10053370 / FUN_100531d0) are moved before the running task.
-                self.list.made(tasklist::Made::Moved);
+                // The generator tasks: B's clone made (FUN_100536c0(0, 0, 1) -> FUN_100531d0) and then, per A element,
+                // made anew before the running task (FUN_100538e0 -> FUN_10053370, `emit_once`).
                 // FUN_100538e0 per A element: one emission of the target with the element as parent (its count reset),
                 // the A element deleted.
                 let any = self.template_wide(ga);
@@ -2739,9 +2764,9 @@ impl Effects {
                 let Some(id) = self.doll_of(t.a1).id() else { return Flow::Next };
                 let (n, show) = (op.u16_at(0xc) as u8, op.u32_at(8) == 0);
                 // FUN_100d5f10: the glow on while engaged and not invisible (+0x128 bit 6), else off; FUN_100d60e0: off.
-                let glow_on = |actors: &dyn Actors| actors.applied_status(id) == 1 && !actors.invisible(id);
+                let glow_on = |actors: &dyn Actors| super::equip::glow_on(id, actors);
                 if op.code == 0xa3 {
-                    self.weapons.push(crate::fx::WeaponOp { actor: id, n, byte: 1, hide: !show, glow: false });
+                    self.weapons.push(crate::fx::WeaponOp { actor: id, n, byte: 1, hide: !show });
                     self.glow_in_op(id, n, show && glow_on(actors), actors);
                     return Flow::Next;
                 }
@@ -2750,11 +2775,13 @@ impl Effects {
                 }
                 let len = op.dur as f32 * t.speed;
                 let hide = !show || len != 0.0;
-                self.weapons.push(crate::fx::WeaponOp { actor: id, n, byte: 0, hide, glow: false });
+                self.weapons.push(crate::fx::WeaponOp { actor: id, n, byte: 0, hide });
                 if len != 0.0 {
                     // FUN_10061960: the timer (a child, FUN_10074790) is linked before its hide starts `!w02`.
-                    self.list.made(tasklist::Made::After);
+                    self.timer_ids += 1;
+                    self.list.new_timer(self.timer_ids);
                     self.wep_timers.push(super::equip::WepTimer {
+                        id: self.timer_ids,
                         owner: t.uid,
                         actor: id,
                         n,
@@ -3084,16 +3111,15 @@ impl Effects {
                 .find(|&i| self.insts[i].as_ref().is_some_and(|x| x.src == g && !x.clone && x.parent_elem.is_none()))
         {
             self.restart(i);
-            self.list.made(tasklist::Made::Moved);
             if let Some(x) = self.insts[i].as_mut() {
                 x.actors = [t.a1, t.a2];
             }
             self.attach_now(i, actors);
             return Some(i);
         }
+        // The generator's task (FUN_100536c0(.., 1) at 0x10059b10 -> FUN_100531d0): attached to the front of bucket 9,
+        // else before the running task.
         let i = self.start(g, Owner::Task(t.uid))?;
-        // The generator's task (FUN_10053370), moved before the running task.
-        self.list.made(tasklist::Made::Moved);
         // FUN_10041f40: "%d" of the task's number, ":" (the "Miss!" art) under `misv`; fixed at emission.
         let misv = self.reg.libs[t.res.0].tree.nodes[t.res.1].name == *b"misv";
         let dam = t.num.map(|(v, rgb)| super::DamValue {
@@ -4999,7 +5025,7 @@ mod tests {
             }
             (out, glow_names, weapons)
         };
-        let op = |hide: bool| crate::fx::WeaponOp { actor: A, n: 0, byte: 0, hide, glow: false };
+        let op = |hide: bool| crate::fx::WeaponOp { actor: A, n: 0, byte: 0, hide };
         // The hide's `!w02` makes a task in its first update: the scheduler runs again in frame 4's walk.
         let (counts, names, weapons) = run(wep_op(0x75, true, 0, 0), true, false);
         assert_eq!(counts, [8.0, 6.0, 4.0, 2.0, 98.0, 96.0]);
@@ -5016,11 +5042,135 @@ mod tests {
         assert_eq!((counts.as_slice(), names), (&[8.0, 6.0, 4.0, 2.0, 98.0, 96.0][..], vec!["!w02".to_string()]));
     }
 
+    /// Row 191: op 0x75's timed hide is a task of the list, after its scheduler (FUN_10074790). Its update in the walk
+    /// (FUN_100619d0) takes the frame's ticks and under 0.0 deletes it; its destructor (FUN_10061920) shows the weapon
+    /// and starts the glow there (FUN_100d5f10 -> FUN_100d5fe0), first update at once, the timer still the running
+    /// task: a task that update makes leaves the walk's next before the timer, which is unlinked, so nothing runs again.
+    /// The scheduler's end deletes the timer with it, inside its own update.
+    #[test]
+    fn timed_hide_ends_in_the_walk() {
+        let name = |n: &[u8; 4]| u32::from_le_bytes(*n);
+        let (parent, off, on) = (name(b"prnt"), name(b"!w02"), name(b"!w01"));
+        const A: u32 = 0x0001_0005;
+        // (the frame the weapon shows, the glow on's countdown then, the parent's countdowns)
+        let run = |rest: i16| -> (usize, f32, Vec<f32>) {
+            let mut fx = Effects::new();
+            let ops = vec![sop(0x01, 2, 0, 0), wep_op(0x75, false, 0, 6), sop(0x01, rest, 0, 0), sop(0x00, 0, 0, 0)];
+            fx.reg.add(sched_lib(1, &[(parent, ops)]));
+            let glow = vec![sop(0x72, 0, 0, 0), sop(0x01, 50, 0, 0), sop(0x00, 0, 0, 0)];
+            fx.reg.add(sched_lib(2, &[(off, glow.clone()), (on, glow)]));
+            let actors = Armed { invisible: false };
+            let r = (fx.lib_for(1).unwrap(), 0);
+            let ops = fx.sched_ops(r);
+            fx.tasks.push(Some(Task::new(r, ops, Who::Actor(A), Who::None, None, 1.0)));
+            let f = ticks_frame(RETAIL_FRAME);
+            let (mut shown, mut glow_left, mut counts) = (0, -1.0, Vec::new());
+            for k in 0..8 {
+                fx.tick(&f, &actors);
+                let named = |t: &Task, n: u32| fx.reg.libs[t.res.0].tree.nodes[t.res.1].name == n.to_le_bytes();
+                counts.push(fx.tasks.iter().flatten().find(|t| named(t, parent)).map_or(-1.0, |t| t.countdown));
+                if std::mem::take(&mut fx.weapons).iter().any(|w| !w.hide) {
+                    shown = k;
+                    glow_left = fx.tasks.iter().flatten().find(|t| named(t, on)).map_or(-1.0, |t| t.countdown);
+                }
+            }
+            (shown, glow_left, counts)
+        };
+        // The op runs in frame 0's walk, the timer right after it (6 - 2), then 2, 0, and -2 in frame 3: shown, `!w01`
+        // started with its first update (50 - 2), and the parent's countdown untouched by it.
+        let (shown, glow_left, counts) = run(100);
+        assert_eq!((shown, glow_left), (3, 48.0));
+        assert_eq!(counts[..6], [98.0, 96.0, 94.0, 92.0, 90.0, 88.0]);
+        // The scheduler ends first (its rest 2, gone in frame 2's walk): the timer goes with it in that update, and the
+        // weapon shows then.
+        let (shown, glow_left, _) = run(2);
+        assert_eq!((shown, glow_left), (2, 48.0));
+    }
+
+    /// Row 191: generators' tasks in the list (FUN_100531d0). Outside a walk the unattached ones go before bucket 9 in
+    /// start order and the attached ones to its front, so the walk reaches them in that order (`Instance::rank`). A
+    /// scheduler in the walk before bucket 9 links its unattached generator before itself (behind the walk: no update
+    /// until the next walk) and its attached one to the front of bucket 9 (reached in this walk). From the entity
+    /// loop's task (bucket 13) both are behind the walk, the unattached one past bucket 0xb's anchor.
+    #[test]
+    fn generator_tasks_in_the_walk() {
+        let name = |n: &[u8; 4]| u32::from_le_bytes(*n);
+        let strt = name(b"strt");
+        let mut dat = Vec::new();
+        res_dat(
+            &[
+                Res::Gen(b"gu01", 0),
+                Res::Gen(b"gu02", 0),
+                Res::Gen(b"ga01", 1),
+                Res::Gen(b"ga02", 1),
+                Res::Gen(b"gu03", 0),
+                Res::Gen(b"ga03", 1),
+                Res::Sched(
+                    b"strt",
+                    vec![
+                        sop(0x01, 3, 0, 0),
+                        sop(0x02, 0, 100, name(b"gu03")),
+                        sop(0x02, 0, 100, name(b"ga03")),
+                        sop(0x01, 100, 0, 0),
+                        sop(0x00, 0, 0, 0),
+                    ],
+                    false,
+                ),
+            ],
+            &mut dat,
+        );
+        let f = ticks_frame(RETAIL_FRAME);
+        let setup = || {
+            let mut fx = Effects::new();
+            fx.reg.add(Library::load(1, dat.clone()).unwrap());
+            fx
+        };
+        let inst = |fx: &Effects, n: &[u8; 4]| {
+            let names: Vec<_> =
+                fx.insts.iter().flatten().map(|x| String::from_utf8_lossy(&x.name).into_owned()).collect();
+            let x = fx.insts.iter().flatten().find(|x| x.name == *n).unwrap_or_else(|| panic!("{n:?} in {names:?}"));
+            (x.due, x.rank, x.past_elems)
+        };
+        let mut fx = setup();
+        let l = fx.reg.lib_of(1).unwrap();
+        for n in [b"gu01", b"ga01", b"gu02", b"ga02"] {
+            let g = fx.reg.libs[l].find_global(kind::GENERATOR, name(n)).unwrap();
+            fx.start((l, g), crate::fx::Owner::Zone).unwrap();
+        }
+        fx.tick(&f, &Two);
+        let ranks: Vec<_> = [b"gu01", b"gu02", b"ga02", b"ga01"].map(|n| inst(&fx, n)).to_vec();
+        assert!(ranks.iter().all(|r| r.0 && !r.2), "{ranks:?}");
+        assert!(ranks.windows(2).all(|w| w[0].1 < w[1].1), "{ranks:?}");
+        // A scheduler before bucket 9 starts them after its wait, in a walk.
+        fx.on_event_scheduler(1, strt, Who::None, Who::None);
+        fx.tick(&f, &Two);
+        assert!(fx.insts.iter().flatten().all(|x| x.name != *b"gu03"));
+        fx.tick(&f, &Two);
+        assert_eq!((inst(&fx, b"gu03").0, inst(&fx, b"ga03").0), (false, true));
+        assert!(inst(&fx, b"ga03").1 < inst(&fx, b"ga02").1);
+        fx.tick(&f, &Two);
+        // gu01, gu02, gu03 (before strt), strt, anchor 9, ga03, ga02, ga01.
+        let (u, a) = (inst(&fx, b"gu03"), inst(&fx, b"ga03"));
+        assert!(u.0 && !u.2 && inst(&fx, b"gu02").1 < u.1 && u.1 < a.1, "{u:?} {a:?}");
+        assert!(a.0 && !a.2 && a.1 < inst(&fx, b"ga02").1, "{a:?}");
+        // The same scheduler started by the entity loop.
+        let mut fx = setup();
+        fx.in_loop(|fx| fx.on_event_scheduler(1, strt, Who::None, Who::None));
+        fx.tick(&f, &Two);
+        fx.tick(&f, &Two);
+        assert_eq!((inst(&fx, b"gu03").0, inst(&fx, b"ga03").0), (false, false));
+        fx.tick(&f, &Two);
+        assert_eq!((inst(&fx, b"gu03").0, inst(&fx, b"gu03").2), (true, true));
+        assert_eq!((inst(&fx, b"ga03").0, inst(&fx, b"ga03").2), (true, false));
+    }
+
     /// A resource of a made-up scene file: a folder, a scheduler (looping: self-starting) or a 0x2f env block.
     enum Res {
         Folder(&'static [u8; 4], Vec<Res>),
         Sched(&'static [u8; 4], Vec<SOp>, bool),
         Env(&'static [u8; 4]),
+        /// A generator with no streams, its attach word.
+        Gen(&'static [u8; 4], u32),
     }
 
     fn res_dat(items: &[Res], dat: &mut Vec<u8>) {
@@ -5057,6 +5207,12 @@ mod tests {
                 Res::Env(name) => {
                     dat.extend(head(name, 12, 0x2f));
                     dat.extend(vec![0u8; 0xb0]);
+                }
+                Res::Gen(name, attach) => {
+                    dat.extend(head(name, 9, kind::GENERATOR));
+                    let mut d = vec![0u8; 0x80];
+                    d[..4].copy_from_slice(&attach.to_le_bytes());
+                    dat.extend(d);
                 }
             }
         }
@@ -5713,9 +5869,8 @@ mod tests {
             // The parent stands just before anchor 9 (linked with none running): the walk goes on there, with no
             // node made between the child and the parent.
             assert_eq!(fx.list.advance(), Some(tasklist::Node::Anchor(9)), "soft {soft}");
-            let live = fx.tasks.iter().flatten().map(|t| t.uid).collect();
             while fx.list.advance().is_some() {}
-            fx.list.purge(&live);
+            fx.purge_list();
         }
     }
 
@@ -6874,7 +7029,7 @@ mod skillchain_tests {
         fx.weapons.clear();
         fx.on_scheduler(1, 1, name(b"hwat"));
         fx.tick(&f, &Pair);
-        let op = |n, hide| crate::fx::WeaponOp { actor: 1, n, byte: 0, hide, glow: false };
+        let op = |n, hide| crate::fx::WeaponOp { actor: 1, n, byte: 0, hide };
         assert_eq!(fx.weapons, [op(0, false), op(1, false), op(2, true)]);
         // An explicit stop (model vtable +0x29c) frees the stopped task's holds too.
         fx.on_scheduler_alone(1, name(b"bntg"));
