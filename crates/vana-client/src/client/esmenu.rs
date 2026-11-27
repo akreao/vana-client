@@ -137,7 +137,7 @@ pub fn key(w: &mut World, gu: &GameUi, key: egui::Key) {
 }
 
 /// The mouse on mcres20 (rows and page arrows) or mcresmn; the slot editor's.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     use super::macroedit::generic;
     // The modern layer draws these and takes their mouse.
     if w.modern {
@@ -145,7 +145,7 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
     }
     let Some(s) = w.macroedit.as_ref().and_then(|m| m.sets.as_ref()) else { return };
     if s.ed.is_some() {
-        super::esedit::pointer(w, gu, sw, sh, p, moved, clicked, right);
+        super::esedit::pointer(w, gu, sw, sh, p, clicked, right);
         return;
     }
     if s.rename.is_some() {

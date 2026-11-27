@@ -1247,8 +1247,6 @@ pub(super) fn hit(w: &World, name: &str, win: &super::game_ui::LobbyWin) {
     super::winhits::record(w, name, win);
 }
 
-pub(super) use super::winhits::child_under;
-
 /// The generic window mouse with this chain's keys.
 pub(super) fn generic(
     w: &mut World,
@@ -1264,15 +1262,50 @@ pub(super) fn generic(
     super::winhits::generic(w, gu, name, cursor, ids, p, clicked, right, set, key);
 }
 
-/// The mouse on the chain (no typing field open). Over the other palette the focus moves there at that column
-/// *(inf: retail's window focus on a click)*.
-pub fn pointer(w: &mut World, gu: &GameUi, _sw: f32, _sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+/// The mouse on the chain (no typing field open): the focused window's children as the generic window, then the
+/// focused window's frame hook (super::winhits::hook, after the hover as FUN_10160fd0 runs them):
+/// - a palette's (win_mcr1edit_v28 0x101a61d0 / win_mcr2edit_v28 0x101a68b0): the pointer in the other palette's frame
+///   is FUN_101a5b10 with the palette's own column (both palettes' columns set to it, the focus to the other palette,
+///   SE 0001); in mcrbedit's frame, message 8 (Num+: mcrbedit takes the focus);
+/// - macro's (win_macro_v28 0x101a6fd0): with the cursor on lines 4..9, the pointer in mcrledit's frame is message 8;
+/// - mcrbedit's (FUN_101a7510) and mcrledit's (FUN_101a78b0): the pointer in macro's frame is message 8 (the menu
+///   closes, SE 0013).
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     if w.modern {
         return;
     }
+    hover(w, gu, sw, sh, p, clicked, right);
+    let Some(e) = w.macroedit.as_ref().filter(|m| m.sets.is_none()).and_then(|m| m.book.as_ref()?.edit.as_ref()) else {
+        return;
+    };
+    let hook = |name: &str| super::winhits::hook(w, gu, super::winhits::frame_of(w, name), p);
+    let (flip, plus) = match (&e.editor, e.bopt) {
+        (Some(d), _) if d.editing.is_some() => (None, false),
+        (Some(d), _) if d.lopt.is_some() => (None, hook(MACRO)),
+        (Some(d), _) => (None, (4..=9).contains(&d.sel) && hook(LEDIT)),
+        (None, Some(_)) => (None, hook(MACRO)),
+        (None, None) => {
+            let (focus, col) = (e.focus, e.cols[e.focus as usize - 1]);
+            (hook(&format!("palette{}", 3 - focus)).then_some((3 - focus, col)), hook(BEDIT))
+        }
+    };
+    if let Some((other, col)) = flip {
+        if let Some(e) = edit_mut(w) {
+            e.focus = other;
+            e.cols = [col; 2];
+        }
+        w.sounds.push(Ui::Cursor as u32);
+    }
+    if plus {
+        num_plus(w);
+    }
+}
+
+/// The hover and the buttons on the focused window of the chain.
+fn hover(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     let Some(me) = w.macroedit.as_ref() else { return };
     if me.sets.is_some() {
-        super::esmenu::pointer(w, gu, _sw, _sh, p, moved, clicked, right);
+        super::esmenu::pointer(w, gu, sw, sh, p, clicked, right);
         return;
     }
     let Some(b) = me.book.as_ref() else {
@@ -1313,12 +1346,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, _sw: f32, _sh: f32, p: (f32, f32), mo
                 }
             }),
             None => {
-                // The editor's twin of the same hover (0x101a62f4): the pointer over mcrledit is Num+.
-                if super::winhits::over(w, LEDIT, p) && (moved || clicked) && (4..=9).contains(&d.sel) {
-                    gu.hover.set(true);
-                    num_plus(w);
-                    return;
-                }
                 let sel = d.sel;
                 generic(w, gu, MACRO, sel, 1..=9, p, clicked, right, |w, id| {
                     if let Some(d) = edit_mut(w).and_then(|e| e.editor.as_mut()) {
@@ -1334,25 +1361,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, _sw: f32, _sh: f32, p: (f32, f32), mo
         }),
         (None, None) => {
             let (focus, cols) = (e.focus, e.cols);
-            // FUN_101a47e0: while the mouse drives the menus, the pointer over mcrbedit is the palette sending itself
-            // message 8, i.e. Num+.
-            if super::winhits::over(w, BEDIT, p) && (moved || clicked) {
-                gu.hover.set(true);
-                num_plus(w);
-                return;
-            }
-            let other = 3 - focus;
-            if let (Some(id), _) = child_under(w, &format!("palette{other}"), p, 1..=10, |_| Some((0.0, 0.0)))
-                && (moved || clicked)
-            {
-                gu.hover.set(true);
-                if let Some(e) = edit_mut(w) {
-                    e.focus = other;
-                    e.cols[other as usize - 1] = id - 1;
-                }
-                w.sounds.push(Ui::Cursor as u32);
-                return;
-            }
             let p_name = format!("palette{focus}");
             generic(w, gu, &p_name, cols[focus as usize - 1] + 1, 1..=10, p, clicked, right, |w, id| {
                 if let Some(e) = edit_mut(w) {

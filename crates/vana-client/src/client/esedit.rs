@@ -391,10 +391,11 @@ fn mogc_key(w: &mut World, gu: &GameUi, key: egui::Key, o: u16) {
 }
 
 /// The mouse: mcrmogc's or the grid's children as the generic window; the list's rows as the item list (a row takes
-/// the cursor by winhits::takes, a click on the cursor row is Enter); the pointer over the other of grid and list moves the focus
-/// (message 8), as the Equipment screen.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
-    use super::macroedit::{child_under, generic};
+/// the cursor by winhits::takes, a click on the cursor row is Enter). The pointer over the other of grid and list
+/// moves no focus: the grid's frame hook (win_mcresed_v28 0x10136d20) asks nothing of the mouse, and the list's
+/// (FUN_101f3d70) asks only about itmsortw / itmsort2, bank and menu equip (super::winhits::hook).
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
+    use super::macroedit::generic;
     if w.modern {
         return;
     }
@@ -407,16 +408,9 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
         });
         return;
     }
-    let (on_list, grid, mode, picked, scroll, cursor) = (e.on_list, e.grid, e.mode, e.picked, e.scroll, e.cursor);
+    let (on_list, grid, mode, scroll, cursor) = (e.on_list, e.grid, e.mode, e.scroll, e.cursor);
     let n = EXTRA + items(w, e).len();
     let row = super::post::picker_row(gu, sw, sh, p);
-    let (_, in_grid) = child_under(w, GRID, p, 1..=16, super::winhits::parts(gu, GRID));
-    if (moved || clicked)
-        && ((!on_list && row.is_some() && mode == 2) || (on_list && in_grid && mode == 1 && picked.is_none()))
-    {
-        num_plus(w);
-        return;
-    }
     if !on_list {
         let free = mode == 2 || ed(w).is_some_and(|e| e.mask == 0);
         generic(w, gu, GRID, grid, 1..=16, p, clicked, right, |w, id| {

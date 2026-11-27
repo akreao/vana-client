@@ -682,13 +682,41 @@ pub(super) fn over(gu: &GameUi, name: &str, sw: f32, sh: f32, p: (f32, f32)) -> 
     gu.window_rect(name, sw, sh).is_some_and(|[x, y, ww, hh]| p.0 >= x && p.0 < x + ww && p.1 >= y && p.1 < y + hh)
 }
 
+/// Message 8 between our window and theirs (Num+, and the frame hooks in `pointer`): trade's (win_trade_onkey
+/// 0x10152bb0 case 8) raises gift, gift's (FUN_1013a650 case 8) raises trade, each with SE 0013 (FUN_10037e90) and
+/// the cursors kept; after our OK too.
+pub fn num_plus(w: &mut World) {
+    let Some(u) = w.p2p.ui.as_mut() else { return };
+    u.focus = match u.focus {
+        PFocus::Trade => PFocus::Gift,
+        PFocus::Gift => PFocus::Trade,
+        _ => return,
+    };
+    w.sounds.push(Ui::Close as u32);
+}
+
 /// The mouse on the focused trade window: a child under it takes the cursor, a click on the cursor's child is Enter
-/// and a right click on the window Escape; the picker's rows as the item list's (items::pointer).
+/// and a right click on the window Escape; the picker's rows as the item list's (items::pointer). Then the frame hooks
+/// of player trade (super::winhits::hook): trade's (win_trade_v28 0x10152e80) sends itself message 8 while the
+/// pointer is in gift's frame, gift's (FUN_1013a540) while it is in trade's (`num_plus`).
 pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     // The modern layer draws these and takes their mouse.
     if w.modern {
         return;
     }
+    hover(w, gu, sw, sh, p, clicked, right);
+    let other = match (&w.handover, w.p2p.ui.as_ref().map(|u| u.focus)) {
+        (None, Some(PFocus::Trade)) => GIFT,
+        (None, Some(PFocus::Gift)) => TRADE,
+        _ => return,
+    };
+    if super::winhits::hook(w, gu, gu.window_rect(other, sw, sh), p) {
+        num_plus(w);
+    }
+}
+
+/// The hover and the buttons on the focused window.
+fn hover(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     let (window, picker, ctr) = match (&w.handover, &w.p2p.ui) {
         (Some(h), _) => match h.focus {
             Focus::Window => (Some((HANDOVER, h.cursor, 1..=11)), None, None),
@@ -1050,9 +1078,11 @@ fn p2p_key(w: &mut World, gu: &GameUi, key: egui::Key) {
         // FUN_101515e0: slots pick from the inventory (a filled one is cleared), OK sends Make, Cancel cancels, the gil
         // child asks the amount; after our OK only OK / Cancel take keys. Down from the bottom row moves to the gift.
         PFocus::Trade => match key {
+            // win_trade_onkey message 1 at the bottom edge: gift's cursor under ours, SE 0013 (FUN_10037e90), gift
+            // raised.
             K::ArrowDown if !w.modern && !locked && (5..=8).contains(&u.cursor) => {
                 (u.focus, u.gift) = (PFocus::Gift, u.cursor - 4);
-                w.sounds.push(Ui::Cursor as u32);
+                w.sounds.push(Ui::Close as u32);
             }
             // Modern: their slots are right of ours.
             K::ArrowRight if w.modern && !locked && matches!(u.cursor, 4 | 8) => {
@@ -1130,9 +1160,10 @@ fn p2p_key(w: &mut World, gu: &GameUi, key: egui::Key) {
             _ => {}
         },
         PFocus::Gift => match key {
+            // FUN_1013a650 message 2 at the top edge: our cursor over theirs, SE 0013, trade raised.
             K::ArrowUp if !w.modern && (1..=4).contains(&u.gift) => {
                 (u.focus, u.cursor) = (PFocus::Trade, u.gift + 4);
-                w.sounds.push(Ui::Cursor as u32);
+                w.sounds.push(Ui::Close as u32);
             }
             K::ArrowLeft if w.modern && matches!(u.gift, 1 | 5) => {
                 (u.focus, u.cursor) = (PFocus::Trade, u.gift + 3);
@@ -1146,10 +1177,8 @@ fn p2p_key(w: &mut World, gu: &GameUi, key: egui::Key) {
                     w.sounds.push(Ui::Cursor as u32);
                 }
             }
-            K::Escape => {
-                (u.focus, u.cursor) = (PFocus::Trade, 10);
-                w.sounds.push(Ui::Cancel as u32);
-            }
+            // FUN_1013a650 message 6: trade's cursor to Cancel and trade raised, no sound.
+            K::Escape => (u.focus, u.cursor) = (PFocus::Trade, 10),
             _ => {}
         },
         PFocus::Picker => {

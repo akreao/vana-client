@@ -507,11 +507,10 @@ pub(super) fn set_row(w: &mut World, k: usize) -> bool {
     true
 }
 
-/// The mouse: fe_main as the generic window; the focused list's rows the same. Every frame the focused list's update
-/// (FUN_101174b0 for fe_equip, FUN_10117d90 for fe_inven) sends itself message 8, as Num+, while the mouse drives the
-/// menus and is not busy (FUN_10127770: +0x4d == 2, FUN_10087070(0) clear) and the pointer is anywhere inside the
-/// other list (FUN_1011a0a0, a plain rectangle test). A resting pointer counts: after Num+ the keys come straight back,
-/// and with a pick held the refusal buzzes each frame, as retail does.
+/// The mouse: fe_main as the generic window; the focused list's rows the same. Then the focused list's frame hook
+/// (FUN_101174b0 for fe_equip, FUN_10117d90 for fe_inven; super::winhits::hook): the pointer anywhere inside the
+/// other list sends the list message 8, as Num+. A resting pointer counts: after Num+ the keys come straight back,
+/// and with a pick held the refusal buzzes every retail frame, as retail does.
 pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool, right: bool) {
     // The modern layer draws them and takes their mouse.
     if w.modern {
@@ -543,11 +542,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool, right: 
             (INVEN, EQUIP, u.cursor.saturating_sub(u.top), n.saturating_sub(u.top).min(ROWS))
         }
     };
-    if !super::textcmd::busy(w) && super::winhits::over(w, other, p) {
-        gu.hover.set(true);
-        key(w, egui::Key::Plus, false, false);
-        return;
-    }
     super::winhits::generic(
         w,
         gu,
@@ -567,6 +561,9 @@ pub fn pointer(w: &mut World, gu: &GameUi, p: (f32, f32), clicked: bool, right: 
         },
         keys,
     );
+    if super::winhits::hook(w, gu, super::winhits::frame_of(w, other), p) {
+        key(w, egui::Key::Plus, false, false);
+    }
 }
 
 /// fe_main: its cursor child's help. The lists: their layout's help (0xe 1106) and title (0xd 201), and in slot 2

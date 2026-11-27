@@ -304,8 +304,8 @@ pub fn key(w: &mut World, key: egui::Key) {
                 }
                 l.done = false;
             }
+            // lnowin's message 6 is its message 8 (FUN_101406e0): loot raised (FUN_10140720), SE 0013 alone.
             egui::Key::Escape => {
-                w.sounds.push(Ui::Cancel as u32);
                 w.sounds.push(13);
                 l.done = false;
             }
@@ -346,8 +346,27 @@ pub fn key(w: &mut World, key: egui::Key) {
 }
 
 /// The mouse (the generic window messages 9 / 5 / 6): a row of loot (or Cast Lot / Pass of lootope) takes the hand by
-/// winhits::takes, a click on the hand's child is Enter, a right click on the window is Escape.
-pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), moved: bool, clicked: bool, right: bool) {
+/// winhits::takes, a click on the hand's child is Enter, a right click on the window is Escape. Then loot's frame hook
+/// (win_loot_v28 0x1013ffe0, while loot has the focus and lnowin is up, +0x164): the pointer in lnowin's frame is
+/// message 8 (Num+: lnowin takes the focus, SE 0013; super::winhits::hook). lnowin's own hook asks nothing of the
+/// mouse.
+pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
+    // The modern layer draws these and takes their mouse.
+    if w.modern {
+        return;
+    }
+    hover(w, gu, sw, sh, p, clicked, right);
+    if w.loot.as_ref().is_some_and(|l| l.ope.is_none() && !l.done) {
+        let off = lnowin_off(gu, w, sw, sh);
+        let lno = gu.window_rect(LNOWIN, sw, sh).map(|[x, y, ww, h]| [x + off.0, y + off.1, ww, h]);
+        if super::winhits::hook(w, gu, lno, p) {
+            num_plus(w);
+        }
+    }
+}
+
+/// The hover and the buttons on the focused window.
+fn hover(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), clicked: bool, right: bool) {
     // The modern layer draws these and takes their mouse.
     if w.modern {
         return;
@@ -369,10 +388,6 @@ pub fn pointer(w: &mut World, gu: &GameUi, sw: f32, sh: f32, p: (f32, f32), move
                 key(w, egui::Key::Enter);
             }
         }
-        return;
-    }
-    if in_lno && (moved || clicked) {
-        num_plus(w);
         return;
     }
     let (Some((lx, ly)), Some(lay)) = (gu.window_xy(LOOT, sw, sh), gu.layout(LOOT)) else { return };
