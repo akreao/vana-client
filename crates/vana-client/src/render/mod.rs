@@ -2705,9 +2705,9 @@ impl ZoneGeometry {
         };
         let mut floor_faces: Vec<reflect::Face> = Vec::new();
         // The collision's water levels and the scenery water on them (render/reflect.rs); none for a sub-area.
-        let levels = match (&scene.collision, animate) {
-            (Some(c), true) => reflect::water_levels(c),
-            _ => Vec::new(),
+        let (levels, wet) = match (&scene.collision, animate) {
+            (Some(c), true) => (reflect::water_levels(c), reflect::WetGrid::build(c)),
+            _ => (Vec::new(), Default::default()),
         };
         let mut water_faces: Vec<reflect::Face> = Vec::new();
         let mut tex_mean: HashMap<String, [u8; 4]> = HashMap::new();
@@ -2783,26 +2783,26 @@ impl ZoneGeometry {
                     }
                 }
             }
-            // Scenery water (render/reflect.rs is_water): each model placed at full detail whose faces lie on the
-            // collision's water levels, its upward faces with its colour. Only placements whose box reaches a level
-            // are walked.
-            for model in mesh.models.iter().filter(|_| animate && levels.iter().any(|l| l.exact)) {
+            // Scenery water (render/reflect.rs water_mask): each model placed at full detail whose faces lie on the
+            // collision's water levels, its upward water faces with its colour. Only placements whose box may hold
+            // water (reflect::may_hold_water) are walked.
+            for model in mesh.models.iter().filter(|_| animate && (levels.iter().any(|l| l.exact) || !wet.is_empty())) {
                 let indices = if model.strip { strip_to_list(&model.indices) } else { model.indices.clone() };
                 for inst in matrices[start as usize..]
                     .iter()
                     .filter(|i| i.band[0] <= 0.0 && i.band[2] == 0.0 && i.band[3] == 0.0)
                 {
                     let m = Mat4::from_cols_array_2d(&inst.model);
-                    let (ylo, yhi) = (0..8).fold((f32::MAX, f32::MIN), |(a, b), k| {
+                    let (wlo, whi) = (0..8).fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(a, b), k| {
                         let c = Vec3::new(
                             if k & 1 == 0 { lo.x } else { hi.x },
                             if k & 2 == 0 { lo.y } else { hi.y },
                             if k & 4 == 0 { lo.z } else { hi.z },
                         );
-                        let y = m.transform_point3(c).y;
-                        (a.min(y), b.max(y))
+                        let w = m.transform_point3(c);
+                        (a.min(w), b.max(w))
                     });
-                    if !levels.iter().any(|l| l.exact && (l.holds(ylo) || l.holds(yhi) || (ylo < l.y && yhi > l.y))) {
+                    if !reflect::may_hold_water(&levels, &wet, wlo, whi) {
                         continue;
                     }
                     let tris: Vec<([Vec3; 3], [usize; 3])> = indices
@@ -2816,9 +2816,7 @@ impl ZoneGeometry {
                         })
                         .collect();
                     let corners: Vec<[Vec3; 3]> = tris.iter().map(|t| t.0).collect();
-                    if !reflect::is_water(&corners, &levels) {
-                        continue;
-                    }
+                    let Some(mask) = reflect::water_mask(&corners, &levels, &wet) else { continue };
                     let tex = *tex_mean.entry(model.texture.clone()).or_insert_with(|| {
                         scene
                             .textures
@@ -2828,8 +2826,8 @@ impl ZoneGeometry {
                     });
                     // Opaque unless blended (bit 0x8000: drawn after the opaque scenery, no depth written).
                     let kind = if model.blending & 0x8000 != 0 { reflect::SEE_THROUGH } else { reflect::OPAQUE };
-                    for (c, k) in tris {
-                        if reflect::faces_up(&m, k.map(|k| model.vertices[k].normal)) {
+                    for (i, (c, k)) in tris.into_iter().enumerate() {
+                        if mask.keeps(i, &m, k.map(|k| model.vertices[k].normal)) {
                             let rgba = k.map(|k| {
                                 let [b, g, r, a] = model.vertices[k].color.to_le_bytes();
                                 [r, g, b, a]
