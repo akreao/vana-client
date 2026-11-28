@@ -53,16 +53,24 @@ jobs:
         run: |
           set -euo pipefail
           branch="known-build/$VERSION-$SUM"
-          # An open PR is the proof it's up for review; a branch alone (a run whose PR step failed) is pushed again.
-          if [ -n "$(gh pr list --head "$branch" --state open --json number -q '.[].number')" ]; then
+          prs=$(gh pr list --head "$branch" --state all --json state -q '.[].state')
+          if grep -q OPEN <<< "$prs"; then
             echo "$branch is already up for review"
             exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch -c "$branch"
-          git commit -am "Known build $VERSION (FFXiMain.dll $SUM)"
-          git push --force -u origin "$branch"
+          if [ -n "$prs" ]; then
+            # a PR for it was closed or merged: that was a maintainer's call, and its branch is left as it is
+            echo "$branch had a PR ($prs); nothing opened again"
+            exit 0
+          fi
+          if ! git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git switch -c "$branch"
+            git commit -am "Known build $VERSION (FFXiMain.dll $SUM)"
+            git push -u origin "$branch"
+          fi
+          # a branch with no PR (an earlier run's PR step failed) gets its PR as it is, never rewritten
           gh pr create --base develop --head "$branch" --title "Known build $VERSION (FFXiMain.dll $SUM)" --body \
             "The patch server's FFXiMain.dll is a build the client doesn't know yet: checksum $SUM, version $VERSION.
           Merging this adds it to assets/known-builds.txt, so PlayOnline sign-in stops showing the unknown-build warning for it.
