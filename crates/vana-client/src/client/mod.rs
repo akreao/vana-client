@@ -757,7 +757,8 @@ impl Entity {
     const HIDE: u8 = 2;
     const SLEEP: u8 = 4;
 
-    /// Hidden or asleep by the server (+0x120 & 0x44000): not targetable, off the radar, marked for unloading.
+    /// Hidden or asleep by the server (+0x120 & 0x44000; an event's end writes the hide bit for the actors it
+    /// reserved, event::left_hidden): not targetable, off the radar, marked for unloading.
     fn server_hidden(&self) -> bool {
         self.flags & (Self::HIDE | Self::SLEEP) != 0
     }
