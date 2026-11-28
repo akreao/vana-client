@@ -378,6 +378,10 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
             t.set("owned", show == Show::Map)?;
             t.set("zone", r.zone)?;
             t.set("number", r.num)?;
+            // The shown record's key, and the sub-key under the player that the map window matches points (file
+            // 55504) against (MapWin::key, +0x102): they differ where that sub-key has no record and key 0 is shown.
+            t.set("key", r.key)?;
+            t.set("sub_key", super::super::map::sub_key(w, -1, true))?;
             t.set("file", r.file_id())?;
             t.set("scale", r.scale)?;
             let o = lua.create_table()?;

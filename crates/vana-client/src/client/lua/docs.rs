@@ -1214,7 +1214,7 @@ pub const FUNCS: &[Func] = &[
     Func {
         ns: "game",
         name: "map",
-        doc: "The map record where we stand, as the map window shows it: {kind ('map'; 'not_owned': retail's NO MAP shows while we don't have the map, markers where they would be; 'no_map_needed': the record's image, no marker), owned, zone, number (the map's page), file (its DAT id), scale, origin {x, y} (the image's top left in map pixels), size (512), px_per_unit (map pixels per world unit)}; nil where no map exists.",
+        doc: "The map record where we stand, as the map window shows it: {kind ('map'; 'not_owned': retail's NO MAP shows while we don't have the map, markers where they would be; 'no_map_needed': the record's image, no marker), owned, zone, number (the map's page), key (the shown record's sub-map key), sub_key (the sub-map key under the player, which the map window shows map points by: those with this key; it differs from key where it has no record and the zone's key-0 map is shown), file (its DAT id), scale, origin {x, y} (the image's top left in map pixels), size (512), px_per_unit (map pixels per world unit)}; nil where no map exists.",
         params: &[],
         ret: "table?",
     },
