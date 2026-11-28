@@ -260,6 +260,9 @@ pub struct Config {
     /// automation and packets.write on a PlayOnline login. Off (the default), they act only on the player's input
     /// there. Not a retail option.
     pub playonline_automation: bool,
+    /// The FFXiMain.dll checksum of a game build this client does not know that the player chose to play on anyway
+    /// (the PlayOnline sign-in's warning; 0 none): asked again only for another DLL.
+    pub accepted_build: u32,
     /// Movement Rate: the retail frames a second our own character moves in, 30 (the game's, two ticks a frame) or 60
     /// (one tick a frame, as retail plays with an fps add-on): the drawn place and turn ease once per frame either way.
     /// Not a retail option.
@@ -665,6 +668,7 @@ impl Default for Config {
             draw_distance: 0,
             send_interval: 400,
             playonline_automation: false,
+            accepted_build: 0,
             move_rate: crate::client::ground::MOVE_RATE_GAME,
             party_tp: true,
             window_opacity: Default::default(),

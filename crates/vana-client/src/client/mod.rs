@@ -9622,6 +9622,10 @@ pub struct App {
     mouse: mousecur::MouseCursor,
     /// A lobby or login error (or the new account's notice) waiting in the OK window on the login screen.
     login_error: Option<String>,
+    /// A PlayOnline sign-in held for the unknown-build warning (Continue / Cancel): the DLL's checksum, the passwords
+    /// and the one-time password; and the cursor (true on Continue).
+    build_ask: Option<(u32, String, String, String)>,
+    build_yes: bool,
     /// The backdrop behind a lobby run (lobbywin 85): ptcbgwin at the lobby entry, hnbackwi at the log-in.
     backdrop: Option<Backdrop>,
     /// A failed log-in run's popup over its backdrop; OK goes back to the title menu (FUN_10241200's -1).
@@ -9991,6 +9995,8 @@ impl App {
             cursor_in: false,
             cursor_hid_at: None,
             login_error: None,
+            build_ask: None,
+            build_yes: true,
             backdrop: None,
             lobby_popup: None,
             leave_lobby: false,
@@ -10201,7 +10207,11 @@ impl App {
 
     /// The lobby mods' phase, and what they asked for.
     fn lobby_mods_frame(&mut self) {
-        let busy = self.busy || self.netwait.is_some() || self.lobby_fade.busy() || self.login_error.is_some();
+        let busy = self.busy
+            || self.netwait.is_some()
+            || self.lobby_fade.busy()
+            || self.login_error.is_some()
+            || self.build_ask.is_some();
         let mut view = lua::lobby::View {
             server: self.cfg.server.clone(),
             account: self.cfg.username.clone(),
@@ -10663,6 +10673,22 @@ impl App {
         }
         // PlayOnline's game files are game_dir's.
         self.cfg.login_game_dir = None;
+        // The game's own build before anything goes to PlayOnline; one this client does not know is played only once
+        // the player has been warned (build_ask).
+        let dll = std::fs::read(crate::dat::ffximain(&self.cfg.ffxi_dir())).unwrap_or_default();
+        let applied = crate::patch::applied_version(&self.cfg.ffxi_dir());
+        let build = match crate::net::lobby::playonline_build(&dll, applied.as_deref(), &self.cfg.client_version) {
+            Ok(b) => b,
+            Err(e) => {
+                self.login_error = Some(e.to_string());
+                return;
+            }
+        };
+        if !build.known && self.cfg.accepted_build != build.checksum {
+            log::warn!("PlayOnline: FFXiMain.dll {:08X} is not a known build; asking first", build.checksum);
+            (self.build_ask, self.build_yes) = (Some((build.checksum, pol_password, password, otp)), true);
+            return;
+        }
         let cfg = self.cfg.clone();
         if self.drive.login.is_none() {
             let _ = self.cfg.save();
@@ -10684,9 +10710,6 @@ impl App {
                     se_password: password,
                     otp: (!otp.is_empty()).then_some(otp),
                 };
-                // The game's own build, known to this client, before anything goes to PlayOnline.
-                let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())).unwrap_or_default();
-                let version = crate::net::lobby::playonline_version(&dll)?;
                 let (session, pol) = crate::net::pol::sign_in(&creds)?;
                 let mut lobby = Lobby::connect(
                     crate::net::pol::LOBBY_HOST,
@@ -10694,7 +10717,7 @@ impl App {
                     0,
                     session,
                     &dll,
-                    version,
+                    &build.version,
                     5,
                     crate::dat::installed(&cfg.ffxi_dir()),
                     replies,
@@ -16668,7 +16691,11 @@ impl App {
                         page: false,
                         events: Vec::new(),
                     };
-                    let shown = if self.login_error.is_some() || self.twofa.is_some() || self.update_ui.is_some() {
+                    let shown = if self.login_error.is_some()
+                        || self.build_ask.is_some()
+                        || self.twofa.is_some()
+                        || self.update_ui.is_some()
+                    {
                         &none
                     } else {
                         &input
@@ -17020,6 +17047,68 @@ impl App {
                             self.login_error = None;
                             if let Some(a) = self.audio.as_mut() {
                                 a.ui(crate::audio::Ui::Select);
+                            }
+                        }
+                    }
+                    // Ours: a game build this client does not know, before a PlayOnline sign-in: Continue or Cancel
+                    // (ptc6yesn's place; Left / Right move the cursor, Enter picks, Escape cancels).
+                    if self.login_error.is_none()
+                        && let Some((sum, ..)) = self.build_ask.as_ref()
+                    {
+                        let text = format!(
+                            "This game's FFXiMain.dll ({sum:08X}) is a newer build than\nthis vana-client was made \
+                             for. Some things may not work\nuntil a client update. Continue to PlayOnline?"
+                        );
+                        let (sw, sh) = (size[0] as f32, size[1] as f32);
+                        let mut pick = None;
+                        for ev in &input.events {
+                            if let egui::Event::Key { key, pressed: true, .. } = ev {
+                                match key {
+                                    egui::Key::ArrowLeft | egui::Key::ArrowRight => self.build_yes = !self.build_yes,
+                                    egui::Key::Enter => pick = Some(self.build_yes),
+                                    egui::Key::Escape => pick = Some(false),
+                                    _ => {}
+                                }
+                            }
+                        }
+                        if modern_ui {
+                            let r = lu.popup_rects("menu    ptc6yesn", sw, sh);
+                            let frame = r.as_ref().map_or([0.0; 4], |r| lift(r.frame));
+                            let row = r
+                                .as_ref()
+                                .and_then(|r| r.children.first().map(|c| place(r.frame, c.1)))
+                                .unwrap_or(frame);
+                            let m = self.modern.get_or_insert_with(|| modern::Modern::new(ctx));
+                            let (scale, k, yes) = (self.cfg.modern_scale, self.ui_k, self.build_yes);
+                            if let Some(p) =
+                                m.choice_popup(ctx, window, scale, k, frame, row, &text, ["Continue", "Cancel"], yes)
+                            {
+                                pick = Some(p);
+                            }
+                        } else if let Some(win) = lu.yes_no_win(&text, self.build_yes, true, sw, sh)
+                            && input.clicked
+                            && let Some(p) = input.pointer
+                        {
+                            for (id, r) in &win.children {
+                                if inside(r, p) && matches!(id, 1 | 2) {
+                                    pick = Some(*id == 1);
+                                }
+                            }
+                        }
+                        if let Some(yes) = pick
+                            && let Some((sum, pp, p, o)) = self.build_ask.take()
+                        {
+                            if let Some(a) = self.audio.as_mut() {
+                                a.ui(if yes { crate::audio::Ui::Select } else { crate::audio::Ui::Cancel });
+                            }
+                            if yes {
+                                self.cfg.accepted_build = sum;
+                                if self.drive.login.is_none() {
+                                    let _ = self.cfg.save();
+                                }
+                                action = Some(Box::new(move |app: &mut App| app.login_playonline(pp, p, o)));
+                            } else {
+                                self.status = "PlayOnline sign-in cancelled.".into();
                             }
                         }
                     }
