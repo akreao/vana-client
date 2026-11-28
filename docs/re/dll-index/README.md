@@ -158,11 +158,12 @@ the two read differently is listed as unverified. `packets.py diff OLD NEW` writ
   remap reads as changed (instructions, not behaviour: a struct shift folded another way reads as changed too). Our
   code is matched by id and direction (a line naming the other direction is left out).
 
-The known-builds workflow (`.github/workflows/known-builds.yml`, added with the known-builds file) opens a "Known build" PR when the patch server has a
-DLL the client doesn't know. `python3 newbuild.py watch --post --queue FILE` is the local half: for each such open PR
-not handled yet (and opened by GitHub Actions from a `known-build/` branch of the repo) it runs the above for that version and comments `summary.md` on the PR. It reports only; the build
-goes into `assets/known-builds.txt` when the PR merges, after the packets are checked. Run it on a timer on a machine
-with Ghidra (it needs `gh` signed in); it never runs on GitHub, since the DLL and the decompiles must stay local.
+The known-builds workflow (`.github/workflows/known-builds.yml`, added with the known-builds file) opens a "Known
+build" PR when the patch server has a DLL the client doesn't know. `python3 newbuild.py watch --post --queue FILE` is
+the local half: for each such open PR not handled yet (and opened by GitHub Actions from a `known-build/` branch of
+the repo) it runs the above for that version and comments `summary.md` on the PR. It reports only; the build goes into
+`assets/known-builds.txt` when the PR merges, after the packets are checked. Run it on a timer on a machine with
+Ghidra (it needs `gh` signed in); it never runs on GitHub, since the DLL and the decompiles must stay local.
 
 ## Never commit
 
