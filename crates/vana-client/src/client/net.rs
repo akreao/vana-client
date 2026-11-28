@@ -2110,6 +2110,22 @@ fn with_injected(batch: &mut Vec<Vec<u8>>, injected: Vec<Vec<u8>>) {
     batch.splice(at..at, injected);
 }
 
+/// Mods' injected packets through the send gate in their order (`waiting`: the slots already taken): the credited
+/// ones (take_credits) hold their slots from the start, so the room test counts them before any other.
+fn admit_injected(gate: &mut SendGate, marked: Vec<(Vec<u8>, bool)>, waiting: usize, now: Instant) -> Vec<Vec<u8>> {
+    let mut sent = waiting + marked.iter().filter(|(_, free)| *free).count();
+    let mut out = Vec::new();
+    for (p, free) in marked {
+        let mut one = vec![p];
+        if !free {
+            gate.admit(&mut one, 0, sent, now);
+            sent += one.len();
+        }
+        out.extend(one);
+    }
+    out
+}
+
 fn session(
     addr: SocketAddr,
     login: &MapLogin,
@@ -3021,21 +3037,10 @@ impl Session<'_> {
                 NetCommand::Inject(packets) => {
                     // A replacement for a packet a hook held back takes that packet's gate slot; the rest ask, each
                     // in its place.
-                    // The credited ones hold their slots from the start: the room test counts them before any other.
-                    let now = Instant::now();
                     let marked = take_credits(packets, &mut self.credits);
-                    let mut sent = self.map.pending()
-                        + self.queue.len()
-                        + self.injected.len()
-                        + marked.iter().filter(|(_, free)| *free).count();
-                    for (p, free) in marked {
-                        let mut one = vec![p];
-                        if !free {
-                            self.gate.admit(&mut one, 0, sent, now);
-                            sent += one.len();
-                        }
-                        self.injected.extend(one);
-                    }
+                    let waiting = self.map.pending() + self.queue.len() + self.injected.len();
+                    let admitted = admit_injected(&mut self.gate, marked, waiting, Instant::now());
+                    self.injected.extend(admitted);
                     continue;
                 }
                 NetCommand::PacketHeld { id, body } => {
@@ -3487,6 +3492,20 @@ mod tests {
         let got =
             take_credits(vec![build(0x050, &[0; 4]), build(0x01A, &[0; 24]), build(0x050, &[0; 4])], &mut credits);
         assert_eq!(marks(got), [(0x050, false), (0x01A, true), (0x050, false)]);
+    }
+
+    /// At the queue's limit the credited cast keeps its slot: an equip before it is refused, the cast goes.
+    #[test]
+    fn credited_replacement_keeps_its_slot() {
+        let mut gate = SendGate::default();
+        let ids = |v: &[Vec<u8>]| v.iter().map(|p| sub_id(p)).collect::<Vec<_>>();
+        let now = Instant::now();
+        // 19 waiting + the cast's slot: the queue's room (fewer than 21 with the position's) is full for the equip.
+        let marked = vec![(build(0x050, &[0; 4]), false), (build(0x01A, &[0; 24]), true)];
+        assert_eq!(ids(&admit_injected(&mut gate, marked, 19, now)), [0x01A]);
+        // One slot more: both.
+        let marked = vec![(build(0x050, &[0; 4]), false), (build(0x01A, &[0; 24]), true)];
+        assert_eq!(ids(&admit_injected(&mut gate, marked, 18, now)), [0x050, 0x01A]);
     }
 
     /// Mods' injected packets go into the timed datagram before its trailing position, never after it.
