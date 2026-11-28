@@ -26,13 +26,24 @@ fn parse_source_tag(tag: &str) -> Option<Source> {
     }
 }
 
-/// Saved `owner/repo` for `keys`, or the first key when no repo is set.
+/// Saved `owner/repo` for `keys`, or the first key when no repo is set. A row's own list files (`--mods` / `--dats`)
+/// are part of it: two lists from one repository are not each other's updates.
 pub fn server_list_identity(keys: &[String]) -> String {
-    let repo = super::catalogue_cfg::repo_for_keys(keys);
-    if !repo.is_empty() {
-        return repo;
+    let store = crate::config::ServerCatalogues::load();
+    let Some(e) = keys.iter().filter_map(|k| store.get(k)).find(|e| !e.repo.is_empty()) else {
+        return keys.first().cloned().unwrap_or_default();
+    };
+    list_identity(e)
+}
+
+fn list_identity(e: &crate::config::ServerCatalogueEntry) -> String {
+    let mut id = e.repo.clone();
+    for (name, file) in [("mods", &e.mods), ("dats", &e.dats)] {
+        if let Some(f) = file.as_deref().filter(|f| !f.is_empty()) {
+            id.push_str(&format!("#{name}={f}"));
+        }
     }
-    keys.first().cloned().unwrap_or_default()
+    id
 }
 
 fn write_mark(work: &Path, version: &str, source: Source, list_id: Option<&str>) -> std::io::Result<()> {
@@ -548,6 +559,19 @@ pub fn install(e: &Entry, root: &Path, progress: &AtomicU32, source: Source, ser
 
 #[cfg(test)]
 mod tests {
+    /// A row's list files name its installs' list: the repository alone without them (as installs were marked).
+    #[test]
+    fn list_identity_names_list_files() {
+        let mut e = crate::config::ServerCatalogueEntry { repo: "a/b".into(), ..Default::default() };
+        assert_eq!(super::list_identity(&e), "a/b");
+        e.mods = Some("mods-test.json".into());
+        let one = super::list_identity(&e);
+        e.mods = Some("mods-live.json".into());
+        assert!(one != super::list_identity(&e) && one.starts_with("a/b"), "{one}");
+        e.dats = Some("dats.json".into());
+        assert_eq!(super::list_identity(&e), "a/b#mods=mods-live.json#dats=dats.json");
+    }
+
     use super::*;
 
     const LIST: &str = r#"{"format": 1, "mods": [

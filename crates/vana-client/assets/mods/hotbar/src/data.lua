@@ -587,9 +587,12 @@ function M.import_entries(main, entries, shared)
   return #new, skipped, nil, dropped
 end
 
-local function uses_in(main, id)
+-- The job's slots naming the entry. Once a pair has its own set the old layout is not counted (`legacy`: it is, as the
+-- pairs not played yet still start from it).
+local function uses_in(main, id, legacy)
   local n = 0
-  local paired = next(job_part(main, "sets", false) or {}) ~= nil or next(job_part(main, "pads", false) or {}) ~= nil
+  local paired = not legacy
+    and (next(job_part(main, "sets", false) or {}) ~= nil or next(job_part(main, "pads", false) or {}) ~= nil)
   each_set(main, function(set, old)
     if old and paired then return end
     for _, row in pairs(set) do
@@ -651,7 +654,7 @@ function M.set_sticky(main, id, on)
         return jid
       end
       each_job(function(job)
-        if job ~= main and uses_in(job, id) > 0 then take(job) end
+        if job ~= main and uses_in(job, id, true) > 0 then take(job) end
       end)
       nid = take(main)
       sticky.library[id] = nil

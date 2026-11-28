@@ -1,5 +1,5 @@
 name = "Retail Macros"
-version = "1.0.1"
+version = "1.0.2"
 description = "Brings your macro books over from a game install on this computer (retail's, found by itself or picked): copies the books you choose into this client's macro palettes, or turns their macros into Hotbars macros for the jobs you choose. //retailmacros opens it. It reads only the folder you allow, and changes nothing there."
 permissions = ["files.outside", "actions"]
 

@@ -33,7 +33,10 @@ end
 function M.titles(ttl1, ttl2)
   local out = {}
   for k = 1, 2 do
-    local p = payload(k == 1 and ttl1 or ttl2, 0x140)
+    -- Not `k == 1 and ttl1 or ttl2`: a missing first file would read the second's titles into books 1 to 20.
+    local raw = ttl1
+    if k == 2 then raw = ttl2 end
+    local p = payload(raw, 0x140)
     for i = 0, 19 do
       local t = p and cstr(p:sub(16 * i + 1, 16 * i + 16)) or ""
       local b = (k - 1) * 20 + i + 1

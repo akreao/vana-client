@@ -424,9 +424,24 @@ local function users_of(combo, b, i)
   return out
 end
 
+-- The key moves to this slot: another of our slots holding it gives it up (bind_all binds a shared key to the first
+-- slot only, so both keeping it would leave this one dead).
 local function set_key(b, i, combo)
+  local freed = {}
+  if combo ~= "" then
+    local o = opts()
+    for b2 = 1, o.bars do
+      for s2 = 1, o.slots do
+        if (b2 ~= b or s2 ~= i) and keys.combo(b2, s2) == combo then
+          keys.set_slot(b2, s2, "")
+          freed[#freed + 1] = ("bar %d, slot %d"):format(b2, s2)
+        end
+      end
+    end
+  end
   keys.set_slot(b, i, combo)
-  say(("bar %d, slot %d: %s."):format(b, i, keys.hint_or(b, i)))
+  say(("bar %d, slot %d: %s."):format(b, i, keys.hint_or(b, i))
+    .. (#freed > 0 and (" (taken from %s)"):format(table.concat(freed, ", ")) or ""))
   draw()
 end
 

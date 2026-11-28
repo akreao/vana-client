@@ -14,11 +14,14 @@ local M = {}
 local SETTLE = 2
 local last_sig, since, told = nil, 0, false
 
+local function signature()
+  local mj, sj = jobs.current()
+  return tostring(mj) .. "/" .. tostring(sj) .. ":" .. table.concat(game.abilities() or {}, ",")
+end
+
 -- Every half second (init.lua); true once, when the list has just settled.
 function M.watch()
-  local mj, sj = jobs.current()
-  local ids = game.abilities() or {}
-  local sig = tostring(mj) .. "/" .. tostring(sj) .. ":" .. table.concat(ids, ",")
+  local sig = signature()
   if sig ~= last_sig then
     last_sig, since, told = sig, clock(), false
     return false
@@ -30,7 +33,9 @@ function M.watch()
   return false
 end
 
-function M.ready() return last_sig ~= nil and clock() - since >= SETTLE end
+-- Settled for the jobs and list as they are now: a job change the watch has not seen yet (job_change rebuilds at
+-- once) is not, so the old pair's settled list never judges the new pair.
+function M.ready() return last_sig ~= nil and last_sig == signature() and clock() - since >= SETTLE end
 
 local function ability_ids()
   local have = {}

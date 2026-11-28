@@ -82,6 +82,13 @@ pub(super) fn read_file(path: &Path, version: u32) -> Option<Vec<u8>> {
 }
 
 pub(super) fn write_file(path: &Path, version: u32, payload: &[u8]) {
+    if let Err(e) = try_write_file(path, version, payload) {
+        log::warn!("macro file {}: {e}", path.display());
+    }
+}
+
+/// As write_file, the failure returned (the macro import reports it).
+fn try_write_file(path: &Path, version: u32, payload: &[u8]) -> std::io::Result<()> {
     let mut out = Vec::with_capacity(0x18 + payload.len());
     out.extend_from_slice(&version.to_le_bytes());
     out.extend_from_slice(&[0; 4]);
@@ -90,9 +97,13 @@ pub(super) fn write_file(path: &Path, version: u32, payload: &[u8]) {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    if let Err(e) = std::fs::write(path, out) {
-        log::warn!("macro file {}: {e}", path.display());
-    }
+    std::fs::write(path, out)
+}
+
+/// read_file for a file in a folder a mod named: a plain file only, never a link out of it.
+fn read_plain(path: &Path, version: u32) -> Option<Vec<u8>> {
+    std::fs::symlink_metadata(path).ok().filter(|m| m.file_type().is_file())?;
+    read_file(path, version)
 }
 
 /// FUN_101a2a10: "Book%02d" (group 10 0x6c), the names every book has before the ttl files are read.
@@ -527,10 +538,17 @@ impl Macros {
 
     /// FUN_101a27e0: mcr.ttl and mcr_2.ttl (0x140 bytes each).
     pub fn save_titles(&self) {
+        if let Err(e) = self.try_save_titles() {
+            log::warn!("macro titles: {e}");
+        }
+    }
+
+    fn try_save_titles(&self) -> std::io::Result<()> {
         for (k, name) in ["mcr.ttl", "mcr_2.ttl"].iter().enumerate() {
             let p: Vec<u8> = self.titles[k * 20..k * 20 + 20].iter().flatten().copied().collect();
-            write_file(&self.dir.join(name), 1, &p);
+            try_write_file(&self.dir.join(name), 1, &p)?;
         }
+        Ok(())
     }
 
     /// Copies `books` (0-based) of another USER/<content id> folder over this character's: their ten sets and titles,
@@ -549,7 +567,7 @@ impl Macros {
         self.save_set();
         let mut titles: Vec<[u8; 16]> = (0..BOOKS).map(default_name).collect();
         for (k, name) in ["mcr.ttl", "mcr_2.ttl"].iter().enumerate() {
-            if let Some(p) = read_file(&src.join(name), 1).filter(|p| p.len() == 0x140) {
+            if let Some(p) = read_plain(&src.join(name), 1).filter(|p| p.len() == 0x140) {
                 for i in 0..20 {
                     titles[k * 20 + i].copy_from_slice(&p[16 * i..16 * i + 16]);
                 }
@@ -573,10 +591,35 @@ impl Macros {
                 out.backup = Some(backup.clone());
             }
         }
-        for &b in &books {
+        let written = self.write_books(src, &books, &titles, &mut out);
+        if books.contains(&self.book) {
+            self.load_set();
+        }
+        match written {
+            Ok(()) => Ok(out),
+            Err(e) => Err(std::io::Error::new(
+                e.kind(),
+                match &out.backup {
+                    Some(b) => format!("{e}: only part was copied; the books replaced are in {}", b.display()),
+                    None => format!("{e}: only part was copied"),
+                },
+            )),
+        }
+    }
+
+    /// import_books' writes: each set, then the titles; the first that fails stops it.
+    fn write_books(
+        &mut self,
+        src: &Path,
+        books: &[usize],
+        titles: &[[u8; 16]],
+        out: &mut Imported,
+    ) -> std::io::Result<()> {
+        let names = |n: usize| if n == 0 { "mcr.dat".to_string() } else { format!("mcr{n}.dat") };
+        for &b in books {
             for s in 0..10 {
                 let name = names(b * 10 + s);
-                let mut recs: Vec<Macro> = match read_file(&src.join(&name), 1) {
+                let mut recs: Vec<Macro> = match read_plain(&src.join(&name), 1) {
                     Some(p) if p.len() == SET_PAYLOAD => p.chunks(RECORD).map(Macro::parse).collect(),
                     _ => vec![Macro::default(); 20],
                 };
@@ -592,16 +635,12 @@ impl Macros {
                 for m in &recs {
                     m.write(&mut p);
                 }
-                write_file(&self.dir.join(&name), 1, &p);
+                try_write_file(&self.dir.join(&name), 1, &p)?;
                 out.sets += 1;
             }
             self.titles[b] = if titles[b][0] == 0 { default_name(b) } else { titles[b] };
         }
-        self.save_titles();
-        if books.contains(&self.book) {
-            self.load_set();
-        }
-        Ok(out)
+        self.try_save_titles()
     }
 
     /// The book's title, "Book%02d" when empty (group 10 0x6c).
@@ -880,6 +919,42 @@ mod tests {
         assert!(m.import_books(&own, &[0]).is_err());
         assert!(m.import_books(&own.join("..").join(own.file_name().unwrap()), &[0]).is_err());
         assert_eq!(m.recs[0].title(), "Mine");
+        let _ = std::fs::remove_dir_all(&game);
+    }
+
+    /// A set the import cannot write fails it (no "copied" for a half-done import), naming the backup; a source file
+    /// that is a link is not read.
+    #[test]
+    fn import_books_failures() {
+        let game = scratch("impfail");
+        let src = game.join("retail/USER/1234");
+        let mut set = Vec::new();
+        let mut a = Macro::default();
+        a.title[..4].copy_from_slice(b"Cure");
+        a.write(&mut set);
+        for _ in 1..20 {
+            Macro::default().write(&mut set);
+        }
+        write_file(&src.join("mcr10.dat"), 1, &set);
+        let mut m = Macros::load(&game, 7, Box::new(|_| None));
+        m.set_title(1, b"Mine");
+        m.save(false);
+        // mcr11.dat (book 2, set 2) a folder: that set cannot be written.
+        std::fs::create_dir_all(m.dir().join("mcr11.dat")).unwrap();
+        let Err(e) = m.import_books(&src, &[1]) else { panic!("a set that cannot be written was not reported") };
+        let e = e.to_string();
+        assert!(e.contains("only part was copied") && e.contains("backup"), "{e}");
+        std::fs::remove_dir_all(m.dir().join("mcr11.dat")).unwrap();
+        #[cfg(unix)]
+        {
+            let outside = game.join("outside.ttl");
+            let mut t = vec![0u8; 0x140];
+            t[16..20].copy_from_slice(b"LINK");
+            write_file(&outside, 1, &t);
+            std::os::unix::fs::symlink(&outside, src.join("mcr.ttl")).unwrap();
+            assert!(m.import_books(&src, &[1]).is_ok());
+            assert_eq!(m.book_title(1), "Book02", "a linked title file was read");
+        }
         let _ = std::fs::remove_dir_all(&game);
     }
 }

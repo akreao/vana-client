@@ -64,7 +64,14 @@ settle()
 assert(names("THF", "NIN") == "1.1=Steal,1.2=Utsu,1.4=Tonko,1.7=Pact", names("THF", "NIN"))
 assert(writes > 0, "the pair's set was not saved")
 -- THF/DNC: Utsusemi is neither THF's nor DNC's; Spectral Jig listed now, kept; the NIN sub set's Tonko is not here.
-ME.sub_job, LISTED = 19, { 0x240, 0x2b5 }
+-- The sub job changed and the server's list for it has not come yet: the old pair's settled list judges nothing, Jig
+-- stays and nothing is saved.
+ME.sub_job = 19
+local before = writes
+assert(not subjob.ready(), "the old pair's settled list counted for THF/DNC")
+assert(names("THF", "DNC"):find("1.3=Jig", 1, true), names("THF", "DNC"))
+assert(writes == before, "THF/DNC's set was saved before its list came")
+LISTED = { 0x240, 0x2b5 }
 settle()
 assert(names("THF", "DNC") == "1.1=Steal,1.3=Jig,1.5=Gone,1.7=Pact", names("THF", "DNC"))
 -- The pairs are apart from here on.

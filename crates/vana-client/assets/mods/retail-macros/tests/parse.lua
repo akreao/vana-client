@@ -19,6 +19,9 @@ assert(mcr.file(40, 10) == "mcr399.dat")
 local ttl = string.rep("\0", 16) .. "WAR" .. string.rep("\0", 13) .. string.rep("\0", 16 * 18)
 local titles = mcr.titles(container(ttl), nil)
 assert(#titles == 40 and titles[1] == "Book01" and titles[2] == "WAR" and titles[21] == "Book21", titles[2])
+-- The first file missing: books 1 to 20 have no titles, the second file's stay books 21 to 40.
+titles = mcr.titles(nil, container(ttl))
+assert(titles[2] == "Book02" and titles[22] == "WAR", titles[2])
 
 local recs = { record("Provoke", { '/ja "Provoke" <t>' }), record("123456789X", { "/p bad" }) }
 for _ = 3, 20 do recs[#recs + 1] = record("", {}) end

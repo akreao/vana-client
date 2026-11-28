@@ -123,9 +123,14 @@ assert(keys.combo(1, 2) == "f1")
 ASKED, ANSWER = nil, 2
 KEYF({ key = "1", down = true })
 assert(ASKED and ASKED:find("bar 1, slot 1", 1, true), tostring(ASKED))
+-- Use It moves the key: the other slot gives it up (a shared key binds the first slot only).
+ANSWER = 1
+KEYF({ key = "1", down = true })
+assert(keys.combo(1, 2) == "1" and keys.combo(1, 1) == "", ("1:1 %q, 1:2 %q"):format(keys.combo(1, 1), keys.combo(1, 2)))
 -- Escape ends it: the keys are bound again, clicks run.
 assert(KEYF({ key = "escape", down = true }) == true)
-assert(not bar.assigning() and KEYF == nil and BOUND["f1"], "Escape did not end assigning")
+assert(not bar.assigning() and KEYF == nil and BOUND["1"], "Escape did not end assigning")
 bar.fire(1, 1)
 assert(ran == 1, "a click after assigning did not run the slot")
+assert(#require("src.keys").conflicts() == 0, "a moved key left a conflict")
 runner.run_checked = run
