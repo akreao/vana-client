@@ -4657,7 +4657,7 @@ mod tests {
         assert!(!no_position_in(None));
     }
 
-    /// 0x100952e7: only a zone-in event with Mode bit 0x80 starts in cinema mode, at (0, 0).
+    /// FUN_1008ee30: at the event's end only the actors it reserved keep the script's hide.
     #[test]
     fn reserved_actors_keep_the_scripts_hide() {
         // The Mog Garden's zone-in: it reserves the garden's actors and hides what is not unlocked (Chacharoon
@@ -4671,6 +4671,7 @@ mod tests {
         assert_eq!(left, [(0x111802b, true), (0x111803b, false), (0x1118087, true)]);
     }
 
+    /// 0x100952e7: only a zone-in event with Mode bit 0x80 starts in cinema mode, at (0, 0).
     #[test]
     fn login_mode_80_starts_cinema() {
         assert!(State::new(EventStart { mode: 0x80, login: true, ..Default::default() }).place_on);
