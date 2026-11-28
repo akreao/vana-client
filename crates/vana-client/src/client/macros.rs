@@ -100,10 +100,15 @@ fn try_write_file(path: &Path, version: u32, payload: &[u8]) -> std::io::Result<
     std::fs::write(path, out)
 }
 
-/// read_file for a file in a folder a mod named: a plain file only, never a link out of it.
-fn read_plain(path: &Path, version: u32) -> Option<Vec<u8>> {
-    std::fs::symlink_metadata(path).ok().filter(|m| m.file_type().is_file())?;
-    read_file(path, version)
+/// read_file for a file in `dir`, a folder a mod named: links resolved, and one leading out of the folder not read.
+fn read_within(dir: &Path, name: &str, version: u32) -> Option<Vec<u8>> {
+    let root = dir.canonicalize().ok()?;
+    let path = dir.join(name).canonicalize().ok()?;
+    if !path.starts_with(&root) {
+        log::warn!("macro import: {name} leads out of {}; not read", dir.display());
+        return None;
+    }
+    read_file(&path, version)
 }
 
 /// FUN_101a2a10: "Book%02d" (group 10 0x6c), the names every book has before the ttl files are read.
@@ -543,12 +548,18 @@ impl Macros {
         }
     }
 
+    /// Both title files written, the first failure returned (one failing still writes the other).
     fn try_save_titles(&self) -> std::io::Result<()> {
+        let mut first = Ok(());
         for (k, name) in ["mcr.ttl", "mcr_2.ttl"].iter().enumerate() {
             let p: Vec<u8> = self.titles[k * 20..k * 20 + 20].iter().flatten().copied().collect();
-            try_write_file(&self.dir.join(name), 1, &p)?;
+            if let Err(e) = try_write_file(&self.dir.join(name), 1, &p)
+                && first.is_ok()
+            {
+                first = Err(e);
+            }
         }
-        Ok(())
+        first
     }
 
     /// Copies `books` (0-based) of another USER/<content id> folder over this character's: their ten sets and titles,
@@ -567,7 +578,7 @@ impl Macros {
         self.save_set();
         let mut titles: Vec<[u8; 16]> = (0..BOOKS).map(default_name).collect();
         for (k, name) in ["mcr.ttl", "mcr_2.ttl"].iter().enumerate() {
-            if let Some(p) = read_plain(&src.join(name), 1).filter(|p| p.len() == 0x140) {
+            if let Some(p) = read_within(src, name, 1).filter(|p| p.len() == 0x140) {
                 for i in 0..20 {
                     titles[k * 20 + i].copy_from_slice(&p[16 * i..16 * i + 16]);
                 }
@@ -619,7 +630,7 @@ impl Macros {
         for &b in books {
             for s in 0..10 {
                 let name = names(b * 10 + s);
-                let mut recs: Vec<Macro> = match read_plain(&src.join(&name), 1) {
+                let mut recs: Vec<Macro> = match read_within(src, &name, 1) {
                     Some(p) if p.len() == SET_PAYLOAD => p.chunks(RECORD).map(Macro::parse).collect(),
                     _ => vec![Macro::default(); 20],
                 };
@@ -952,8 +963,13 @@ mod tests {
             t[16..20].copy_from_slice(b"LINK");
             write_file(&outside, 1, &t);
             std::os::unix::fs::symlink(&outside, src.join("mcr.ttl")).unwrap();
+            // A link inside the folder is read, as the preview reads it.
+            std::fs::rename(src.join("mcr10.dat"), src.join("set.bin")).unwrap();
+            std::os::unix::fs::symlink(src.join("set.bin"), src.join("mcr10.dat")).unwrap();
             assert!(m.import_books(&src, &[1]).is_ok());
-            assert_eq!(m.book_title(1), "Book02", "a linked title file was read");
+            assert_eq!(m.book_title(1), "Book02", "a title file linked out of the folder was read");
+            m.switch(1, 0);
+            assert_eq!(m.recs[0].title(), "Cure", "a set linked inside the folder was not read");
         }
         let _ = std::fs::remove_dir_all(&game);
     }

@@ -183,7 +183,7 @@ local function copy_to_palettes()
     .. "backup."):format(#books), { "Copy", "Cancel" }, function(k)
     if k ~= 1 then return end
     actions.macro_import(S.char.path, books)
-    status(("Copied %d book(s): the chat log says where the old ones went."):format(#books))
+    status(("Copying %d book(s): the chat log says how it went, and where the old ones are kept."):format(#books))
   end)
 end
 

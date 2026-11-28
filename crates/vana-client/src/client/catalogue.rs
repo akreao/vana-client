@@ -26,24 +26,23 @@ fn parse_source_tag(tag: &str) -> Option<Source> {
     }
 }
 
-/// Saved `owner/repo` for `keys`, or the first key when no repo is set. A row's own list files (`--mods` / `--dats`)
-/// are part of it: two lists from one repository are not each other's updates.
-pub fn server_list_identity(keys: &[String]) -> String {
+/// Saved `owner/repo` for `keys`, or the first key when no repo is set. The row's own list file for the entry's kind
+/// (`--mods` for Lua mods, `--dats` for DAT packs) is part of it: two lists of one kind from one repository are not
+/// each other's updates, and the other kind's file changing leaves this kind's alone.
+pub fn server_list_identity(keys: &[String], e: &Entry) -> String {
     let store = crate::config::ServerCatalogues::load();
-    let Some(e) = keys.iter().filter_map(|k| store.get(k)).find(|e| !e.repo.is_empty()) else {
+    let Some(row) = keys.iter().filter_map(|k| store.get(k)).find(|r| !r.repo.is_empty()) else {
         return keys.first().cloned().unwrap_or_default();
     };
-    list_identity(e)
+    list_identity(row, e.kind != "lua")
 }
 
-fn list_identity(e: &crate::config::ServerCatalogueEntry) -> String {
-    let mut id = e.repo.clone();
-    for (name, file) in [("mods", &e.mods), ("dats", &e.dats)] {
-        if let Some(f) = file.as_deref().filter(|f| !f.is_empty()) {
-            id.push_str(&format!("#{name}={f}"));
-        }
+fn list_identity(row: &crate::config::ServerCatalogueEntry, pack: bool) -> String {
+    let (name, file) = if pack { ("dats", &row.dats) } else { ("mods", &row.mods) };
+    match file.as_deref().filter(|f| !f.is_empty()) {
+        Some(f) => format!("{}#{name}={f}", row.repo),
+        None => row.repo.clone(),
     }
-    id
 }
 
 fn write_mark(work: &Path, version: &str, source: Source, list_id: Option<&str>) -> std::io::Result<()> {
@@ -380,7 +379,7 @@ pub fn entry_status(e: &Entry, source: Source, server_keys: &[String]) -> Option
         (None, _) => offer(e, None),
         (Some(v), Some(s)) if s == source => {
             if source == Source::Server {
-                let cur = server_list_identity(server_keys);
+                let cur = server_list_identity(server_keys, e);
                 match installed_server_list_id(&root, &e.id) {
                     Some(inst) if inst != cur => None,
                     _ => offer(e, Some(v)),
@@ -477,7 +476,7 @@ fn require_manifest_id(work: &Path, catalogue_id: &str, source: Source) -> Resul
 /// catalogue Lua mods are given the permissions they ask for at install; server mods are not (prompt on first load).
 /// Returns the folder's name.
 pub fn install(e: &Entry, root: &Path, progress: &AtomicU32, source: Source, server_keys: &[String]) -> Result<String> {
-    let list_id = (source == Source::Server).then(|| server_list_identity(server_keys));
+    let list_id = (source == Source::Server).then(|| server_list_identity(server_keys, e));
     if source == Source::Server {
         super::lua::clear_grants_for_mod(&e.id);
     }
@@ -559,17 +558,20 @@ pub fn install(e: &Entry, root: &Path, progress: &AtomicU32, source: Source, ser
 
 #[cfg(test)]
 mod tests {
-    /// A row's list files name its installs' list: the repository alone without them (as installs were marked).
+    /// A row's list file for the kind names its installs' list: the repository alone without one (as installs were
+    /// marked), and the other kind's file never counts.
     #[test]
     fn list_identity_names_list_files() {
         let mut e = crate::config::ServerCatalogueEntry { repo: "a/b".into(), ..Default::default() };
-        assert_eq!(super::list_identity(&e), "a/b");
+        assert_eq!((super::list_identity(&e, false), super::list_identity(&e, true)), ("a/b".into(), "a/b".into()));
         e.mods = Some("mods-test.json".into());
-        let one = super::list_identity(&e);
+        let one = super::list_identity(&e, false);
         e.mods = Some("mods-live.json".into());
-        assert!(one != super::list_identity(&e) && one.starts_with("a/b"), "{one}");
+        assert!(one != super::list_identity(&e, false) && one.starts_with("a/b"), "{one}");
+        assert_eq!(super::list_identity(&e, true), "a/b");
         e.dats = Some("dats.json".into());
-        assert_eq!(super::list_identity(&e), "a/b#mods=mods-live.json#dats=dats.json");
+        assert_eq!(super::list_identity(&e, false), "a/b#mods=mods-live.json");
+        assert_eq!(super::list_identity(&e, true), "a/b#dats=dats.json");
     }
 
     use super::*;

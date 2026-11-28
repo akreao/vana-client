@@ -426,7 +426,8 @@ end
 
 -- The key moves to this slot: another of our slots holding it gives it up (bind_all binds a shared key to the first
 -- slot only, so both keeping it would leave this one dead).
-local function set_key(b, i, combo)
+-- `default`: the slot goes back to the bar's key (no override of its own), taken the same way.
+local function set_key(b, i, combo, default)
   local freed = {}
   if combo ~= "" then
     local o = opts()
@@ -439,24 +440,24 @@ local function set_key(b, i, combo)
       end
     end
   end
-  keys.set_slot(b, i, combo)
+  keys.set_slot(b, i, (not default) and combo or nil)
   say(("bar %d, slot %d: %s."):format(b, i, keys.hint_or(b, i))
     .. (#freed > 0 and (" (taken from %s)"):format(table.concat(freed, ", ")) or ""))
   draw()
 end
 
 -- A collision asks first, at the pointer (over the slot).
-local function assign_key(b, i, combo)
+local function assign_key(b, i, combo, default)
   local users = users_of(combo, b, i)
   if #users == 0 then
-    set_key(b, i, combo)
+    set_key(b, i, combo, default)
     return
   end
   A.asking = true
   ui.prompt(("%s is also %s. Use it for bar %d, slot %d anyway?"):format(pretty(combo), table.concat(users, "; "), b, i),
     { "Use It", "Cancel" }, function(k)
       A.asking = false
-      if k == 1 then set_key(b, i, combo) end
+      if k == 1 then set_key(b, i, combo, default) end
     end, "pointer")
 end
 
@@ -514,11 +515,7 @@ open_menu = function(b, i)
         items[#items + 1] = { "Clear this slot's key", function() set_key(b, i, "") end }
       end
       if keys.get_slot(b, i) then
-        items[#items + 1] = { "Use the bar's key", function()
-          keys.set_slot(b, i, nil)
-          say(("bar %d, slot %d: %s."):format(b, i, keys.hint_or(b, i)))
-          draw()
-        end }
+        items[#items + 1] = { "Use the bar's key", function() assign_key(b, i, keys.default_combo(b, i), true) end }
       end
     elseif macro then
       items[#items + 1] = { "Clear the slot", function()

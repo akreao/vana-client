@@ -127,6 +127,14 @@ assert(ASKED and ASKED:find("bar 1, slot 1", 1, true), tostring(ASKED))
 ANSWER = 1
 KEYF({ key = "1", down = true })
 assert(keys.combo(1, 2) == "1" and keys.combo(1, 1) == "", ("1:1 %q, 1:2 %q"):format(keys.combo(1, 1), keys.combo(1, 2)))
+-- Use the bar's key on slot 1 takes "1" back the same way (asks, then slot 2 gives it up).
+H(nil, { kind = "click", id = "c", x = 20, y = 64, button = "right" })
+assert(WINDOWS.slotmenu.title == "Bar 1, Slot 1", WINDOWS.slotmenu.title)
+ASKED, ANSWER = nil, 1
+pick("Use the bar's key")
+assert(ASKED and ASKED:find("bar 1, slot 2", 1, true), tostring(ASKED))
+assert(keys.get_slot(1, 1) == nil and keys.combo(1, 1) == "1" and keys.combo(1, 2) == "",
+  ("1:1 %q, 1:2 %q"):format(keys.combo(1, 1), keys.combo(1, 2)))
 -- Escape ends it: the keys are bound again, clicks run.
 assert(KEYF({ key = "escape", down = true }) == true)
 assert(not bar.assigning() and KEYF == nil and BOUND["1"], "Escape did not end assigning")
