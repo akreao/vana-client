@@ -32,13 +32,18 @@ jobs:
       - name: Current retail build
         id: build
         run: |
-          line=$(cargo run --release --locked -q -p vana-client -- known-build --to "$RUNNER_TEMP/ffxi" \
-            --write crates/vana-client/assets/known-builds.txt | head -1)
-          echo "$line"
-          set -- $line
-          echo "sum=$1" >> "$GITHUB_OUTPUT"
-          echo "version=$2" >> "$GITHUB_OUTPUT"
-          echo "state=$3" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          out=$(cargo run --release --locked -q -p vana-client -- known-build \
+            --write crates/vana-client/assets/known-builds.txt)
+          echo "$out"
+          read -r sum version state _ <<< "$(head -1 <<< "$out")"
+          if [[ ! "$sum" =~ ^[0-9A-F]{8}$ || ! "$version" =~ ^[0-9]{8}_[0-9]+$ || ! "$state" =~ ^(known|new)$ ]]; then
+            echo "::error::unexpected known-build output"
+            exit 1
+          fi
+          echo "sum=$sum" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "state=$state" >> "$GITHUB_OUTPUT"
       - name: Pull request for a new build
         if: steps.build.outputs.state == 'new'
         env:
@@ -46,8 +51,10 @@ jobs:
           SUM: ${{ steps.build.outputs.sum }}
           VERSION: ${{ steps.build.outputs.version }}
         run: |
+          set -euo pipefail
           branch="known-build/$VERSION-$SUM"
-          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+          # An open PR is the proof it's up for review; a branch alone (a run whose PR step failed) is pushed again.
+          if [ -n "$(gh pr list --head "$branch" --state open --json number -q '.[].number')" ]; then
             echo "$branch is already up for review"
             exit 0
           fi
@@ -55,8 +62,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
           git commit -am "Known build $VERSION (FFXiMain.dll $SUM)"
-          git push -u origin "$branch"
+          git push --force -u origin "$branch"
           gh pr create --base develop --head "$branch" --title "Known build $VERSION (FFXiMain.dll $SUM)" --body \
             "The patch server's FFXiMain.dll is a build the client doesn't know yet: checksum $SUM, version $VERSION.
           Merging this adds it to assets/known-builds.txt, so PlayOnline sign-in stops showing the unknown-build warning for it.
-          Check the build's packets against the client's first (export it to re-notes/builds, compare with docs/re/dll-index)."
+          The patch server is SE's plain PlayOnline protocol (no signature, as the retail updater has it), so this PR is the trust point: check the build's packets against the client's first (newbuild.py watch comments the packet diff here)."

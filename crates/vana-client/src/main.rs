@@ -125,9 +125,6 @@ enum Cmd {
         version: Option<String>,
         #[arg(long)]
         write: Option<PathBuf>,
-        /// Where the fetched DLL goes (deleted after).
-        #[arg(long)]
-        to: Option<PathBuf>,
     },
     /// Trust a server's new TLS certificate: forget what is pinned for HOST (every port, or --port), so the next
     /// connection pins the certificate it is sent. With --fingerprint and --port, pin that key's SHA-256 instead.
@@ -1295,20 +1292,17 @@ fn main() -> Result<()> {
             };
             client::run(config::Config::load(), drive)
         }
-        Cmd::KnownBuild { dll, version, write, to } => {
+        Cmd::KnownBuild { dll, version, write } => {
             let (bytes, version) = match dll {
                 Some(p) => {
                     let v = version.ok_or_else(|| anyhow::anyhow!("--dll needs --version"))?;
                     (std::fs::read(&p)?, v)
                 }
                 None => {
-                    let dir = to.unwrap_or_else(|| {
-                        std::env::temp_dir().join(format!("vana-known-build-{}", std::process::id()))
-                    });
-                    let (out, stamp) = patch::fetch_one("FFXiMain.dll", &dir)?;
-                    let b = std::fs::read(&out)?;
-                    let _ = std::fs::remove_file(&out);
-                    (b, version.unwrap_or(stamp))
+                    // In memory: nothing on disk is written or replaced. The version is the release the patch
+                    // server is on (what PlayOnline sign-in sends with this DLL), not the DLL's own stamp.
+                    let f = patch::fetch_current("FFXiMain.dll")?;
+                    (f.data, version.unwrap_or(f.release))
                 }
             };
             if patch::version_key(&version).is_none() {

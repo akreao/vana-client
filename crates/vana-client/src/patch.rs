@@ -755,11 +755,7 @@ pub fn ffximain_version(root: &Path, path: &Path, bytes: &[u8]) -> Option<String
         let k = e.versions.iter().rposition(|v| v.sig == sig)?;
         // The current DLL of that manifest: the release it belongs to (its newest stamp over every file, as
         // applied_version reads it), not the stamp the DLL last changed at. An older one: its own stamp.
-        if k + 1 == e.versions.len() {
-            entries.iter().flat_map(|e| e.versions.iter().map(|v| v.stamp.clone())).max_by_key(|s| version_key(s))
-        } else {
-            Some(e.versions[k].stamp.clone())
-        }
+        if k + 1 == e.versions.len() { release_of(&entries) } else { Some(e.versions[k].stamp.clone()) }
     });
     stamped.or_else(|| (path == root.join("FFXiMain.dll")).then(|| installed_version(root, GAME)).flatten())
 }
@@ -1017,18 +1013,42 @@ fn produce(s: &mut Session, root: &Path, e: &Entry, a: Action) -> Result<Vec<u8>
     Ok(data)
 }
 
-/// The current version of one manifest file, written under `dir` at its manifest path (the install untouched).
-pub fn fetch_one(path: &str, dir: &Path) -> Result<(PathBuf, String)> {
+/// A manifest's release: the newest stamp over every file (a DAT-only release leaves the DLL's own stamp older).
+pub fn release_of(entries: &[Entry]) -> Option<String> {
+    entries.iter().flat_map(|e| e.versions.iter().map(|v| v.stamp.clone())).max_by_key(|s| version_key(s))
+}
+
+/// The current version of one manifest file, kept in memory.
+pub struct Fetched {
+    /// The file's path as the manifest spells it.
+    pub path: String,
+    pub data: Vec<u8>,
+    /// The file's own newest stamp.
+    pub stamp: String,
+    /// The manifest's release (`release_of`).
+    pub release: String,
+}
+
+pub fn fetch_current(path: &str) -> Result<Fetched> {
     let manifest = Session::connect()?.manifest()?;
     let entries = parse_manifest(&String::from_utf8_lossy(&manifest))?;
     let e = entries
         .iter()
         .find(|e| e.path.eq_ignore_ascii_case(path))
         .ok_or_else(|| anyhow!("{path} is not in the manifest"))?;
-    let data = produce(&mut Session::connect()?, dir, e, Action::Direct)?;
-    let out = writable(dir, &e.path)?;
-    write_atomic(&out, &data)?;
-    Ok((out, e.versions.last().map(|v| v.stamp.clone()).unwrap_or_default()))
+    // A direct download reads no local file: the root is not used.
+    let data = produce(&mut Session::connect()?, Path::new("."), e, Action::Direct)?;
+    let stamp = e.versions.last().map(|v| v.stamp.clone()).unwrap_or_default();
+    let release = release_of(&entries).unwrap_or_else(|| stamp.clone());
+    Ok(Fetched { path: e.path.clone(), data, stamp, release })
+}
+
+/// The current version of one manifest file, written under `dir` at its manifest path (the install untouched).
+pub fn fetch_one(path: &str, dir: &Path) -> Result<(PathBuf, String)> {
+    let f = fetch_current(path)?;
+    let out = writable(dir, &f.path)?;
+    write_atomic(&out, &f.data)?;
+    Ok((out, f.stamp))
 }
 
 /// Fetches every planned file on `connections` sessions into its staged `.tmp2`, then moves them all into place
@@ -1196,6 +1216,9 @@ mod tests {
         assert_eq!(ffximain_version(&root, &own, b"MZ other"), None);
         // The game folder's DLL with no matching entry and no patch.ver: none either.
         assert_eq!(ffximain_version(&root, &root.join("FFXiMain.dll"), b"MZ other"), None);
+        // `known-build`'s version for the server's current DLL: the release, not the DLL's own stamp.
+        let entries = parse_manifest(&std::fs::read_to_string(root.join(STAMP_FILE)).unwrap()).unwrap();
+        assert_eq!(release_of(&entries).as_deref(), Some("30261215_0"));
         let _ = std::fs::remove_dir_all(&root);
     }
 
