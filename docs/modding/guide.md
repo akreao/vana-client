@@ -368,6 +368,7 @@ permissions = ["actions", "net"]
 | `packets.write` | Changing, blocking and sending packets. |
 | `input.capture` | Taking keys and the mouse away from the game, and pressing keys. |
 | `files.shared` | A folder shared by every mod with this permission. |
+| `files.outside` | Reads folders the player picks or allows (`fs.pick_folder`, `fs.open_folder`), read only. |
 | `net` | The internet and local connections: web requests, TCP, UDP, opening links. |
 | `exec` | Starting programs, and recording the game window to video. |
 | `multibox` | Talking to your other game windows on this computer, and moving or focusing the game window. |

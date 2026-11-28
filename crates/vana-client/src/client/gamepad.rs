@@ -467,9 +467,21 @@ pub struct Pad {
 
 /// A gilrs pad as XInput reads one: the sticks unfiltered (gilrs's default filters are off: its dead zone rescales
 /// radially, retail takes the raw value, v x 127 >> 15), and a trigger held at any value above 0 (FUN_10005a40 tests
-/// the trigger byte against 0; gilrs's own press threshold is 0.75).
+/// the trigger byte against 0; gilrs's own press threshold is 0.75). A pad with no SDL mapping (gilrs's evdev
+/// default, e.g. Sunshine's virtual Xbox 360 pad, GUID 0500..., which the DB lists only as USB 0300...) in the
+/// XInput shape (xpad's, uinput's: the sticks on X / Y and RX / RY) reports its triggers as the Z axes (ABS_Z /
+/// ABS_RZ, -1 at rest): those stand in for LT / RT. Without RX / RY the Z axes are the right stick (hid-generic's
+/// "USB Gamepad" clones), resting at 0: never triggers, as retail reads such a pad through DirectInput, where Z / Rz
+/// are only what padsin gives them.
 fn gilrs_pad(pad: &gilrs::Gamepad) -> Pad {
-    let trigger = |b: Button| pad.button_data(b).map_or(0.0, |d| d.value());
+    let xinput_shaped = pad.axis_code(Axis::RightStickX).is_some() && pad.axis_code(Axis::RightStickY).is_some();
+    let trigger = |b: Button| {
+        let z = match b {
+            Button::LeftTrigger2 => Axis::LeftZ,
+            _ => Axis::RightZ,
+        };
+        trigger_value(pad.button_data(b).map(|d| d.value()), pad.axis_data(z).map(|d| d.value()), xinput_shaped)
+    };
     let held = |b: Button| match b {
         Button::LeftTrigger2 | Button::RightTrigger2 => trigger(b) > 0.0,
         _ => pad.is_pressed(b),
@@ -486,6 +498,16 @@ fn gilrs_pad(pad: &gilrs::Gamepad) -> Pad {
         ],
         di: None,
     }
+}
+
+/// A trigger's 0 ..= 1: its mapped button's value, else its Z axis (-1 ..= 1) rescaled to XInput's byte. gilrs maps
+/// an odd range (0 ..= 255) with a +1 offset, so a released trigger reads -1 + 2/256, not -1: the byte's floor makes
+/// that 0 again (as XInput's trigger byte would be), else the trigger would never come up. An axis that has sent
+/// nothing yet reads none, so an untouched trigger is not held. `z_triggers`: the Z axes are the triggers (the pad has
+/// its right stick on RX / RY); else they are a stick's and the trigger is its button alone.
+fn trigger_value(button: Option<f32>, z: Option<f32>, z_triggers: bool) -> f32 {
+    let z = z.filter(|_| z_triggers).map(|v| (((v + 1.0) / 2.0).clamp(0.0, 1.0) * 255.0).floor() / 255.0);
+    button.or(z).unwrap_or(0.0).clamp(0.0, 1.0)
 }
 
 #[derive(Default)]
@@ -1376,6 +1398,33 @@ mod tests {
         s[pos(17)] = "32".into();
         let m = PadMap::parse(&s.join(","));
         assert!(m.camera_mode && !m.dpad_mode);
+    }
+
+    #[test]
+    fn unmapped_triggers_read_the_z_axes() {
+        let t = |b, z| super::trigger_value(b, z, true);
+        // Mapped: the button's value. Unmapped: the Z axis from -1 (rest) to 1 (full); none sent yet, not held.
+        assert_eq!(t(Some(0.4), Some(1.0)), 0.4);
+        assert_eq!(t(None, Some(-1.0)), 0.0);
+        assert_eq!(t(None, Some(1.0)), 1.0);
+        assert!(t(None, Some(-0.9)) > 0.0);
+        assert_eq!(t(None, None), 0.0);
+        // gilrs on a 0 ..= 255 axis: raw r reads (r + 1) / 256 x 2 - 1. Released (0) is not held; 1 and up are.
+        let g = |r: f32| (r + 1.0) / 256.0 * 2.0 - 1.0;
+        assert_eq!(t(None, Some(g(0.0))), 0.0);
+        assert!(t(None, Some(g(1.0))) > 0.0);
+        assert_eq!(t(None, Some(g(255.0))), 1.0);
+    }
+
+    #[test]
+    fn z_axes_of_a_right_stick_are_no_triggers() {
+        use super::trigger_value as t;
+        // hid-generic's clones: the right stick on Z / RZ (no RX / RY), resting at 0 and pushed anywhere. Never held.
+        for v in [0.0, -1.0, 0.4, 1.0] {
+            assert_eq!(t(None, Some(v), false), 0.0);
+        }
+        // A trigger button it does have still counts.
+        assert_eq!(t(Some(0.6), Some(0.0), false), 0.6);
     }
 
     #[test]

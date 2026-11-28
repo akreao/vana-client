@@ -976,6 +976,60 @@ pub(super) fn install(lua: &mlua::Lua, g: &mlua::Table) -> mlua::Result<()> {
             Ok(out)
         })?,
     )?;
+    // binds.users(key): what else takes the combination: the game's key functions, other mods' binds, the client's.
+    binds.set(
+        "users",
+        lua.create_function(|lua, key: String| {
+            let Some(c) = Combo::parse(&key) else {
+                return Err(mlua::Error::runtime(format!("{key:?} is not a key combination")));
+            };
+            let me = super::api::mod_id(lua)?;
+            let info = lua
+                .app_data_ref::<std::rc::Rc<std::cell::RefCell<super::state::FrameInfo>>>()
+                .map(|i| i.clone())
+                .unwrap_or_default();
+            let out = lua.create_table()?;
+            let push = |kind: &str, name: String| -> mlua::Result<()> {
+                let t = lua.create_table()?;
+                t.set("kind", kind)?;
+                t.set("name", name)?;
+                out.push(t)
+            };
+            let f = info.borrow();
+            if let Some(dik) = super::super::input::dik(c.key) {
+                let mut names: Vec<String> = Vec::new();
+                // Only the field's functions: what else the key does in windows and lists is not a clash.
+                for id in super::super::input::functions_on(&f.game_keys, dik, c.ctrl, c.alt, c.shift) {
+                    if let Some(n) = super::super::input::function_name(id)
+                        && !names.contains(&n)
+                    {
+                        names.push(n);
+                    }
+                }
+                for n in names {
+                    push("game", n)?;
+                }
+            }
+            let mut mods: Vec<&str> = Vec::new();
+            for (m, b) in &f.all_binds {
+                if *m != me && *b == c && !mods.contains(&m.as_str()) {
+                    mods.push(m);
+                }
+            }
+            for m in mods {
+                push("mod", m.to_string())?;
+            }
+            // The client's own keys.
+            let plain = !c.ctrl && !c.alt && !c.shift && !c.win;
+            if plain && c.key == K::F12 {
+                push("client", "the debug overlay (F12)".into())?;
+            }
+            if c.ctrl && c.alt && c.shift && c.key == K::KeyV {
+                push("client", "LAN voice chat".into())?;
+            }
+            Ok(out)
+        })?,
+    )?;
     g.set("binds", binds)?;
 
     let chat: mlua::Table = g.get("chat")?;

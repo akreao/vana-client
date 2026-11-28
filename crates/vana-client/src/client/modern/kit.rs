@@ -676,6 +676,34 @@ pub fn field(
     r
 }
 
+/// A text area: `rows` lines of `text` in the input field's frame, scrolled to keep the caret's line in view (the
+/// caret a char index into `text`).
+#[allow(clippy::too_many_arguments)]
+pub fn field_lines(
+    ui: &mut Ui,
+    m: &Modern,
+    text: &str,
+    caret: Option<usize>,
+    width: f32,
+    font: FontId,
+    rows: usize,
+) -> Rect {
+    let line_h = (font.size * 1.45).round();
+    let (r, _) = ui.allocate_exact_size(vec2(width, 30.0 + line_h * rows.saturating_sub(1) as f32), Sense::hover());
+    let sprite = if caret.is_some() { "controls/input_focused" } else { "controls/input_normal" };
+    if let Some(s) = m.art.sprite(sprite).or_else(|| m.art.sprite("controls/input_focused")) {
+        ui.painter().add(paint::nine_slice(&s, r, (30.0 / s.size.y).min(1.0), Color32::WHITE));
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let (shown, at) = super::super::lua::window::area_rows(&chars, caret, rows);
+    for (k, row) in shown.iter().enumerate() {
+        let y = r.min.y + 15.0 + line_h * k as f32;
+        let c = at.filter(|a| a.0 == k).map(|a| a.1);
+        caret_text(ui, m, pos2(r.min.x + 10.0, y), row, c, font.clone(), r.max.x - 8.0);
+    }
+    r
+}
+
 /// A combo field's arrow centred on `a`, its right end (the login form's fields, the mods' dropdowns); `size` the
 /// field's text size.
 pub fn combo_arrow(p: &egui::Painter, m: &Modern, a: Rect, size: f32) {

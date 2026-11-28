@@ -68,7 +68,7 @@ data.assign("RDM", nil, 1, 1, lib_id)
 data.assign("RDM", nil, 1, 3, grp_id)
 
 local bar = require("src.bar")
-bar.hooks = { changed = function() end, open_manager = function() end, palette = function() end }
+bar.hooks = { changed = function() end, open_manager = function() end }
 bar.rebuild()
 
 assert(HUD.elems["ovb_1_1"], "overlay draws slot 1:1")
@@ -140,7 +140,7 @@ local mode = require("src.mode")
 input.pad = function() return { connected = true, buttons = {} } end
 mode.set("gamepad")
 local pad = require("src.pad")
-pad.hooks = { changed = function() end, open_manager = function() end, palette = function() end,
+pad.hooks = { changed = function() end, open_manager = function() end,
   editing = function() return false end }
 bar.rebuild()
 pad.rebuild()

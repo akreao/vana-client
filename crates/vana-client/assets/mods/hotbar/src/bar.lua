@@ -8,7 +8,6 @@ local runner = require("src.runner")
 local jobs = require("src.jobs")
 local keys = require("src.keys")
 local actions = require("src.actions")
-local palette = require("src.palette")
 local chooser = require("src.chooser")
 local menu = require("src.menu")
 local mode = require("src.mode")
@@ -17,7 +16,7 @@ local overlay = require("src.overlay")
 
 local M = {}
 
--- Set by init.lua: changed(), open_manager(), palette().
+-- Set by init.lua: changed(), open_manager().
 M.hooks = {}
 
 local WIN = "bars"
@@ -37,6 +36,24 @@ local reveal = nil     -- bars shown now, eased toward wanted()
 local geo = nil        -- size, gap, slots, bars, width, btn
 local eff, main, sub = nil, nil, nil
 local st = slotview.state()
+
+-- Set below; named here so everything above their definitions calls them, not globals.
+local draw
+local open_menu
+
+-- Assign Keys (below): on, the slot chosen ("b:i"), its key filter, a collision question open.
+local A = { on = false, sel = nil, filter = nil, asking = false }
+local MODIFIER_KEYS = { lctrl = true, rctrl = true, lshift = true, rshift = true, lalt = true, ralt = true,
+  lwin = true, rwin = true }
+local ASSIGN_EDGE = { 96, 196, 186, 230 }
+local SEL_EDGE = { 255, 214, 120, 255 }
+
+local function say(msg) chat.add("Hotbars: " .. msg) end
+
+local function slot_of(key)
+  local b, i = tostring(key or ""):match("^(%d+):(%d+)$")
+  return b and { b = tonumber(b), i = tonumber(i) } or nil
+end
 local suggested = {}   -- "kind:id" the battle menu suggests
 local shades = {}      -- "b:i" -> recast shade
 local top_dock = false
@@ -104,6 +121,12 @@ end
 
 -- Runs a slot; a group opens its list. While a list is open its bar's keys pick members by number.
 function M.fire(bar, slot)
+  -- Assigning keys: a click chooses the slot instead.
+  if A.on then
+    A.sel = bar .. ":" .. slot
+    draw()
+    return
+  end
   if chooser.is_open() then
     if chooser.bar() == bar then
       chooser.pick(slot)
@@ -179,8 +202,6 @@ local function key_of(c) return type(c) == "table" and (c.b .. ":" .. c.i) or c 
 -- Drawing
 -- ---------------------------------------------------------------------------
 
-local draw
-local open_menu
 
 local function draw_overlay()
   if not geo or not eff then return end
@@ -194,20 +215,18 @@ local function draw_overlay()
     glow = 0.5 + 0.5 * math.sin(os.clock() * 3.2),
     suggested = is_suggested,
     edge = EDGE, hint = keys.hint, st = st, redraw = draw,
+    assigning = A.on, selected = A.sel, assign_edge = ASSIGN_EDGE, selected_edge = SEL_EDGE,
     fire = function(c) M.fire(c.b, c.i) end,
-    menu = function(c) open_menu(c.b, c.i) end,
+    menu = function(c) open_menu(c and c.b, c and c.i) end,
     swap = function(from, to)
       if not main then return end
-      local _, a = data.resolve(main, sub, from.b, from.i)
-      local _, b = data.resolve(main, sub, to.b, to.i)
-      data.swap(main, (a == "sub" or b == "sub") and sub or nil, from.b, from.i, to.b, to.i)
+      data.swap(main, sub, from.b, from.i, to.b, to.i)
       M.rebuild()
       if M.hooks.changed then M.hooks.changed() end
     end,
     drop = function(c, id)
       if not main or not data.get_entry(main, id) then return end
-      local _, from = data.resolve(main, sub, c.b, c.i)
-      data.assign(main, from == "sub" and sub or nil, c.b, c.i, id)
+      data.assign(main, sub, c.b, c.i, id)
       slotview.flash(st, c.b .. ":" .. c.i, draw)
       M.rebuild()
       if M.hooks.changed then M.hooks.changed() end
@@ -220,6 +239,8 @@ end
 
 draw = function()
   if mode.is_pad() or not geo or not eff then return end
+  -- Assigning keys: the slot pointed at is the one chosen.
+  if A.on and slot_of(st.hover) then A.sel = st.hover end
   if overlay.on() then draw_overlay(); return end
   local d = {}
   local function add(c) d[#d + 1] = c end
@@ -238,8 +259,9 @@ draw = function()
         local sugg = is_suggested(macro, act)
         slotview.draw_slot(add, {
           x = x, y = y, s = s, macro = macro, act = act, shade = shades[key], up = top_dock,
-          hover = st.hover == key, edge = macro and EDGE[cell.from] or slotview.EMPTY_EDGE,
-          hint = geo.show_keys and keys.hint(b, i) or nil, fallback = keys.hint(b, i),
+          hover = st.hover == key,
+          edge = A.on and (A.sel == key and SEL_EDGE or ASSIGN_EDGE) or macro and EDGE[cell.from] or slotview.EMPTY_EDGE,
+          hint = (geo.show_keys or A.on) and keys.hint(b, i) or nil, fallback = keys.hint(b, i),
           st = st, key = key, source = st.drag and st.drag.cell.b == b and st.drag.cell.i == i,
           hit_key = function(px, py) return key_of(hit(px, py)) end,
           -- Suggested: a pulsing gold fade inward, and a glow ring outside.
@@ -255,7 +277,13 @@ draw = function()
                 colour = { GLOW[1], GLOW[2], GLOW[3], math.floor((55 + 55 * glow) * (1 - t) * (1 - t)) } })
             end
           end or nil,
-          after = sugg and function()
+          after = (sugg or (A.on and A.sel == key)) and function()
+            if A.on and A.sel == key then
+              -- The slot the next key goes to.
+              add({ type = "rect", x = x - 2, y = y - 2, w = s + 4, h = s + 4, round = round + 2, line = 2.5,
+                colour = SEL_EDGE })
+              return
+            end
             add({ type = "rect", x = x - 3, y = y - 3, w = s + 6, h = s + 6, round = round + 3, line = 3,
               colour = { GLOW[1], GLOW[2], GLOW[3], math.floor(25 + 45 * glow) } })
             add({ type = "rect", x = x - 1, y = y - 1, w = s + 2, h = s + 2, round = round + 1, line = 1.5,
@@ -344,23 +372,176 @@ end
 -- Window
 -- ---------------------------------------------------------------------------
 
-open_menu = function(b, i)
-  if not main then return end
-  local macro, from = data.resolve(main, sub, b, i)
-  local items = {}
-  if macro then
-    items[#items + 1] = { "Clear the slot", function()
-      data.clear(main, from == "sub" and sub or nil, b, i)
-      M.rebuild()
-      if M.hooks.changed then M.hooks.changed() end
-    end }
+-- ---------------------------------------------------------------------------
+-- Assign Keys: the bars take no clicks or hotkeys; the slot pointed at (or clicked) takes the next key pressed.
+-- ---------------------------------------------------------------------------
+
+
+-- "ctrl+shift+q" from a key event.
+local function combo_of(e)
+  local p = {}
+  if e.ctrl then p[#p + 1] = "ctrl" end
+  if e.alt then p[#p + 1] = "alt" end
+  if e.shift then p[#p + 1] = "shift" end
+  p[#p + 1] = e.key
+  return table.concat(p, "+")
+end
+
+-- "ctrl+shift+q" as people write it: "Ctrl+Shift+Q".
+local function pretty(combo)
+  local out, rest = {}, combo
+  while true do
+    local m, tail = rest:match("^(%a+)%+(.+)$")
+    if m == "ctrl" or m == "alt" or m == "shift" then
+      out[#out + 1] = m:sub(1, 1):upper() .. m:sub(2)
+      rest = tail
+    else
+      break
+    end
   end
-  items[#items + 1] = { "Open the palette", function() M.hooks.palette() end }
+  out[#out + 1] = #rest == 1 and rest:upper() or (rest:sub(1, 1):upper() .. rest:sub(2))
+  return table.concat(out, "+")
+end
+
+-- What else takes `combo`: this mod's other slots, the game's key functions, other mods' binds and the client's
+-- keys (binds.users; clients before it: the slots alone).
+local function users_of(combo, b, i)
+  local out = {}
+  local o = opts()
+  for b2 = 1, o.bars do
+    for s2 = 1, o.slots do
+      if (b2 ~= b or s2 ~= i) and keys.combo(b2, s2) == combo then
+        out[#out + 1] = ("bar %d, slot %d"):format(b2, s2)
+      end
+    end
+  end
+  if binds.users then
+    local ok, list = pcall(binds.users, combo)
+    for _, u in ipairs(ok and list or {}) do
+      out[#out + 1] = u.kind == "mod" and ("the %s mod"):format(u.name) or u.name
+    end
+  end
+  return out
+end
+
+local function set_key(b, i, combo)
+  keys.set_slot(b, i, combo)
+  say(("bar %d, slot %d: %s."):format(b, i, keys.hint_or(b, i)))
+  draw()
+end
+
+-- A collision asks first, at the pointer (over the slot).
+local function assign_key(b, i, combo)
+  local users = users_of(combo, b, i)
+  if #users == 0 then
+    set_key(b, i, combo)
+    return
+  end
+  A.asking = true
+  ui.prompt(("%s is also %s. Use it for bar %d, slot %d anyway?"):format(pretty(combo), table.concat(users, "; "), b, i),
+    { "Use It", "Cancel" }, function(k)
+      A.asking = false
+      if k == 1 then set_key(b, i, combo) end
+    end, "pointer")
+end
+
+-- While assigning: Escape ends it; any other key (modifiers alone aside) goes to the slot chosen.
+local function on_key(e)
+  if not A.on or A.asking or e.typing or not e.down then return false end
+  if MODIFIER_KEYS[e.key] then return false end
+  if e.repeated then return true end
+  if e.key == "escape" and not (e.ctrl or e.alt or e.shift) then
+    M.set_assigning(false)
+    return true
+  end
+  local c = slot_of(A.sel)
+  if not c then
+    say("point at a slot, then press its key.")
+    return true
+  end
+  assign_key(c.b, c.i, combo_of(e))
+  return true
+end
+
+-- Off without a word (the bars went away).
+local function stop_assigning()
+  A.on, A.sel, A.asking = false, nil, false
+  if A.filter then
+    input.off(A.filter)
+    A.filter = nil
+  end
+end
+
+function M.assigning() return A.on end
+
+function M.set_assigning(on)
+  if on == A.on then return end
+  if on then
+    A.on, A.sel, A.asking = true, nil, false
+    A.filter = input.on_key(on_key)
+    say("assigning keys: point at a slot (or click it) and press its key. Esc, or the right-click menu, ends it.")
+  else
+    stop_assigning()
+    say("done assigning keys.")
+  end
+  M.rebind()
+  M.rebuild()
+end
+
+-- The right-click menu, on slot (b, i) or (b nil) off the slots.
+open_menu = function(b, i)
+  local items = {}
+  local macro, from
+  if b and main then
+    macro, from = data.resolve(main, sub, b, i)
+    if A.on then
+      if keys.get_slot(b, i) ~= "" then
+        items[#items + 1] = { "Clear this slot's key", function() set_key(b, i, "") end }
+      end
+      if keys.get_slot(b, i) then
+        items[#items + 1] = { "Use the bar's key", function()
+          keys.set_slot(b, i, nil)
+          say(("bar %d, slot %d: %s."):format(b, i, keys.hint_or(b, i)))
+          draw()
+        end }
+      end
+    elseif macro then
+      items[#items + 1] = { "Clear the slot", function()
+        data.clear(main, sub, b, i)
+        M.rebuild()
+        if M.hooks.changed then M.hooks.changed() end
+      end }
+    end
+  end
   items[#items + 1] = { "Open the manager", function() M.hooks.open_manager() end }
-  menu.open(("Bar %d, Slot %d"):format(b, i), macro, keys.hint(b, i), items)
+  if A.on then
+    items[#items + 1] = { "Reset Every Key", function()
+      A.asking = true
+      ui.prompt("Put every bar and slot back on its default key?", { "Reset", "Cancel" }, function(k)
+        A.asking = false
+        if k == 1 then
+          keys.reset()
+          draw()
+        end
+      end, "pointer")
+    end }
+    items[#items + 1] = { "Stop Assigning Keys", function() M.set_assigning(false) end }
+  else
+    items[#items + 1] = { "Assign Keys", function() M.set_assigning(true) end }
+  end
+  if b then
+    menu.open(("Bar %d, Slot %d"):format(b, i), macro, keys.hint_or(b, i), items)
+  else
+    menu.open(A.on and "Assigning Keys" or "Hotbars", nil, nil, items)
+  end
 end
 
 local function on_event(_, e)
+  -- A right-click on the window off the slots' canvas (its heading, its edges): the menu without a slot.
+  if e.kind == "context" then
+    open_menu()
+    return
+  end
   if e.kind == "dock" then
     top_dock = e.side == "top"
     draw()
@@ -374,19 +555,16 @@ local function on_event(_, e)
     drop = function(c, id)
       -- Into the set the slot shows.
       if not main then return end
-      local _, from = data.resolve(main, sub, c.b, c.i)
-      data.assign(main, from == "sub" and sub or nil, c.b, c.i, id)
+      data.assign(main, sub, c.b, c.i, id)
       slotview.flash(st, key_of(c), draw)
       M.rebuild()
       if M.hooks.changed then M.hooks.changed() end
     end,
     fire = function(c) M.fire(c.b, c.i) end,
-    menu = function(c) open_menu(c.b, c.i) end,
+    menu = function(c) open_menu(c and c.b, c and c.i) end,
     swap = function(from, to)
       if not main then return end
-      local _, a = data.resolve(main, sub, from.b, from.i)
-      local _, b = data.resolve(main, sub, to.b, to.i)
-      data.swap(main, (a == "sub" or b == "sub") and sub or nil, from.b, from.i, to.b, to.i)
+      data.swap(main, sub, from.b, from.i, to.b, to.i)
       M.rebuild()
       if M.hooks.changed then M.hooks.changed() end
     end,
@@ -399,6 +577,10 @@ end
 function M.rebuild()
   built_sig = signature()
   if hidden or not settings.get("on") or not settings.get("visible") or mode.is_pad() then
+    if A.on then
+      stop_assigning()
+      M.rebind()
+    end
     ui.close(WIN)
     overlay.clear("ovb")
     geo, eff, last_sig = nil, nil, nil
@@ -426,7 +608,7 @@ function M.rebuild()
   overlay.clear("ovb")
   ui.window(WIN, {
     title = "Hotbars",
-    heading = main .. "/" .. (sub or "-"),
+    heading = A.on and "Assigning keys: point at a slot, press its key (Esc: done)" or (main .. "/" .. (sub or "-")),
     edge = true,
     grow = "up",
     width = geo.width + 34, -- plus the edge frame's margins
@@ -467,7 +649,8 @@ end)
 chooser.hooks.picked = function() M.recasts() end
 
 function M.rebind()
-  if not settings.get("on") or mode.is_pad() then
+  -- Assigning keys: none bound, so their presses reach the assignment.
+  if not settings.get("on") or mode.is_pad() or A.on then
     keys.bind_all(0, 0, M.fire)
     return
   end

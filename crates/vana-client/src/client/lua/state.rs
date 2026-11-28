@@ -8,6 +8,10 @@ use mlua::{Lua, Table};
 /// What the mod phase reads from the UI for the mods (shared as app data): the map grid as <pos> shows it.
 #[derive(Default)]
 pub(super) struct FrameInfo {
+    /// The game's key bindings (the client's Input table: three per key function, flags << 8 | DIK), for binds.users.
+    pub game_keys: Vec<[u16; 3]>,
+    /// Every running mod's binds this frame (mod id, combination), for binds.users.
+    pub all_binds: Vec<(String, super::input::Combo)>,
     pub grid: String,
     grid_at: Option<std::time::Instant>,
     /// The window in pixels, and UI units per pixel (the classic layout's stretch).
@@ -374,6 +378,10 @@ pub(super) fn install(lua: &Lua, game: &Table) -> mlua::Result<()> {
             t.set("owned", show == Show::Map)?;
             t.set("zone", r.zone)?;
             t.set("number", r.num)?;
+            // The shown record's key, and the sub-key under the player that the map window matches points (file
+            // 55504) against (MapWin::key, +0x102): they differ where that sub-key has no record and key 0 is shown.
+            t.set("key", r.key)?;
+            t.set("sub_key", super::super::map::sub_key(w, -1, true))?;
             t.set("file", r.file_id())?;
             t.set("scale", r.scale)?;
             let o = lua.create_table()?;

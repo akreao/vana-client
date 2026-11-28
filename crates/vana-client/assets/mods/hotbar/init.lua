@@ -1,13 +1,12 @@
--- Hotbars: multi-line macro bars loaded by main / sub job, with a macro library, builder and palette. Two modes: the
+-- Hotbars: multi-line macro bars loaded by main / sub job, with a macro library and builder. Two modes: the
 -- keyboard's hotbars (src/bar.lua) or the gamepad's crossbars (src/pad.lua). //hb opens the manager.
 
 local data = require("src.data")
 local bar = require("src.bar")
 local manager = require("src.manager")
 local stock = require("src.stock")
-local palette = require("src.palette")
+local tiledrag = require("src.tiledrag")
 local ghost = require("src.ghost")
-local jobs = require("src.jobs")
 local chooser = require("src.chooser")
 local mode = require("src.mode")
 local pad = require("src.pad")
@@ -25,10 +24,13 @@ local function read_failed(why, file)
   chat.add("Hotbars: " .. file .. " could not be read (" .. tostring(why) .. "); a copy was kept as " .. file .. ".bad.")
 end
 if not ok then read_failed(err, bad) end
+-- A main / sub pair's set starts from the old layout less another sub job's actions, once the job's ability list
+-- has settled.
+local subjob = require("src.subjob")
+data.keep, data.keep_ready = subjob.keep, subjob.ready
 
 local function lists_changed()
   manager.refresh()
-  palette.set_job(jobs.current())
 end
 
 local function changed()
@@ -37,27 +39,17 @@ local function changed()
   lists_changed()
 end
 
-local function toggle_palette()
-  palette.set_job(jobs.current())
-  palette.toggle()
-end
-
 bar.hooks.changed = lists_changed
 bar.hooks.open_manager = manager.open
-bar.hooks.palette = toggle_palette
 pad.hooks.changed = lists_changed
 pad.hooks.open_manager = manager.open
-pad.hooks.palette = toggle_palette
-pad.hooks.editing = function() return palette.is_open() or manager.is_open() end
+pad.hooks.editing = function() return manager.is_open() end
 manager.hooks.changed = function()
   bar.rebuild()
   pad.invalidate()
-  palette.set_job(jobs.current())
 end
 manager.hooks.rebind = bar.rebind
-manager.hooks.palette = toggle_palette
-palette.hooks.edit = manager.edit_entry
-palette.hooks.drag_ended = function()
+tiledrag.hooks.drag_ended = function()
   bar.tile_drag_ended()
   pad.tile_drag_ended()
 end
@@ -89,7 +81,7 @@ end
 
 local function clear_drag_state()
   ghost.stop()
-  if palette.dragging then palette.end_drag() end
+  if tiledrag.dragging then tiledrag.stop() end
   bar.clear_drag()
   pad.clear_drag()
 end
@@ -100,6 +92,15 @@ local function refresh()
   bar.rebind()
   changed()
 end
+
+-- Other mods hand macros over (the Retail Macros mod): import_macros(job, entries, shared) -> added, skipped, why,
+-- dropped (the /lua lines left out).
+mods.provide("import_macros", function(job, entries, shared)
+  if type(job) ~= "string" or not job:match("^%u%u%u$") then return 0, 0, "a job is three letters, e.g. WAR", 0 end
+  local added, skipped, why, dropped = data.import_entries(job, entries, shared == true)
+  if added > 0 then changed() end
+  return added, skipped, why, dropped
+end)
 
 local detect
 events.on("unload", function()
@@ -121,6 +122,13 @@ timer.every(0.25, pad.recasts)
 timer.every(0.25, pad.sync)
 timer.every(1, pad.tick)
 timer.every(0.25, apply_stock_palette)
+-- The ability list settled after a job change: the bars and crossbars again, so a new pair's set is judged and saved.
+timer.every(0.5, function()
+  if subjob.watch() then
+    bar.rebuild()
+    pad.invalidate()
+  end
+end)
 
 -- `to` nil: the other mode.
 local function set_mode(to)
@@ -180,8 +188,6 @@ commands.register("hb", function(cmd, a, b)
     bar.grow(1)
   elseif cmd == "fewer" then
     bar.grow(-1)
-  elseif cmd == "palette" then
-    toggle_palette()
   elseif cmd == "assign" then
     if mode.is_pad() and pad.is_active() then
       pad.set_assigning(not pad.is_assigning())

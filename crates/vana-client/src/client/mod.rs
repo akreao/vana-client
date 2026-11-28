@@ -4415,6 +4415,8 @@ fn world_hud(
         regime::draw(gu, &mut world.regime, sw);
     }
     skillchain::draw(gu, &mut world.skillchain, sw);
+    // The mods' HUD and edge windows stand with the Timers' dock, under the HUD and every window (World::over_mod_hud).
+    let mod_hud = if world.modern { Vec::new() } else { lua::draw_classic(gu, world, true) };
     let slots = gu.hud(sw, sh, &st);
 
     // Target cursor (FUN_10149900): anc_l at the target's point, 6 frames of 4 ticks, tint 0xe0808080;
@@ -4964,15 +4966,18 @@ fn world_hud(
     if let Some(s) = world.settings.as_ref().filter(|_| !world.modern) {
         blockers.push(s.draw(gu, sw, sh));
     }
-    // The Lua mods' windows (the modern UI draws them as panels).
+    // The Lua mods' other windows (the modern UI draws them as panels): their managers, popups and modal ones.
     if !world.modern {
-        blockers.extend(lua::draw_classic(gu, world));
+        blockers.extend(lua::draw_classic(gu, world, false));
         blockers.extend(voicechat::draw_classic(gu, world, sw, sh));
+        lua::draw_hud_top(gu, world);
     }
-    // The map covers the screen (mapframe takes the mouse), as does cnqframe.
-    if world.map.is_some() || world.cnq.is_some() {
+    // The map covers the screen (mapframe takes the mouse), as does cnqframe. Both draw under the mods' HUD layer,
+    // so this one keeps the mouse off the world only (not off that layer).
+    let map_at = (world.map.is_some() || world.cnq.is_some()).then(|| {
         blockers.push([0.0, 0.0, sw, sh]);
-    }
+        blockers.len() - 1
+    });
     // The choice menu (FUN_100b0960).
     if let Some(c) = event::choice(world).filter(|_| !world.modern) {
         let options: Vec<String> = c.options.iter().map(|o| o.1.clone()).collect();
@@ -5462,6 +5467,15 @@ fn world_hud(
         (Some(false), _) => world.confirm = None,
         _ => {}
     }
+    // All drawn after the mods' HUD layer (not the minimap nor the map, under it), then the layer itself under Timers'
+    // clicks.
+    world.over_mod_hud = blockers
+        .iter()
+        .enumerate()
+        .filter(|(k, r)| world.minimap_rect != Some(**r) && map_at != Some(*k))
+        .map(|x| *x.1)
+        .collect();
+    blockers.extend(mod_hud);
     // The Timers window under every other window: its clicks only where none is over it.
     blockers.extend(timers::pointer(world, gu, input.pointer, input.clicked, &blockers));
     blockers.extend(regime::pointer(world, gu, input.pointer, input.clicked, &blockers));
@@ -7963,6 +7977,8 @@ struct World {
     camst: camera::State,
     last_status: u8,
     auto_lock: bool,
+    /// The closest auto-target (config closest_auto_target) and its state.
+    closest: target::Closest,
     /// Loaded models by source key, shared by every actor with that look, and keys being loaded.
     models: HashMap<String, Arc<Model>>,
     models_loading: HashSet<String>,
@@ -8370,6 +8386,9 @@ struct World {
     info_page: std::cell::Cell<(usize, u16, usize)>,
     /// Windows as drawn this frame (name, frame, children), for the mouse (winhits.rs).
     win_hits: std::cell::RefCell<Vec<(String, [f32; 4], Vec<(u16, [f32; 4])>)>>,
+    /// The game's windows and the HUD drawn over the mods' HUD layer last frame (lua::hud_layer, drawn with the Timers'
+    /// dock): the mouse there is theirs, not those windows'.
+    over_mod_hud: Vec<[f32; 4]>,
     /// The left button this frame (pressed, held), for the windows' held buttons (winhits::ctr).
     ptr_button: (bool, bool),
     /// itemctrl / moneyctr's - / + held under the pointer, and when it repeats next (winhits::ctr).
@@ -9039,8 +9058,10 @@ pub struct App {
     monitors: Vec<(String, String)>,
     gpus: Vec<String>,
     index: Option<Arc<DatIndex>>,
-    /// Installed-content mask (ROM2..): title music and lobycwin's tracks (FUN_1023ae80).
+    /// Installed-content mask (ROM2..) of the game files in use (Config::ffxi_dir): logos, the creator, the world.
     installed: u32,
+    /// The same of game_dir's files, which sound plays from: title music and lobycwin's tracks (FUN_1023ae80).
+    music_installed: u32,
     keys_table: Option<Arc<zone::Keys>>,
     knock_table: Option<[[f32; 3]; 8]>,
     search_words: Option<Arc<crate::dat::tables::SearchWords>>,
@@ -9434,6 +9455,7 @@ impl App {
             nation: NationShow::default(),
             index: None,
             installed,
+            music_installed: installed,
             keys_table: None,
             knock_table: None,
             search_words: None,
@@ -9954,7 +9976,8 @@ impl App {
             // FFXI_AUDIO_DEVICE overrides the config's device (test runs into a null sink).
             let device = std::env::var("FFXI_AUDIO_DEVICE").unwrap_or_else(|_| self.cfg.audio_device.clone());
             let (m, e) = self.volume_factors();
-            self.audio = crate::audio::Audio::open(self.cfg.ffxi_dir(), Some(&device), m, e);
+            // game_dir's sound files whatever the login (music_installed is their mask).
+            self.audio = crate::audio::Audio::open(self.cfg.main_ffxi_dir(), Some(&device), m, e);
             self.applied_volumes = Some(self.volume_sliders());
             if let Some(a) = self.audio.as_mut() {
                 a.max_se = self.cfg.tool("0029").clamp(1, 20);
@@ -9985,7 +10008,7 @@ impl App {
         if scene != self.music_scene {
             match scene {
                 MusicScene::Opening => a.play_music_now(opening::MUSIC),
-                MusicScene::Title => a.title_music(self.cfg.game.global.get(0xaf), self.installed),
+                MusicScene::Title => a.title_music(self.cfg.game.global.get(0xaf), self.music_installed),
                 // LAB_1022fedb: reaching the nation step plays 0x78 through the fade task; back on the dancer steps
                 // the race BGM returns when the performance wraps (FUN_10036a90).
                 MusicScene::Created => a.change_music(0x78, 0x7f, 0x7f, 0, 0, false),
@@ -10096,21 +10119,38 @@ impl App {
     }
 
     fn game_data(&mut self) -> Result<(Arc<DatIndex>, Arc<zone::Keys>)> {
+        // A login into a server with its own game folder (Config::login_game_dir), or out of one: those files from here
+        // on, everything read from them opened again as after a patch.
+        if self.index.as_ref().is_some_and(|i| i.root() != self.cfg.ffxi_dir()) {
+            log::info!("game files: {}", self.cfg.ffxi_dir().display());
+            self.index = None;
+            self.name_tables = None;
+        }
         if self.index.is_none() {
-            self.index = Some(Arc::new(DatIndex::open(&self.cfg.ffxi_dir())?));
-            let dll = std::fs::read(crate::dat::ffximain(&self.cfg.ffxi_dir()))?;
-            self.keys_table = Some(Arc::new(zone::Keys::from_ffximain(&dll)?));
+            // Everything read into locals first: a folder whose DLL cannot be read leaves the open files and the
+            // tables as they were (index none: the next call tries again).
+            let dir = self.cfg.ffxi_dir();
+            let index = Arc::new(DatIndex::open(&dir)?);
+            let dll_path = crate::dat::ffximain(&dir);
+            let dll = std::fs::read(&dll_path).map_err(|e| anyhow::anyhow!("reading {}: {e}", dll_path.display()))?;
+            let keys = Arc::new(zone::Keys::from_ffximain(&dll)?);
+            // The expansions these files hold (character select, the creator, the world).
+            self.installed = crate::dat::installed(&dir);
+            self.keys_table = Some(keys);
             self.knock_table = crate::dat::tables::knockback(&dll).ok();
             self.search_words =
                 crate::dat::tables::search_words(&dll).map_err(|e| log::warn!("{e:#}")).ok().map(Arc::new);
             let blu_desc = crate::dat::msg::current_slot_file(&dll, 1, 0x1a);
-            self.blu_data = Some(Arc::new(crate::dat::blumagic::BluData::load(self.index.as_ref().unwrap(), blu_desc)));
+            self.blu_data = Some(Arc::new(crate::dat::blumagic::BluData::load(&index, blu_desc)));
             self.cnq_tables = crate::dat::tables::conquest(&dll).map_err(|e| log::warn!("{e:#}")).ok().map(Arc::new);
             self.point_files = [0x1d, 0x1e, 0x1f, 0x20, 0x21, maze::TEXT_SLOT]
                 .map(|slot| crate::dat::msg::current_slot_file(&dll, 1, slot));
             self.msg_files = [0, 0, 0x63, 0x64, 0x65, 0x66, 0x68, 0x69, 0, 0, 0x6a]
                 .map(|slot| (slot != 0).then(|| crate::dat::msg::current_slot_file(&dll, 1, slot)).flatten());
             self.input.load(&dll);
+            // The DLL tables built outside the client (text commands, chat colours, Monstrosity) follow.
+            crate::dat::use_ffxi_dir(&dir);
+            self.index = Some(index);
         }
         Ok((self.index.clone().unwrap(), self.keys_table.clone().unwrap()))
     }
@@ -10136,6 +10176,8 @@ impl App {
             self.status = p.into();
             return;
         }
+        // PlayOnline's game files are game_dir's.
+        self.cfg.login_game_dir = None;
         let cfg = self.cfg.clone();
         if self.drive.login.is_none() {
             let _ = self.cfg.save();
@@ -10195,6 +10237,11 @@ impl App {
             } else {
                 "Passwords must be 1-32 plain ASCII characters (no accents or symbols outside ASCII).".into()
             };
+            return;
+        }
+        // The server's own game folder, if it has one: the lobby's FFXiMain and expansions, then the world's files.
+        if !create && let Err(e) = self.cfg.enter_server_game_dir() {
+            self.status = e;
             return;
         }
         let cfg = self.cfg.clone();
@@ -10501,6 +10548,10 @@ impl App {
             }
             Task::LoggedIn(Ok((lobby, chars)), _) | Task::Lobby(Ok((lobby, chars))) => {
                 self.status.clear();
+                // The login's game files from character select on: its expansions, models and text.
+                if let Err(e) = self.game_data() {
+                    log::warn!("game files: {e:#}");
+                }
                 // A login that worked: the password is remembered (sealed) or forgotten as the box says.
                 if let Phase::Login { password, pol_password, .. } = &self.phase
                     && !password.is_empty()
@@ -10565,6 +10616,11 @@ impl App {
             }
             Task::Selected(Ok(login)) => {
                 self.backdrop = None;
+                // The login's game files before anything of the world is read from them (a lobby mod may play from the
+                // title, where nothing has opened them yet).
+                if let Err(e) = self.game_data() {
+                    log::warn!("game files: {e:#}");
+                }
                 match crate::net::map::compress::Codec::from_ffximain(
                     &std::fs::read(crate::dat::ffximain(&self.cfg.ffxi_dir())).unwrap_or_default(),
                 ) {
@@ -10710,6 +10766,7 @@ impl App {
                             camst: camera::State::new(),
                             last_status: 0,
                             auto_lock: true,
+                            closest: target::Closest::new(self.cfg.closest_auto_target),
                             models: HashMap::new(),
                             models_loading: HashSet::new(),
                             zone_uploading: None,
@@ -11002,6 +11059,7 @@ impl App {
                             info_win: None,
                             info_page: std::cell::Cell::new((0, 0, 1)),
                             win_hits: Default::default(),
+                            over_mod_hud: Vec::new(),
                             ptr_button: (false, false),
                             ctr_hold: None,
                             event_ext: [0; 24],
@@ -15090,6 +15148,7 @@ impl App {
         let window = f.window;
         self.input.begin_frame(f);
         let Phase::World(world) = &mut self.phase else { return };
+        world.lua.set_game_keys(&self.input.bindings);
         // The software keyboard first: open, it is the focused window and takes the frame's presses.
         swkbd::update(world, self.game_ui.as_ref(), &mut self.input);
         if world.swkbd_reopen && world.in_scene() {
@@ -15103,11 +15162,12 @@ impl App {
         garden::update(world, dt);
         // The map window's keys and animations (FUN_101ef0a0); it goes once its fade-out ends, reopening the main menu
         // it came from (LAB_101faff0).
+        // Not a press a classic mod window holds (a hotbar slot dragged over the map).
         let k = self.ui_k;
         let drag = self
             .press_at
             .zip(self.last_cursor)
-            .filter(|_| self.left_down)
+            .filter(|_| self.left_down && !(!world.modern && lua::holds_pointer(&world.lua)))
             .map(|(a, b)| ((b.0 - a.0) as f32 * k.0, (b.1 - a.1) as f32 * k.1));
         if world.cnq.is_some() && !region::update(world, &mut self.input, dt * 60.0) {
             world.cnq = None;
@@ -15907,8 +15967,10 @@ impl App {
                     // Audio opened on the empty folder (and the title music failed): open it on the new files.
                     self.audio = None;
                     self.audio_tried = false;
+                    self.music_installed = crate::dat::installed(&self.cfg.main_ffxi_dir());
                     self.index = None;
                     self.keys_table = None;
+                    crate::dat::dll_files_changed();
                     self.game_ui_state = LoadState::Idle;
                     self.flyover_state = LoadState::Idle;
                     self.cfg.installed = true;
@@ -15917,7 +15979,7 @@ impl App {
                     if let Err(e) = self.cfg.save() {
                         log::warn!("saving the config: {e:#}");
                     }
-                    self.updates = Some(updater::start(self.cfg.ffxi_dir(), uses_playonline(&self.cfg)));
+                    self.updates = Some(updater::start(self.cfg.main_ffxi_dir(), uses_playonline(&self.cfg)));
                 }
                 firstrun::Action::Begin(dir) => {
                     self.cfg.game_dir = dir;
@@ -16162,6 +16224,21 @@ impl App {
                     }
                     // The two-factor window over the form (client/twofa.rs).
                     if let Some(t) = self.twofa.as_mut() {
+                        // Game files: a folder picked is the server's once it holds the game files.
+                        if let Some(dir) = t.take_picked() {
+                            let r = firstrun::existing(&dir).map_err(|e| format!("{e:#}")).and_then(|g| {
+                                match crate::config::game_files_missing(&g.join("FINAL FANTASY XI")) {
+                                    Some(m) => Err(format!("No {m} in {}: pick a full game folder.", g.display())),
+                                    None => Ok(g),
+                                }
+                            });
+                            if let Ok(g) = &r {
+                                let server = self.cfg.server.trim().to_string();
+                                self.cfg.set_server_game_dir(&server, Some(g.clone()));
+                                save |= self.drive.login.is_none() || crate::config::is_copy();
+                            }
+                            t.folder_set(r.map(Some));
+                        }
                         let mut tv = None;
                         let act = twofa::window(lu, &input, size, t, busy, &mut sounds, modern_ui.then_some(&mut tv));
                         if let Some(v) = &tv {
@@ -16175,6 +16252,12 @@ impl App {
                         }
                         match act {
                             Some(twofa::Act::Close) => self.twofa = None,
+                            Some(twofa::Act::DefaultFolder) => {
+                                let server = self.cfg.server.trim().to_string();
+                                self.cfg.set_server_game_dir(&server, None);
+                                save |= self.drive.login.is_none() || crate::config::is_copy();
+                                t.folder_set(Ok(None));
+                            }
                             Some(twofa::Act::Copy(code)) => {
                                 log::info!("clipboard: copied {} chars", code.chars().count());
                                 ctx.copy_text(code);
@@ -16277,6 +16360,8 @@ impl App {
                             // New and changed DATs: the next login opens the index again.
                             if out.reload {
                                 self.index = None;
+                                crate::dat::dll_files_changed();
+                                self.music_installed = crate::dat::installed(&self.cfg.main_ffxi_dir());
                                 // The next login sends the patched files' version.
                                 // At once: the restart below starts a client that reads it.
                                 if self.cfg.follow_applied_version()
@@ -16449,11 +16534,14 @@ impl App {
                         && let Some(s) = self.updates.clone()
                     {
                         self.viewer_asked = true;
-                        self.update_ui = Some(updater::UpdateUi::open(s, self.cfg.ffxi_dir()));
+                        self.update_ui = Some(updater::UpdateUi::open(s, self.cfg.main_ffxi_dir()));
                     }
                     match chosen.filter(|_| self.login_error.is_none()) {
                         Some(LoginChoice::Exit) => self.exit_requested = true,
-                        Some(LoginChoice::TwoFa) => self.twofa = Some(twofa::TwoFa::new()),
+                        Some(LoginChoice::TwoFa) => {
+                            let own = self.cfg.server_game_dir(&self.cfg.server);
+                            self.twofa = Some(twofa::TwoFa::new().folders(own, &self.cfg.game_dir));
+                        }
                         Some(LoginChoice::Catalogue) if !is_playonline(&self.cfg.server) => {
                             let login = catalogue_cfg::login_key(&self.cfg);
                             let keys = catalogue_cfg::catalogue_keys_for_cfg(&self.cfg);
@@ -16461,7 +16549,7 @@ impl App {
                         }
                         Some(LoginChoice::Update) => {
                             if let Some(s) = self.updates.clone() {
-                                self.update_ui = Some(updater::UpdateUi::open(s, self.cfg.ffxi_dir()));
+                                self.update_ui = Some(updater::UpdateUi::open(s, self.cfg.main_ffxi_dir()));
                             }
                         }
                         Some(LoginChoice::Picked(_) | LoginChoice::Forget(..)) => {}
@@ -16672,7 +16760,7 @@ impl App {
                             }
                             // lobycwin and our settings screen over the title; modern: both pages of one Config panel.
                             if let Some(c) = self.lobby_cfg.as_mut().filter(|_| modern_title) {
-                                c.owned = self.installed;
+                                c.owned = self.music_installed;
                                 if modern::lobby_config_settings(c) && self.lobby_settings.is_none() {
                                     let mut s = settings::SettingsUi::open(&self.cfg, window);
                                     s.monitors = self.monitors.clone();
@@ -16722,7 +16810,7 @@ impl App {
                                     save = true;
                                 }
                             } else if let Some(c) = self.lobby_cfg.as_mut() {
-                                c.owned = self.installed;
+                                c.owned = self.music_installed;
                                 if self.lobby_settings.is_none() {
                                     let mut outs = Vec::new();
                                     for ev in &input.events {
@@ -17880,7 +17968,7 @@ impl App {
             && let (Some(a), Phase::Characters { .. }) = (self.audio.as_mut(), &self.phase)
         {
             // FUN_1023ae50: a new title music choice starts at once.
-            a.title_music(self.lobby_values.get(0xaf), self.installed);
+            a.title_music(self.lobby_values.get(0xaf), self.music_installed);
         }
         if lobby_apply.volume {
             self.cfg.game.store(None, &self.lobby_values);
@@ -18080,7 +18168,7 @@ impl App {
     /// Parses the lobby DATs and font on a worker thread.
     fn load_game_ui(&mut self) {
         self.game_ui_state = LoadState::Loading;
-        if firstrun::needed(&self.cfg.ffxi_dir()) {
+        if firstrun::needed(&self.cfg.main_ffxi_dir()) {
             self.first_run = Some(firstrun::FirstRun::new(self.cfg.game_dir.clone()));
             self.game_ui_state = LoadState::Failed;
             return;
@@ -18648,6 +18736,7 @@ impl App {
                 .synth_events
                 .iter()
                 .any(|e| matches!(e, egui::Event::Key { key: egui::Key::Enter, pressed: true, .. }));
+            w.lua.synth_keys = self.synth_events.iter().any(|e| matches!(e, egui::Event::Key { .. }));
         }
         raw.events.append(&mut self.synth_events);
         self.numpad_presses.append(&mut self.numpad_synth);

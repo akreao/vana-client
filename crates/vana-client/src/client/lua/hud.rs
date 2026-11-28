@@ -273,12 +273,16 @@ pub(in crate::client) struct Elem {
     pub kind: Kind,
     /// The tooltip shown while the pointer rests on it: (title, text).
     pub tip: Option<(String, String)>,
+    /// Beside the tooltip's title (the modern UI's).
+    pub tip_icon: Option<super::window::Icon>,
     /// A modern panel its place counts from (ui.native.panels names them), and which corner: bit 0 right, bit 1
     /// bottom.
     pub anchor: Option<String>,
     pub corner: u8,
     /// The HUD window it belongs to (its opacity: hud.opacity); "hud" by default.
     pub window: String,
+    /// Drawn over every window (a drag's ghost), taking no pointer: what is under it gets the clicks and drops.
+    pub top: bool,
 }
 
 pub(super) fn colour(v: Value) -> mlua::Result<Option<[u8; 4]>> {
@@ -308,6 +312,9 @@ fn apply(e: &mut Elem, t: &Table) -> mlua::Result<()> {
     }
     if let Some(v) = t.get::<Option<i32>>("layer")? {
         e.layer = v;
+    }
+    if let Some(v) = t.get::<Option<bool>>("top")? {
+        e.top = v;
     }
     // A panel's name, or false for the window.
     if t.contains_key("anchor")? {
@@ -348,6 +355,15 @@ fn apply(e: &mut Elem, t: &Table) -> mlua::Result<()> {
                 tt.get::<Option<String>>("title")?.unwrap_or_default(),
                 tt.get::<Option<String>>("text")?.unwrap_or_default(),
             )),
+            _ => None,
+        };
+        e.tip_icon = match t.get::<Value>("tip")? {
+            Value::Table(tt) => match tt.get::<Option<Table>>("icon")? {
+                Some(i) => {
+                    Some(super::window::Icon::of(i.get::<Option<String>>("kind")?.as_deref(), i.get::<u16>("id")?))
+                }
+                None => None,
+            },
             _ => None,
         };
     }
@@ -569,9 +585,11 @@ fn put(lua: &Lua, id: String, kind: Kind, spec: Table) -> mlua::Result<()> {
         layer: 0,
         kind,
         tip: None,
+        tip_icon: None,
         anchor: None,
         corner: 0,
         window: "hud".into(),
+        top: false,
     };
     apply(&mut e, &spec)?;
     let st = super::api::state(lua);
@@ -929,10 +947,13 @@ pub(in crate::client) fn place(
 /// Whether the game UI draws an element in the modern UI: only text in the game's font (the modern UI's painter has
 /// it not); the rest is the modern layer's (modern/hudmods.rs), drawn as its panels are.
 fn game_drawn(e: &Elem) -> bool {
-    matches!(e.kind, Kind::Text { font: Some(HudFace::Game), .. })
+    // Over the windows: the modern layer's, in its font.
+    !e.top && matches!(e.kind, Kind::Text { font: Some(HudFace::Game), .. })
 }
 
-pub(super) fn draw(gu: &mut super::super::game_ui::GameUi, w: &World) {
+/// The HUD under the windows; `top`: the elements over them (the classic UI draws those after its windows), which
+/// take no pointer.
+pub(super) fn draw(gu: &mut super::super::game_ui::GameUi, w: &World, top: bool) {
     let host = &w.lua;
     let info = host.info.clone();
     let (k, win) = {
@@ -945,7 +966,7 @@ pub(super) fn draw(gu: &mut super::super::game_ui::GameUi, w: &World) {
     let mut rects = Vec::new();
     // Panels are the modern UI's: in the classic UI anchored elements wait.
     let panels = if w.modern { info.borrow().native_rects.clone() } else { Default::default() };
-    for (mod_id, e) in elements(host).into_iter().filter(|(_, e)| !w.modern || game_drawn(e)) {
+    for (mod_id, e) in elements(host).into_iter().filter(|(_, e)| e.top == top && (!w.modern || game_drawn(e))) {
         let Some((px, py)) = place(&e, &panels, win) else { continue };
         // Its HUD window's opacity, over everything it draws.
         let o = host.window_opacity(&w.window_opacity, &format!("hud:{mod_id}:{}", e.window));
@@ -1087,10 +1108,13 @@ pub(super) fn draw(gu: &mut super::super::game_ui::GameUi, w: &World) {
         rects.push((mod_id, e.id.clone(), [r[0] / k.0, r[1] / k.1, r[2] / k.0, r[3] / k.1]));
     }
     gu.opacity(None);
+    if top {
+        return;
+    }
     info.borrow_mut().hud_rects = rects;
     // The classic UI's tooltip (the modern UI's is the kit's, modern/mod.rs), once the pointer rests a moment.
     if !w.modern
-        && let Some((title, text, secs)) = tip(host)
+        && let Some((title, text, _, secs)) = tip(host)
         && secs >= 0.35
     {
         let (cx, cy) = host.input.borrow().cursor;
@@ -1191,10 +1215,12 @@ pub(super) fn hover(host: &mut super::Host) {
 }
 
 /// The tooltip of the element under the pointer, and how long it has been there.
-pub(super) fn tip(host: &super::Host) -> Option<(String, String, f32)> {
+pub(super) fn tip(host: &super::Host) -> Option<(String, String, Option<super::window::Icon>, f32)> {
     let s = host.input.borrow();
     let (m, id, since) = s.hud_hover.as_ref()?;
     let vm = host.vms.iter().find(|v| v.manifest.id == *m && v.suspended.is_none())?;
-    let (title, text) = vm.st.borrow().hud.iter().find(|e| e.id == *id && e.visible)?.tip.clone()?;
-    Some((title, text, since.elapsed().as_secs_f32()))
+    let st = vm.st.borrow();
+    let e = st.hud.iter().find(|e| e.id == *id && e.visible)?;
+    let (title, text) = e.tip.clone()?;
+    Some((title, text, e.tip_icon, since.elapsed().as_secs_f32()))
 }

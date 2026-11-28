@@ -6,17 +6,20 @@
 --   {
 --     "RDM": {
 --       "library": { "<id>": <entry> },
---       "main": { "<bar>": { "<slot>": <macro> } },
---       "sub":  { "WHM": { "<bar>": { "<slot>": <macro> } } },   -- overrides "main" as RDM/WHM
---       "pad":  { "lt": { "up": <macro>, ... }, "rt": {...}, "lr": {...} }
+--       "sets": { "WHM": { "<bar>": { "<slot>": <macro> } }, "-": {...} },   -- RDM/WHM's bars, RDM's with no sub
+--       "pads": { "WHM": { "lt": { "up": <macro>, ... }, "rt": {...}, "lr": {...} } },   -- the crossbars, the same
+--       "main": {...}, "sub": { "WHM": {...} }, "pad": {...}   -- before sets by sub job: read once to start them
 --     }
 --   }
 --
--- Slot value: a macro { name, label?, lines }, a library reference { ref = "<id>" }, or false in a sub set (blanks
--- the main set's slot). Library entry: { name, label?, action = { kind, name, target, line? }?, lines } or a group
+-- Every main / sub job pair has its own bars and crossbars. A pair's first use starts its set from the old layout
+-- (the main set with the sub set over it, the job's crossbars), less what another sub job's actions were (M.keep).
+--
+-- Slot value: a macro { name, label?, lines }, a library reference { ref = "<id>" }, or false in an old sub set
+-- (blanked the main set's slot). Library entry: { name, label?, action = { kind, name, target, line? }?, lines } or a group
 -- { name, label?, group = { <entry>, ... } }. Bar and slot keys are strings (JSON object keys).
 --
--- Sticky entries (ids "s<n>") live in sticky.json, for every world and job: { next_id, library = { "s1": <entry> } }.
+-- Shared entries (ids "s<n>") live in sticky.json, for every world and job: { next_id, library = { "s1": <entry> } }.
 
 local M = {}
 
@@ -46,17 +49,18 @@ end
 M.trim = trim
 
 -- "a | b | c" -> { "a", "b", "c" }, empty pieces dropped.
-function M.split_lines(text)
+-- Lines from typed text: one a line (`sep` "\n", a text area), else between | marks (a one-line field).
+function M.split_lines(text, sep)
   local out = {}
-  for piece in tostring(text or ""):gmatch("[^|]+") do
-    piece = trim(piece)
-    if piece ~= "" then out[#out + 1] = piece end
+  for piece in tostring(text or ""):gmatch(sep == "\n" and "[^\n]+" or "[^|]+") do
+    local line = trim(piece)
+    if line ~= "" then out[#out + 1] = line end
   end
   return out
 end
 
-function M.join_lines(lines)
-  return table.concat(lines or {}, " | ")
+function M.join_lines(lines, sep)
+  return table.concat(lines or {}, sep == "\n" and "\n" or " | ")
 end
 
 -- A slot's text: up to 7 characters, or two lines of 7.
@@ -212,11 +216,17 @@ local function job_part(main, part, create)
   return child(child(db, main, create), part, create)
 end
 
--- The main set (sub nil) or a sub job's set.
+-- The old main set (sub nil) or an old sub job's set (before sets by sub job; read only).
 local function find_set(main, sub, create)
   if not sub then return job_part(main, "main", create) end
   return child(job_part(main, "sub", create), sub, create)
 end
+
+-- keep(main, sub, macro): whether the pair can use a slot's macro when its set starts from the old layout (another
+-- sub job's action: false); keep_ready(): whether keep can judge everything yet (until then a pair's set is shown,
+-- not saved). Set by init.lua; none keeps every slot.
+M.keep = nil
+M.keep_ready = nil
 
 local function raw_slot(set, row, slot)
   local r = child(set, key(row), false)
@@ -239,7 +249,7 @@ end
 -- Library
 -- ---------------------------------------------------------------------------
 
-local COMMAND = { ma = "/ma", ja = "/ja", ws = "/ws", pet = "/pet", item = "/item", equip = "/equip", cmd = "" }
+local COMMAND = { ma = "/ma", trust = "/ma", ja = "/ja", ws = "/ws", pet = "/pet", item = "/item", equip = "/equip", cmd = "" }
 
 -- The line an action builds: /ma "Cure" <t>, /equip ring1 "Warp Ring", /attack <t>; its `line` when set.
 function M.command(action)
@@ -268,7 +278,7 @@ function M.entry_lines(entry)
 end
 
 local function member(e)
-  return { name = e.name or "", label = e.label, lines = M.entry_lines(e), action = e.action }
+  return { name = e.name or "", label = e.label, lines = M.entry_lines(e), action = e.action, icon = e.icon }
 end
 
 -- One runnable macro per entry table (the runner keys on it); a saved entry is a new table.
@@ -289,7 +299,7 @@ local function expand(entry, id)
   return m
 end
 
--- A sticky entry's id: shown in every job's library.
+-- A shared entry's id: shown in every job's library.
 function M.is_sticky(id)
   return id ~= nil and tostring(id):match("^s%d+$") ~= nil
 end
@@ -324,7 +334,7 @@ local function entry_id_order(a, b)
   return tostring(a) < tostring(b)
 end
 
--- The job's entries, oldest first, then the sticky ones: { { id, entry, sticky? }, ... }.
+-- The job's entries, oldest first, then the shared ones: { { id, entry, shared? }, ... }.
 function M.library(main)
   local out = {}
   local function add(lib, is_sticky)
@@ -343,9 +353,15 @@ function M.library(main)
   return out
 end
 
+-- The icon kinds a macro may show.
+local ICON_KINDS = { spell = true, ability = true, item = true, status = true }
+
 local function clean_entry(e)
   local out = { name = trim(e.name) }
   if trim(e.label) ~= "" then out.label = trim(e.label) end
+  local ic = e.icon
+  local id = is_table(ic) and tonumber(ic.id)
+  if id and ICON_KINDS[ic.kind] and id == math.floor(id) then out.icon = { kind = ic.kind, id = math.floor(id) } end
   if is_table(e.group) then
     out.group = {}
     for _, m in ipairs(e.group) do
@@ -375,7 +391,7 @@ local function new_job_id(main)
   return tostring(n + 1)
 end
 
--- Sticky ids are never reused: another world's file may still name a deleted one.
+-- Shared ids are never reused: another world's file may still name a deleted one.
 local function new_sticky_id()
   local n = tonumber(sticky.next_id) or 1
   for k in pairs(sticky.library) do n = math.max(n, (tonumber(tostring(k):sub(2)) or 0) + 1) end
@@ -387,14 +403,20 @@ local function refers(v, id)
   return is_table(v) and v.ref ~= nil and tostring(v.ref) == id
 end
 
--- fn(set) for the job's main set, crossbars and every sub set.
+-- fn(set, old) for every set of the job: each main / sub pair's bars and crossbars, and the old layout's sets (`old`
+-- true: they start pairs not played yet).
 local function each_set(main, fn)
+  for _, part in ipairs({ "sets", "pads" }) do
+    for _, set in pairs(job_part(main, part, false) or {}) do
+      if is_table(set) then fn(set, false) end
+    end
+  end
   for _, part in ipairs({ "main", "pad" }) do
     local set = job_part(main, part, false)
-    if set then fn(set) end
+    if set then fn(set, true) end
   end
   for _, set in pairs(job_part(main, "sub", false) or {}) do
-    if is_table(set) then fn(set) end
+    if is_table(set) then fn(set, true) end
   end
 end
 
@@ -405,9 +427,143 @@ local function each_job(fn)
   end
 end
 
+-- Whether two saved entries are the same macro (names, lines, action and group members alike).
+local function same(a, b)
+  if type(a) ~= type(b) then return false end
+  if not is_table(a) then return a == b end
+  for k, v in pairs(a) do
+    if not same(v, b[k]) then return false end
+  end
+  for k in pairs(b) do
+    if a[k] == nil then return false end
+  end
+  return true
+end
+
+-- The jobs of this world with macros of their own (shared ones aside), by name: { { job, n }, ... }.
+function M.jobs_with_macros()
+  local out = {}
+  each_job(function(job)
+    local n = 0
+    for _, e in pairs(job_part(job, "library", false) or {}) do
+      if is_table(e) then n = n + 1 end
+    end
+    if n > 0 then out[#out + 1] = { job = job, n = n } end
+  end)
+  table.sort(out, function(a, b) return a.job < b.job end)
+  return out
+end
+
+-- The job's own entries (no shared ones), oldest first.
+function M.own_library(main)
+  local out = {}
+  for _, it in ipairs(M.library(main)) do
+    if not it.sticky then out[#out + 1] = it end
+  end
+  return out
+end
+
+-- Copies `ids` of `from`'s own library (all of them when nil) into `to`'s, skipping any `to` already has the same.
+-- Returns how many were copied and skipped, and why the save failed.
+-- Whether `to`'s own library has an entry the same as `entry`.
+function M.has_same(to, entry)
+  local c = clean_entry(entry)
+  for _, have in pairs(job_part(to, "library", false) or {}) do
+    if same(clean_entry(have), c) then return true end
+  end
+  return false
+end
+
+function M.copy_entries(from, to, ids)
+  local want = nil
+  if ids then
+    want = {}
+    for _, id in ipairs(ids) do want[tostring(id)] = true end
+  end
+  local copied, skipped = 0, 0
+  for _, it in ipairs(M.own_library(from)) do
+    if not want or want[tostring(it.id)] then
+      local c = clean_entry(it.entry)
+      local dup = false
+      for _, have in pairs(job_part(to, "library", false) or {}) do
+        dup = dup or same(clean_entry(have), c)
+      end
+      if dup then
+        skipped = skipped + 1
+      else
+        local nid = new_job_id(to)
+        job_part(to, "library", true)[nid] = c
+        copied = copied + 1
+      end
+    end
+  end
+  if copied == 0 then return 0, skipped end
+  local ok, err = M.save()
+  return copied, skipped, not ok and tostring(err) or nil
+end
+
+-- Macros another mod hands over ({ name, lines, icon? } each) into `main`'s library, or the shared one: each unless the
+-- same is there already. Returns how many were added and skipped, and why the save failed (then none are kept).
+-- A /lua line (a mod's own command) is never taken from another mod: Hotbars would run it as the player's line.
+local function lua_line(l) return type(l) == "string" and l:lower():match("^%s*/+lua") ~= nil end
+
+function M.import_entries(main, entries, shared)
+  local have = {}
+  local dropped = 0
+  for _, it in ipairs(M.library(main)) do
+    if (it.sticky == true) == (shared == true) then have[#have + 1] = clean_entry(it.entry) end
+  end
+  local new = {}
+  local skipped = 0
+  for _, e in ipairs(is_table(entries) and entries or {}) do
+    if is_table(e) and is_table(e.lines) then
+      local kept = {}
+      for _, l in ipairs(e.lines) do
+        if lua_line(l) then dropped = dropped + 1 else kept[#kept + 1] = l end
+      end
+      e = { name = e.name, label = e.label, icon = e.icon, action = e.action, lines = kept }
+    end
+    local c = is_table(e) and not is_table(e.group) and clean_entry(e) or nil
+    if c and #c.lines > 0 then
+      local dup = false
+      for _, h in ipairs(have) do dup = dup or same(h, c) end
+      if dup then
+        skipped = skipped + 1
+      else
+        have[#have + 1] = c
+        new[#new + 1] = c
+      end
+    end
+  end
+  if #new == 0 then return 0, skipped, nil, dropped end
+  if shared then
+    local _, why = with_sticky(function()
+      for _, c in ipairs(new) do sticky.library[new_sticky_id()] = c end
+      return true
+    end)
+    if why then return 0, skipped, why, dropped end
+    return #new, skipped, nil, dropped
+  end
+  local lib = job_part(main, "library", true)
+  local added = {}
+  for _, c in ipairs(new) do
+    local id = new_job_id(main)
+    lib[id] = c
+    added[#added + 1] = id
+  end
+  local ok, err = M.save()
+  if not ok then
+    for _, id in ipairs(added) do lib[id] = nil end
+    return 0, skipped, tostring(err), dropped
+  end
+  return #new, skipped, nil, dropped
+end
+
 local function uses_in(main, id)
   local n = 0
-  each_set(main, function(set)
+  local paired = next(job_part(main, "sets", false) or {}) ~= nil or next(job_part(main, "pads", false) or {}) ~= nil
+  each_set(main, function(set, old)
+    if old and paired then return end
     for _, row in pairs(set) do
       if is_table(row) then
         for _, v in pairs(row) do
@@ -419,7 +575,7 @@ local function uses_in(main, id)
   return n
 end
 
--- How many slots name the entry (a sticky one: in every job of this world).
+-- How many slots name the entry (a shared one: in every job of this world).
 function M.uses(main, id)
   id = tostring(id)
   if not M.is_sticky(id) then return uses_in(main, id) end
@@ -443,7 +599,7 @@ end
 
 local move_last
 
--- Makes an entry sticky (every job and world) or the job's again. Returns its new id, or nil and why when a file
+-- Makes an entry shared (every job and world) or the job's again. Returns its new id, or nil and why when a file
 -- cannot be written (nothing moves). Unstuck, each job of this world with a slot naming it gets a copy (`main` always);
 -- other worlds' slots naming it go empty.
 function M.set_sticky(main, id, on)
@@ -476,8 +632,8 @@ function M.set_sticky(main, id, on)
   end)
 end
 
--- Saves an entry under `id` (nil: a new id), then makes it sticky or the job's when `want` says so (nil: as it is).
--- Returns its id; when a file cannot be written, also why (an edit is kept where the entry was; a new sticky entry
+-- Saves an entry under `id` (nil: a new id), then makes it shared or the job's when `want` says so (nil: as it is).
+-- Returns its id; when a file cannot be written, also why (an edit is kept where the entry was; a new shared entry
 -- is not made, and its id is nil).
 function M.save_entry(main, id, entry, want)
   local shared = id == nil and want or id ~= nil and M.is_sticky(tostring(id))
@@ -513,7 +669,7 @@ function M.last_member(macro)
   return math.max(1, math.min(k, #(macro.group or {})))
 end
 
--- A group's last pick follows its entry to a new id (saved with the files, by with_sticky).
+-- A group's last pick follows its entry to a new id (saved with the files, by with_shared).
 function move_last(main, old, new)
   local t = storage and storage.character and storage.character.hb_last
   if type(t) ~= "table" then return end
@@ -544,12 +700,13 @@ local function clear_refs(main, id)
     pcall(storage.save)
   end
   local main_set = find_set(main, nil, false)
-  each_set(main, function(set)
+  each_set(main, function(set, old)
     for rk, row in pairs(set) do
       if is_table(row) then
         for sk, v in pairs(row) do
           if refers(v, id) then
-            local under = set ~= main_set and raw_slot(main_set, rk, sk)
+            -- An old sub set blanks the old main set's slot under it; the pairs' sets just empty theirs.
+            local under = old and set ~= main_set and raw_slot(main_set, rk, sk)
             if is_table(under) and not refers(under, id) then row[sk] = false else row[sk] = nil end
           end
         end
@@ -559,8 +716,8 @@ local function clear_refs(main, id)
   end)
 end
 
--- Removes an entry and every slot naming it (a sticky one: in every job of this world). Returns true, or false and
--- why when a file cannot be written (a sticky entry then stays, slots and all).
+-- Removes an entry and every slot naming it (a shared one: in every job of this world). Returns true, or false and
+-- why when a file cannot be written (a shared entry then stays, slots and all).
 function M.delete_entry(main, id)
   id = tostring(id)
   if M.is_sticky(id) then
@@ -583,55 +740,95 @@ end
 -- ---------------------------------------------------------------------------
 
 -- The value in one set: a macro, a reference, false (blanked) or nil.
-function M.get_raw(main, sub, bar, slot)
-  return raw_slot(find_set(main, sub, false), bar, slot)
-end
+-- ---------------------------------------------------------------------------
+-- Sets by main / sub job
+-- ---------------------------------------------------------------------------
 
--- A slot's macro for main/sub and where it came from ("main" or "sub"), or nil.
-function M.resolve(main, sub, bar, slot)
-  if sub then
-    local v = raw_slot(find_set(main, sub, false), bar, slot)
-    if v == false then return nil end
-    if is_table(v) then
-      local m = deref(main, v)
-      if m then return m, "sub" end
-      return nil
+local function pair_key(sub) return sub or "-" end
+
+-- Drops the slots the pair cannot use (M.keep); rows left empty go.
+local function keep_only(main, sub, set)
+  if not M.keep then return set end
+  for rk, row in pairs(set) do
+    if is_table(row) then
+      for sk, v in pairs(row) do
+        local m = deref(main, v)
+        if m and not M.keep(main, sub, m) then row[sk] = nil end
+      end
+      if next(row) == nil then set[rk] = nil end
     end
   end
-  local m = deref(main, raw_slot(find_set(main, nil, false), bar, slot))
+  return set
+end
+
+-- The old layout as main / sub: the main set with the sub set over it (its blanks blank).
+local function old_bars(main, sub)
+  local out = {}
+  local function lay(set)
+    for rk, row in pairs(set or {}) do
+      if is_table(row) then
+        out[rk] = out[rk] or {}
+        for sk, v in pairs(row) do
+          if v == false then out[rk][sk] = nil elseif is_table(v) then out[rk][sk] = deep_copy(v) end
+        end
+        if next(out[rk]) == nil then out[rk] = nil end
+      end
+    end
+  end
+  lay(find_set(main, nil, false))
+  if sub then lay(find_set(main, sub, false)) end
+  return out
+end
+
+-- The pair's `part` ("sets": its bars, "pads": its crossbars), started from the old layout on first use.
+local function pair_set(main, sub, part, create)
+  if not main then return nil end
+  local k = pair_key(sub)
+  local sets = job_part(main, part, false)
+  if sets and is_table(sets[k]) then return sets[k] end
+  local old = part == "sets" and old_bars(main, sub) or deep_copy(job_part(main, "pad", false) or {})
+  if not create and next(old) == nil then return nil end
+  old = keep_only(main, sub, old)
+  -- Shown only while keep cannot judge yet: saved once it can (or when a slot changes).
+  if not create and M.keep_ready and not M.keep_ready() then return old end
+  sets = job_part(main, part, true)
+  sets[k] = old
+  M.save()
+  return sets[k]
+end
+
+function M.get_raw(main, sub, bar, slot)
+  return raw_slot(pair_set(main, sub, "sets", false), bar, slot)
+end
+
+-- A slot's macro as main / sub, or nil (the second value, "main", is kept for older callers).
+function M.resolve(main, sub, bar, slot)
+  local m = deref(main, raw_slot(pair_set(main, sub, "sets", false), bar, slot))
   if m then return m, "main" end
   return nil
 end
 
--- Every slot for main/sub: eff[bar][slot] = { macro, from = "main" | "sub" }.
+-- Every slot as main / sub: eff[bar][slot] = { macro, from = "main" }.
 function M.effective(main, sub)
   local eff = {}
-  local function overlay(set, from)
-    for bk, row in pairs(set or {}) do
-      local b = tonumber(bk)
-      if b and is_table(row) then
-        for sk, v in pairs(row) do
-          local s = tonumber(sk)
-          if s then
-            eff[b] = eff[b] or {}
-            if v == false then
-              eff[b][s] = nil
-            elseif is_table(v) then
-              local macro = deref(main, v)
-              eff[b][s] = macro and { macro = macro, from = from } or nil
-            end
-          end
+  for bk, row in pairs(pair_set(main, sub, "sets", false) or {}) do
+    local b = tonumber(bk)
+    if b and is_table(row) then
+      for sk, v in pairs(row) do
+        local s = tonumber(sk)
+        local macro = s and is_table(v) and deref(main, v)
+        if macro then
+          eff[b] = eff[b] or {}
+          eff[b][s] = { macro = macro, from = "main" }
         end
       end
     end
   end
-  overlay(find_set(main, nil, false), "main")
-  if sub then overlay(find_set(main, sub, false), "sub") end
   return eff
 end
 
 function M.assign(main, sub, bar, slot, id)
-  put_slot(find_set(main, sub, true), bar, slot, { ref = tostring(id) })
+  put_slot(pair_set(main, sub, "sets", true), bar, slot, { ref = tostring(id) })
   M.save()
 end
 
@@ -645,18 +842,12 @@ function M.set_macro(main, sub, bar, slot, macro)
   for _, l in ipairs(macro.lines or {}) do lines[#lines + 1] = tostring(l) end
   local m = { name = trim(macro.name), lines = lines }
   if trim(macro.label) ~= "" then m.label = trim(macro.label) end
-  put_slot(find_set(main, sub, true), bar, slot, m)
+  put_slot(pair_set(main, sub, "sets", true), bar, slot, m)
   M.save()
 end
 
--- Empties a slot; in a sub set over a filled main slot it is blanked (false).
 function M.clear(main, sub, bar, slot)
-  local set = find_set(main, sub, true)
-  if sub and is_table(raw_slot(find_set(main, nil, false), bar, slot)) then
-    put_slot(set, bar, slot, false)
-  else
-    drop_slot(set, bar, slot)
-  end
+  drop_slot(pair_set(main, sub, "sets", true), bar, slot)
   M.save()
 end
 
@@ -675,38 +866,34 @@ end
 -- Crossbars
 -- ---------------------------------------------------------------------------
 
-function M.pad_get_raw(main, side, button)
-  local v = raw_slot(job_part(main, "pad", false), side, button)
+function M.pad_get_raw(main, sub, side, button)
+  local v = raw_slot(pair_set(main, sub, "pads", false), side, button)
   return is_table(v) and v or nil
 end
 
-function M.pad_resolve(main, side, button)
-  return deref(main, M.pad_get_raw(main, side, button))
+function M.pad_resolve(main, sub, side, button)
+  return deref(main, M.pad_get_raw(main, sub, side, button))
 end
 
-local function pad_put(main, side, button, v)
-  if v then
-    put_slot(job_part(main, "pad", true), side, button, v)
-  else
-    local set = job_part(main, "pad", false)
-    if set then drop_slot(set, side, button) end
-  end
+local function pad_put(main, sub, side, button, v)
+  local set = pair_set(main, sub, "pads", true)
+  if v then put_slot(set, side, button, v) else drop_slot(set, side, button) end
 end
 
-function M.pad_assign(main, side, button, id)
-  pad_put(main, side, button, { ref = tostring(id) })
+function M.pad_assign(main, sub, side, button, id)
+  pad_put(main, sub, side, button, { ref = tostring(id) })
   M.save()
 end
 
-function M.pad_clear(main, side, button)
-  pad_put(main, side, button, nil)
+function M.pad_clear(main, sub, side, button)
+  pad_put(main, sub, side, button, nil)
   M.save()
 end
 
-function M.pad_swap(main, s1, b1, s2, b2)
-  local v1, v2 = M.pad_get_raw(main, s1, b1), M.pad_get_raw(main, s2, b2)
-  pad_put(main, s1, b1, v2)
-  pad_put(main, s2, b2, v1)
+function M.pad_swap(main, sub, s1, b1, s2, b2)
+  local v1, v2 = M.pad_get_raw(main, sub, s1, b1), M.pad_get_raw(main, sub, s2, b2)
+  pad_put(main, sub, s1, b1, v2)
+  pad_put(main, sub, s2, b2, v1)
   M.save()
 end
 

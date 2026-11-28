@@ -1289,10 +1289,6 @@
               "help": "Shows one bar fewer."
             },
             {
-              "args": "palette",
-              "help": "Opens or closes the macro palette for your job."
-            },
-            {
               "args": "mode",
               "help": "Switches between the keyboard hotbars and the gamepad crossbars."
             },
@@ -1328,60 +1324,66 @@
           "help": "Opens the hotbar manager."
         }
       },
-      "description": "Hotbars of multi-line macros with their actions' icons and recasts, loaded by main job and sub job; a macro library with a builder and a palette to drag from. Play with the keyboard's hotbars or the gamepad's crossbars (LT, RT or both with the d-pad, face buttons, L1 / R1 and L3 / R3), and switch between them with //hb mode. Gamepad mode needs input.capture (to take the triggers and buttons) and automation (a slot fires from a timer, since a pad filter cannot wait for a macro's waits).",
+      "description": "Hotbars of multi-line macros with their actions' icons and recasts, loaded by main job and sub job; a macro library with a builder to drag macros from. Play with the keyboard's hotbars or the gamepad's crossbars (LT, RT or both with the d-pad, face buttons, L1 / R1 and L3 / R3), and switch between them with //hb mode. Gamepad mode needs input.capture (to take the triggers and buttons) and automation (a slot fires from a timer, since a pad filter cannot wait for a macro's waits).",
       "files": [
         {
           "path": "init.lua",
-          "sha256": "24fac7a8d3482533099ffa936383b6be3d75e3a4a008c9695a655fa2e97a18c1",
-          "size": 6163,
+          "sha256": "029c42773c4099c5977e3639e2017decddc8b1fa21ff3f0d4f3d620b47a55471",
+          "size": 6684,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/init.lua"
         },
         {
           "path": "mod.toml",
-          "sha256": "d8c6208098a31156b649435b3d4bd2b157efa936800e95faa8bf171dc002805a",
-          "size": 4516,
+          "sha256": "7b78c4b0de9ebf5fd6bcac49ea56ce549f36f98f78fd8a010415a1d9e782475d",
+          "size": 4415,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/mod.toml"
         },
         {
           "path": "src/actions.lua",
-          "sha256": "f57c3421c24ff30a55dd28fafe1a079980647682cf8a9346044e3306e4290906",
-          "size": 4071,
+          "sha256": "99fd4b0e146ee089bed5e444f697c95aadbad9646a62dbb25dd893bc860107b1",
+          "size": 4696,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/actions.lua"
         },
         {
           "path": "src/bar.lua",
-          "sha256": "d6b4b641880a549e7deea85a463b21a671ec571c58107305cce026c0dbf08ca9",
-          "size": 16589,
+          "sha256": "89bffda76a8849b3817960f5008dec3539a83241a1b809921a65121273d67b48",
+          "size": 22336,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/bar.lua"
         },
         {
           "path": "src/builder.lua",
-          "sha256": "2b94f26f83aefe20ceb91536c491597cbce9defda20afe7f93f25c91d1854c80",
-          "size": 12588,
+          "sha256": "9c007accb6f0da8332959f25694b7267a4d87d28da80232e555684adc8d4ae77",
+          "size": 13058,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/builder.lua"
         },
         {
           "path": "src/chooser.lua",
-          "sha256": "cdf38e7372832d05335bd76fcb2e1deead7cf8bedf5508fa2fdd1a28eb3d4001",
-          "size": 4841,
+          "sha256": "28e4b818ee545dd7e24f9aa99b1ab5ab6f32c7d4d524c1911d66d7c9cdde10ee",
+          "size": 4974,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/chooser.lua"
         },
         {
           "path": "src/data.lua",
-          "sha256": "ef611ef261242a6351b10f09809fede742340e7df10ab84c65f6836f6307ccd6",
-          "size": 22938,
+          "sha256": "0866463aa60cf291abc4e9de57044acbefbbc58e557c58f9489b6cc51976a401",
+          "size": 30468,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/data.lua"
         },
         {
           "path": "src/ghost.lua",
-          "sha256": "74e8caa5008b7ea3c0d02ea69e0e71ed29fbda02fa53a86521d94446f88b1763",
-          "size": 2407,
+          "sha256": "ce5bc18f16aad571c834d58f63d29bed5f9d125bb6effb941ab53d9e55a6491d",
+          "size": 2754,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/ghost.lua"
         },
         {
+          "path": "src/iconpick.lua",
+          "sha256": "cea4d30c5cb54ccf82d86e698cc55a4e3330b9a8e149e181c32e018c311a0ba5",
+          "size": 7026,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/iconpick.lua"
+        },
+        {
           "path": "src/jobs.lua",
-          "sha256": "8c553f5f802bfd310eb9e3decddccf24fcfdb2a621d578ad6259a5a11e1b1d5e",
-          "size": 696,
+          "sha256": "a66ba3bca119f255f9d803dd037dccf5279a2de507c0094c12927294a9e6fef8",
+          "size": 829,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/jobs.lua"
         },
         {
@@ -1392,14 +1394,14 @@
         },
         {
           "path": "src/manager.lua",
-          "sha256": "9dabb151e5f09b616fdfb976d03742b790c2c4ffd62fa6bca02b0003a9c5581c",
-          "size": 33590,
+          "sha256": "3da79bc66a61ca95dc8df7e3f2219326668861600feedf00afba78404ddbc60c",
+          "size": 38154,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/manager.lua"
         },
         {
           "path": "src/menu.lua",
-          "sha256": "2b09d2a11a33ca386a97fbb8c41b6559600e8a5e4c2f1238446f9f5bcf430246",
-          "size": 1122,
+          "sha256": "2c8c874bf6a65bad74a72632772635c49c2e0d1c40c41464b9181ba1e7cdb517",
+          "size": 1252,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/menu.lua"
         },
         {
@@ -1410,32 +1412,26 @@
         },
         {
           "path": "src/overlay.lua",
-          "sha256": "263e272f8e38589b83f50a4da01079b840460436223fdfb3ce843919aa85d09b",
-          "size": 18189,
+          "sha256": "c3bd7aba3c1e3dc85ce949cb26a6a0b247dd8524afa3e540de2253cda7bced9f",
+          "size": 18855,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/overlay.lua"
         },
         {
           "path": "src/pad.lua",
-          "sha256": "cfc7098028d476b987836e5559cc9fd239f1adf3aace0d02e78567555ee7bfd7",
-          "size": 22118,
+          "sha256": "54e8edbd82748bc7826316b75f64d7f65dca6a89c3031c5bb584f45887ecec39",
+          "size": 22197,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/pad.lua"
         },
         {
-          "path": "src/palette.lua",
-          "sha256": "e71420c897649bfe4838598145c7812bc46be0ea197373854c3656caa515f7f4",
-          "size": 6905,
-          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/palette.lua"
-        },
-        {
           "path": "src/runner.lua",
-          "sha256": "1d921f612e5ef2adededc9b9bf704ca66c574f2fbe4f961cf19cd3f585890d0b",
-          "size": 2044,
+          "sha256": "9f4adeb16ab22b17ffc979778dc0978a38580e9c2082beb9a3fd0f3a56deecdc",
+          "size": 3917,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/runner.lua"
         },
         {
           "path": "src/slotview.lua",
-          "sha256": "eafa1b77419b2ec7fef863bf977155c3285bceb170aae610a71b8b7397770a2d",
-          "size": 8132,
+          "sha256": "29954cd59abd461f97e25d596c11c17c1156f62a0c7479b339981fa758e7769c",
+          "size": 8490,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/slotview.lua"
         },
         {
@@ -1443,12 +1439,30 @@
           "sha256": "4da0e6c74cda1b7f5d2426baa880276a2c1194036c23a88f39cae801e2048197",
           "size": 4618,
           "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/stock.lua"
+        },
+        {
+          "path": "src/subjob.lua",
+          "sha256": "a957bc25cef73b2f1d316dd3275371e410625da459275e9dade9af3aa138d7cd",
+          "size": 2714,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/subjob.lua"
+        },
+        {
+          "path": "src/tiledrag.lua",
+          "sha256": "504ce01ae8b6b8fea3d60baf9bee8ca452e69f93b41108aa7cc8d77c8dabe706",
+          "size": 563,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/tiledrag.lua"
+        },
+        {
+          "path": "src/tooltip.lua",
+          "sha256": "721e589a03bd4592be2e091be3516053f432340453fba64b29297ddd4cbcd796",
+          "size": 2761,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/hotbar/src/tooltip.lua"
         }
       ],
       "id": "hotbar",
       "kind": "lua",
       "name": "Hotbars",
-      "version": "1.13.14"
+      "version": "1.16.2"
     },
     {
       "authors": [],
@@ -2614,6 +2628,46 @@
       "id": "regime",
       "kind": "lua",
       "name": "Training Regime",
+      "version": "1.0.1"
+    },
+    {
+      "authors": [],
+      "commands": {
+        "retailmacros": {
+          "args": "",
+          "help": "Opens the Retail Macros window."
+        }
+      },
+      "description": "Brings your macro books over from a game install on this computer (retail's, found by itself or picked): copies the books you choose into this client's macro palettes, or turns their macros into Hotbars macros for the jobs you choose. //retailmacros opens it. It reads only the folder you allow, and changes nothing there.",
+      "files": [
+        {
+          "path": "init.lua",
+          "sha256": "93c3778208314b32b9f73048bab159ab4f3975fecc48a2c8ea85374811137278",
+          "size": 12424,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/retail-macros/init.lua"
+        },
+        {
+          "path": "mod.toml",
+          "sha256": "3a4338fea159dfbf7485597290ce81645ba6e5cb139be6226d71349720142b8e",
+          "size": 499,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/retail-macros/mod.toml"
+        },
+        {
+          "path": "src/mcr.lua",
+          "sha256": "adccbae1c7b67835e776d97da658cd95e576cfb0bddc86a67eaab18a740e7ca0",
+          "size": 2571,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/retail-macros/src/mcr.lua"
+        },
+        {
+          "path": "src/md5.lua",
+          "sha256": "150099c20d2b6ce1d357f860cf8abe1e40c141cc55f17a6362db9f41748ccc14",
+          "size": 1532,
+          "url": "https://raw.githubusercontent.com/lenonk/vana-client/master/crates/vana-client/assets/mods/retail-macros/src/md5.lua"
+        }
+      ],
+      "id": "retail-macros",
+      "kind": "lua",
+      "name": "Retail Macros",
       "version": "1.0.1"
     },
     {

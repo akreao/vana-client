@@ -340,6 +340,8 @@ pub struct Host {
     pub(in crate::client) synth: Vec<input::Synth>,
     /// A mod pressed Enter this frame: a chat line it submits is the mod's, not the player's.
     pub(in crate::client) synth_enter: bool,
+    /// A mod pressed any key this frame: the client's own question (fs.open_folder) takes no keys then.
+    pub(in crate::client) synth_keys: bool,
     /// actions.choose's pick, held until the event's menu takes input (5 s at most).
     pub(in crate::client) choose: Option<(usize, std::time::Instant)>,
     /// Every loaded mod, for mods.list / call / emit.
@@ -1277,6 +1279,14 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
     }
     let mut host = Host::park(&mut w.lua);
     host.gu = gu.map(|g| g as *const _);
+    // Who binds what, for binds.users: every running mod's binds.
+    let all: Vec<(String, input::Combo)> = host
+        .vms
+        .iter()
+        .filter(|v| v.suspended.is_none())
+        .flat_map(|v| v.st.borrow().binds.iter().map(|b| (v.manifest.id.clone(), b.combo)).collect::<Vec<_>>())
+        .collect();
+    host.info.borrow_mut().all_binds = all;
     if !host.started {
         // Mods start with our character's state in: in a zone, our vitals known (or 5 s on, whatever came).
         let waited = *host.start_wait.get_or_insert_with(std::time::Instant::now);
@@ -1793,13 +1803,20 @@ pub(super) fn world_shapes(w: &World) -> [Vec<crate::render::LineVertex>; 2] {
 }
 
 /// The mods' HUD elements, under the windows (world_hud).
+/// The HUD elements drawn over the windows (`top`), after the classic UI's windows.
+pub(super) fn draw_hud_top(gu: &mut super::game_ui::GameUi, w: &World) {
+    if !w.modern && w.lua.started && !w.lua.all_hidden.get() {
+        hud::draw(gu, w, true);
+    }
+}
+
 pub(super) fn draw_hud(gu: &mut super::game_ui::GameUi, w: &World) {
     if !w.modern {
         w.lua.set_modern_scale(None);
     }
     if w.lua.started && !w.lua.all_hidden.get() {
         draw::draw_overlay(gu, w);
-        hud::draw(gu, w);
+        hud::draw(gu, w, false);
     } else {
         w.lua.info.borrow_mut().hud_rects.clear();
     }
@@ -1985,7 +2002,7 @@ impl Host {
     }
 
     /// The tooltip of the mod HUD element under the pointer: (title, text, seconds there).
-    pub(in crate::client) fn hud_tip(&self) -> Option<(String, String, f32)> {
+    pub(in crate::client) fn hud_tip(&self) -> Option<(String, String, Option<window::Icon>, f32)> {
         hud::tip(self)
     }
 
@@ -2389,6 +2406,97 @@ mod tests {
             })?,
         )?;
         lua.globals().set("TEST", t)
+    }
+
+    /// A host with one mod "t" holding `wins`, on a 1000 x 800 screen.
+    fn classic_host(wins: Vec<window::Window>) -> Host {
+        let vm = Vm::new(
+            manifest::Manifest { id: "t".into(), ..Default::default() },
+            PathBuf::from("."),
+            vm::Source::Dir(PathBuf::from(".")),
+        )
+        .unwrap();
+        vm.st.borrow_mut().windows = wins;
+        let mut host = Host::default();
+        {
+            let mut f = host.info.borrow_mut();
+            (f.window, f.k) = ([1000.0, 800.0], (1.0, 1.0));
+        }
+        host.vms.push(vm);
+        host
+    }
+
+    fn classic_win(id: &str, hud: bool, place: Option<(f32, f32)>) -> window::Window {
+        let mut win = window::Window::new(id);
+        (win.open, win.hud, win.place) = (true, hud, place);
+        win
+    }
+
+    /// The classic UI draws and routes the HUD layer's windows first, then the other windows, modal and anchored
+    /// ones last, whatever order the mod opened them in.
+    #[test]
+    fn classic_places_hud_layer_first() {
+        let mut modal = classic_win("modal", false, None);
+        modal.modal = true;
+        let mut popup = classic_win("popup", false, None);
+        popup.anchor = Some((10.0, 10.0));
+        let mut hidden = classic_win("closed", true, Some((0.0, 0.0)));
+        hidden.open = false;
+        let host = classic_host(vec![
+            modal,
+            classic_win("manager", false, Some((50.0, 50.0))),
+            popup,
+            classic_win("edge", true, Some((0.0, 0.0))),
+            hidden,
+            classic_win("cascade", false, None),
+        ]);
+        let ids: Vec<_> = classic_places(&host).into_iter().map(|(_, id, _, _)| id).collect();
+        assert_eq!(ids, ["edge", "manager", "cascade", "modal", "popup"]);
+        host.all_hidden.set(true);
+        assert!(classic_places(&host).is_empty());
+    }
+
+    /// Under a rect of World::over_mod_hud a HUD-layer window takes no pointer, unless a press or a drag on it
+    /// already holds it; the other windows are drawn over the game's and keep it.
+    #[test]
+    fn pointer_places_under_game_windows() {
+        let host = classic_host(vec![
+            classic_win("edge", true, Some((0.0, 0.0))),
+            classic_win("manager", false, Some((0.0, 0.0))),
+        ]);
+        let ids = |over: &[[f32; 4]], p| -> Vec<String> {
+            pointer_places(&host, over, p).into_iter().map(|(_, id, _, _)| id).collect()
+        };
+        let over = [[0.0, 0.0, 100.0, 100.0]];
+        assert_eq!(ids(&over, (50.0, 50.0)), ["manager"]);
+        assert_eq!(ids(&over, (150.0, 150.0)), ["edge", "manager"]);
+        assert_eq!(ids(&[], (50.0, 50.0)), ["edge", "manager"]);
+        host.vms[0].st.borrow_mut().windows[0].press = Some((0, 1.0, 1.0));
+        assert_eq!(ids(&over, (50.0, 50.0)), ["edge", "manager"]);
+        host.vms[0].st.borrow_mut().windows[0].press = None;
+        host.vms[0].st.borrow_mut().windows[0].drag = Some((0, 1.0, 1.0));
+        assert_eq!(ids(&over, (50.0, 50.0)), ["edge", "manager"]);
+    }
+
+    /// A press or a drag holds the pointer only on a window pointer_classic reaches and so can end: not a suspended
+    /// mod's, nor a panel's (the Timers' dock), nor any while the mods' windows are hidden.
+    #[test]
+    fn holds_pointer_only_routed_windows() {
+        let mut win = classic_win("w", false, None);
+        win.drag = Some((0, 1.0, 1.0));
+        let mut host = classic_host(vec![win]);
+        assert!(holds_pointer(&host));
+        host.all_hidden.set(true);
+        assert!(!holds_pointer(&host));
+        host.all_hidden.set(false);
+        host.vms[0].st.borrow_mut().windows[0].panel = Some("p".into());
+        assert!(!holds_pointer(&host));
+        host.vms[0].st.borrow_mut().windows[0].panel = None;
+        host.vms[0].suspended = Some("errors".into());
+        assert!(!holds_pointer(&host));
+        host.vms[0].suspended = None;
+        host.vms[0].st.borrow_mut().windows[0].open = false;
+        assert!(!holds_pointer(&host));
     }
 
     /// The stand-in parked in `World::lua` while the host runs the mods answers the World's queries from the mods'
@@ -4455,6 +4563,12 @@ pub(super) fn window_key(w: &mut World, key: egui::Key, shift: bool) -> bool {
     for vm in host.vms.iter().filter(|v| v.suspended.is_none()) {
         let mut st = vm.st.borrow_mut();
         if let Some(win) = st.windows.iter_mut().find(|w| w.open && w.focus) {
+            // A key a mod pressed never answers the client's question for the player (a real key the same frame
+            // goes too).
+            if win.id == api::CLIENT_ASK && host.synth_keys {
+                log::info!("{}: a pressed key ignored by the client's question", vm.manifest.id);
+                return true;
+            }
             let (ev, se) = win.key_mod(key, shift);
             hit = Some((vm.manifest.id.clone(), win.id.clone(), ev, se));
             break;
@@ -4466,11 +4580,18 @@ pub(super) fn window_key(w: &mut World, key: egui::Key, shift: bool) -> bool {
     true
 }
 
-/// The open mod windows in the classic UI, cascaded from the Config pages' place; their rects.
-pub(super) fn draw_classic(gu: &mut super::game_ui::GameUi, w: &World) -> Vec<[f32; 4]> {
+/// A classic window of the HUD layer, drawn with the Timers' dock under the HUD and every game window: a HUD or edge
+/// window that is not modal and not opened at an anchor. The others (a mod's manager, a popup) stay over them.
+fn hud_layer(win: &window::Window) -> bool {
+    win.hud && !win.modal && win.anchor.is_none()
+}
+
+/// The open mod windows in the classic UI of one layer (`hud`: hud_layer's), cascaded from the Config pages' place;
+/// their rects.
+pub(super) fn draw_classic(gu: &mut super::game_ui::GameUi, w: &World, hud: bool) -> Vec<[f32; 4]> {
     let mut out = Vec::new();
-    for (v, id, x, y) in classic_places(w) {
-        if let Some(win) = w.lua.vms[v].st.borrow().windows.iter().find(|x| x.id == id) {
+    for (v, id, x, y) in classic_places(&w.lua) {
+        if let Some(win) = w.lua.vms[v].st.borrow().windows.iter().find(|x| x.id == id && hud_layer(x) == hud) {
             // Its opacity (per-window opacity), over the whole window.
             let o = w.lua.window_opacity(&w.window_opacity, &format!("mod:{}:{id}", w.lua.vms[v].manifest.id));
             gu.opacity((o < 1.0).then_some(o));
@@ -4634,20 +4755,20 @@ impl Host {
     }
 }
 
-/// The classic places of the open windows, in draw order (cascaded from the Config pages' place; modal ones last,
-/// centred, or at their anchor kept on screen).
-fn classic_places(w: &World) -> Vec<(usize, String, f32, f32)> {
-    let (mut out, mut modal) = (Vec::new(), Vec::new());
-    if w.lua.all_hidden.get() {
+/// The classic places of the open windows, in draw order (cascaded from the Config pages' place; the HUD layer's
+/// first, modal ones last, centred, or at their anchor kept on screen).
+fn classic_places(h: &Host) -> Vec<(usize, String, f32, f32)> {
+    let (mut hud, mut out, mut modal) = (Vec::new(), Vec::new(), Vec::new());
+    if h.all_hidden.get() {
         return out;
     }
     let (screen, uk) = {
-        let f = w.lua.info.borrow();
+        let f = h.info.borrow();
         (f.window, f.k)
     };
     let (sw, sh) = (screen[0] * uk.0, screen[1] * uk.1);
     let mut k = 0.0;
-    for (v, vm) in w.lua.vms.iter().enumerate().filter(|(_, v)| v.suspended.is_none()) {
+    for (v, vm) in h.vms.iter().enumerate().filter(|(_, v)| v.suspended.is_none()) {
         // A panel's edge window is the Timers' dock's (regime.rs).
         for win in vm.st.borrow().windows.iter().filter(|w| w.open && w.panel.is_none()) {
             // The room below its top: a list shows fewer rows rather than run past the screen's bottom.
@@ -4669,16 +4790,53 @@ fn classic_places(w: &World) -> Vec<(usize, String, f32, f32)> {
                 (None, None) if win.modal => {
                     modal.push((v, win.id.clone(), ((sw - ww) / 2.0).max(0.0), ((sh - wh) / 2.0).max(0.0)))
                 }
-                (None, Some((x, y))) => out.push((v, win.id.clone(), x, y)),
+                (None, Some((x, y))) => {
+                    if hud_layer(win) { &mut hud } else { &mut out }.push((v, win.id.clone(), x, y))
+                }
                 (None, None) => {
-                    out.push((v, win.id.clone(), 16.0 + 24.0 * k, 48.0 + 24.0 * k));
+                    let at = (v, win.id.clone(), 16.0 + 24.0 * k, 48.0 + 24.0 * k);
+                    if hud_layer(win) { &mut hud } else { &mut out }.push(at);
                     k += 1.0;
                 }
             }
         }
     }
-    out.extend(modal);
-    out
+    hud.extend(out);
+    hud.extend(modal);
+    hud
+}
+
+/// The classic places the pointer at `p` can reach: the HUD layer's windows not where a game window or the HUD is over
+/// them (`over_mod_hud`: World::over_mod_hud), unless a press or a drag on one already holds the pointer.
+fn pointer_places(h: &Host, over_mod_hud: &[[f32; 4]], p: (f32, f32)) -> Vec<(usize, String, f32, f32)> {
+    let mut places = classic_places(h);
+    let r = |r: &[f32; 4]| p.0 >= r[0] && p.1 >= r[1] && p.0 < r[0] + r[2] && p.1 < r[1] + r[3];
+    if over_mod_hud.iter().any(r) {
+        places.retain(|(v, id, _, _)| {
+            h.vms[*v]
+                .st
+                .borrow()
+                .windows
+                .iter()
+                .find(|x| x.id == *id)
+                .is_none_or(|win| !hud_layer(win) || win.drag.is_some() || win.press.is_some())
+        });
+    }
+    places
+}
+
+/// A classic mod window holds the pointer: a press or a canvas drag on it goes on until the button comes up, wherever
+/// the pointer is. Only the windows classic_places routes (pointer_classic clears the press or drag): not while the
+/// mods' windows are hidden (/lua hide), nor a suspended mod's or a panel's window, whose press or drag nothing ends.
+pub(super) fn holds_pointer(h: &Host) -> bool {
+    !h.all_hidden.get()
+        && h.vms.iter().filter(|vm| vm.suspended.is_none()).any(|vm| {
+            vm.st
+                .borrow()
+                .windows
+                .iter()
+                .any(|win| win.open && win.panel.is_none() && (win.drag.is_some() || win.press.is_some()))
+        })
 }
 
 /// The item of the classic mod list cell under the pointer, for the item window: (id, extdata).
@@ -4711,16 +4869,26 @@ pub(super) fn pointer_classic(
     right: bool,
     held: (bool, bool, bool),
 ) -> bool {
-    let mut places = classic_places(w);
-    // A canvas the pointer has left (its window not under it now): its 'leave'.
+    let all = classic_places(&w.lua);
+    let mut places = pointer_places(&w.lua, &w.over_mod_hud, p);
+    // A canvas the pointer has left (its window not under it now, or a window over it there): its 'leave'.
     let mut left = Vec::new();
-    for (v, id, x, y) in &places {
+    for (v, id, x, y) in &all {
         let vm = &w.lua.vms[*v];
+        let reached = places.iter().any(|q| q.0 == *v && q.1 == *id);
         let mut st = vm.st.borrow_mut();
+        // A click on a window over it closes its open dropdown, as a click off it does.
+        if !reached
+            && (clicked || right)
+            && let Some(win) = st.windows.iter_mut().find(|x| x.id == *id)
+            && let Some(d) = win.drop_open()
+        {
+            win.drop_close(d);
+        }
         if let Some(win) = st.windows.iter_mut().find(|x| x.id == *id && x.hovered.is_some()) {
             // With an open dropdown's list hanging below it.
             let (ww, wh) = win.classic_reach();
-            if p.0 < *x || p.1 < *y || p.0 >= x + ww || p.1 >= y + wh {
+            if !reached || p.0 < *x || p.1 < *y || p.0 >= x + ww || p.1 >= y + wh {
                 left.extend(win.hover_off().into_iter().map(|e| (vm.manifest.id.clone(), id.clone(), e)));
             }
         }
@@ -4744,8 +4912,9 @@ pub(super) fn pointer_classic(
             return true;
         }
     }
-    // A mod window or a recorded game window under the pointer, over the HUD there (canvas drags report it).
-    let covered = places.iter().any(|(v, id, x, y)| {
+    // A mod window (a HUD-layer one a game window covers too) or a recorded game window under the pointer, over the HUD
+    // there (canvas drags report it).
+    let covered = all.iter().any(|(v, id, x, y)| {
         w.lua.vms[*v].st.borrow().windows.iter().find(|win| win.id == *id).is_some_and(|win| {
             let (ww, wh) = win.classic_reach();
             p.0 >= *x && p.1 >= *y && p.0 < x + ww && p.1 < y + wh
@@ -4796,6 +4965,14 @@ pub(super) fn pointer_classic(
 }
 
 impl Host {
+    /// The game's key bindings as the client's Input table holds them, for binds.users.
+    pub(in crate::client) fn set_game_keys(&self, keys: &[[u16; 3]]) {
+        let mut f = self.info.borrow_mut();
+        if f.game_keys != keys {
+            f.game_keys = keys.to_vec();
+        }
+    }
+
     /// F12's lines: each mod's time a frame (average and peak, ms), calls over the soft cap, memory, errors.
     pub(super) fn debug_lines(&self) -> Vec<String> {
         self.vms
@@ -4900,6 +5077,10 @@ fn permission_text(p: &str) -> (&'static str, &'static str) {
         "packets.write" => ("Allow changing packets", "Changes, blocks and sends packets."),
         "input.capture" => ("Allow taking input", "Takes keys and the mouse from the game and presses keys."),
         "files.shared" => ("Allow shared files", "Reads and writes files outside its folder, in the shared mod data."),
+        "files.outside" => (
+            "Allow reading your folders",
+            "Reads folders on this computer that you pick or allow, such as a game install.",
+        ),
         "net" => ("Allow network", "Connects to the internet (web requests, sockets)."),
         "exec" => ("Allow running programs", "Starts programs on this computer."),
         "clipboard" => ("Allow reading the clipboard", "Reads the text you copied."),

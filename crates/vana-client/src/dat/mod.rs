@@ -18,6 +18,60 @@ pub fn ffximain(ffxi_dir: &Path) -> PathBuf {
     if own.is_file() { own } else { ffxi_dir.join("FFXiMain.dll") }
 }
 
+/// The game folder a login uses (Client::game_data sets it as it opens that folder's files); none yet: the config's.
+static FFXI_DIR_IN_USE: std::sync::RwLock<Option<PathBuf>> = std::sync::RwLock::new(None);
+
+/// From here on the tables built from FFXiMain outside the client's own (DllTable) come from `ffxi_dir`'s.
+pub fn use_ffxi_dir(ffxi_dir: &Path) {
+    *FFXI_DIR_IN_USE.write().unwrap_or_else(|e| e.into_inner()) = Some(ffxi_dir.to_path_buf());
+}
+
+/// The "FINAL FANTASY XI" folder in use: the login's (use_ffxi_dir), else the config's.
+pub fn ffxi_dir_in_use() -> PathBuf {
+    FFXI_DIR_IN_USE
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .unwrap_or_else(|| crate::config::Config::load().ffxi_dir())
+}
+
+/// Bumped by dll_files_changed: the tables built before it are built again.
+static DLL_GENERATION: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The game files changed under the client (an update applied, a first start's install): DllTable builds its tables
+/// again from the new FFXiMain.
+pub fn dll_files_changed() {
+    DLL_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// A table built from the FFXiMain of the game folder in use, once for each folder (a server's own folder has its
+/// own DLL) and update (dll_files_changed): a login into another folder gets that DLL's table. Each is kept for the
+/// whole run (a few folders and updates at most).
+pub struct DllTable<T: 'static>(std::sync::Mutex<Vec<(PathBuf, u32, &'static T)>>);
+
+impl<T: Sync + 'static> DllTable<T> {
+    pub const fn new() -> Self {
+        Self(std::sync::Mutex::new(Vec::new()))
+    }
+
+    /// The table for the folder in use, built from its FFXiMain (empty bytes when it cannot be read).
+    pub fn get(&self, build: impl FnOnce(&[u8]) -> T) -> &'static T {
+        self.get_in(&ffxi_dir_in_use(), build)
+    }
+
+    fn get_in(&self, ffxi_dir: &Path, build: impl FnOnce(&[u8]) -> T) -> &'static T {
+        let g = DLL_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
+        let mut t = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, _, v)) = t.iter().find(|(d, k, _)| d == ffxi_dir && *k == g) {
+            return v;
+        }
+        let v: &'static T = Box::leak(Box::new(build(&std::fs::read(ffximain(ffxi_dir)).unwrap_or_default())));
+        t.retain(|(d, _, _)| d != ffxi_dir);
+        t.push((ffxi_dir.to_path_buf(), g, v));
+        v
+    }
+}
+
 /// `VTABLE{n}.DAT` holds one byte per file id (the ROM number when present);
 /// `FTABLE{n}.DAT` a u16 per id: `dir << 7 | file`.
 pub struct DatIndex {
@@ -58,27 +112,29 @@ impl DatIndex {
         if entries.is_empty() {
             bail!("no VTABLE.DAT under {}", ffxi_dir.display());
         }
-        let overlays = Self::overlays(&entries);
+        let overlays = Self::overlays(ffxi_dir, &entries);
         Ok(Self { root: ffxi_dir.to_path_buf(), entries, overlays })
     }
 
-    fn overlays(entries: &[(u8, u16)]) -> Option<std::sync::Arc<overlay::Overlays>> {
+    /// The enabled mods' files by this install's ids: one scan for each install (a server's own game folder has its
+    /// own file tables) while the enabled mods stay the same; every install shares the one mod list.
+    fn overlays(ffxi_dir: &Path, entries: &[(u8, u16)]) -> Option<std::sync::Arc<overlay::Overlays>> {
         use std::sync::{Arc, Mutex, OnceLock};
+        type Scan = (PathBuf, Vec<PathBuf>, Arc<overlay::Overlays>);
         let dirs = crate::config::enabled_mod_dirs();
         if dirs.is_empty() {
             return None;
         }
-        static SCANNED: OnceLock<Mutex<Option<(Vec<PathBuf>, Arc<overlay::Overlays>)>>> = OnceLock::new();
+        static SCANNED: OnceLock<Mutex<Vec<Scan>>> = OnceLock::new();
         let mut s = SCANNED.get_or_init(Default::default).lock().unwrap();
-        if let Some((d, o)) = s.as_ref()
-            && *d == dirs
-        {
+        if let Some((_, _, o)) = s.iter().find(|(r, d, _)| r == ffxi_dir && *d == dirs) {
             return Some(o.clone());
         }
         let ids: std::collections::HashMap<(u8, u16), u32> =
             entries.iter().enumerate().filter(|(_, e)| e.0 != 0).map(|(i, &e)| (e, i as u32)).collect();
         let o = Arc::new(overlay::Overlays::scan(&dirs, &ids, crate::config::merged_dir()));
-        *s = Some((dirs, o.clone()));
+        s.retain(|(r, _, _)| r != ffxi_dir);
+        s.push((ffxi_dir.to_path_buf(), dirs, o.clone()));
         Some(o)
     }
 
@@ -87,6 +143,11 @@ impl DatIndex {
         let mut index = Self::open(ffxi_dir)?;
         index.overlays = None;
         Ok(index)
+    }
+
+    /// The "FINAL FANTASY XI" folder it was opened on.
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 
     /// The folder that holds "FINAL FANTASY XI" (the PlayOnline Viewer's files sit beside it).
@@ -233,3 +294,35 @@ pub mod zone;
 
 #[cfg(test)]
 mod fuzz;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A DLL table is built once for each game folder, from that folder's FFXiMain.
+    #[test]
+    fn dll_table_per_folder() {
+        let base = std::env::temp_dir().join(format!("vana-dlltable-{}", std::process::id()));
+        let (a, b) = (base.join("a"), base.join("b"));
+        for (d, dll) in [(&a, b"AAAA".as_slice()), (&b, b"BB".as_slice())] {
+            std::fs::create_dir_all(d).unwrap();
+            std::fs::write(d.join("FFXiMain.dll"), dll).unwrap();
+        }
+        static T: DllTable<usize> = DllTable::new();
+        let mut built = 0;
+        let mut len = |d: &[u8]| {
+            built += 1;
+            d.len()
+        };
+        assert_eq!(*T.get_in(&a, &mut len), 4);
+        assert_eq!(*T.get_in(&b, &mut len), 2);
+        assert_eq!(*T.get_in(&a, &mut len), 4);
+        assert_eq!(built, 2);
+        // An update: built again from the new DLL.
+        std::fs::write(a.join("FFXiMain.dll"), b"AAAAAA").unwrap();
+        dll_files_changed();
+        assert_eq!(*T.get_in(&a, |d| d.len()), 6);
+        assert_eq!(*T.get_in(&base.join("none"), |d| d.len()), 0);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}

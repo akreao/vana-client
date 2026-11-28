@@ -3,10 +3,14 @@
 //! CreateTotp brings the otpauth URI, shown as a QR code with its key; a code from the app (VerifyTotp) switches it on
 //! and brings the recovery code. Turn off (RemoveTotp) and a new recovery code (RegenerateRecovery) take the app's code
 //! or the recovery code. LSB's auth service checks the form's password on each (src/login/auth_session.cpp).
+//! Game files gives the server its own game folder (Config::server_game_dirs), for one whose text ids follow another
+//! copy of the files than the client's (lenonk/vana-client#137); no server request.
 
 use super::game_ui::{GREY, GameUi, WHITE, YELLOW};
 use super::{UiInput, inside};
 use crate::net::auth::{Command, Reply};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 const TITLE: &str = "Account";
 const LINE: f32 = 16.0;
@@ -29,6 +33,8 @@ pub enum Step {
     Code(Ask),
     /// The new password twice, and a code with two-factor sign-in on.
     Password,
+    /// The server's game folder: its own, or the default.
+    Folder,
     /// The outcome, and a recovery code to keep.
     Done {
         text: &'static str,
@@ -43,6 +49,12 @@ pub struct TwoFa {
     /// Change password's new password and its repeat.
     pub new: [String; 2],
     pub error: Option<String>,
+    /// Game files: the server's own folder (shown), else none, and the default one.
+    pub folder: Option<String>,
+    pub default_folder: String,
+    /// The folder dialog's answer once it closes (none: cancelled); `picking` while it is open.
+    picked: Arc<Mutex<Option<Option<PathBuf>>>>,
+    pub picking: bool,
 }
 
 /// What the window asks of the app.
@@ -56,6 +68,8 @@ pub enum Act {
     Close,
     /// The recovery code to the clipboard.
     Copy(String),
+    /// Game files: the server back on the default folder.
+    DefaultFolder,
 }
 
 /// The window as drawn, for the modern layer (UI pixels): the frame, the text lines (rect, text, colour, centred),
@@ -73,7 +87,56 @@ pub struct View {
 
 impl TwoFa {
     pub fn new() -> Self {
-        TwoFa { step: Step::Menu, focus: 0, code: String::new(), new: Default::default(), error: None }
+        TwoFa {
+            step: Step::Menu,
+            focus: 0,
+            code: String::new(),
+            new: Default::default(),
+            error: None,
+            folder: None,
+            default_folder: String::new(),
+            picked: Default::default(),
+            picking: false,
+        }
+    }
+
+    /// With the server's own game folder (if any) and the default one, for Game files.
+    pub fn folders(mut self, own: Option<&Path>, default: &Path) -> Self {
+        self.folder = own.map(|d| d.display().to_string());
+        self.default_folder = default.display().to_string();
+        self
+    }
+
+    /// Opens the folder dialog (off the UI thread), at the folder in use.
+    fn pick(&mut self) {
+        if self.picking {
+            return;
+        }
+        self.picking = true;
+        let start = PathBuf::from(self.folder.as_deref().unwrap_or(&self.default_folder));
+        let out = self.picked.clone();
+        std::thread::spawn(move || {
+            let mut dialog = rfd::FileDialog::new().set_title("This server's FINAL FANTASY XI folder");
+            if let Some(dir) = start.ancestors().find(|d| d.is_dir()) {
+                dialog = dialog.set_directory(dir);
+            }
+            *out.lock().unwrap() = Some(dialog.pick_folder());
+        });
+    }
+
+    /// The folder picked once the dialog closed (none: cancelled, or still open).
+    pub fn take_picked(&mut self) -> Option<PathBuf> {
+        let answer = self.picked.lock().unwrap().take()?;
+        self.picking = false;
+        answer
+    }
+
+    /// The folder the app kept for the server (none: the default), or why it would not.
+    pub fn folder_set(&mut self, r: Result<Option<PathBuf>, String>) {
+        match r {
+            Ok(own) => (self.folder, self.error) = (own.map(|d| d.display().to_string()), None),
+            Err(e) => self.error = Some(e),
+        }
     }
 
     /// The step's fields: their labels, focus 0.. in order (the new passwords are shown as stars).
@@ -123,9 +186,15 @@ impl TwoFa {
 
     fn buttons(&self) -> &'static [&'static str] {
         match self.step {
-            Step::Menu => {
-                &["Change password", "Turn on two-factor", "Turn off two-factor", "New recovery code", "Close"]
-            }
+            Step::Menu => &[
+                "Change password",
+                "Turn on two-factor",
+                "Turn off two-factor",
+                "New recovery code",
+                "Game files",
+                "Close",
+            ],
+            Step::Folder => &["Choose folder", "Use default", "Back"],
             Step::Scan { .. } => &["Confirm", "Cancel"],
             Step::Code(Ask::Off) => &["Turn off", "Cancel"],
             Step::Code(Ask::Recovery) => &["Make a new code", "Cancel"],
@@ -139,7 +208,12 @@ impl TwoFa {
         match &self.step {
             Step::Menu => {
                 "Change this account's password, or turn on two-factor sign-in: logging in then also asks for a code from \
-                 an authenticator app on your phone."
+                 an authenticator app on your phone. Game files picks the game folder this server uses."
+            }
+            Step::Folder => {
+                "A server that ships its own copy of the game files (with text that follows it) can use that copy: \
+                 choose its FINAL FANTASY XI folder. It is used from the next login to this server, with that folder's \
+                 own macros, equip sets and map markers (its USER folder), as the server's own launcher keeps them."
             }
             Step::Password => {
                 "The current password is the login form's. Enter the new one twice, and with two-factor sign-in on, the \
@@ -160,6 +234,10 @@ impl TwoFa {
             (Step::Menu, 1) => "Turn on two-factor sign-in for this account.",
             (Step::Menu, 2) => "Turn off two-factor sign-in (needs a code or the recovery code).",
             (Step::Menu, 3) => "Replace the recovery code (needs a code or the old recovery code).",
+            (Step::Menu, 4) => "The game files this server uses: its own copy, or the default.",
+            (Step::Folder, 0) => "Pick the server's FINAL FANTASY XI folder, or a folder above it.",
+            (Step::Folder, 1) => "This server uses the default game files again.",
+            (Step::Folder, _) => "Back to the account menu.",
             (Step::Menu, _) => "Back to the login form.",
             (Step::Password, 0) => "The new password: 1 to 32 plain ASCII characters.",
             (Step::Password, 1) => "The new password again.",
@@ -278,6 +356,18 @@ fn layout(lu: &GameUi, size: [u32; 2], st: &TwoFa, busy: bool, f: f32) -> Lay {
     if let Step::Done { code: Some(c), .. } = &st.step {
         y += 6.0 * f;
         line(&mut lines, &mut y, c.clone(), YELLOW, true);
+    }
+    if let Step::Folder = st.step {
+        y += 6.0 * f;
+        let (head, dir) = match &st.folder {
+            Some(d) => ("This server's own folder:", d),
+            None => ("The default folder:", &st.default_folder),
+        };
+        line(&mut lines, &mut y, head.into(), WHITE, false);
+        line(&mut lines, &mut y, super::fit_tail(lu, dir, cw / f), YELLOW, false);
+        if st.picking {
+            line(&mut lines, &mut y, "Choose the folder in the dialog...".into(), GREY, false);
+        }
     }
     let mut fields = Vec::new();
     let labels = st.fields();
@@ -416,6 +506,9 @@ pub fn window(
             (Step::Menu, 1) => act = Some(Act::Send(Command::CreateTotp, String::new())),
             (Step::Menu, 2) => (st.step, st.focus) = (Step::Code(Ask::Off), 0),
             (Step::Menu, 3) => (st.step, st.focus) = (Step::Code(Ask::Recovery), 0),
+            (Step::Menu, 4) => (st.step, st.focus) = (Step::Folder, 0),
+            (Step::Folder, 0) => st.pick(),
+            (Step::Folder, 1) => act = Some(Act::DefaultFolder),
             (Step::Done { code: Some(c), .. }, 0) => act = Some(Act::Copy(c.clone())),
             (Step::Menu, _) | (Step::Done { .. }, _) => act = Some(Act::Close),
             _ if refused.is_some() => st.error = refused.map(String::from),
@@ -530,6 +623,22 @@ mod tests {
         t.focus = 2;
         t.type_in("12 3-4ab");
         assert_eq!(t.code, "1234ab");
+    }
+
+    /// Game files shows the server's own folder or the default one; a refused folder keeps the shown one.
+    #[test]
+    fn game_files_folder() {
+        let mut t = TwoFa::new().folders(None, Path::new("/games/main"));
+        assert_eq!((t.folder.as_deref(), t.default_folder.as_str()), (None, "/games/main"));
+        t.folder_set(Ok(Some(PathBuf::from("/games/catseye"))));
+        assert_eq!(t.folder.as_deref(), Some("/games/catseye"));
+        t.folder_set(Err("No game files".into()));
+        assert_eq!((t.folder.as_deref(), t.error.as_deref()), (Some("/games/catseye"), Some("No game files")));
+        t.folder_set(Ok(None));
+        assert!(t.folder.is_none() && t.error.is_none());
+        assert!(t.take_picked().is_none() && !t.picking);
+        t.step = Step::Folder;
+        assert_eq!(t.buttons(), ["Choose folder", "Use default", "Back"]);
     }
 
     /// 0x07 on the password step says what to check; 0x06 ends it with the new passwords gone.

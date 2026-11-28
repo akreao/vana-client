@@ -416,11 +416,14 @@ impl Modern {
         modmgr::draw(&mut p, w);
         modwin::draw(&mut p, w);
         // A mod HUD element's tooltip, unless a panel is over it.
-        if let Some((title, text, _)) = w.lua.hud_tip()
+        if let Some((title, text, icon, _)) = w.lua.hud_tip()
             && let Some(at) = ctx.input(|i| i.pointer.hover_pos())
             && ctx.layer_id_at(at).is_none_or(|l| l.order == Order::Background)
         {
-            self.tip_at(ctx, at, &title, &text);
+            match icon {
+                Some(i) => modwin::icon_tip(self, ctx, Some(gu), Some(&*w), at, Some(i), &title, &text),
+                None => self.tip_at(ctx, at, &title, &text),
+            }
         }
         status::draw(&mut p, w);
         points::draw(&mut p, w);

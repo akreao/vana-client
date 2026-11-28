@@ -4707,7 +4707,9 @@ From the party spec (scratchpad party/SPEC.md; current addresses).
   sends it). 0x0DF (100e9cc0): HP / MP / TP / jobs of listed ids. A nameless member asks c2s 0x076 {u8 0}.
 - Slots DAT_10663ad8 (18 x 0x7c, FUN_10201fb0 / FUN_10202b80): self first in party 0, our party number's members
   0..5, other numbers 6..11 then 12..17; leaders per party (flag 4) and the alliance leader (flag 8); "ptw0" iff our
-  party has no leader, else "ptwN".
+  party has no leader, else "ptwN". Our slot 0 too takes its party number and leader bits from record 0's +0x34
+  (written by 0x0C8 as for anyone), not from our GAttr G+0x97f8: we stay in slot 0, but a table-only change
+  can change its party number or leader bits (calling trusts sets our leader bit 4: ptw0 to ptw3).
 - F1 / F7 (0x46 / 0x4c) target ourselves (we are an ordinary entity in retail); F2..F6 (0x47..0x4b) slots 1..5, F11
   (0x53) slot 6, F12 (0x54) slot 12 (FUN_102033c0: used, in our zone, no marker, model loaded; no distance). A re-pick
   of the same target plays "0010" again. Lock-on refuses self; Enter on self opens playermo.
@@ -19802,6 +19804,11 @@ From the research notes:
   0xcb -205, 0xcc -204, 0xcd -206, above 0xdb -code, else -129; `Kicked by same NICK` -> -0x201 (POLCON_IDLE gives
   -0x40f); KILL -251. The Viewer closes the chat without QUIT; PONG and NOTICE lines are held about 1 s before
   sending.
+- What those codes mean (polerr.bin's labels, numbered in decimal): 201 a second sign-in with this ID, 202 the
+  password is wrong, 203 the POL ID is wrong, 204 the protocol version is too old, 205 three wrong passwords in a
+  row (no sign-in for a few minutes), 206 a POLPRO <-> IRC server error. So 0xca is a wrong PlayOnline password,
+  sent after the 300 greeting (seen in a sign-in log, 2026-11-25); the member login (SE ID) comes after the chat
+  and is not reached. chat.rs `error_text` words them.
 - RSA: two 128-bit primes (16 random bytes, b[0] |= 1, b[15] = (b[15] & 0x0f) | 0x80, the next prime with gcd(c - 1,
   0xffff) = 1), n always 255 bits, e = 0xffff never sent; one pair until the slots go. The unpad zeroes byte 30 (the
   block type, unchecked), then skips nonzero bytes from 29 down to a zero byte.
@@ -19820,7 +19827,7 @@ From the research notes:
   XORed with a pad from a GetTickCount-dependent offset of 0x10065e34; its NICK is command 0x28 (0x10016ae0); POLCON
   is connected in state 0x1e (0x1c in 1.18.00n). Open: whether a server checks the NICK token; whether greeting offset
   0x14 is the client's port as the server sees it; what numeric 001 carries; the keep-alive setting in a real Viewer;
-  the ERROR codes for a wrong password or a locked account; who opens 51241.
+  who opens 51241.
 - Profile service: the function table (GetCommonFunctionTable, IPOLCoreCom vtable slot 7: 0x1006dbe8 / 0x1006fbe8;
   index: 1.18.00n / 1.18.15e): 0xab / 0xac LoadHandleNameList 0/9 (1001de30, 1001de50 / 1001e470, 1001e490); 0xaf /
   0xb0 LoadCharacterList 1/3 (10024a80, 10022980 / 10023440, 10023460); 0xc3 / 0xc4 ChangeMyStatus 4/5 (1001d520,
@@ -25060,3 +25067,110 @@ Settings > Graphics > Upscaling (config `upscaler` 0 off / 1 FSR / 2 external, `
   the installed Lua mods and DAT packs offered an update (catalogue::offer Some(true)). Any found: one log line in
   lua::ERROR red, "Updates are available for N mods (Settings > Mods)." (DAT packs: Settings > DAT Packs). Seen live
   (modern UI) with a test list (VANA_MOD_CATALOGUE) one version ahead.
+
+## Mod UI additions for the Hotbars rework (ours, 2026-11-25)
+- `textarea` element (lua/window.rs Input with `lines` > 1): Enter breaks the line, Up / Down keep the column
+  (line_move), Home / End go to the line's ends, Tab or Ctrl+Enter ends it, Escape undoes it, a paste keeps its line
+  breaks. Both UIs draw `lines` rows scrolled to the caret's line (area_rows); modern kit::field_lines.
+- Canvas `float = "right"`: at the window's right edge, taking no height; the elements after it narrow until past its
+  bottom (classic classic_widths / classic_size; modern: the element loop is a closure run in a narrowed child Ui).
+- HUD `top = true`: drawn over every window (modern: a tooltip-order painter; classic: a second pass after the mod
+  windows, lua::draw_hud_top) and left out of the hit rects, so drops reach what is under it.
+- `ui.prompt(text, buttons, handler, at)`: at "pointer" or {x, y, above}, the window's anchor.
+- Window event `context` {x, y}: a right-click on a mod window none of its elements took (modern: the window's drawn
+  rect, no canvas right-click in the frame's clicks; classic: no control under the pointer).
+- List row `hover` {title, text, icon}, canvas `tip` icon, HUD tip icon: the modern tooltip with the icon beside its
+  title (modwin::icon_tip). The classic UI keeps the row's `tip` in the help line.
+- `binds.users(key)`: the game's field key functions on a combination from the client's Input table (copied to the
+  frame info each frame; client::input::functions_on applies FUN_1011ff30's modifier flags: 0x80 neither Ctrl nor
+  Alt, 0x01 Shift, 0x02 Ctrl, 0x04 Alt, 0x08 both, 0x10 either, 0x20 no Shift), named by function_name (Ctrl+0..9
+  0x6c..0x75 and Alt+0..9 0x62..0x6b the macros, 0x58..0x61 the macro sets, F1..F8 targeting 0x46..0x4e, 0x10 first /
+  third person, 0x1c autorun, 0x30 lock-on, 0x44 /heal, 0x45 walk / run, 0x91 / 0x92 Enter / Esc on the target, ...);
+  functions of windows and lists are not counted (a plain `]` binding there takes Alt+] too). Other mods' binds of
+  the same combination, and the client's F12 and Ctrl+Alt+Shift+V.
+- Hotbars 1.14.0 uses them: the Builder (Type, Name with its icon tile, Target; a Macro's lines in a text area), one
+  action a slot run straight through actions.cast / ability / use_item / equip; Copy From's tiles; Assign Keys on the
+  bars (right-click anywhere), the Keys tab gone; one tooltip (src/tooltip.lua) everywhere.
+
+## Hotbars: a set per main / sub job pair (ours, 2026-11-25)
+- Hotbars 1.15.0 keeps db[main].sets[sub or "-"] (bars) and .pads[sub or "-"] (crossbars). A pair's first use
+  starts its set from the old layout: main with the sub set over it (false blanks), the job's one crossbar set;
+  src/subjob.lua drops another sub job's actions: a spell with no `levels` entry for the main or the sub job; a job
+  ability or pet command not in game.abilities(), only at main level 99 and once the jobs and the list have held for
+  2 s (the server's list for the new jobs lands after the change; game files give no job for an ability). Until then
+  the pair's set is shown, not saved; the settled list rebuilds the bars and saves it. The old parts stay to start
+  the pairs not played yet; delete_entry clears every set, uses() counts the pairs' slots once a job has any.
+
+## Retail macro import: game installs, files.outside, macro_import (2026-11-25)
+
+- Retail's install folder: HKLM\SOFTWARE\PlayOnline\InstallFolder, PlayOnlineUS\InstallFolder, PlayOnlineEU\InstallFolder
+  (key table at 0x1037ca08, by region DAT_10456a28 + 4), value "0001" (0x1034f498), read with RegOpenKeyExA /
+  RegQueryValueExA in FUN_101bccb0 (the gamepad tool's launcher; it runs "<value>\Tools\FFXiPadConfig.exe -game").
+  The game is 32-bit, so on a 64-bit Windows the key is under Wow6432Node. Wine keeps it in the prefix's system.reg
+  as `[Software\\Wow6432Node\\PlayOnlineUS\\InstallFolder]` with `"0001"="C:\\...\\FINAL FANTASY XI"`. Ours:
+  installs.rs (the registry on Windows; elsewhere padreg's prefixes, a drive letter through dosdevices, c: as
+  drive_c, plus the installer's default folders in each prefix).
+- Mods read folders outside their own with files.outside (read only): fs.pick_folder (the system dialog; the folder
+  picked is allowed), fs.open_folder (the client's question in window "__client_ask", which ui.window / update / on /
+  opacity refuse; the answer is recorded before the mod's handler hears it), fs.read_outside / exists_outside /
+  list_outside (full paths, resolved; under an allowed folder only; the client's mod data never), fs.game_installs.
+  Allowed folders last until the mod unloads.
+- actions.macro_import(folder, books): Macros::import_books saves the current set, copies the books' set files (read
+  as the game reads them: a damaged file becomes an empty set, a damaged record is cleared) and their titles, leaves
+  out /lua lines (macro_edit's rule), and first copies the files it replaces to USER/<id>/backup/<unix seconds>/. The
+  current set is read again when its book was imported. mcr.sys is not copied (the palette stays on its book).
+- Retail Macros mod (assets/mods/retail-macros): lists an install's USER/<content id> folders (the one named by
+  the player's id first), the 40 books with their macro counts, and copies the picked ones with macro_import or hands
+  their macros to Hotbars (mods.call "hotbar" "import_macros", per job; the book title's job, else the main job).
+  Not seen live: no retail install with macros on the test machine.
+- Review fixes (2026-11-27): the client's question (fs.open_folder) puts Don't Allow first and ignores every key
+  while a mod pressed one that frame (Lua `synth_keys`: `input.press` / `input.send` reach the focused mod window, so
+  a mod could answer for the player; a real key that frame goes too). The Lua reader checks the container's MD5 as
+  `macros::read_file` does (src/md5.lua, RFC 1321's vectors in the test): a set the client would read as empty is
+  damaged in the Books list too. `import_books` refuses this character's own folder (canonical paths), which only
+  stripped its `/lua` lines. Hotbars' `import_entries` drops `/lua` lines itself (any mod can call it) and returns how
+  many as a fourth value.
+
+## Closest auto-target (ours, 2026-11-26)
+- Not retail: config closest_auto_target (default on, no UI yet), only while /autotarget is on (0x0B4 byte 1 bit 6
+  clear). The server picks the next monster in a front cone after a kill (LSB CAttackState::UpdateTarget: the
+  first attacking monster facing within 64 and 10 yalms) or, with none there, lets us go; FUN_101514a0's client pick is
+  the lowest index we claimed.
+- Seen in a client log: the server's pick comes as an 0x058 while engaged before the dead target is
+  dropped on our side, and its let-go (status 1 -> 0) about 0.3 s before the target shows dead. So the order of
+  0x058 / status / death cannot be relied on.
+- client/target.rs: candidates are monsters within 30 claimed by us, a party or alliance member or our pet, or
+  unclaimed and either facing one of us (0x00E facetarget) or engaged (status 1); alive, targetable, with a model;
+  the nearest within 90 degrees of our heading, else the nearest behind (front_first). In a client log of a pull where
+  nothing is claimed (Dynamis), every monster of the pull had claim 0 and face target 0, so without the engaged rule
+  no candidate was found.
+  - An 0x058 while engaged that we did not ask for (no /attack or /attackoff in the last 2 s): the server's auto-target;
+    when the closest is another, c2s 0x01A category 0x0f to it instead, and the server's pick is not taken.
+  - The server lets us go unasked: c2s 0x01A category 0x02 (engage) on the closest at once (its dead target showed
+    dead 0.06 to 3 s after the let-go, so waiting for it missed kills).
+  - Each decision logs the monsters within 30 with claim, face target, hpp, flags and the checks
+    ("closest auto-target (...)").
+  - FUN_101514a0's pick (engaged, no target): the closest, and the attack switched to it (0x0f).
+- Not seen live yet.
+
+## Riding out a local link drop (ours, 2026-11-26)
+- Seen over Wi-Fi: a beacon loss, a failed roam, NetworkManager taking the address away for about 20 s
+  until DHCP gave the same one back. The zone session's send failed with ENETUNREACH (os error 101) and the client
+  went back to the login screen; the PlayOnline chat's keep-alive read failed 0.14 s before and closed it.
+- net::link_down: unreachable network or host, network down, address not available, ENOBUFS (Windows WSAENOBUFS).
+  The zone session counts such a send as a lost datagram (its unacked sub-packets go again in the next one, as after
+  any loss) and such a read as a quiet one (sleeping its timeout, as the failure comes at once); one log line when the
+  link goes, one when it is back. After net::LINK_WAIT (120 s) down it ends with the error, as any other did at once.
+  Any other error ends it as before. Not seen live yet: whether the server keeps the session through the gap.
+- The PlayOnline chat is not waited for: a read on an established socket that fails as unreachable has already
+  closed it (Linux tcp_write_err -> tcp_done), so the next read returns 0. Its close line now names the error.
+
+## Camera: the spring rests in front of a wall (ours, 2026-11-26)
+- Retail's free camera with a wall nearer than the spring's 3 behind the eye (MODLOG "Camera collision as retail"):
+  the spring pushes the eye out 12.5 % of the shortfall a tick, the look -> eye ray (A) finds nothing while the eye is
+  still in front of the wall, so it creeps up to the wall over a few ticks, crosses it, and (A) snaps it back to 0.5
+  in front. With a wall 2 back: 1.5, 1.69, 1.85, 2.0, then 1.5 again, every few ticks: the view bounces in and out
+  while standing still. Retail does the same at its 30 fps; ours ran it every 60 Hz tick.
+- Ours (camera.rs `spring`): a push stops 0.5 short of what the look -> pushed eye (+0.5) ray hits, where (A) would put
+  it, and never pulls in (that stays (A)'s). The eye settles there and stays. Test spring_rests_in_front_of_a_wall
+  (a wall 2 back: rests at 1.5; retail's spring in the same loop still saws by more than 0.3).

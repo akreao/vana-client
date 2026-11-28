@@ -1,7 +1,53 @@
--- Runs a macro's lines as typed commands. "/wait 2" waits; a trailing "<wait 3>" waits after its line. A macro still
--- running ignores another press.
+-- Runs a slot. One action (a spell, ability, weapon skill, pet command, item, piece of equipment or system command)
+-- goes straight to the game's action; a macro's lines run as typed commands: "/wait 2" waits, a trailing "<wait 3>"
+-- waits after its line. A macro still running ignores another press.
+
+local data = require("src.data")
+local found = require("src.actions")
 
 local M = {}
+
+-- System commands that are game actions; the rest run as their command line.
+local COMMAND_ACTION = {
+  ["/attack"] = function(t) actions.attack(t) end,
+  ["/attackoff"] = function() actions.disengage() end,
+  ["/ra"] = function(t) actions.ranged(t) end,
+  ["/assist"] = function(t) actions.assist(t) end,
+  ["/heal"] = function() actions.heal() end,
+  ["/dismount"] = function() actions.dismount() end,
+}
+
+-- The game's tag for a stored target ("t" -> "<t>"), or nil for none.
+local function tag(target)
+  target = data.trim(target)
+  return target ~= "" and ("<" .. target .. ">") or nil
+end
+
+-- A slot that is one action and nothing else (no lines after it, no line of its own): runs it and returns true.
+local function direct(macro)
+  local a = type(macro.action) == "table" and macro.action or nil
+  if not a or data.trim(a.line) ~= "" or #(macro.lines or {}) > 1 then return false end
+  if a.kind == "cmd" then
+    local run = COMMAND_ACTION[data.trim(a.name)]
+    if not run then return false end
+    run(tag(a.target))
+    return true
+  end
+  local hit = found.of(macro)
+  if not hit then return false end
+  if (a.kind == "ma" or a.kind == "trust") and hit.kind == "spell" then
+    actions.cast(hit.id, tag(a.target))
+  elseif (a.kind == "ja" or a.kind == "ws" or a.kind == "pet") and hit.kind == "ability" then
+    actions.ability(hit.id, tag(a.target))
+  elseif a.kind == "item" and hit.kind == "item" then
+    actions.use_item(hit.id, tag(a.target))
+  elseif a.kind == "equip" and hit.kind == "item" then
+    actions.equip(data.trim(a.target), hit.id)
+  else
+    return false
+  end
+  return true
+end
 
 local running = {}
 local MAX_WAIT = 60
@@ -44,6 +90,7 @@ function M.run(macro)
   end
   running[macro] = true
   local ok, err = pcall(function()
+    if direct(macro) then return end
     for _, line in ipairs(macro.lines) do
       local kind, a, b = M.parse_line(line)
       if kind == "wait" then

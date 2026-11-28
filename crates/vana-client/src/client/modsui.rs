@@ -684,7 +684,8 @@ impl Mods {
         self.installing.as_ref().filter(|i| i.0 == slug).map(|i| i.1.load(Ordering::Relaxed))
     }
 
-    /// Keeps cursor row `row` (1 = the first entry) in view.
+    /// Keeps cursor row `row` (1 = the first entry) in view; the page name (0) keeps the list where it is (scrolled
+    /// by the wheel or the bar).
     pub fn follow(&mut self, row: usize) {
         if let Some(i) = row.checked_sub(1) {
             if i < self.top {
@@ -692,8 +693,6 @@ impl Mods {
             } else if i >= self.top + VISIBLE {
                 self.top = i + 1 - VISIBLE;
             }
-        } else {
-            self.top = 0;
         }
     }
 }
