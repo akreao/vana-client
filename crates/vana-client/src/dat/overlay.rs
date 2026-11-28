@@ -502,9 +502,10 @@ mod tests {
         let spells = super::super::actions::FILE;
         let old = dir.join("cache").join(format!("{spells}-{key:016x}.DAT"));
         let other = dir.join("cache").join(format!("7-{key:016x}.DAT"));
-        for p in [&old, &other] {
-            std::fs::write(p, std::fs::read(&stock).unwrap()).unwrap();
-        }
+        // The spell file's old build is stale (stock's bytes); the other file's is what its merge makes.
+        std::fs::write(&old, std::fs::read(&stock).unwrap()).unwrap();
+        let merged = merge(&std::fs::read(&stock).unwrap(), &[std::fs::read(&pack).unwrap()]).unwrap();
+        std::fs::write(&other, &merged).unwrap();
         let o = Overlays {
             by_id: [(spells, vec![pack.clone()]), (7, vec![pack.clone()])].into(),
             dirs: Vec::new(),
@@ -514,6 +515,7 @@ mod tests {
         assert_ne!(p, old);
         assert_eq!(std::fs::read(&p).unwrap(), spell_file(&[Some(5), Some(2)], 1));
         assert_eq!(o.resolve(7, &stock).unwrap(), other);
+        assert_eq!(std::fs::read(&other).unwrap(), merged);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
