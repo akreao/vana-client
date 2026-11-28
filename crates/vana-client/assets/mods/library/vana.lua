@@ -814,7 +814,7 @@ function packets.off(id) end
 ---@param body? string the body after the 4-byte header
 function packets.inject_in(id_or_data, body) end
 
---- Sends a packet to the server with the next datagram, as the client's own sends go (it passes the hooks, injected = true, then the client's one-a-second gate for the ids it gates). Needs packets.write; refused on a PlayOnline login.
+--- Sends a packet to the server with the next datagram, as the client's own sends go (it passes the hooks, injected = true, then the client's one-a-second gate for the ids it gates). Needs packets.write. On a PlayOnline login the mods Mod Automation on PlayOnline covers (Synthesis Amount, Event Rules, Loot Rules, Party Tools, Multibox, Auto Advance) send nothing unless it is on.
 ---@param id_or_data integer|string an id, or a whole sub-packet
 ---@param body? string the body after the 4-byte header
 function packets.inject_out(id_or_data, body) end

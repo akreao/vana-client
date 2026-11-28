@@ -5422,10 +5422,11 @@ fn chain(host: &Host, w: &World, data: Vec<u8>, injected: bool, outgoing: bool) 
         if funcs.is_empty() {
             continue;
         }
-        let write = {
+        let (granted, locked) = {
             let st = vm.st.borrow();
-            st.granted.iter().any(|g| g == "packets.write") && !(st.retail_bot && w.retail_locked())
+            (st.granted.iter().any(|g| g == "packets.write"), st.retail_bot && w.retail_locked())
         };
+        let write = granted && !locked;
         lend(vm, w, |vm| {
             for (want, f) in funcs {
                 if want.is_some_and(|i| i != id) {
@@ -5447,6 +5448,15 @@ fn chain(host: &Host, w: &World, data: Vec<u8>, injected: bool, outgoing: bool) 
                 vm.st.borrow_mut().deadline = None;
                 match r {
                     Err(e) => vm.error(&e),
+                    // The PlayOnline policy, not a fault: the packet goes as it was, once noted (api::retail_denied).
+                    Ok(mlua::Value::Boolean(false)) | Ok(mlua::Value::String(_)) if granted && locked => {
+                        let mut st = vm.st.borrow_mut();
+                        if !st.retail_told {
+                            st.retail_told = true;
+                            st.notices
+                                .push(format!("{}: changing packets is off on a PlayOnline login", vm.manifest.name));
+                        }
+                    }
                     Ok(mlua::Value::Boolean(false)) | Ok(mlua::Value::String(_)) if !write => {
                         vm.error(&mlua::Error::runtime(
                             "changing or blocking packets needs packets.write (/lua grant)",

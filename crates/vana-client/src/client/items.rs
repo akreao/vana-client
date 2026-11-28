@@ -1267,11 +1267,12 @@ const SORT_SPACING: std::time::Duration = std::time::Duration::from_millis(1500)
 
 /// c2s 0x03A {c} (the server merges the container's stacks). Held by the net thread for FUN_100fc3c0's gate (one
 /// 0x03A a second over every container), where retail drops it, so sorting several containers merges each; a
-/// container sorted again within SORT_SPACING sorts once that has passed (sort_due). Ours: retail sends every one,
-/// and a PlayOnline login does as retail does (the gate drops one within the second).
+/// container sorted again within SORT_SPACING sorts once that has passed (sort_due). Ours: retail sends every one.
 fn send_sort(w: &mut World, c: u8) {
+    // A PlayOnline login: no LSB spacing, but held for the gate (one 0x03A a second) like the private-server path, so a
+    // merged pane's containers (the modern view sorts each) all merge, one a second as retail's gate allows.
     if w.playonline {
-        let _ = w.net.commands.send(NetCommand::Packet { id: 0x03A, body: (c as u32).to_le_bytes().to_vec() });
+        let _ = w.net.commands.send(NetCommand::PacketHeld { id: 0x03A, body: (c as u32).to_le_bytes().to_vec() });
         return;
     }
     let now = std::time::Instant::now();

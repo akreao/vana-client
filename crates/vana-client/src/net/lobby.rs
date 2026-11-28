@@ -1908,6 +1908,19 @@ mod create_tests {
         assert_eq!((b.version.as_str(), b.known), ("30261201_0", false));
         assert_eq!(playonline_build(b"dll", None, "30261102_0").unwrap().version, "30261102_0");
         // The installed 30261006_0 (its value in MODLOG "PlayOnline sign-in"), when present.
+        // Each research build (FFXI_RE_DIR's parent holds one folder per build), when present: its own version.
+        if let Ok(re) = std::env::var("FFXI_RE_DIR")
+            && let Some(builds) = std::path::Path::new(&re).parent()
+        {
+            for (_, v) in KNOWN_BUILDS {
+                if let Ok(b) = std::fs::read(builds.join(v).join("FFXiMain.dll")) {
+                    assert_eq!(
+                        playonline_build(&b, None, "").unwrap(),
+                        GameBuild { checksum: ffximain_checksum(&b), version: v.to_string(), known: true }
+                    );
+                }
+            }
+        }
         let dll = crate::dat::ffximain(&crate::config::Config::load().ffxi_dir());
         if let Ok(b) = std::fs::read(dll)
             && b.len() == 2_901_584

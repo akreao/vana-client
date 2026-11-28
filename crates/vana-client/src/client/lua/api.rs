@@ -377,8 +377,8 @@ pub(super) fn install(
     commands.set(
         "run",
         lua.create_function(|lua, line: String| {
-            if !line.starts_with("//") {
-                need_action(lua)?;
+            if !line.starts_with("//") && !need_action(lua)? {
+                return Ok(());
             }
             if super::controls_mods(&line) {
                 need(lua, "mods")?;
@@ -817,6 +817,10 @@ pub(super) fn install(
                     return Err(mlua::Error::runtime("not available in the lobby (before login)"));
                 }
                 let data = packet_bytes(a, b)?;
+                if retail_locked(lua) {
+                    retail_denied(lua, "packets.inject");
+                    return Ok(());
+                }
                 let st = state(lua);
                 let mut s = st.borrow_mut();
                 if out {
@@ -2870,11 +2874,6 @@ fn update(e: &mut super::window::Elem, t: &Table) -> mlua::Result<()> {
     Ok(())
 }
 
-/// A permission the mod must hold (granted by the user, docs/lua-mods.md 3.5).
-/// The permissions a PlayOnline login keeps from the mods that play for the player unless Settings' Mod Automation
-/// on PlayOnline is on.
-const RETAIL_LOCKED: [&str; 2] = ["automation", "packets.write"];
-
 /// The bundled mods that play without the player (Steven's grouping, 2026-11-28): the unattended crafting run, commands
 /// run on triggers, lots and passes, party invites, commands to other characters, event text moving on. Gear swapping
 /// (Gearshift, Steady Cast), hotbars and the rest keep their permissions on a retail login.
@@ -2888,10 +2887,19 @@ pub(super) fn retail_locked(lua: &Lua) -> bool {
 
 const RETAIL_LOCKED_TEXT: &str = "off on a PlayOnline login (Settings > Mod Automation on PlayOnline)";
 
-pub(super) fn need(lua: &Lua, perm: &str) -> mlua::Result<()> {
-    if RETAIL_LOCKED.contains(&perm) && retail_locked(lua) {
-        return Err(mlua::Error::runtime(format!("{perm} is {RETAIL_LOCKED_TEXT}")));
+/// A refusal by the PlayOnline policy, not a fault of the mod: nothing happens, no error (errors count toward the mod's
+/// suspension, and the mod should work again the moment the setting allows it), one notice per mod.
+pub(super) fn retail_denied(lua: &Lua, what: &str) {
+    let st = state(lua);
+    let mut s = st.borrow_mut();
+    if !s.retail_told {
+        s.retail_told = true;
+        s.notices.push(format!("{}: {what} is {RETAIL_LOCKED_TEXT}", mod_id(lua).unwrap_or_default()));
     }
+}
+
+/// A permission the mod must hold (granted by the user, docs/lua-mods.md 3.5).
+pub(super) fn need(lua: &Lua, perm: &str) -> mlua::Result<()> {
     let st = state(lua);
     let s = st.borrow();
     if s.granted.iter().any(|g| g == perm) {
@@ -2904,17 +2912,19 @@ pub(super) fn need(lua: &Lua, perm: &str) -> mlua::Result<()> {
 }
 
 /// A game action: `automation` any time, `actions` while handling the player's input (a typed command, a window event).
-pub(super) fn need_action(lua: &Lua) -> mlua::Result<()> {
+/// On a retail-locked login `automation` counts as `actions`: false (do nothing, no error) for an action of the mod's
+/// own (`retail_denied`).
+pub(super) fn need_action(lua: &Lua) -> mlua::Result<bool> {
+    let locked = retail_locked(lua);
     let st = state(lua);
     let s = st.borrow();
     let has = |p: &str| s.granted.iter().any(|g| g == p);
-    let locked = retail_locked(lua);
-    if (has("automation") && !locked) || (has("actions") && s.input) {
-        Ok(())
+    if (has("automation") && (!locked || s.input)) || (has("actions") && s.input) {
+        Ok(true)
     } else if has("automation") {
-        Err(mlua::Error::runtime(format!(
-            "a game action outside the player's input: automation is {RETAIL_LOCKED_TEXT}"
-        )))
+        drop(s);
+        retail_denied(lua, "a game action of the mod's own");
+        Ok(false)
     } else if has("actions") {
         Err(mlua::Error::runtime("a game action outside the player's input needs the automation permission"))
     } else {

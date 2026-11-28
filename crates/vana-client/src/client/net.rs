@@ -2068,6 +2068,36 @@ struct Session<'a> {
     /// batch that is with the hooks, added when it comes back.
     injected: Vec<Vec<u8>>,
     injected_away: Vec<Vec<u8>>,
+    /// The ids of each batch now with the hooks (oldest first), and the gate slots the hooks freed: the ids of the
+    /// player's packets a hook held back, which a mod's replacement (Gearshift's re-sent action, Steady Cast's late one)
+    /// may take without asking the gate again; one each, the oldest dropped past HOOK_CREDITS.
+    away_ids: std::collections::VecDeque<Vec<u16>>,
+    credits: Vec<u16>,
+}
+
+/// The most freed gate slots kept for mods' replacements.
+const HOOK_CREDITS: usize = 8;
+
+/// The ids of a hooked batch that did not come back (a hook held them back), one per packet.
+fn held_back(sent: &[u16], back: &[Vec<u8>]) -> Vec<u16> {
+    let mut left = sent.to_vec();
+    for p in back {
+        if let Some(k) = left.iter().position(|&i| i == sub_id(p)) {
+            left.remove(k);
+        }
+    }
+    left
+}
+
+/// Injected packets that take a freed slot (`credits`, used up) and those that still ask the gate.
+fn take_credits(packets: Vec<Vec<u8>>, credits: &mut Vec<u16>) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
+    packets.into_iter().partition(|p| match credits.iter().position(|&i| i == sub_id(p)) {
+        Some(k) => {
+            credits.remove(k);
+            true
+        }
+        None => false,
+    })
 }
 
 /// Mods' injected packets into a datagram's sub-packets: before its trailing 0x015 (retail's position goes last).
@@ -2122,6 +2152,8 @@ fn session(
         away_out: 0,
         injected: Vec::new(),
         injected_away: Vec::new(),
+        away_ids: Default::default(),
+        credits: Vec::new(),
     };
     loop {
         if let Some(packets) = s.receive()? {
@@ -2942,6 +2974,11 @@ impl Session<'_> {
                 NetCommand::SendBatch(g, mut packets) => {
                     if g == self.sess {
                         self.away_out = self.away_out.saturating_sub(1);
+                        if let Some(sent) = self.away_ids.pop_front() {
+                            self.credits.extend(held_back(&sent, &packets));
+                            let over = self.credits.len().saturating_sub(HOOK_CREDITS);
+                            self.credits.drain(..over);
+                        }
                         with_injected(&mut packets, std::mem::take(&mut self.injected_away));
                     }
                     if g == self.sess && !packets.is_empty() {
@@ -2977,10 +3014,12 @@ impl Session<'_> {
                     self.queue.push(build(0x01A, &action_body(target, index, action)))
                 }
                 NetCommand::Packet { id, body } => self.queue.push(build(id, &body)),
-                NetCommand::Inject(mut packets) => {
-                    let sent = self.map.pending() + self.queue.len() + self.injected.len();
-                    self.gate.admit(&mut packets, 0, sent, Instant::now());
-                    self.injected.extend(packets);
+                NetCommand::Inject(packets) => {
+                    // A replacement for a packet a hook held back takes that packet's gate slot; the rest ask.
+                    let (free, mut ask) = take_credits(packets, &mut self.credits);
+                    let sent = self.map.pending() + self.queue.len() + self.injected.len() + free.len();
+                    self.gate.admit(&mut ask, 0, sent, Instant::now());
+                    self.injected.extend(free.into_iter().chain(ask));
                     continue;
                 }
                 NetCommand::PacketHeld { id, body } => {
@@ -3100,6 +3139,7 @@ impl Session<'_> {
             }
             if hooked || self.away_out > 0 {
                 self.away_out += 1;
+                self.away_ids.push_back(self.queue.iter().map(|p| sub_id(p)).collect());
                 self.tx.send(NetEvent::RawOut(self.sess, std::mem::take(&mut self.queue)))?;
             } else {
                 if self.hooks.load(Ordering::Relaxed) & HOOK_LAST != 0 {
@@ -3414,6 +3454,17 @@ mod tests {
         let mut q = vec![build(0x01A, &action_body(1, 2, 0x02))];
         add_position(&mut q, pos, false, true);
         assert_eq!(ids(&q), [0x01A, 0x015]);
+    }
+
+    /// A hook that holds back the player's item use frees its gate slot for the mod's replacement, once: the
+    /// replacement takes it, a second injection of that id asks the gate.
+    #[test]
+    fn held_back_packets_free_their_slot() {
+        let back = vec![build(0x050, &[0; 4]), build(0x015, &[0; 28])];
+        let mut credits = held_back(&[0x037, 0x050, 0x015], &back);
+        assert_eq!(credits, [0x037]);
+        let (free, ask) = take_credits(vec![build(0x037, &[0; 20]), build(0x037, &[0; 20])], &mut credits);
+        assert_eq!((free.len(), ask.len(), credits.len()), (1, 1, 0));
     }
 
     /// Mods' injected packets go into the timed datagram before its trailing position, never after it.
