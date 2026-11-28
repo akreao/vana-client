@@ -58,8 +58,8 @@ pub const KNOWN_BUILDS: [(u32, &str); 2] = [(0x43FA_0718, "30261006_0"), (0x74F0
 pub struct GameBuild {
     /// The 0x26 checksum.
     pub checksum: u32,
-    /// The version to send: a known build's own, else the version the patch files record for these very bytes
-    /// (`patch::ffximain_version`). Never a stale config value, so the version and the checksum agree.
+    /// The version to send: the release the patch files record for these very bytes (`patch::ffximain_version`), a
+    /// known build's own when they record none or an older one. Never a stale config value.
     pub version: String,
     /// One of KNOWN_BUILDS: the packet layouts are this client's. An unknown one (a retail update newer than the
     /// client) may still play, but the player is warned first.
@@ -79,7 +79,12 @@ fn build_among(known: &[(u32, &str)], dll: &[u8], patched: Option<&str>) -> Resu
     }
     let checksum = ffximain_checksum(dll);
     Ok(match (known.iter().find(|b| b.0 == checksum), patched) {
-        (Some(b), _) => GameBuild { checksum, version: b.1.into(), known: true },
+        // A known DLL: its build, or the release the patch files put it in when that is newer (a DAT-only update keeps
+        // the DLL), so the lobby hears the release as retail's would.
+        (Some(b), p) => {
+            let newer = p.filter(|v| crate::patch::version_key(v) > crate::patch::version_key(b.1));
+            GameBuild { checksum, version: newer.unwrap_or(b.1).into(), known: true }
+        }
         (None, Some(v)) => GameBuild { checksum, version: v.to_string(), known: false },
         (None, None) => bail!(
             "This game's FFXiMain.dll ({checksum:08X}) is not a build this client knows, and its version can't be \
@@ -1920,6 +1925,8 @@ mod create_tests {
         let table = [(ffximain_checksum(b"dll"), "30261102_0")];
         let g = build_among(&table, b"dll", Some("1_0")).unwrap();
         assert_eq!((g.version.as_str(), g.known), ("30261102_0", true));
+        // A later DAT-only release with that DLL: the release's version.
+        assert_eq!(build_among(&table, b"dll", Some("30261215_0")).unwrap().version, "30261215_0");
         assert_eq!(build_among(&table, b"dll", None).unwrap().version, "30261102_0");
         // The installed 30261006_0 (its value in MODLOG "PlayOnline sign-in"), when present.
         // Each research build (FFXI_RE_DIR's parent holds one folder per build), when present: its own version.
@@ -1940,8 +1947,8 @@ mod create_tests {
             && b.len() == 2_901_584
         {
             assert_eq!(ffximain_checksum(&b), 0x43FA_0718);
-            // A known DLL sends its own version whatever the config or patch files say.
-            let g = playonline_build(&b, Some("30261102_0")).unwrap();
+            // A known DLL sends its own version over an older one the patch files give.
+            let g = playonline_build(&b, Some("30261001_0")).unwrap();
             assert_eq!((g.version.as_str(), g.known), ("30261006_0", true));
         }
     }

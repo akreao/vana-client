@@ -3021,12 +3021,18 @@ impl Session<'_> {
                 NetCommand::Inject(packets) => {
                     // A replacement for a packet a hook held back takes that packet's gate slot; the rest ask, each
                     // in its place.
+                    // The credited ones hold their slots from the start: the room test counts them before any other.
                     let now = Instant::now();
-                    for (p, free) in take_credits(packets, &mut self.credits) {
+                    let marked = take_credits(packets, &mut self.credits);
+                    let mut sent = self.map.pending()
+                        + self.queue.len()
+                        + self.injected.len()
+                        + marked.iter().filter(|(_, free)| *free).count();
+                    for (p, free) in marked {
                         let mut one = vec![p];
                         if !free {
-                            let sent = self.map.pending() + self.queue.len() + self.injected.len();
                             self.gate.admit(&mut one, 0, sent, now);
+                            sent += one.len();
                         }
                         self.injected.extend(one);
                     }
