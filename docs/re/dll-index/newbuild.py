@@ -7,8 +7,8 @@ build" in README.md, then packets.py).
 
 Every build has a folder BUILDS/<version>/ (BUILDS = --builds or $FFXI_BUILDS). For VERSION it:
   1. takes the DLL: --dll FILE, --fetch (the patch server's current FFXiMain.dll through `vana-client update --file`,
-     which must be VERSION), or the FFXiMain.dll already in the folder; --sum checks its 0x26 checksum
-     (net/lobby.rs ffximain_checksum, as assets/known-builds.txt lists it);
+     which must be VERSION unless --sum is given), or the FFXiMain.dll already in the folder; --sum checks its 0x26
+     checksum (net/lobby.rs ffximain_checksum, as assets/known-builds.txt lists it);
   2. unpacks it (unpack_pol1.py) and exports the index (ri.sh: Ghidra import and analysis on the first run);
   3. compares it with the build before (--old, else the newest older folder): remap.py -> <version>/remap/;
   4. packets.py diff -> <version>/packet-diff/ (report.md, summary.md, queue-rows.md); --queue appends the rows.
@@ -130,9 +130,12 @@ def build(a, builds):
         m = re.search(r'wrote (.+) \(version (\S+)\)', p.stdout)
         if not m:
             raise SystemExit('unexpected `vana-client update --file` output')
-        if m.group(2) != ver:
+        # update --file names the DLL's own stamp; a known-build PR names the release (a DAT-only release since
+        # leaves them apart), so with --sum the checksum decides
+        if m.group(2) != ver and not a.sum:
             shutil.rmtree(tmp, ignore_errors=True)
-            raise SystemExit('the patch server is on %s now, not %s' % (m.group(2), ver))
+            raise SystemExit('the patch server\'s FFXiMain.dll is %s, not %s (pass --sum to go by checksum)' %
+                             (m.group(2), ver))
         os.replace(m.group(1), stage)
         shutil.rmtree(tmp, ignore_errors=True)
     cand = stage if os.path.exists(stage) else packed

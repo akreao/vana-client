@@ -138,9 +138,10 @@ python3 newbuild.py 30261102_0 --fetch --sum 74F0058F   # or --dll FFXiMain.dll,
 ```
 
 It takes the DLL (`--fetch`: the patch server's current one through `vana-client update --file FFXiMain.dll`, which
-must be that version; `--sum`: the checksum `assets/known-builds.txt` lists), unpacks it, runs `ri.sh` (the first run
-imports and analyses it in Ghidra: the slow part; a different DLL later gets a new project), runs `remap.py` against the newest older folder (or `--old`), then
-`packets.py diff`. Done steps are skipped; `--force` redoes them. One run at a time (a lock in the builds folder).
+must be that version, or carry the checksum `--sum` names: `--sum` is the checksum `assets/known-builds.txt` lists),
+unpacks it, runs `ri.sh` (the first run imports and analyses it in Ghidra: the slow part; a different DLL later gets a
+new project), runs `remap.py` against the newest older folder (or `--old`), then `packets.py diff`. Done steps are
+skipped; `--force` redoes them. One run at a time (a lock in the builds folder).
 
 `packets.py table DIR` lists the build's packets (`packets.json`, `packets.tsv`): every call of the send gate (c2s id
 and the size given to its buffer) and every handler registration (s2c id, handler, which of the two tables). The gate,
