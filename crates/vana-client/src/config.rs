@@ -705,6 +705,8 @@ impl Default for Config {
 pub fn game_files_missing(ffxi_dir: &std::path::Path) -> Option<&'static str> {
     if !ffxi_dir.join("VTABLE.DAT").is_file() {
         Some("VTABLE.DAT")
+    } else if !ffxi_dir.join("FTABLE.DAT").is_file() {
+        Some("FTABLE.DAT")
     } else if !crate::dat::ffximain(ffxi_dir).is_file() {
         Some("FFXiMain.dll")
     } else {
@@ -1173,6 +1175,8 @@ mod tests {
         assert!(c.enter_server_game_dir().is_err_and(|e| e.contains("No game files")));
         assert_eq!(c.ffxi_dir(), base.join("main").join("FINAL FANTASY XI"));
         std::fs::write(own.join("FINAL FANTASY XI").join("VTABLE.DAT"), b"").unwrap();
+        assert!(c.enter_server_game_dir().is_err_and(|e| e.contains("FTABLE.DAT missing")));
+        std::fs::write(own.join("FINAL FANTASY XI").join("FTABLE.DAT"), b"").unwrap();
         // The DATs without the DLL: refused too, the login's folder unchanged.
         assert!(c.enter_server_game_dir().is_err_and(|e| e.contains("FFXiMain.dll missing")));
         assert_eq!(c.ffxi_dir(), base.join("main").join("FINAL FANTASY XI"));

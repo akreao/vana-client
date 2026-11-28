@@ -15900,6 +15900,7 @@ impl App {
                     self.music_installed = crate::dat::installed(&self.cfg.main_ffxi_dir());
                     self.index = None;
                     self.keys_table = None;
+                    crate::dat::dll_files_changed();
                     self.game_ui_state = LoadState::Idle;
                     self.flyover_state = LoadState::Idle;
                     self.cfg.installed = true;
@@ -16236,6 +16237,7 @@ impl App {
                             // New and changed DATs: the next login opens the index again.
                             if out.reload {
                                 self.index = None;
+                                crate::dat::dll_files_changed();
                                 self.music_installed = crate::dat::installed(&self.cfg.main_ffxi_dir());
                                 // The next login sends the patched files' version.
                                 // At once: the restart below starts a client that reads it.
