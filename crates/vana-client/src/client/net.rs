@@ -1313,16 +1313,19 @@ const S2C_PACKET_CONTROL: u16 = 0x005;
 /// c2s 0x00D: the answer to a zone change or logout (s2c 0x00B), the session's last datagram.
 const C2S_NETEND: u16 = 0x00D;
 
-/// The datagram interval in force, one rule: a mod's interval, then a Send Rate faster than retail's on a private
-/// server (LSB answers every datagram), then the server's s2c 0x005, then retail's 400.
+/// The datagram interval in force, one rule: on a private server (LSB answers every datagram) a mod's interval, then a
+/// Send Rate faster than retail's; then the server's s2c 0x005, then retail's 400. A PlayOnline login always keeps the
+/// game's rate: neither a mod nor Settings changes how often the retail server hears from us.
 fn wanted_interval(stats: &NetStats, private: bool, server: Option<u32>) -> u32 {
     let retail = server.unwrap_or(RETAIL_INTERVAL);
+    if !private {
+        return retail;
+    }
     match stats.send_ms.load(Relaxed) {
-        0 if private => match stats.rate_ms.load(Relaxed) {
+        0 => match stats.rate_ms.load(Relaxed) {
             n @ 1..RETAIL_INTERVAL => n.max(50),
             _ => retail,
         },
-        0 => retail,
         n => n,
     }
 }
@@ -3274,8 +3277,8 @@ mod tests {
         assert!(call_gate(&mut m, C2S_FISHING, &s, t0 + Duration::from_millis(1001)));
     }
 
-    /// One rule for the interval: a mod's, then a Send Rate faster than retail's (private servers only), then the
-    /// server's s2c 0x005, then 400. The connect's 5 x stops at retail's 2000.
+    /// One rule for the interval: a mod's, then a Send Rate faster than retail's (both private servers only), then
+    /// the server's s2c 0x005, then 400. The connect's 5 x stops at retail's 2000.
     #[test]
     fn interval_precedence() {
         let s = NetStats::default();
@@ -3289,6 +3292,10 @@ mod tests {
         assert_eq!(wanted_interval(&s, false, None), 400);
         s.send_ms.store(1000, Relaxed);
         assert_eq!(wanted_interval(&s, true, Some(800)), 1000);
+        // PlayOnline: a mod's interval is ignored too, fast or slow.
+        assert_eq!(wanted_interval(&s, false, Some(800)), 800);
+        s.send_ms.store(50, Relaxed);
+        assert_eq!(wanted_interval(&s, false, None), 400);
         assert_eq!((connect_interval(400), connect_interval(100), connect_interval(1000)), (2000, 500, 2000));
     }
 
