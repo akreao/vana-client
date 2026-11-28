@@ -4010,7 +4010,7 @@ fn world_hud(
         && lua::pointer_classic(
             world,
             gu,
-            if world.above_mods.iter().any(|r| inside(r, p)) && !lua::holds_pointer(world) {
+            if world.above_mods.iter().any(|r| inside(r, p)) && !lua::holds_pointer(&world.lua) {
                 (-1.0e6, -1.0e6)
             } else {
                 p
@@ -10604,23 +10604,31 @@ impl App {
             self.name_tables = None;
         }
         if self.index.is_none() {
+            // Everything read into locals first: a folder whose DLL cannot be read leaves the open files and the
+            // tables as they were (index none: the next call tries again).
+            let dir = self.cfg.ffxi_dir();
+            let index = Arc::new(DatIndex::open(&dir)?);
+            let dll_path = crate::dat::ffximain(&dir);
+            let dll = std::fs::read(&dll_path).map_err(|e| anyhow::anyhow!("reading {}: {e}", dll_path.display()))?;
+            let keys = Arc::new(zone::Keys::from_ffximain(&dll)?);
             // The expansions these files hold (character select, the creator, the world).
-            self.installed = crate::dat::installed(&self.cfg.ffxi_dir());
-            self.index = Some(Arc::new(DatIndex::open(&self.cfg.ffxi_dir())?));
-            let dll = std::fs::read(crate::dat::ffximain(&self.cfg.ffxi_dir()))?;
-            self.keys_table = Some(Arc::new(zone::Keys::from_ffximain(&dll)?));
+            self.installed = crate::dat::installed(&dir);
+            self.keys_table = Some(keys);
             self.knock_table = crate::dat::tables::knockback(&dll).ok();
             self.search_words =
                 crate::dat::tables::search_words(&dll).map_err(|e| log::warn!("{e:#}")).ok().map(Arc::new);
             let lang = crate::dat::lang::files() as u8;
             let blu_desc = crate::dat::msg::current_slot_file(&dll, lang, 0x1a);
-            self.blu_data = Some(Arc::new(crate::dat::blumagic::BluData::load(self.index.as_ref().unwrap(), blu_desc)));
+            self.blu_data = Some(Arc::new(crate::dat::blumagic::BluData::load(&index, blu_desc)));
             self.cnq_tables = crate::dat::tables::conquest(&dll).map_err(|e| log::warn!("{e:#}")).ok().map(Arc::new);
             self.point_files = [0x1d, 0x1e, 0x1f, 0x20, 0x21, maze::TEXT_SLOT]
                 .map(|slot| crate::dat::msg::current_slot_file(&dll, lang, slot));
             self.msg_files = [0, 0, 0x63, 0x64, 0x65, 0x66, 0x68, 0x69, 0, 0, 0x6a]
                 .map(|slot| (slot != 0).then(|| crate::dat::msg::current_slot_file(&dll, lang, slot)).flatten());
             self.input.load(&dll);
+            // The DLL tables built outside the client (text commands, chat colours, Monstrosity) follow.
+            crate::dat::use_ffxi_dir(&dir);
+            self.index = Some(index);
         }
         Ok((self.index.clone().unwrap(), self.keys_table.clone().unwrap()))
     }
@@ -15639,7 +15647,7 @@ impl App {
         let drag = self
             .press_at
             .zip(self.last_cursor)
-            .filter(|_| self.left_down && !(!world.modern && lua::holds_pointer(world)))
+            .filter(|_| self.left_down && !(!world.modern && lua::holds_pointer(&world.lua)))
             .map(|(a, b)| ((b.0 - a.0) as f32 * k.0, (b.1 - a.1) as f32 * k.1));
         // Cursor mode's mouse (FUN_101ef0a0): the pointer while shown (mouse +0x4e) and the window active. After a
         // cursor move hid it, it shows again once it is more than 2 px from where it was hidden in all (CursorMoved
@@ -16505,6 +16513,7 @@ impl App {
                     self.music_installed = crate::dat::installed(&self.cfg.main_ffxi_dir());
                     self.index = None;
                     self.keys_table = None;
+                    crate::dat::dll_files_changed();
                     self.game_ui_state = LoadState::Idle;
                     self.flyover_state = LoadState::Idle;
                     self.cfg.installed = true;
@@ -16753,7 +16762,12 @@ impl App {
                     if let Some(t) = self.twofa.as_mut() {
                         // Game files: a folder picked is the server's once it holds the game files.
                         if let Some(dir) = t.take_picked() {
-                            let r = firstrun::existing(&dir).map_err(|e| format!("{e:#}"));
+                            let r = firstrun::existing(&dir).map_err(|e| format!("{e:#}")).and_then(|g| {
+                                match crate::config::game_files_missing(&g.join("FINAL FANTASY XI")) {
+                                    Some(m) => Err(format!("No {m} in {}: pick a full game folder.", g.display())),
+                                    None => Ok(g),
+                                }
+                            });
                             if let Ok(g) = &r {
                                 let server = self.cfg.server.trim().to_string();
                                 self.cfg.set_server_game_dir(&server, Some(g.clone()));
@@ -16836,6 +16850,7 @@ impl App {
                             // New and changed DATs: the next login opens the index again.
                             if out.reload {
                                 self.index = None;
+                                crate::dat::dll_files_changed();
                                 self.music_installed = crate::dat::installed(&self.cfg.main_ffxi_dir());
                                 // The next login sends the patched files' version.
                                 // At once: the restart below starts a client that reads it.
