@@ -24,10 +24,11 @@ Environment: FFXI_BUILDS, VANA_CLIENT (the client binary for --fetch; default: t
 checkout, else `cargo run --release -p vana-client`), GHIDRA_HOME (ri.sh). Everything written is generated from the
 DLL and stays local.
 """
-import sys, os, re, json, shutil, argparse, subprocess, fcntl, time, hashlib
+import sys, os, re, json, shutil, argparse, subprocess, fcntl, time, hashlib, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 VERSION_RE = re.compile(r'^\d{8}_\d+$')
+TRUSTED_AUTHORS = ('app/github-actions', 'github-actions[bot]', 'github-actions')
 
 
 def log(*a):
@@ -111,9 +112,9 @@ def build(a, builds):
     src = checkout()
 
     # 1. the DLL: staged next to the archived copy, which is replaced only once the staged one passes the checks
-    stage = packed + '.new'
-    if os.path.exists(stage):
-        os.remove(stage)     # left by a run that stopped
+    fd, stage = tempfile.mkstemp(prefix='.FFXiMain.', suffix='.stage', dir=nd)
+    os.close(fd)
+    os.remove(stage)          # only its unique name is used: nothing exists there unless this run writes it
     if a.dll:
         if os.path.abspath(a.dll) != os.path.abspath(packed):
             shutil.copyfile(a.dll, stage)
@@ -165,10 +166,10 @@ def build(a, builds):
             log('the Ghidra project holds another DLL: importing again')
             shutil.rmtree(proj + '.old', ignore_errors=True)
             os.replace(proj, proj + '.old')
-        try:
-            run(['sh', os.path.join(HERE, 'ri.sh')], env=dict(os.environ, FFXI_RE_DIR=nd))
+        try:   # FFXI_DLL pinned to the file the stamp names
+            run(['sh', os.path.join(HERE, 'ri.sh')], env=dict(os.environ, FFXI_RE_DIR=nd, FFXI_DLL=unpacked))
         except subprocess.CalledProcessError:
-            if stale and not os.path.exists(os.path.join(proj, 'ffxi.gpr')):
+            if stale:      # whatever the failed import left, the old project comes back
                 shutil.rmtree(proj, ignore_errors=True)
                 os.replace(proj + '.old', proj)
             raise
@@ -189,7 +190,8 @@ def build(a, builds):
     if not os.path.exists(os.path.join(ow, 'sig_insns.tsv')):
         if not os.path.exists(os.path.join(ow, 'FFXiMain.unpacked.dll')):
             raise SystemExit('%s: no index and no unpacked DLL' % ow)
-        run(['sh', os.path.join(HERE, 'ri.sh')], env=dict(os.environ, FFXI_RE_DIR=ow))
+        run(['sh', os.path.join(HERE, 'ri.sh')], env=dict(os.environ, FFXI_RE_DIR=ow,
+                                                         FFXI_DLL=os.path.join(ow, 'FFXiMain.unpacked.dll')))
     log('comparing %s with %s' % (ver, old))
     # the remap is of a pair: pair.json says which, so another --old redoes it
     pair_f = os.path.join(nw, 'remap', 'pair.json')
@@ -222,7 +224,8 @@ def watch(a, builds):
     repo = a.repo or subprocess.run(['gh', 'repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'],
                                     cwd=src or HERE, capture_output=True, text=True, check=True).stdout.strip()
     prs = json.loads(subprocess.run(['gh', 'pr', 'list', '--repo', repo, '--state', 'open', '--search',
-                                     'in:title "Known build"', '--json', 'number,title,url'],
+                                     'in:title "Known build"', '--json',
+                                     'number,title,url,author,headRefName,isCrossRepository'],
                                     capture_output=True, text=True, check=True).stdout)
     rc = 0
     for pr in prs:
@@ -230,6 +233,11 @@ def watch(a, builds):
         if not m:
             continue
         ver, sum_ = m.groups()
+        # only the known-builds workflow's own PRs: opened by GitHub Actions from a known-build/ branch of this repo
+        if (pr.get('author') or {}).get('login') not in TRUSTED_AUTHORS or pr.get('isCrossRepository') or \
+                not pr.get('headRefName', '').startswith('known-build/'):
+            log('PR #%d: not opened by the known-builds workflow, skipped' % pr['number'])
+            continue
         base = os.path.join(builds, ver, 'packet-diff', 'pr-%d-%s' % (pr['number'], sum_.upper()))
         posted, reported = base + '.posted', base + '.reported'
         if os.path.exists(posted) or (not a.post and os.path.exists(reported)):
@@ -256,11 +264,25 @@ def watch(a, builds):
     return rc
 
 
+def command(argv):
+    """The first word that is not an option or an option's value."""
+    takes = {'--builds', '--queue', '--repo', '--old', '--dll', '--sum'}
+    skip = False
+    for w in argv:
+        if skip:
+            skip = False
+        elif w in takes:
+            skip = True
+        elif not w.startswith('-'):
+            return w
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--builds', default=os.environ.get('FFXI_BUILDS'), help='the build folders ($FFXI_BUILDS)')
     ap.add_argument('--queue', help='modlog-gaps queue file to append new rows to')
-    if len(sys.argv) > 1 and sys.argv[1] == 'watch':
+    if command(sys.argv[1:]) == 'watch':
         ap.add_argument('cmd')
         ap.add_argument('--repo')
         ap.add_argument('--post', action='store_true', help='comment the summary on the PR')

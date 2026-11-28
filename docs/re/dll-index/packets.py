@@ -279,14 +279,22 @@ def extract(b, r):
         if ks['gate']:
             sites = [(s, push_args(dis[s], 1)[0] if s in dis else None) for s in sorted(ks['gate'])]
             dec = gate_calls(body, gate_c, size_c)
-            pushed = collections.Counter()
-            for s in ks['size']:
-                if s in dis:
-                    _, n, x = push_args(dis[s], 3)
-                    if n is not None and x is not None:
-                        pushed[(n + x + 3) // 4 * 4] += 1
+            # each send's own size push: the first size call after it, before the next send (by address)
+            gsorted = sorted(ks['gate'])
+            spush = {}
+            for z in sorted(ks['size']):
+                if z in dis:
+                    _, n, x = push_args(dis[z], 3)
+                    spush[z] = (n + x + 3) // 4 * 4 if n is not None and x is not None else None
+            own_push = {}
+            for k, g in enumerate(gsorted):
+                nxt = gsorted[k + 1] if k + 1 < len(gsorted) else float('inf')
+                win = [z for z in sorted(spush) if g < z < nxt]
+                if win:
+                    own_push[g] = spush[win[0]]
+            anywhere = collections.Counter(v for v in spush.values() if v is not None)
             for s, rv, d in pair(sites, dec, lambda d, v: v in d['ids']):
-                note = []
+                note, info = [], ''
                 if d is None:
                     ids, size = [rv], None
                     note.append('not in the decompile')
@@ -297,23 +305,19 @@ def extract(b, r):
                     elif rv is not None and rv not in d['ids']:
                         note.append('decompile %s, disassembly %#x' % (d['text'], rv))
                         ids = [rv]
-                    if isinstance(size, int) and not d['header']:
-                        if pushed[size] > 0:
-                            pushed[size] -= 1
-                        else:
-                            note.append('size %#x not pushed' % size)
+                mine = own_push.get(s)
+                if isinstance(size, int) and not (d and d['header']):
+                    if isinstance(mine, int) and mine != size:
+                        note.append('decompile size %#x, this send pushes %#x' % (size, mine))
+                    elif anywhere[size] == 0:
+                        note.append('size %#x not pushed' % size)
+                elif size is None and isinstance(mine, int):
+                    size, info = mine, 'size from the disassembly only'
                 if ids == [None]:
                     note.append('id not read')
                 for i in ids:
                     c2s.append({'id': i, 'size': size, 'by': fn, 'site': s, 'via_var': len(ids) > 1 or
-                                (d is not None and not d['literal']), 'note': '; '.join(note)})
-            # a size the decompile lost (Ghidra moved the buffer to another variable): one send, one push left
-            left = [k for k, n in pushed.items() for _ in range(n)]
-            nos = [c for c in c2s if c['by'] == fn and c['size'] is None]
-            if len(left) == 1 and len({c['site'] for c in nos}) == 1 and len(ks['gate']) == 1:
-                for c in nos:
-                    c['size'] = left[0]
-                    c['info'] = 'size from the disassembly only'
+                                (d is not None and not d['literal']), 'note': '; '.join(note), 'info': info})
             # sends that share one size call (a goto into another case's tail): the size of this id's other sends
             for c in c2s:
                 if c['by'] == fn and c['size'] is None:
