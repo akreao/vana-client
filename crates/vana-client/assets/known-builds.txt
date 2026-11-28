@@ -1,0 +1,5 @@
+# The retail FFXiMain.dll builds this client knows (net/lobby.rs known_builds): the checksum the lobby's 0x26 carries
+# (FUN_100185a0, hex) and the version that build sends. One per line; `#` starts a comment.
+# Added by `vana-client known-build --write` (.github/workflows/known-builds.yml runs it every day).
+43FA0718 30261006_0
+74F0058F 30261102_0

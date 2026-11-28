@@ -115,6 +115,20 @@ enum Cmd {
         #[arg(long)]
         to: Option<PathBuf>,
     },
+    /// The retail FFXiMain.dll's checksum and version (the PlayOnline lobby's 0x26), and whether this client knows the
+    /// build (assets/known-builds.txt). The current one from the patch server, or --dll's (then --version names it).
+    /// With --write FILE a new build is added to that known-builds file.
+    KnownBuild {
+        #[arg(long)]
+        dll: Option<PathBuf>,
+        #[arg(long)]
+        version: Option<String>,
+        #[arg(long)]
+        write: Option<PathBuf>,
+        /// Where the fetched DLL goes (deleted after).
+        #[arg(long)]
+        to: Option<PathBuf>,
+    },
     /// Trust a server's new TLS certificate: forget what is pinned for HOST (every port, or --port), so the next
     /// connection pins the certificate it is sent. With --fingerprint and --port, pin that key's SHA-256 instead.
     TrustServer {
@@ -1280,6 +1294,42 @@ fn main() -> Result<()> {
                 ..Default::default()
             };
             client::run(config::Config::load(), drive)
+        }
+        Cmd::KnownBuild { dll, version, write, to } => {
+            let (bytes, version) = match dll {
+                Some(p) => {
+                    let v = version.ok_or_else(|| anyhow::anyhow!("--dll needs --version"))?;
+                    (std::fs::read(&p)?, v)
+                }
+                None => {
+                    let dir = to.unwrap_or_else(|| {
+                        std::env::temp_dir().join(format!("vana-known-build-{}", std::process::id()))
+                    });
+                    let (out, stamp) = patch::fetch_one("FFXiMain.dll", &dir)?;
+                    let b = std::fs::read(&out)?;
+                    let _ = std::fs::remove_file(&out);
+                    (b, version.unwrap_or(stamp))
+                }
+            };
+            if patch::version_key(&version).is_none() {
+                anyhow::bail!("version {version:?} is not DATE_N");
+            }
+            let sum = net::lobby::ffximain_checksum(&bytes);
+            let known = net::lobby::known_builds().iter().any(|b| b.0 == sum);
+            println!("{sum:08X} {version} {}", if known { "known" } else { "new" });
+            if let Some(path) = write {
+                let text = std::fs::read_to_string(&path)?;
+                if !net::lobby::parse_known_builds(&text)?.iter().any(|b| b.0 == sum) {
+                    let mut text = text;
+                    if !text.is_empty() && !text.ends_with('\n') {
+                        text.push('\n');
+                    }
+                    text.push_str(&format!("{sum:08X} {version}\n"));
+                    std::fs::write(&path, text)?;
+                    println!("added to {}", path.display());
+                }
+            }
+            Ok(())
         }
         Cmd::Update { dry_run, data_only, full, connections, file, to } => {
             if let Some(f) = file {

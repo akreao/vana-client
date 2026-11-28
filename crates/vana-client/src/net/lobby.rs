@@ -49,9 +49,37 @@ pub fn ffximain_checksum(dll: &[u8]) -> u32 {
     dll.iter().enumerate().fold(0u32, |s, (i, &b)| s.wrapping_add(((b as i8 as i32) << (((i % 20) * 4) & 31)) as u32))
 }
 
-/// The retail builds this client was made against, by the installed FFXiMain.dll's checksum (the 0x26 value), with the
-/// version each sends. The client's packet layouts are those of the last one.
-pub const KNOWN_BUILDS: [(u32, &str); 2] = [(0x43FA_0718, "30261006_0"), (0x74F0_058F, "30261102_0")];
+/// The retail builds this client knows, by the installed FFXiMain.dll's checksum (the 0x26 value), with the version
+/// each sends: assets/known-builds.txt. A build there plays without the unknown-build warning, so one is added only by
+/// a reviewed PR (the known-builds workflow opens it) once the build's packets are checked against the client's.
+pub fn known_builds() -> &'static [(u32, &'static str)] {
+    static LIST: std::sync::OnceLock<Vec<(u32, &'static str)>> = std::sync::OnceLock::new();
+    LIST.get_or_init(|| parse_known_builds(KNOWN_BUILDS).expect("assets/known-builds.txt"))
+}
+
+/// assets/known-builds.txt, kept in the binary.
+pub const KNOWN_BUILDS: &str = include_str!("../../assets/known-builds.txt");
+
+/// The known-builds file: "CHECKSUM VERSION" lines (hex checksum), `#` comments and blank lines skipped.
+pub fn parse_known_builds(text: &str) -> Result<Vec<(u32, &str)>> {
+    let mut out = Vec::new();
+    for (n, line) in text.lines().enumerate() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut it = line.split_whitespace();
+        let (Some(sum), Some(v), None) = (it.next(), it.next(), it.next()) else {
+            bail!("known builds line {}: \"CHECKSUM VERSION\" expected", n + 1);
+        };
+        let sum = u32::from_str_radix(sum, 16).with_context(|| format!("known builds line {}: checksum", n + 1))?;
+        if crate::patch::version_key(v).is_none() {
+            bail!("known builds line {}: version {v:?} is not DATE_N", n + 1);
+        }
+        out.push((sum, v));
+    }
+    Ok(out)
+}
 
 /// The installed FFXiMain.dll as a PlayOnline login sees it.
 #[derive(Debug, PartialEq)]
@@ -61,7 +89,7 @@ pub struct GameBuild {
     /// The version to send: the release the patch files record for these very bytes (`patch::ffximain_version`), a
     /// known build's own when they record none or an older one. Never a stale config value.
     pub version: String,
-    /// One of KNOWN_BUILDS: the packet layouts are this client's. An unknown one (a retail update newer than the
+    /// One of known_builds(): the packet layouts are this client's. An unknown one (a retail update newer than the
     /// client) may still play, but the player is warned first.
     pub known: bool,
 }
@@ -70,7 +98,7 @@ pub struct GameBuild {
 /// unknown one whose version no patch file confirms (`patched`: what they record for these bytes), rather than pair it
 /// with a version from somewhere else.
 pub fn playonline_build(dll: &[u8], patched: Option<&str>) -> Result<GameBuild> {
-    build_among(&KNOWN_BUILDS, dll, patched)
+    build_among(known_builds(), dll, patched)
 }
 
 fn build_among(known: &[(u32, &str)], dll: &[u8], patched: Option<&str>) -> Result<GameBuild> {
@@ -1907,6 +1935,20 @@ mod create_tests {
         assert!(crate::dat::character::file_ids(&look).is_ok());
     }
 
+    /// The committed list parses, has no checksum twice, and holds the builds the client was made against.
+    #[test]
+    fn known_builds_file() {
+        let list = known_builds();
+        let mut sums: Vec<u32> = list.iter().map(|b| b.0).collect();
+        sums.sort();
+        sums.dedup();
+        assert_eq!(sums.len(), list.len());
+        assert!(list.contains(&(0x74F0_058F, "30261102_0")));
+        assert!(parse_known_builds("XYZ 30261102_0").is_err());
+        assert!(parse_known_builds("74F0058F 1102").is_err());
+        assert_eq!(parse_known_builds("# c\n\n0000000A 30270101_0 # new").unwrap(), [(10, "30270101_0")]);
+    }
+
     #[test]
     fn checksum_matches_the_games() {
         // FUN_100185a0: signed bytes, the shift cycling 0, 4, .. 76 (masked to 31).
@@ -1933,7 +1975,7 @@ mod create_tests {
         if let Ok(re) = std::env::var("FFXI_RE_DIR")
             && let Some(builds) = std::path::Path::new(&re).parent()
         {
-            for (_, v) in KNOWN_BUILDS {
+            for (_, v) in known_builds() {
                 if let Ok(b) = std::fs::read(builds.join(v).join("FFXiMain.dll")) {
                     assert_eq!(
                         playonline_build(&b, None).unwrap(),
