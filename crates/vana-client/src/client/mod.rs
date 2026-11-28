@@ -10677,15 +10677,17 @@ impl App {
                     se_password: password,
                     otp: (!otp.is_empty()).then_some(otp),
                 };
-                let (session, pol) = crate::net::pol::sign_in(&creds)?;
+                // The game's own build, known to this client, before anything goes to PlayOnline.
                 let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())).unwrap_or_default();
+                let version = crate::net::lobby::playonline_version(&dll)?;
+                let (session, pol) = crate::net::pol::sign_in(&creds)?;
                 let mut lobby = Lobby::connect(
                     crate::net::pol::LOBBY_HOST,
                     crate::net::pol::LOBBY_PORT,
                     0,
                     session,
                     &dll,
-                    &cfg.client_version,
+                    version,
                     5,
                     crate::dat::installed(&cfg.ffxi_dir()),
                     replies,

@@ -49,6 +49,27 @@ pub fn ffximain_checksum(dll: &[u8]) -> u32 {
     dll.iter().enumerate().fold(0u32, |s, (i, &b)| s.wrapping_add(((b as i8 as i32) << (((i % 20) * 4) & 31)) as u32))
 }
 
+/// The retail builds this client was made against, by the installed FFXiMain.dll's checksum (the 0x26 value), with the
+/// version each sends. The client's packet layouts are those of the last one.
+pub const KNOWN_BUILDS: [(u32, &str); 2] = [(0x43FA_0718, "30261006_0"), (0x74F0_058F, "30261102_0")];
+
+/// The version a PlayOnline login sends: the installed FFXiMain.dll's own build, never the config's (which may be
+/// hand-written or stale), so the version and the checksum in 0x26 always agree. A build this client does not know
+/// (the game patched past it) is refused: the retail server would get packets laid out for an older build.
+pub fn playonline_version(dll: &[u8]) -> Result<&'static str> {
+    if dll.is_empty() {
+        bail!("FFXiMain.dll was not found in the game folder, so the game's version is unknown.");
+    }
+    let sum = ffximain_checksum(dll);
+    match KNOWN_BUILDS.iter().find(|b| b.0 == sum) {
+        Some(b) => Ok(b.1),
+        None => bail!(
+            "This game's FFXiMain.dll (checksum {sum:08X}) is a build this client does not know, likely a newer \
+             retail update. Update vana-client before signing in to PlayOnline."
+        ),
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Character {
     pub content_id: u32,
@@ -1872,12 +1893,15 @@ mod create_tests {
             s = s.wrapping_add(((b as i8 as i32) << (((i as u32 % 20) * 4) & 31)) as u32);
         }
         assert_eq!(ffximain_checksum(&d), s);
+        assert_eq!(playonline_version(b"").map_err(|_| ()), Err(()));
+        assert_eq!(playonline_version(b"dll").map_err(|_| ()), Err(()));
         // The installed 30261006_0 (its value in MODLOG "PlayOnline sign-in"), when present.
         let dll = crate::dat::ffximain(&crate::config::Config::load().ffxi_dir());
         if let Ok(b) = std::fs::read(dll)
             && b.len() == 2_901_584
         {
             assert_eq!(ffximain_checksum(&b), 0x43FA_0718);
+            assert_eq!(playonline_version(&b).unwrap(), "30261006_0");
         }
     }
 }
