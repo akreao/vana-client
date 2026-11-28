@@ -395,6 +395,8 @@ and revoke them there.
 | `devices` | HID devices by their raw reports | Binder, GBinder, Stream Deck tools |
 | `mods` | `/lua load`, `unload`, `reload`, `hide`, `show` from the mod's lines (`commands.run`, binds) | add-on managers, per-job or per-zone loaders |
 
+On a PlayOnline (retail) login, `automation` and `packets.write` are refused unless Settings' Mod Automation on PlayOnline is on (off by default): a mod there acts only on the player's input (`actions`) and reads packets. The behaviour switches that change what the server sees (`client.set_option`: dead_commands, move_lock, menu_reach, occlusion, equipset_delay, cutscene_speed, animation_rate, player_collision, send_interval, synth_amount, ah_result_delay, all_maps, compass_monsters) always stay as the game has them there, and injected packets go with the next timed datagram through the client's send gate, as the game's own sends do.
+
 Never exposed to any mod, not even read-only: the password, the 2FA secret, `secret.key`, session keys and the
 Blowfish state. Outgoing chat, commands and packets are rate-limited per mod. There is no WoW-style taint or combat
 lockdown: on a private server the player decides.

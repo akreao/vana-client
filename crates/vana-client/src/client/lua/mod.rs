@@ -5421,7 +5421,7 @@ fn chain(host: &Host, w: &World, data: Vec<u8>, injected: bool, outgoing: bool) 
         if funcs.is_empty() {
             continue;
         }
-        let write = vm.st.borrow().granted.iter().any(|g| g == "packets.write");
+        let write = vm.st.borrow().granted.iter().any(|g| g == "packets.write") && !w.retail_locked();
         lend(vm, w, |vm| {
             for (want, f) in funcs {
                 if want.is_some_and(|i| i != id) {

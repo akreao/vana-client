@@ -256,6 +256,10 @@ pub struct Config {
     /// Milliseconds between the datagrams sent to a private server's zone server (50..400; 400 is the game's, which a
     /// PlayOnline sign-in always keeps). The server answers each one, so its updates come sooner. Not a retail option.
     pub send_interval: u32,
+    /// Mod Automation on PlayOnline: mods may act on their own (the automation permission) and send, change or block
+    /// packets (packets.write) on a PlayOnline login. Off (the default), a retail login takes only the actions the
+    /// player starts. Not a retail option.
+    pub playonline_automation: bool,
     /// Movement Rate: the retail frames a second our own character moves in, 30 (the game's, two ticks a frame) or 60
     /// (one tick a frame, as retail plays with an fps add-on): the drawn place and turn ease once per frame either way.
     /// Not a retail option.
@@ -660,6 +664,7 @@ impl Default for Config {
             neural: false,
             draw_distance: 0,
             send_interval: 400,
+            playonline_automation: false,
             move_rate: crate::client::ground::MOVE_RATE_GAME,
             party_tp: true,
             window_opacity: Default::default(),

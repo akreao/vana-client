@@ -2871,7 +2871,22 @@ fn update(e: &mut super::window::Elem, t: &Table) -> mlua::Result<()> {
 }
 
 /// A permission the mod must hold (granted by the user, docs/lua-mods.md 3.5).
+/// The permissions a PlayOnline login keeps from mods unless Settings' Mod Automation on PlayOnline is on.
+const RETAIL_LOCKED: [&str; 2] = ["automation", "packets.write"];
+
+/// In the world on a PlayOnline login with Mod Automation on PlayOnline off.
+pub(super) fn retail_locked(lua: &Lua) -> bool {
+    world(lua).is_ok_and(|w| w.retail_locked())
+}
+
+const RETAIL_LOCKED_TEXT: &str =
+    "off on a PlayOnline login (Settings > Mod Automation on PlayOnline turns it on; mods that play for you are \
+     against the game's terms)";
+
 pub(super) fn need(lua: &Lua, perm: &str) -> mlua::Result<()> {
+    if RETAIL_LOCKED.contains(&perm) && retail_locked(lua) {
+        return Err(mlua::Error::runtime(format!("{perm} is {RETAIL_LOCKED_TEXT}")));
+    }
     let st = state(lua);
     let s = st.borrow();
     if s.granted.iter().any(|g| g == perm) {
@@ -2888,8 +2903,11 @@ pub(super) fn need_action(lua: &Lua) -> mlua::Result<()> {
     let st = state(lua);
     let s = st.borrow();
     let has = |p: &str| s.granted.iter().any(|g| g == p);
-    if has("automation") || (has("actions") && s.input) {
+    let locked = retail_locked(lua);
+    if (has("automation") && !locked) || (has("actions") && s.input) {
         Ok(())
+    } else if has("automation") {
+        Err(mlua::Error::runtime(format!("a game action outside the player's input: automation is {RETAIL_LOCKED_TEXT}")))
     } else if has("actions") {
         Err(mlua::Error::runtime("a game action outside the player's input needs the automation permission"))
     } else {

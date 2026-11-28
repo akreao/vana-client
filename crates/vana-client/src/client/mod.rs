@@ -9016,6 +9016,8 @@ struct World {
     ah_index: auction::AhIndex,
     /// Signed in through PlayOnline: our additions that send what the original client never would stay off.
     playonline: bool,
+    /// Config `playonline_automation`, each frame: mods keep automation and packets.write on a PlayOnline login.
+    playonline_automation: bool,
     /// FUN_100fc3c0's last c2s 0x102 (one a second, shared by BLU and PUP).
     ext_job_sent: Option<Instant>,
     /// Monstrosity Customization (client/moncustom.rs).
@@ -9308,6 +9310,11 @@ impl World {
             kept.push((configui::CONFIGWI_MENU, w.cursor));
         }
         self.cursor_mem.extend(kept);
+    }
+
+    /// A PlayOnline login with Mod Automation on PlayOnline off: mods lose automation and packets.write.
+    fn retail_locked(&self) -> bool {
+        self.playonline && !self.playonline_automation
     }
 
     fn dead(&self) -> bool {
@@ -11648,6 +11655,7 @@ impl App {
                             maze: Default::default(),
                             ah_index: Default::default(),
                             playonline: is_playonline(&self.cfg.server),
+                            playonline_automation: false,
                             ext_job_sent: None,
                             moncustom: None,
                             treasure: Default::default(),
@@ -12445,6 +12453,7 @@ impl App {
         let Phase::World(world) = &mut self.phase else { return };
         world.net.stats.rate_ms.store(self.cfg.send_interval, std::sync::atomic::Ordering::Relaxed);
         world.net.stats.gm_window.store(self.cfg.gm_window, std::sync::atomic::Ordering::Relaxed);
+        world.playonline_automation = self.cfg.playonline_automation;
         let mut load = None;
         let mut looks: Vec<(u32, Source)> = Vec::new();
         // Lines that need the message tables wait for them (they load on a thread at world start), in order.
