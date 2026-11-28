@@ -9,7 +9,6 @@ use super::{Modern, Panels, Show, chatsel, paint};
 use crate::dat::font::{CODE_BASE, code_table};
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontId, Id, Order, Rect, Sense, Ui, Vec2, pos2, vec2};
-use std::sync::OnceLock;
 
 /// The tabs: retail's full log's (FUN_10138700 / FUN_101299f0; MODLOG "The full log's tabs"): every line, then each
 /// channel's chat modes, our echo with the others' (Shout with Yell, Party with the trusts').
@@ -85,11 +84,8 @@ pub fn colour(c: [u8; 4]) -> Color32 {
 
 /// The colours of `1e 00..10` (FFXiMain's table; 0 = the line's).
 fn codes() -> &'static [u32; 17] {
-    static T: OnceLock<[u32; 17]> = OnceLock::new();
-    T.get_or_init(|| {
-        let dll = std::fs::read(crate::dat::ffximain(&crate::config::Config::load().ffxi_dir())).unwrap_or_default();
-        crate::dat::tables::code_colours(&dll).unwrap_or_default()
-    })
+    static T: crate::dat::DllTable<[u32; 17]> = crate::dat::DllTable::new();
+    T.get(|dll| crate::dat::tables::code_colours(dll).unwrap_or_default())
 }
 
 /// The space a chat icon takes in a laid-out line.

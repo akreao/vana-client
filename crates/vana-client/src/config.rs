@@ -700,6 +700,18 @@ impl Default for Config {
     }
 }
 
+/// What a "FINAL FANTASY XI" folder lacks of the files a login reads first (its file tables, FFXiMain.dll); none:
+/// it can be a server's game folder.
+pub fn game_files_missing(ffxi_dir: &std::path::Path) -> Option<&'static str> {
+    if !ffxi_dir.join("VTABLE.DAT").is_file() {
+        Some("VTABLE.DAT")
+    } else if !crate::dat::ffximain(ffxi_dir).is_file() {
+        Some("FFXiMain.dll")
+    } else {
+        None
+    }
+}
+
 impl Config {
     /// The cursor's on-screen scale for a window `height` pixels high.
     pub fn cursor_scale(&self, height: u32) -> f32 {
@@ -859,10 +871,11 @@ impl Config {
     pub fn enter_server_game_dir(&mut self) -> Result<(), String> {
         let dir = self.server_game_dir(&self.server).map(PathBuf::from);
         if let Some(d) = &dir
-            && !d.join("FINAL FANTASY XI").join("VTABLE.DAT").is_file()
+            && let Some(missing) = game_files_missing(&d.join("FINAL FANTASY XI"))
         {
             return Err(format!(
-                "No game files in {}, this server's game folder: choose another in Account > Game files.",
+                "No game files in {} ({missing} missing), this server's game folder: choose another in Account > Game \
+                 files.",
                 d.display()
             ));
         }
@@ -1160,6 +1173,10 @@ mod tests {
         assert!(c.enter_server_game_dir().is_err_and(|e| e.contains("No game files")));
         assert_eq!(c.ffxi_dir(), base.join("main").join("FINAL FANTASY XI"));
         std::fs::write(own.join("FINAL FANTASY XI").join("VTABLE.DAT"), b"").unwrap();
+        // The DATs without the DLL: refused too, the login's folder unchanged.
+        assert!(c.enter_server_game_dir().is_err_and(|e| e.contains("FFXiMain.dll missing")));
+        assert_eq!(c.ffxi_dir(), base.join("main").join("FINAL FANTASY XI"));
+        std::fs::write(own.join("FINAL FANTASY XI").join("FFXiMain.dll"), b"").unwrap();
         assert_eq!(c.enter_server_game_dir(), Ok(()));
         assert_eq!(c.ffxi_dir(), own.join("FINAL FANTASY XI"));
         assert_eq!(c.main_ffxi_dir(), base.join("main").join("FINAL FANTASY XI"));
