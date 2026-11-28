@@ -9312,7 +9312,7 @@ impl World {
         self.cursor_mem.extend(kept);
     }
 
-    /// A PlayOnline login with Mod Automation on PlayOnline off: mods lose automation and packets.write.
+    /// A PlayOnline login with Mod Automation on PlayOnline off: the mods that play for the player lose automation and packets.write.
     fn retail_locked(&self) -> bool {
         self.playonline && !self.playonline_automation
     }

@@ -815,6 +815,7 @@ impl Host {
         vm.st.borrow_mut().char_file = Self::char_file(w);
         vm.st.borrow_mut().settings = settings;
         vm.st.borrow_mut().granted = granted;
+        vm.st.borrow_mut().retail_bot = api::RETAIL_LOCKED_MODS.contains(&vm.manifest.id.as_str());
         if !missing.is_empty() {
             let id = vm.manifest.id.clone();
             vm.st.borrow_mut().notices.push(format!(
@@ -5421,7 +5422,10 @@ fn chain(host: &Host, w: &World, data: Vec<u8>, injected: bool, outgoing: bool) 
         if funcs.is_empty() {
             continue;
         }
-        let write = vm.st.borrow().granted.iter().any(|g| g == "packets.write") && !w.retail_locked();
+        let write = {
+            let st = vm.st.borrow();
+            st.granted.iter().any(|g| g == "packets.write") && !(st.retail_bot && w.retail_locked())
+        };
         lend(vm, w, |vm| {
             for (want, f) in funcs {
                 if want.is_some_and(|i| i != id) {

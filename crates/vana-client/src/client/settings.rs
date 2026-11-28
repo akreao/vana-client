@@ -524,7 +524,7 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
         ),
         row(
             "Mod Automation on PlayOnline",
-            "Lets mods act on their own and send or change packets while signed in through PlayOnline (Gearshift, Steady Cast, Event Rules, Loot Rules ...). Off, a retail login takes only the actions you start yourself. Add-ons that play for you are against the game's terms of service.",
+            "Lets the mods that play for you work while signed in through PlayOnline: Synthesis Amount, Event Rules, Loot Rules, Party Tools, Multibox and Auto Advance. Off, they only act on what you do yourself there. Gear swapping, hotbars and the other mods work either way. Add-ons that play for you are against the game's terms of service.",
             PlayOnlineAutomation,
             OFF_ON,
             Now,

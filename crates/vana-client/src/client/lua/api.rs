@@ -2871,12 +2871,19 @@ fn update(e: &mut super::window::Elem, t: &Table) -> mlua::Result<()> {
 }
 
 /// A permission the mod must hold (granted by the user, docs/lua-mods.md 3.5).
-/// The permissions a PlayOnline login keeps from mods unless Settings' Mod Automation on PlayOnline is on.
+/// The permissions a PlayOnline login keeps from the mods that play for the player unless Settings' Mod Automation
+/// on PlayOnline is on.
 const RETAIL_LOCKED: [&str; 2] = ["automation", "packets.write"];
 
-/// In the world on a PlayOnline login with Mod Automation on PlayOnline off.
+/// The bundled mods that play without the player (Steven's grouping, 2026-11-28): the unattended crafting run, commands
+/// run on triggers, lots and passes, party invites, commands to other characters, event text moving on. Gear swapping
+/// (Gearshift, Steady Cast), hotbars and the rest keep their permissions on a retail login.
+pub(super) const RETAIL_LOCKED_MODS: [&str; 6] =
+    ["synth-amount", "event-rules", "loot-rules", "party-tools", "multibox", "auto-advance"];
+
+/// In the world on a PlayOnline login with Mod Automation on PlayOnline off, for one of RETAIL_LOCKED_MODS.
 pub(super) fn retail_locked(lua: &Lua) -> bool {
-    world(lua).is_ok_and(|w| w.retail_locked())
+    state(lua).borrow().retail_bot && world(lua).is_ok_and(|w| w.retail_locked())
 }
 
 const RETAIL_LOCKED_TEXT: &str = "off on a PlayOnline login (Settings > Mod Automation on PlayOnline)";
