@@ -2879,9 +2879,7 @@ pub(super) fn retail_locked(lua: &Lua) -> bool {
     world(lua).is_ok_and(|w| w.retail_locked())
 }
 
-const RETAIL_LOCKED_TEXT: &str =
-    "off on a PlayOnline login (Settings > Mod Automation on PlayOnline turns it on; mods that play for you are \
-     against the game's terms)";
+const RETAIL_LOCKED_TEXT: &str = "off on a PlayOnline login (Settings > Mod Automation on PlayOnline)";
 
 pub(super) fn need(lua: &Lua, perm: &str) -> mlua::Result<()> {
     if RETAIL_LOCKED.contains(&perm) && retail_locked(lua) {
@@ -2907,7 +2905,9 @@ pub(super) fn need_action(lua: &Lua) -> mlua::Result<()> {
     if (has("automation") && !locked) || (has("actions") && s.input) {
         Ok(())
     } else if has("automation") {
-        Err(mlua::Error::runtime(format!("a game action outside the player's input: automation is {RETAIL_LOCKED_TEXT}")))
+        Err(mlua::Error::runtime(format!(
+            "a game action outside the player's input: automation is {RETAIL_LOCKED_TEXT}"
+        )))
     } else if has("actions") {
         Err(mlua::Error::runtime("a game action outside the player's input needs the automation permission"))
     } else {

@@ -522,6 +522,13 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
             &[],
             Now,
         ),
+        row(
+            "Mod Automation on PlayOnline",
+            "Lets mods act on their own and send or change packets while signed in through PlayOnline (Gearshift, Steady Cast, Event Rules, Loot Rules ...). Off, a retail login takes only the actions you start yourself. Add-ons that play for you are against the game's terms of service.",
+            PlayOnlineAutomation,
+            OFF_ON,
+            Now,
+        ),
     ];
     const SCREEN: &[SRow] = &[
         row("Resolution", "The size of the game window.", Size("0001", "0002", Sizes::Window), &[], Now),
@@ -720,13 +727,6 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
             "How often the client sends to a private server, which answers each time: faster brings what happens around you sooner. A PlayOnline sign-in keeps the game's rate (not retail).",
             SendRate,
             &[(400, "Retail"), (200, "2x"), (100, "4x"), (50, "8x")],
-            Now,
-        ),
-        row(
-            "Mod Automation on PlayOnline",
-            "Lets mods act on their own and send or change packets while signed in through PlayOnline (Gearshift, Steady Cast, Event Rules, Loot Rules ...). Off, a retail login takes only the actions you start yourself. Add-ons that play for you are against the game's terms of service.",
-            PlayOnlineAutomation,
-            OFF_ON,
             Now,
         ),
     ];

@@ -256,6 +256,7 @@ const PAGES: [(&str, &str, &[Item]); 14] = [
             Retail("conf4", 3),
             Head("Network"),
             Ours("Send Rate"),
+            Ours("Mod Automation on PlayOnline"),
         ],
     ),
     ("System", "Mods", &[]),

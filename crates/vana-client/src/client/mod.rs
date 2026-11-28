@@ -13391,7 +13391,8 @@ impl App {
                     let fresh = world.inv.set(container, index, id, count);
                     // Retail's Auto-sort (config 0x9a) already sorts the inventory on a new row, the login load too.
                     let retail = container == items::INVENTORY && world.game.get(0x9a) != 0;
-                    if fresh && container < 32 && world.auto_sort >> container & 1 != 0 && !retail && !world.playonline {
+                    if fresh && container < 32 && world.auto_sort >> container & 1 != 0 && !retail && !world.playonline
+                    {
                         world.sort_due = (world.sort_due.0 | 1 << container, items::SORT_DELAY);
                     }
                     if id != 0 {
