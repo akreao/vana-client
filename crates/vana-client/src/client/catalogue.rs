@@ -373,6 +373,11 @@ pub fn installed_source_for_id(id: &str) -> Option<Source> {
 /// Install, update or installed-as-is for one catalogue row (Settings, Modmgr, login update count).
 pub fn entry_status(e: &Entry, source: Source, server_keys: &[String]) -> Option<bool> {
     let root = root_of(e);
+    // Lua mods and DAT packs share the mods folder: a folder of the other kind by this id is never this entry's to
+    // install over or update.
+    if !same_kind(&root, e) {
+        return None;
+    }
     let have = installed(&root, &e.id);
     let inst_src = installed_source(&root, &e.id);
     match (have.as_deref(), inst_src) {
@@ -392,6 +397,12 @@ pub fn entry_status(e: &Entry, source: Source, server_keys: &[String]) -> Option
         (Some(v), Some(Source::Server)) if source == Source::Standard => offer(e, Some(v)).or(Some(false)),
         (Some(_), _) => None,
     }
+}
+
+/// Whether `root/<id>` is missing or of the entry's kind (a Lua mod's folder holds mod.toml, a DAT pack's none).
+fn same_kind(root: &Path, e: &Entry) -> bool {
+    let dir = root.join(&e.id);
+    e.kind == "materials" || !dir.is_dir() || dir.join("mod.toml").is_file() == (e.kind == "lua")
 }
 
 /// The version installed in `root/id`: the catalogue's mark, else its mod.toml's; "" for a folder with neither.
@@ -558,6 +569,25 @@ pub fn install(e: &Entry, root: &Path, progress: &AtomicU32, source: Source, ser
 
 #[cfg(test)]
 mod tests {
+    /// A DAT pack never counts as an update of a Lua mod by the same id, nor the other way round.
+    #[test]
+    fn other_kind_folder_not_ours() {
+        let root = std::env::temp_dir().join(format!("vana-kind-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("weather")).unwrap();
+        std::fs::write(root.join("weather/mod.toml"), "name = \"W\"\nversion = \"1.0.0\"").unwrap();
+        let mut e: super::Entry =
+            serde_json::from_str(r#"{"id": "weather", "name": "W", "version": "2.0.0", "files": []}"#).unwrap();
+        assert!(super::same_kind(&root, &e));
+        e.kind = "pack".into();
+        assert!(!super::same_kind(&root, &e));
+        std::fs::remove_file(root.join("weather/mod.toml")).unwrap();
+        assert!(super::same_kind(&root, &e));
+        e.id = "none".into();
+        assert!(super::same_kind(&root, &e));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A row's list file for the kind names its installs' list: the repository alone without one (as installs were
     /// marked), and the other kind's file never counts.
     #[test]
