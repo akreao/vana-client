@@ -4,7 +4,6 @@
 use super::net::NetCommand;
 use super::{World, combat, event, target};
 use std::collections::HashMap;
-use std::sync::OnceLock;
 
 /// FUN_10080dc0's mode: 0 menus, 1 typed, 2 macro, 3..7 a sub-target tag's re-run with the pick's id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -232,18 +231,18 @@ struct Commands {
 }
 
 fn commands() -> &'static Commands {
-    static T: OnceLock<Commands> = OnceLock::new();
-    T.get_or_init(|| {
-        let dll = std::fs::read(crate::dat::ffximain(&crate::config::Config::load().ffxi_dir())).unwrap_or_default();
-        let rows = parse_rows(&dll).unwrap_or_else(|| {
+    // The login's game folder's DLL: help_file names a file in that folder's tables.
+    static T: crate::dat::DllTable<Commands> = crate::dat::DllTable::new();
+    T.get(|dll| {
+        let rows = parse_rows(dll).unwrap_or_else(|| {
             log::warn!("text command table not found in FFXiMain.dll");
             Vec::new()
         });
         Commands {
             map: rows.iter().map(|(n, id, f)| (n.clone(), (*id, *f))).collect(),
             rows,
-            help: crate::dat::tables::text_help(&dll).map_err(|e| log::warn!("{e:#}")).unwrap_or_default(),
-            help_file: crate::dat::msg::current_slot_file(&dll, crate::dat::lang::files() as u8, 0x24),
+            help: crate::dat::tables::text_help(dll).map_err(|e| log::warn!("{e:#}")).unwrap_or_default(),
+            help_file: crate::dat::msg::current_slot_file(dll, crate::dat::lang::files() as u8, 0x24),
         }
     })
 }

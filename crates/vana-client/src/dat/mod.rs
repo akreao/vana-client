@@ -19,6 +19,48 @@ pub fn ffximain(ffxi_dir: &Path) -> PathBuf {
     if own.is_file() { own } else { ffxi_dir.join("FFXiMain.dll") }
 }
 
+/// The game folder a login uses (Client::game_data sets it as it opens that folder's files); none yet: the config's.
+static FFXI_DIR_IN_USE: std::sync::RwLock<Option<PathBuf>> = std::sync::RwLock::new(None);
+
+/// From here on the tables built from FFXiMain outside the client's own (DllTable) come from `ffxi_dir`'s.
+pub fn use_ffxi_dir(ffxi_dir: &Path) {
+    *FFXI_DIR_IN_USE.write().unwrap_or_else(|e| e.into_inner()) = Some(ffxi_dir.to_path_buf());
+}
+
+/// The "FINAL FANTASY XI" folder in use: the login's (use_ffxi_dir), else the config's.
+pub fn ffxi_dir_in_use() -> PathBuf {
+    FFXI_DIR_IN_USE
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .unwrap_or_else(|| crate::config::Config::load().ffxi_dir())
+}
+
+/// A table built from the FFXiMain of the game folder in use, once for each folder (a server's own folder has its
+/// own DLL): a login into another folder gets that DLL's table. Each is kept for the whole run (a few folders at most).
+pub struct DllTable<T: 'static>(std::sync::Mutex<Vec<(PathBuf, &'static T)>>);
+
+impl<T: Sync + 'static> DllTable<T> {
+    pub const fn new() -> Self {
+        Self(std::sync::Mutex::new(Vec::new()))
+    }
+
+    /// The table for the folder in use, built from its FFXiMain (empty bytes when it cannot be read).
+    pub fn get(&self, build: impl FnOnce(&[u8]) -> T) -> &'static T {
+        self.get_in(&ffxi_dir_in_use(), build)
+    }
+
+    fn get_in(&self, ffxi_dir: &Path, build: impl FnOnce(&[u8]) -> T) -> &'static T {
+        let mut t = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, v)) = t.iter().find(|(d, _)| d == ffxi_dir) {
+            return v;
+        }
+        let v: &'static T = Box::leak(Box::new(build(&std::fs::read(ffximain(ffxi_dir)).unwrap_or_default())));
+        t.push((ffxi_dir.to_path_buf(), v));
+        v
+    }
+}
+
 /// `VTABLE{n}.DAT` holds one byte per file id (the ROM number when present);
 /// `FTABLE{n}.DAT` a u16 per id: `dir << 7 | file`.
 pub struct DatIndex {
@@ -250,3 +292,31 @@ pub mod zone;
 
 #[cfg(test)]
 mod fuzz;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A DLL table is built once for each game folder, from that folder's FFXiMain.
+    #[test]
+    fn dll_table_per_folder() {
+        let base = std::env::temp_dir().join(format!("vana-dlltable-{}", std::process::id()));
+        let (a, b) = (base.join("a"), base.join("b"));
+        for (d, dll) in [(&a, b"AAAA".as_slice()), (&b, b"BB".as_slice())] {
+            std::fs::create_dir_all(d).unwrap();
+            std::fs::write(d.join("FFXiMain.dll"), dll).unwrap();
+        }
+        static T: DllTable<usize> = DllTable::new();
+        let mut built = 0;
+        let mut len = |d: &[u8]| {
+            built += 1;
+            d.len()
+        };
+        assert_eq!(*T.get_in(&a, &mut len), 4);
+        assert_eq!(*T.get_in(&b, &mut len), 2);
+        assert_eq!(*T.get_in(&a, &mut len), 4);
+        assert_eq!(built, 2);
+        assert_eq!(*T.get_in(&base.join("none"), |d| d.len()), 0);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}

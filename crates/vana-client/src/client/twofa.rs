@@ -213,7 +213,8 @@ impl TwoFa {
             }
             Step::Folder => {
                 "A server that ships its own copy of the game files (with text that follows it) can use that copy: \
-                 choose its FINAL FANTASY XI folder. It is used from the next login to this server."
+                 choose its FINAL FANTASY XI folder. It is used from the next login to this server, with that folder's \
+                 own macros, equip sets and map markers (its USER folder), as the server's own launcher keeps them."
             }
             Step::Password => {
                 "The current password is the login form's. Enter the new one twice, and with two-factor sign-in on, the \

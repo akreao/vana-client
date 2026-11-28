@@ -1,7 +1,6 @@
 //! Monstrosity (main job MON): who is in it and the names Monipulators show. MODLOG "Monstrosity, part 1..10".
 
 use super::{Entity, World};
-use std::sync::OnceLock;
 
 /// FUN_10097d50: the 0x00A flag (@0x7E) is set, or the main job (0x061) is MON.
 pub fn active(w: &World) -> bool {
@@ -69,11 +68,10 @@ pub fn is_move(w: &World, id: u16) -> bool {
 
 /// The DLL's prefix table (FUN_10142070: one English table for both prefixes) and the species types before it.
 fn dll_tables() -> &'static (Vec<String>, Vec<u8>) {
-    static T: OnceLock<(Vec<String>, Vec<u8>)> = OnceLock::new();
-    T.get_or_init(|| {
-        let dll = std::fs::read(crate::dat::ffximain(&crate::config::Config::load().ffxi_dir())).unwrap_or_default();
-        let prefixes = crate::dat::tables::mon_prefixes(&dll).map_err(|e| log::warn!("{e:#}")).unwrap_or_default();
-        (prefixes, crate::dat::tables::mon_types(&dll).unwrap_or_default())
+    static T: crate::dat::DllTable<(Vec<String>, Vec<u8>)> = crate::dat::DllTable::new();
+    T.get(|dll| {
+        let prefixes = crate::dat::tables::mon_prefixes(dll).map_err(|e| log::warn!("{e:#}")).unwrap_or_default();
+        (prefixes, crate::dat::tables::mon_types(dll).unwrap_or_default())
     })
 }
 
