@@ -2089,15 +2089,19 @@ fn held_back(sent: &[u16], back: &[Vec<u8>]) -> Vec<u16> {
     left
 }
 
-/// Injected packets that take a freed slot (`credits`, used up) and those that still ask the gate.
-fn take_credits(packets: Vec<Vec<u8>>, credits: &mut Vec<u16>) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
-    packets.into_iter().partition(|p| match credits.iter().position(|&i| i == sub_id(p)) {
-        Some(k) => {
-            credits.remove(k);
-            true
-        }
-        None => false,
-    })
+/// Injected packets in their order, each with whether it takes a freed slot (`credits`, used up) rather than asking
+/// the gate: Gearshift's equips around a re-sent cast keep their places.
+fn take_credits(packets: Vec<Vec<u8>>, credits: &mut Vec<u16>) -> Vec<(Vec<u8>, bool)> {
+    packets
+        .into_iter()
+        .map(|p| {
+            let k = credits.iter().position(|&i| i == sub_id(&p));
+            if let Some(k) = k {
+                credits.remove(k);
+            }
+            (p, k.is_some())
+        })
+        .collect()
 }
 
 /// Mods' injected packets into a datagram's sub-packets: before its trailing 0x015 (retail's position goes last).
@@ -3015,11 +3019,17 @@ impl Session<'_> {
                 }
                 NetCommand::Packet { id, body } => self.queue.push(build(id, &body)),
                 NetCommand::Inject(packets) => {
-                    // A replacement for a packet a hook held back takes that packet's gate slot; the rest ask.
-                    let (free, mut ask) = take_credits(packets, &mut self.credits);
-                    let sent = self.map.pending() + self.queue.len() + self.injected.len() + free.len();
-                    self.gate.admit(&mut ask, 0, sent, Instant::now());
-                    self.injected.extend(free.into_iter().chain(ask));
+                    // A replacement for a packet a hook held back takes that packet's gate slot; the rest ask, each
+                    // in its place.
+                    let now = Instant::now();
+                    for (p, free) in take_credits(packets, &mut self.credits) {
+                        let mut one = vec![p];
+                        if !free {
+                            let sent = self.map.pending() + self.queue.len() + self.injected.len();
+                            self.gate.admit(&mut one, 0, sent, now);
+                        }
+                        self.injected.extend(one);
+                    }
                     continue;
                 }
                 NetCommand::PacketHeld { id, body } => {
@@ -3463,8 +3473,14 @@ mod tests {
         let back = vec![build(0x050, &[0; 4]), build(0x015, &[0; 28])];
         let mut credits = held_back(&[0x037, 0x050, 0x015], &back);
         assert_eq!(credits, [0x037]);
-        let (free, ask) = take_credits(vec![build(0x037, &[0; 20]), build(0x037, &[0; 20])], &mut credits);
-        assert_eq!((free.len(), ask.len(), credits.len()), (1, 1, 0));
+        let marks = |v: Vec<(Vec<u8>, bool)>| v.into_iter().map(|(p, f)| (sub_id(&p), f)).collect::<Vec<_>>();
+        let got = take_credits(vec![build(0x037, &[0; 20]), build(0x037, &[0; 20])], &mut credits);
+        assert_eq!((marks(got), credits.len()), (vec![(0x037, true), (0x037, false)], 0));
+        // A re-sent cast between equips keeps its place.
+        let mut credits = vec![0x01A];
+        let got =
+            take_credits(vec![build(0x050, &[0; 4]), build(0x01A, &[0; 24]), build(0x050, &[0; 4])], &mut credits);
+        assert_eq!(marks(got), [(0x050, false), (0x01A, true), (0x050, false)]);
     }
 
     /// Mods' injected packets go into the timed datagram before its trailing position, never after it.

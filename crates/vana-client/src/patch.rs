@@ -752,7 +752,14 @@ pub fn ffximain_version(root: &Path, path: &Path, bytes: &[u8]) -> Option<String
     let stamped = std::fs::read_to_string(root.join(STAMP_FILE)).ok().and_then(|text| {
         let entries = parse_manifest(&text).ok()?;
         let e = entries.iter().find(|e| e.path.eq_ignore_ascii_case("FFXiMain.dll"))?;
-        e.versions.iter().rev().find(|v| v.sig == sig).map(|v| v.stamp.clone())
+        let k = e.versions.iter().rposition(|v| v.sig == sig)?;
+        // The current DLL of that manifest: the release it belongs to (its newest stamp over every file, as
+        // applied_version reads it), not the stamp the DLL last changed at. An older one: its own stamp.
+        if k + 1 == e.versions.len() {
+            entries.iter().flat_map(|e| e.versions.iter().map(|v| v.stamp.clone())).max_by_key(|s| version_key(s))
+        } else {
+            Some(e.versions[k].stamp.clone())
+        }
     });
     stamped.or_else(|| (path == root.join("FFXiMain.dll")).then(|| installed_version(root, GAME)).flatten())
 }
@@ -1178,10 +1185,13 @@ mod tests {
             let g = Sig::of(d);
             format!("{stamp} {} {} {} {stamp}/Direct/FFXiMain.dll.slc {}\n", g.len, g.sum, g.md5, d.len() + 1)
         };
-        let text = format!("file FFXiMain.dll {{\n{}{}}}\n", line("30261102_0", old), line("30261201_0", new));
+        // A later release changed only a DAT: the current DLL belongs to it, the older DLL keeps its own stamp.
+        let dat =
+            format!("file ROM/1/1.DAT {{\n{}}}\n", line("30261215_0", b"dat").replace("FFXiMain.dll", "ROM/1/1.DAT"));
+        let text = format!("file FFXiMain.dll {{\n{}{}}}\n{dat}", line("30261102_0", old), line("30261201_0", new));
         std::fs::write(root.join(STAMP_FILE), text).unwrap();
         let own = crate::dat::own_ffximain(&root);
-        assert_eq!(ffximain_version(&root, &own, new).as_deref(), Some("30261201_0"));
+        assert_eq!(ffximain_version(&root, &own, new).as_deref(), Some("30261215_0"));
         assert_eq!(ffximain_version(&root, &own, old).as_deref(), Some("30261102_0"));
         assert_eq!(ffximain_version(&root, &own, b"MZ other"), None);
         // The game folder's DLL with no matching entry and no patch.ver: none either.
