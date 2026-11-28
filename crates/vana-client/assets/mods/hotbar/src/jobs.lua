@@ -17,6 +17,14 @@ function M.current()
   return M.abbr(p.main_job), M.abbr(p.sub_job), p
 end
 
+-- "RDM" -> 5, or nil.
+function M.id(abbr)
+  for id = 1, 22 do
+    if res.job(id) == abbr then return id end
+  end
+  return nil
+end
+
 -- "rdm " -> "RDM" when it is a job, else nil.
 function M.parse(text)
   local up = tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", ""):upper()

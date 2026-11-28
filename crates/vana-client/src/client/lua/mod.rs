@@ -362,6 +362,8 @@ pub struct Host {
     pub(in crate::client) synth: Vec<input::Synth>,
     /// A mod pressed Enter this frame: a chat line it submits is the mod's, not the player's.
     pub(in crate::client) synth_enter: bool,
+    /// A mod pressed any key this frame: the client's own question (fs.open_folder) takes no keys then.
+    pub(in crate::client) synth_keys: bool,
     /// actions.choose's pick, held until the event's menu takes input (5 s at most).
     pub(in crate::client) choose: Option<(usize, std::time::Instant)>,
     /// Every loaded mod, for mods.list / call / emit.
@@ -1323,6 +1325,14 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
     }
     let mut host = Host::park(&mut w.lua);
     host.gu = gu.map(|g| g as *const _);
+    // Who binds what, for binds.users: every running mod's binds.
+    let all: Vec<(String, input::Combo)> = host
+        .vms
+        .iter()
+        .filter(|v| v.suspended.is_none())
+        .flat_map(|v| v.st.borrow().binds.iter().map(|b| (v.manifest.id.clone(), b.combo)).collect::<Vec<_>>())
+        .collect();
+    host.info.borrow_mut().all_binds = all;
     if !host.started {
         // Mods start with our character's state in: in a zone, our vitals known (or 5 s on, whatever came).
         let waited = *host.start_wait.get_or_insert_with(std::time::Instant::now);
@@ -1833,13 +1843,20 @@ pub(super) fn world_shapes(w: &World) -> [Vec<crate::render::LineVertex>; 2] {
 }
 
 /// The mods' HUD elements, under the windows (world_hud).
+/// The HUD elements drawn over the windows (`top`), after the classic UI's windows.
+pub(super) fn draw_hud_top(gu: &mut super::game_ui::GameUi, w: &World) {
+    if !w.modern && w.lua.started && !w.lua.all_hidden.get() {
+        hud::draw(gu, w, true);
+    }
+}
+
 pub(super) fn draw_hud(gu: &mut super::game_ui::GameUi, w: &World) {
     if !w.modern {
         w.lua.set_modern_scale(None);
     }
     if w.lua.started && !w.lua.all_hidden.get() {
         draw::draw_overlay(gu, w);
-        hud::draw(gu, w);
+        hud::draw(gu, w, false);
     } else {
         w.lua.info.borrow_mut().hud_rects.clear();
     }
@@ -2029,7 +2046,7 @@ impl Host {
     }
 
     /// The tooltip of the mod HUD element under the pointer: (title, text, seconds there).
-    pub(in crate::client) fn hud_tip(&self) -> Option<(String, String, f32)> {
+    pub(in crate::client) fn hud_tip(&self) -> Option<(String, String, Option<window::Icon>, f32)> {
         hud::tip(self)
     }
 
@@ -4283,6 +4300,14 @@ pub(in crate::client) fn colour_value(rgb: [u8; 3], old: &serde_json::Value) -> 
     serde_json::json!([rgb[0], rgb[1], rgb[2], a])
 }
 
+/// Removes every saved permission for `id` (a server catalogue install replaces an older copy).
+pub(in crate::client) fn clear_grants_for_mod(id: &str) {
+    let mut g = grants();
+    if g.remove(id).is_some() {
+        save_grants(&g);
+    }
+}
+
 /// Gives an installed mod every permission its manifest asks for (a standard mod installed from our list).
 pub(in crate::client) fn grant_manifest(dir: &std::path::Path) {
     let Ok(m) = manifest::read(dir) else { return };
@@ -4739,6 +4764,12 @@ pub(super) fn window_key(w: &mut World, key: egui::Key, shift: bool) -> bool {
     for vm in host.vms.iter().filter(|v| v.suspended.is_none()) {
         let mut st = vm.st.borrow_mut();
         if let Some(win) = st.windows.iter_mut().find(|w| w.open && w.focus) {
+            // A key a mod pressed never answers the client's question for the player (a real key the same frame
+            // goes too).
+            if win.id == api::CLIENT_ASK && host.synth_keys {
+                log::info!("{}: a pressed key ignored by the client's question", vm.manifest.id);
+                return true;
+            }
             let (ev, se) = win.key_mod(key, shift);
             hit = Some((vm.manifest.id.clone(), win.id.clone(), ev, se));
             break;
@@ -5238,6 +5269,14 @@ pub(super) fn pointer_classic(
 }
 
 impl Host {
+    /// The game's key bindings as the client's Input table holds them, for binds.users.
+    pub(in crate::client) fn set_game_keys(&self, keys: &[[u16; 3]]) {
+        let mut f = self.info.borrow_mut();
+        if f.game_keys != keys {
+            f.game_keys = keys.to_vec();
+        }
+    }
+
     /// F12's lines: each mod's time a frame (average and peak, ms), calls over the soft cap, memory, errors.
     pub(super) fn debug_lines(&self) -> Vec<String> {
         self.vms
@@ -5342,6 +5381,10 @@ fn permission_text(p: &str) -> (&'static str, &'static str) {
         "packets.write" => ("Allow changing packets", "Changes, blocks and sends packets."),
         "input.capture" => ("Allow taking input", "Takes keys and the mouse from the game and presses keys."),
         "files.shared" => ("Allow shared files", "Reads and writes files outside its folder, in the shared mod data."),
+        "files.outside" => (
+            "Allow reading your folders",
+            "Reads folders on this computer that you pick or allow, such as a game install.",
+        ),
         "net" => ("Allow network", "Connects to the internet (web requests, sockets)."),
         "exec" => ("Allow running programs", "Starts programs on this computer."),
         "clipboard" => ("Allow reading the clipboard", "Reads the text you copied."),

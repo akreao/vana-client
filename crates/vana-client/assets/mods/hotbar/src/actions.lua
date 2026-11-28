@@ -5,11 +5,11 @@ local data = require("src.data")
 
 local M = {}
 
-local spells, abilities, weaponskills
+local spells, abilities, weaponskills, pets
 
 local function index()
   if spells then return end
-  spells, abilities, weaponskills = {}, {}, {}
+  spells, abilities, weaponskills, pets = {}, {}, {}, {}
   for id = 1, 1023 do
     local s = res.spell(id)
     if s and s.name and s.name ~= "" then spells[s.name:lower()] = spells[s.name:lower()] or id end
@@ -17,14 +17,15 @@ local function index()
   for id = 0, 0x7ff do
     local a = res.ability(id)
     if a and a.name and a.name ~= "" then
-      local t = id < 0x200 and weaponskills or abilities
+      -- Pet commands (0x400..) apart: a name a job ability shares picks the one the line's command says.
+      local t = id < 0x200 and weaponskills or id >= 0x400 and pets or abilities
       t[a.name:lower()] = t[a.name:lower()] or id
     end
   end
 end
 
 local KIND = { ["/ma"] = "spell", ["/magic"] = "spell", ["/so"] = "spell", ["/song"] = "spell", ["/nin"] = "spell",
-  ["/ninjutsu"] = "spell", ["/ja"] = "ability", ["/jobability"] = "ability", ["/pet"] = "ability",
+  ["/ninjutsu"] = "spell", ["/ja"] = "ability", ["/jobability"] = "ability", ["/pet"] = "pet",
   ["/ws"] = "weaponskill", ["/weaponskill"] = "weaponskill", ["/item"] = "item", ["/equip"] = "item" }
 
 local cache = {}
@@ -54,6 +55,9 @@ function M.of(macro)
       elseif kind == "ability" and abilities[name] then
         local r = res.ability(abilities[name])
         hit = { kind = "ability", id = abilities[name], recast_id = r and r.recast_id }
+      elseif kind == "pet" and pets[name] then
+        local r = res.ability(pets[name])
+        hit = { kind = "ability", id = pets[name], recast_id = r and r.recast_id }
       elseif kind == "weaponskill" and weaponskills[name] then
         hit = { kind = "ability", id = weaponskills[name], ws = true }
       elseif kind == "item" then
@@ -75,6 +79,14 @@ function M.of(macro)
   end
   cache[key] = hit
   return hit
+end
+
+-- What a macro shows: the icon picked for it ({kind, id}), else its action's (of), or false.
+function M.look(macro)
+  if type(macro) ~= "table" then return false end
+  local ic = macro.icon
+  if type(ic) == "table" and ic.kind and ic.id then return { kind = ic.kind, id = ic.id } end
+  return M.of(macro)
 end
 
 -- Seconds left and the fraction remaining (0, 0 when ready).

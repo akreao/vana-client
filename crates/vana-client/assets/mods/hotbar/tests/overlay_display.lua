@@ -68,7 +68,7 @@ data.assign("RDM", nil, 1, 1, lib_id)
 data.assign("RDM", nil, 1, 3, grp_id)
 
 local bar = require("src.bar")
-bar.hooks = { changed = function() end, open_manager = function() end, palette = function() end }
+bar.hooks = { changed = function() end, open_manager = function() end }
 bar.rebuild()
 
 assert(HUD.elems["ovb_1_1"], "overlay draws slot 1:1")
@@ -127,19 +127,6 @@ assert(not drag_to(true), "a drop under a window (covered) reached the overlay s
 assert(not drag_to(nil, "bars"), "a drop over another of our windows (no covered field) reached the slot")
 assert(drag_to(false), "a drop where nothing covers the slot did not land")
 
--- A slot dragged onto another: the two swap at its drag_end, and the drop that follows (from the slot, not a palette
--- tile) leaves them be, even with an earlier palette drag's id still kept.
-bar.rebuild()
-require("src.palette").last = grp_id
-local before = data.resolve("RDM", nil, 1, 1)
-HUD.handlers["ovb_1_1"](nil, { kind = "drag_end", over = "ovb_1_6" })
-HUD.handlers["ovb_1_6"](nil, { kind = "drop", from = "ovb_1_1" })
-local moved, left = data.resolve("RDM", nil, 1, 6), data.resolve("RDM", nil, 1, 1)
-assert(moved and before and moved.name == before.name and not left,
-  ("slot drag moved %s to 1:6 (got %s), 1:1 left %s"):format(tostring(before and before.name),
-    tostring(moved and moved.name), tostring(left and left.name)))
-require("src.palette").last = nil
-
 OVER.display = "Window"
 bar.rebuild()
 assert(OPEN.bars and HUD.removed["ovb_1_1"], "window mode opens the bars canvas and clears overlay slots")
@@ -153,7 +140,7 @@ local mode = require("src.mode")
 input.pad = function() return { connected = true, buttons = {} } end
 mode.set("gamepad")
 local pad = require("src.pad")
-pad.hooks = { changed = function() end, open_manager = function() end, palette = function() end,
+pad.hooks = { changed = function() end, open_manager = function() end,
   editing = function() return false end }
 bar.rebuild()
 pad.rebuild()

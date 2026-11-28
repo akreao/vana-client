@@ -17,6 +17,7 @@ end)
 | [`binds.set(key, action, options?)`](#bindsset) | Binds a key combination to a line or a function. |
 | [`binds.unset(key)`](#bindsunset) | Removes the mod's binds of a key combination. |
 | [`binds.list()`](#bindslist) | The mod's binds. |
+| [`binds.users(key)`](#bindsusers) | What else takes a key combination: the game's keys, other mods' binds, the client's. |
 
 ## `binds.set`
 
@@ -117,5 +118,42 @@ This mod's binds, in the order they were set (a replaced bind moves to the end).
 ```lua
 for _, b in ipairs(binds.list()) do
   print(b.key .. " -> " .. (b.line or "(a function)") .. (b.up and " on release" or ""))
+end
+```
+
+## `binds.users`
+
+```lua
+binds.users(key) -> table[]
+```
+
+What else takes a key combination, to warn before binding it: the game's key functions of the field bound to it (from
+the game's key tables, with Key Assignment's changes; a binding that asks for no modifier takes the key with any; what
+a key does in windows and lists is not counted), other mods'
+binds of exactly that combination, and the client's own keys. Your own mod's binds are left out.
+
+**Parameters**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `key` | `string` | yes | A combination as [`binds.set`](#bindsset) takes it: `"ctrl+1"`, `"!f1"`. |
+
+**Returns** a list, empty when nothing else takes it, of:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `kind` | `string` | `"game"`, `"mod"` or `"client"`. |
+| `name` | `string` | What it does there ("the game's Ctrl macro 1", "targeting party member 2"), or the mod's id. |
+
+**Errors** `"…" is not a key combination` for a combination it cannot read.
+
+Clients released before it have no `binds.users`: check `if binds.users then`.
+
+**Example**
+
+```lua
+local users = binds.users("ctrl+1")
+if #users > 0 then
+  print("ctrl+1 is also " .. users[1].name)
 end
 ```

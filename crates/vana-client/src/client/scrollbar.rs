@@ -53,6 +53,9 @@ pub enum Owner {
     Faq,
     /// The block list (blklist).
     BlockList,
+    /// The settings screen: every page in game (Settings, Extras, a mod's settings, the DAT Packs and Mods lists).
+    /// While it is up, it and an event's choice menu over it are the only lists that take the mouse and the wheel.
+    Settings,
 }
 
 /// A focused list's bar as drawn this frame: x, y, height (8 wide), and its (total, visible, top).
@@ -124,7 +127,8 @@ fn zone_msg(hit: u8) -> Option<Msg> {
 /// One frame for last frame's bars: the press, the key repeat (past 16 ticks, then every 2) and the drag, then the
 /// wheel. Returns the input with the press taken off when the pointer was on a bar.
 pub fn frame(gu: &mut GameUi, w: &mut World, input: &UiInput) -> Option<UiInput> {
-    let sites = std::mem::take(&mut gu.bars);
+    let mut sites = std::mem::take(&mut gu.bars);
+    focus(&mut sites);
     let held = gu.bar_hold.map(|h| h.owner);
     let mut msgs: Vec<(Owner, Msg)> = Vec::new();
     let on = input.pointer.and_then(|p| sites.iter().find_map(|s| Some((*s, hit(s, p))).filter(|h| h.1 != 0)));
@@ -193,6 +197,15 @@ pub fn frame(gu: &mut GameUi, w: &mut World, input: &UiInput) -> Option<UiInput>
     })
 }
 
+/// The settings screen holds the keys over the lists left open under it: while it is up only it, and an event's
+/// choice menu over it (which takes the keys first), keep their sites; the menu first, for the wheel.
+fn focus(sites: &mut Vec<Site>) {
+    if sites.iter().any(|s| s.owner == Owner::Settings) {
+        sites.retain(|s| matches!(s.owner, Owner::Settings | Owner::Query));
+        sites.sort_by_key(|s| s.owner != Owner::Query);
+    }
+}
+
 /// A list message to its owner, with the bar's (total, visible, top); true when the list moved (SE 0001).
 fn dispatch(w: &mut World, owner: Owner, m: Msg, bar: (usize, usize, usize)) -> bool {
     match owner {
@@ -231,6 +244,7 @@ fn dispatch(w: &mut World, owner: Owner, m: Msg, bar: (usize, usize, usize)) -> 
             Some(c) => super::configui2::bar(c, &w.game, m),
             None => false,
         },
+        Owner::Settings => w.settings.as_mut().is_some_and(|s| s.bar(m)),
     }
 }
 
@@ -275,7 +289,7 @@ pub fn rows(m: Msg, top: &mut usize, row: &mut usize, n: usize, vis: usize) -> b
         Msg::Set(t) => *top = t.min(max),
     }
     // The shared tail clamps the hand to the count.
-    *row = (*row).min(n - 1 - *top);
+    *row = (*row).min((n - 1).saturating_sub(*top));
     (*top, *row) != before
 }
 
@@ -393,5 +407,17 @@ mod tests {
         assert_eq!(hit(&s, (103.0, 100.0)), 3);
         assert_eq!(hit(&s, (103.0, 150.0)), 5);
         assert_eq!(hit(&s, (99.0, 100.0)), 0);
+    }
+
+    /// The settings screen up: only it and an event's choice menu keep their sites, the menu first for the wheel.
+    #[test]
+    fn settings_takes_the_lists() {
+        let site = |owner| Site { owner, rect: [0.0, 0.0, 100.0], bar: (20, 7, 0) };
+        let mut sites = vec![site(Owner::Items), site(Owner::Settings), site(Owner::Query), site(Owner::Config)];
+        focus(&mut sites);
+        assert_eq!(sites.iter().map(|s| s.owner).collect::<Vec<_>>(), [Owner::Query, Owner::Settings]);
+        let mut sites = vec![site(Owner::Items), site(Owner::Config)];
+        focus(&mut sites);
+        assert_eq!(sites.len(), 2);
     }
 }

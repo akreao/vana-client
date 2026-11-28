@@ -27,7 +27,8 @@ pub const BACKDROP: &str = "menumap m_x36_00";
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Region {
     pub zone: i16,
-    /// Sub-map key (FUN_1017a2d0: the collision map id under the player; not decoded, key 0 is used).
+    /// Sub-map key (+1): the collision map id (FUN_1017a2d0) this record is for. Where the player's sub-key has no
+    /// record the zone's key-0 one is shown (Region::here), so this can differ from the sub-key the points match.
     pub key: i8,
     /// The map number (+3): which records Change Map lists (FUN_101fc970).
     pub num: u8,
@@ -2568,7 +2569,7 @@ fn marks_dir(w: &World) -> Option<std::path::PathBuf> {
 
 /// FUN_101f78e0 / FUN_101f79e0: a negative key is the sub-key (FUN_101811d0) under the player or the loaded area's
 /// origin, for any zone (neither tests it).
-fn sub_key(w: &World, key: i16, under_player: bool) -> u8 {
+pub(super) fn sub_key(w: &World, key: i16, under_player: bool) -> u8 {
     if key >= 0 {
         return key as u8;
     }

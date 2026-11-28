@@ -1,6 +1,6 @@
 name = "Hotbars"
-version = "1.13.17"
-description = "Hotbars of multi-line macros with their actions' icons and recasts, loaded by main job and sub job; a macro library with a builder and a palette to drag from. Play with the keyboard's hotbars or the gamepad's crossbars (LT, RT or both with the d-pad, face buttons, L1 / R1 and L3 / R3), and switch between them with //hb mode. Gamepad mode needs input.capture (to take the triggers and buttons) and automation (a slot fires from a timer, since a pad filter cannot wait for a macro's waits)."
+version = "1.16.3"
+description = "Hotbars of multi-line macros with their actions' icons and recasts, loaded by main job and sub job; a macro library with a builder to drag macros from. Play with the keyboard's hotbars or the gamepad's crossbars (LT, RT or both with the d-pad, face buttons, L1 / R1 and L3 / R3), and switch between them with //hb mode. Gamepad mode needs input.capture (to take the triggers and buttons) and automation (a slot fires from a timer, since a pad filter cannot wait for a macro's waits)."
 authors = ["Arusia"]
 permissions = ["actions", "automation", "input.capture", "ui.native"]
 
@@ -96,7 +96,7 @@ help = "Width and height of one crossbar slot in gamepad mode."
 type = "bool"
 default = true
 label = "Crossbar Only While Triggered"
-help = "In gamepad mode, hide the crossbars until LT, RT or both are held, then show only that set (hold a trigger and press Start to open the manager). Without a controller, or while the manager or palette is open, all three sets stay shown to set up."
+help = "In gamepad mode, hide the crossbars until LT, RT or both are held, then show only that set (hold a trigger and press Start to open the manager). Without a controller, or while the manager is open, all three sets stay shown to set up."
 
 [commands.hb]
 help = "Opens the hotbar manager."
@@ -106,7 +106,6 @@ forms = [
   { args = "hide", help = "Hides the bars." },
   { args = "more", help = "Shows one more bar." },
   { args = "fewer", help = "Shows one bar fewer." },
-  { args = "palette", help = "Opens or closes the macro palette for your job." },
   { args = "mode", help = "Switches between the keyboard hotbars and the gamepad crossbars." },
   { args = "mode hotbars", help = "Uses the keyboard hotbars." },
   { args = "mode gamepad", help = "Uses the gamepad crossbars: hold LT, RT or both, then the d-pad, a face button, L1 / R1 or L3 / R3." },

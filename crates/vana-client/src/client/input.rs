@@ -6,6 +6,64 @@ use winit::keyboard::KeyCode;
 
 /// Key function ids 0x00..0xba (0xb7..0xba test a second pad word, inferred: the gamepad).
 pub const IDS: usize = 0xbb;
+
+/// The key functions whose binding takes DIK `key` with these modifiers held (FUN_1011ff30's flag tests: 0x80 neither
+/// Ctrl nor Alt, 0x01 Shift, 0x02 Ctrl, 0x04 Alt, 0x08 both, 0x10 either, 0x20 no Shift; 0x40, not while typing, is
+/// left out). A binding that asks nothing of the modifiers takes the key with any of them.
+pub fn functions_on(bindings: &[[u16; 3]], key: u8, ctrl: bool, alt: bool, shift: bool) -> Vec<usize> {
+    let takes = |b: u16| {
+        let fl = (b >> 8) as u8;
+        b != 0
+            && b as u8 == key
+            && (fl & 0x80 == 0 || (!ctrl && !alt))
+            && (fl & 0x01 == 0 || shift)
+            && (fl & 0x02 == 0 || ctrl)
+            && (fl & 0x04 == 0 || alt)
+            && (fl & 0x08 == 0 || (ctrl && alt))
+            && (fl & 0x10 == 0 || ctrl || alt)
+            && (fl & 0x20 == 0 || !shift)
+    };
+    bindings.iter().enumerate().filter(|(_, b)| b.iter().any(|&x| takes(x))).map(|(i, _)| i).collect()
+}
+
+/// What a field key function does, in a few words; None for the rest (keys windows, lists, the lobby and the layout
+/// modes read), which a hotkey in the field does not meet.
+pub fn function_name(id: usize) -> Option<String> {
+    Some(match id {
+        0x10 => "first / third person".into(),
+        0x13 => "the log-out prompt".into(),
+        0x1c => "autorun".into(),
+        0x30 => "lock-on".into(),
+        0x44 => "/heal".into(),
+        0x45 => "walk / run".into(),
+        0x46 | 0x4c => "targeting yourself".into(),
+        0x47..=0x4b => format!("targeting party member {}", id - 0x46 + 1),
+        0x4d => "targeting the nearest enemy".into(),
+        0x4f | 0x50 => "zooming the camera".into(),
+        0x51 => "recentring the camera".into(),
+        0x4e => "targeting the nearest player".into(),
+        0x52 | 0xac => "targeting the nearest NPC or monster".into(),
+        0x53 | 0x54 => "targeting an alliance party".into(),
+        // Ctrl / Alt + 1..9, 0 (0x6c / 0x62 the 0); with Shift too, the macro set.
+        0x58 => "switching to macro set 10".into(),
+        0x59..=0x61 => format!("switching to macro set {}", id - 0x58),
+        0x62 => "the game's Alt macro 10".into(),
+        0x63..=0x6b => format!("the game's Alt macro {}", id - 0x62),
+        0x6c => "the game's Ctrl macro 10".into(),
+        0x6d..=0x75 => format!("the game's Ctrl macro {}", id - 0x6c),
+        0x76 | 0x77 => "opening the macro palette".into(),
+        0x81 => "/shoot".into(),
+        0x82 => "/help".into(),
+        0x84 | 0x97 => "cycling targets".into(),
+        0x89 | 0x8a => "the macro palette's sets".into(),
+        0x91 => "talking to the target, or the action menu".into(),
+        0x92 => "clearing the target".into(),
+        0xa9 | 0xaa => "turning left / right".into(),
+        0xa8 => "the page modifier".into(),
+        0xab => "targeting the nearest enemy only".into(),
+        _ => return None,
+    })
+}
 const K2_ROWS: usize = 29;
 /// Key repeat (input +0x94 = 16, FUN_10005210): past 16 ticks held it fires and drops back to 14. Counted in
 /// retail frames of 2 ticks, as retail ran.

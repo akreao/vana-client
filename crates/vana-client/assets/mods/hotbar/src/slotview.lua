@@ -2,7 +2,8 @@
 
 local data = require("src.data")
 local actions = require("src.actions")
-local palette = require("src.palette")
+local tiledrag = require("src.tiledrag")
+local tooltip = require("src.tooltip")
 local chooser = require("src.chooser")
 
 local M = {}
@@ -34,7 +35,7 @@ local LABEL = M.LABEL
 local LABEL_LINE = M.LABEL_LINE
 local ROUND = M.ROUND
 
--- hover: key under the pointer; flash: key -> until; drag: {cell, x, y}; tile_at: a palette tile over us {x, y}.
+-- hover: key under the pointer; flash: key -> until; drag: {cell, x, y}; tile_at: a library tile over us {x, y}.
 function M.state()
   return { hover = nil, flash = {}, drag = nil, tile_at = nil }
 end
@@ -74,9 +75,11 @@ function M.draw_slot(add, c)
     colour = c.hover and M.KEY_HOVER or (macro and M.KEY or M.EMPTY_KEY) })
   add({ type = "rect", x = x, y = y, w = s, h = s, round = ROUND, line = 1.5, colour = c.edge })
   if c.before then c.before(add) end
-  if act then
+  -- The icon picked for the macro, else its action's.
+  local look = macro and actions.look(macro) or act
+  if look then
     local isz = math.floor(s * 0.58)
-    add({ type = "icon", x = x + (s - isz) / 2, y = y + 4, size = isz, kind = act.kind, id = act.id,
+    add({ type = "icon", x = x + (s - isz) / 2, y = y + 4, size = isz, kind = look.kind, id = look.id,
       colour = c.dim and { 150, 150, 150, 255 } or nil })
   end
   if macro and macro.group then
@@ -132,20 +135,20 @@ function M.draw_slot(add, c)
     add({ type = "rect", x = x - 1, y = y - 1, w = s + 2, h = s + 2, round = ROUND + 1, line = 2, colour = DROP })
   end
   if macro then
-    local name = data.trim(macro.name)
-    add({ type = "tip", x = x, y = y, w = s, h = s, title = name ~= "" and name or c.fallback,
-      text = data.tip_text(macro) })
+    -- The Builder's tooltip: name and icon, the action's numbers and description (or the macro's lines).
+    local t = tooltip.macro(macro, c.fallback)
+    add({ type = "tip", x = x, y = y, w = s, h = s, title = t.title, text = t.text, icon = t.icon or nil })
   end
 end
 
--- The dragged slot or palette tile under the pointer.
+-- The dragged slot or library tile under the pointer.
 function M.draw_ghost(add, st, s, macro_of)
   local g, act, label
   if st.drag and st.drag.x then
     local macro = macro_of(st.drag.cell)
-    g, act, label = st.drag, macro and actions.of(macro), macro and data.display_label(macro)
-  elseif st.tile_at and palette.dragging then
-    g, act, label = st.tile_at, palette.dragging.act, palette.dragging.label
+    g, act, label = st.drag, macro and actions.look(macro), macro and data.display_label(macro)
+  elseif st.tile_at and tiledrag.dragging and not tiledrag.top then
+    g, act, label = st.tile_at, tiledrag.dragging.act, tiledrag.dragging.label
   end
   if not g then return end
   local gx, gy = g.x - s / 2, g.y - s / 2
@@ -176,7 +179,7 @@ function M.handle(e, h)
   if e.kind == "drop" then
     st.tile_at = nil
     local c = h.hit(e.x, e.y)
-    local id = palette.dragged_id(e.from) or (e.from == "tiles" and palette.last)
+    local id = e.from == "tiles" and tiledrag.last or nil
     if type(c) == "table" and id then
       h.drop(c, id)
     else
@@ -189,7 +192,7 @@ function M.handle(e, h)
       h.draw()
     end
   elseif e.kind == "drag_over" or e.kind == "drag_out" then
-    st.tile_at = e.kind == "drag_over" and palette.dragging and { x = e.x, y = e.y } or nil
+    st.tile_at = e.kind == "drag_over" and tiledrag.dragging and { x = e.x, y = e.y } or nil
     h.draw()
   elseif e.kind == "click" then
     local c = h.hit(e.x, e.y)
@@ -200,6 +203,9 @@ function M.handle(e, h)
         M.flash(st, h.key_of(c), h.draw)
         h.fire(c)
       end
+    elseif e.button == "right" and h.menu then
+      -- Off the slots: the menu without a slot.
+      h.menu(nil)
     elseif c and h.other then
       h.other(c)
     end

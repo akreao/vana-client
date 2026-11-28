@@ -1,7 +1,7 @@
 //! Ours: once a login, a red log line when installed Lua mods or DAT packs have updates in the catalogue.
 
 use super::World;
-use super::catalogue::{self, List};
+use super::catalogue::{self, Entry, List, Source};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
 /// The login's check: started once in the world with the message tables in; its counts read when they land.
@@ -17,9 +17,11 @@ pub(super) fn frame(w: &mut World) {
             return;
         }
         w.mod_updates.started = true;
+        let keys = w.catalogue_keys.clone();
         let (tx, rx) = channel();
         std::thread::spawn(move || {
-            let _ = tx.send((updates(List::Mods), updates(List::Dats)));
+            let hide = standard_ids_for_server_hide();
+            let _ = tx.send((updates(List::Mods, &keys, hide.as_ref()), updates(List::Dats, &keys, hide.as_ref())));
         });
         w.mod_updates.rx = Some(rx);
         return;
@@ -37,16 +39,40 @@ pub(super) fn frame(w: &mut World) {
     }
 }
 
-/// How many of the list's entries are installed here at an older version.
-fn updates(list: List) -> usize {
-    let Ok(entries) = catalogue::fetch(list) else { return 0 };
-    entries
-        .iter()
-        .filter(|e| {
-            let have = catalogue::installed(&catalogue::root_of(e), &e.id);
-            catalogue::offer(e, have.as_deref()) == Some(true)
-        })
-        .count()
+/// Standard mod and DAT ids: fetched once; None when either list could not be read (server rows fail closed).
+fn standard_ids_for_server_hide() -> Option<std::collections::HashSet<String>> {
+    let mods = catalogue::fetch_from(Source::Standard, List::Mods, &[]).ok()?;
+    let dats = catalogue::fetch_from(Source::Standard, List::Dats, &[]).ok()?;
+    Some(mods.iter().chain(&dats).map(|e| e.id.clone()).collect())
+}
+
+fn counts_as_update(
+    e: &Entry,
+    source: Source,
+    hide: Option<&std::collections::HashSet<String>>,
+    server_keys: &[String],
+) -> bool {
+    if source == Source::Server && hide.is_none_or(|ids| ids.contains(&e.id)) {
+        return false;
+    }
+    catalogue::entry_status(e, source, server_keys) == Some(true)
+}
+
+/// How many of the list's entries are installed here at an older version (Modmgr's source rules).
+fn updates(list: List, server_keys: &[String], hide: Option<&std::collections::HashSet<String>>) -> usize {
+    let mut n = 0;
+    for source in [Source::Standard, Source::Server] {
+        let keys = if source == Source::Server { server_keys } else { &[] as &[String] };
+        if source == Source::Server && hide.is_none() {
+            continue;
+        }
+        let Ok(entries) = catalogue::fetch_from(source, list, keys) else {
+            continue;
+        };
+        let keys = if source == Source::Server { server_keys } else { &[] as &[String] };
+        n += entries.iter().filter(|e| counts_as_update(e, source, hide, keys)).count();
+    }
+    n
 }
 
 /// The line for `mods` Lua mod and `packs` DAT pack updates; none when there are none.

@@ -125,6 +125,164 @@ fn io_err(path: &str, e: std::io::Error) -> mlua::Error {
     mlua::Error::runtime(format!("{path}: {e}"))
 }
 
+/// A path the player let this mod read (files.outside): under a folder picked or allowed, no "..", links resolved.
+pub(super) fn outside(lua: &Lua, path: &str) -> mlua::Result<PathBuf> {
+    super::api::need(lua, "files.outside")?;
+    let p = Path::new(path);
+    if !p.is_absolute() || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err(mlua::Error::runtime(format!("{path:?}: not a full path")));
+    }
+    // A missing file is judged by the nearest folder above it that is there.
+    let real = p.ancestors().find_map(|a| std::fs::canonicalize(a).ok().map(|c| (a, c)));
+    let ok = real.as_ref().is_some_and(|(_, c)| state(lua).borrow().outside.iter().any(|r| c.starts_with(r)));
+    if !ok {
+        return Err(mlua::Error::runtime(format!("{path:?}: not in a folder you picked or allowed")));
+    }
+    let (a, c) = real.expect("checked");
+    Ok(c.join(p.strip_prefix(a).unwrap_or(Path::new(""))))
+}
+
+/// The folder as kept in the allowed list, or why it cannot be (not a folder; the client's mod data).
+fn allowable(path: &str) -> mlua::Result<PathBuf> {
+    let c = std::fs::canonicalize(path)
+        .ok()
+        .filter(|c| c.is_dir())
+        .ok_or_else(|| mlua::Error::runtime(format!("{path:?}: not a folder")))?;
+    if std::fs::canonicalize(super::data_dir()).is_ok_and(|d| c.starts_with(&d) || d.starts_with(&c)) {
+        return Err(mlua::Error::runtime(format!("{path:?}: the mod data is read with fs.read")));
+    }
+    Ok(c)
+}
+
+fn allow(lua: &Lua, c: PathBuf) {
+    let st = state(lua);
+    let mut s = st.borrow_mut();
+    if !s.outside.contains(&c) {
+        s.outside.push(c);
+    }
+}
+
+/// fs's calls for folders outside the mod's (files.outside), read only.
+fn outside_fns(lua: &Lua, fs: &Table, mod_name: &str) -> mlua::Result<()> {
+    fs.set(
+        "game_installs",
+        lua.create_function(|lua, ()| {
+            super::api::need(lua, "files.outside")?;
+            let cfg = crate::config::Config::load();
+            let own = std::fs::canonicalize(cfg.ffxi_dir()).ok();
+            let out = lua.create_table()?;
+            for i in crate::installs::find(&cfg.game_dir) {
+                let t = lua.create_table()?;
+                t.set("own", own.is_some() && std::fs::canonicalize(&i.path).ok() == own)?;
+                t.set("path", i.path.to_string_lossy().into_owned())?;
+                t.set("source", i.source)?;
+                out.push(t)?;
+            }
+            Ok(out)
+        })?,
+    )?;
+    fs.set(
+        "pick_folder",
+        lua.create_function(|lua, (title, handler): (Option<String>, Function)| {
+            super::api::need(lua, "files.outside")?;
+            // The answer comes back on the net channel; picking a folder is the player's leave to read it.
+            let cb = lua.create_function(move |lua, r: Table| {
+                let body = r.get::<Option<mlua::LuaString>>("body")?;
+                let picked = (r.get::<i64>("status")? == 0)
+                    .then(|| body.map(|b| String::from_utf8_lossy(&b.as_bytes()).into_owned()))
+                    .flatten()
+                    .and_then(|p| allowable(&p).ok());
+                match picked {
+                    Some(c) => {
+                        let shown = c.to_string_lossy().into_owned();
+                        allow(lua, c);
+                        handler.call::<()>(shown)
+                    }
+                    None => handler.call::<()>(Value::Nil),
+                }
+            })?;
+            let st = state(lua);
+            let id = super::api::next_id(&st);
+            let key = lua.create_registry_value(cb)?;
+            let tx = {
+                let mut s = st.borrow_mut();
+                s.net_pending.push((id, key));
+                if s.net_rx.is_none() {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    (s.net_rx, s.net_tx) = (Some(rx), Some(tx));
+                }
+                s.net_tx.clone().expect("made above")
+            };
+            let title = title.unwrap_or_else(|| "Choose a folder".into());
+            std::thread::Builder::new()
+                .name("lua-pick".into())
+                .spawn(move || {
+                    let r = match rfd::FileDialog::new().set_title(title).pick_folder() {
+                        Some(p) => (0, p.to_string_lossy().into_owned().into_bytes(), Vec::new()),
+                        None => (1, Vec::new(), Vec::new()),
+                    };
+                    let _ = tx.send((id, Ok(r)));
+                })
+                .map_err(|e| mlua::Error::runtime(format!("fs.pick_folder: {e}")))?;
+            Ok(())
+        })?,
+    )?;
+    let name = mod_name.to_string();
+    fs.set(
+        "open_folder",
+        lua.create_function(move |lua, (path, reason, handler): (String, String, Function)| {
+            super::api::need(lua, "files.outside")?;
+            let c = allowable(&path)?;
+            if state(lua).borrow().outside.iter().any(|r| c.starts_with(r)) {
+                return handler.call::<()>(true);
+            }
+            let shown = c.to_string_lossy().into_owned();
+            // The client's question: the answer is the player's, recorded here before the mod hears it.
+            // "Don't Allow" first: an Enter the player did not mean refuses.
+            let answer = lua.create_function(move |lua, k: Option<i64>| {
+                if k == Some(2) {
+                    allow(lua, c.clone());
+                }
+                handler.call::<()>(k == Some(2))
+            })?;
+            let text = format!("{name} asks to read this folder and everything in it:\n{shown}\n{reason}");
+            super::api::prompt_window(lua, text, vec!["Don't Allow".into(), "Allow".into()], answer)
+        })?,
+    )?;
+    fs.set(
+        "read_outside",
+        lua.create_function(|lua, path: String| {
+            let p = outside(lua, &path)?;
+            match std::fs::read(&p) {
+                Ok(b) => Ok(Some(lua.create_string(b)?)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(io_err(&path, e)),
+            }
+        })?,
+    )?;
+    fs.set("exists_outside", lua.create_function(|lua, path: String| Ok(outside(lua, &path)?.exists()))?)?;
+    fs.set(
+        "list_outside",
+        lua.create_function(|lua, path: String| {
+            let p = outside(lua, &path)?;
+            let mut names: Vec<String> = std::fs::read_dir(&p)
+                .map_err(|e| io_err(&path, e))?
+                .flatten()
+                .map(|e| {
+                    let mut n = e.file_name().to_string_lossy().into_owned();
+                    if e.path().is_dir() {
+                        n.push('/');
+                    }
+                    n
+                })
+                .collect();
+            names.sort();
+            Ok(names)
+        })?,
+    )?;
+    Ok(())
+}
+
 pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<()> {
     // fs: the mod's data folder (mod-data/<id>/files), reads falling back to the mod's files.
     let data = super::data_dir().join(&vm.manifest.id).join("files");
@@ -274,6 +432,7 @@ pub(super) fn install(lua: &Lua, g: &Table, vm: &super::vm::Vm) -> mlua::Result<
             })?,
         )?;
     }
+    outside_fns(lua, &fs, &vm.manifest.name)?;
     g.set("fs", fs)?;
 
     // json: plain data both ways.

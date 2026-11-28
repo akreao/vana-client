@@ -134,13 +134,14 @@ pub struct Setting {
 pub const EXTRA_TABS: [&str; 4] = ["Maps", "Timers", "Battle", "Misc."];
 
 /// Every permission a mod may ask for.
-pub const PERMISSIONS: [&str; 14] = [
+pub const PERMISSIONS: [&str; 15] = [
     "actions",
     "automation",
     "packets.read",
     "packets.write",
     "input.capture",
     "files.shared",
+    "files.outside",
     "net",
     "exec",
     "multibox",

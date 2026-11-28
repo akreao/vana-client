@@ -14,6 +14,8 @@ game = { player = function() return { main_job = 22, sub_job = 0 } end,
 chat = { add = function() end }
 SENT = {}
 commands.run = function(line) SENT[#SENT + 1] = line end
+-- One action goes straight to the game's action: recorded as the line it stands for.
+actions.ability = function(id, t) SENT[#SENT + 1] = ('/ja "%s" %s'):format(res.ability(id).name, t or "") end
 
 local data = require("src.data")
 data.init({ read = function() return nil end, write = function() end, decode = json.decode,
@@ -22,19 +24,19 @@ data.init({ read = function() return nil end, write = function() end, decode = j
 -- The slots: a library entry by reference, swapped, cleared, counted among its uses and gone with it.
 local id = data.save_entry("RUN", nil, { name = "Ignis", action = { kind = "ja", name = "Ignis", target = "me" },
   lines = { "/p Ignis up" } })
-assert(data.pad_resolve("RUN", "lt", "up") == nil)
-data.pad_assign("RUN", "lt", "up", id)
-local m = data.pad_resolve("RUN", "lt", "up")
+assert(data.pad_resolve("RUN", nil, "lt", "up") == nil)
+data.pad_assign("RUN", nil, "lt", "up", id)
+local m = data.pad_resolve("RUN", nil, "lt", "up")
 assert(m.ref == id and m.lines[1] == '/ja "Ignis" <me>' and m.lines[2] == "/p Ignis up")
 assert(data.uses("RUN", id) == 1)
-data.pad_swap("RUN", "lt", "up", "rt", "a")
-assert(data.pad_resolve("RUN", "lt", "up") == nil and data.pad_resolve("RUN", "rt", "a").ref == id)
+data.pad_swap("RUN", nil, "lt", "up", "rt", "a")
+assert(data.pad_resolve("RUN", nil, "lt", "up") == nil and data.pad_resolve("RUN", nil, "rt", "a").ref == id)
 assert(data.get_raw("RUN", nil, 1, 1) == nil, "the bars are not touched")
-data.pad_clear("RUN", "rt", "a")
-assert(data.pad_resolve("RUN", "rt", "a") == nil and data.uses("RUN", id) == 0)
-data.pad_assign("RUN", "rt", "x", id)
+data.pad_clear("RUN", nil, "rt", "a")
+assert(data.pad_resolve("RUN", nil, "rt", "a") == nil and data.uses("RUN", id) == 0)
+data.pad_assign("RUN", nil, "rt", "x", id)
 data.delete_entry("RUN", id)
-assert(data.pad_resolve("RUN", "rt", "x") == nil and data.uses("RUN", id) == 0)
+assert(data.pad_resolve("RUN", nil, "rt", "x") == nil and data.uses("RUN", id) == 0)
 
 -- The pad filter pad.lua registers, the controller it reads and the timers it defers to, which the test drives.
 local FILTERS = {}
@@ -59,7 +61,7 @@ local pad = require("src.pad")
 assert(#FILTERS == 1, "pad.lua registers one pad filter")
 local one = data.save_entry("RUN", nil, { name = "Ignis", action = { kind = "ja", name = "Ignis", target = "me" },
   lines = { "/p Ignis up" } })
-data.pad_assign("RUN", "lt", "b", one)
+data.pad_assign("RUN", nil, "lt", "b", one)
 pad.fire("lt", "b")
 assert(SENT[1] == '/ja "Ignis" <me>' and SENT[2] == "/p Ignis up", tostring(SENT[1]))
 SENT = {}
@@ -71,7 +73,7 @@ assert(#SENT == 0, "an empty slot runs nothing")
 local grp = data.save_entry("RUN", nil, { name = "Runes", group = {
   { name = "Ignis", action = { kind = "ja", name = "Ignis", target = "me" } },
   { name = "Tenebrae", action = { kind = "ja", name = "Tenebrae", target = "me" } } } })
-data.pad_assign("RUN", "rt", "up", grp)
+data.pad_assign("RUN", nil, "rt", "up", grp)
 local chooser = require("src.chooser")
 SENT = {}
 pad.fire("rt", "up")
@@ -121,9 +123,9 @@ data.init({ read = function() return nil end, write = function() end, decode = j
 local bid = data.save_entry("RUN", nil, { name = "Ignis", action = { kind = "ja", name = "Ignis", target = "me" },
   lines = { "/p Ignis up" } })
 for _, b in ipairs({ "lb", "rb", "l3", "r3" }) do
-  data.pad_assign("RUN", "lt", b, bid)
-  assert(data.pad_resolve("RUN", "lt", b).ref == bid)
-  assert(data.pad_resolve("RUN", "rt", b) == nil)
+  data.pad_assign("RUN", nil, "lt", b, bid)
+  assert(data.pad_resolve("RUN", nil, "lt", b).ref == bid)
+  assert(data.pad_resolve("RUN", nil, "rt", b) == nil)
 end
 SENT = {}
 pad.fire("lt", "l3")
@@ -133,9 +135,9 @@ assert(#SENT == 2 and SENT[2] == "/p Ignis up", #SENT)
 data.init({ read = function() return nil end, write = function() end, decode = json.decode, encode = json.encode })
 local lid = data.save_entry("RUN", nil, { name = "Ignis", action = { kind = "ja", name = "Ignis", target = "me" },
   lines = { "/p both" } })
-data.pad_assign("RUN", "lr", "a", lid)
-assert(data.pad_resolve("RUN", "lr", "a").ref == lid)
-assert(data.pad_resolve("RUN", "lt", "a") == nil and data.pad_resolve("RUN", "rt", "a") == nil)
+data.pad_assign("RUN", nil, "lr", "a", lid)
+assert(data.pad_resolve("RUN", nil, "lr", "a").ref == lid)
+assert(data.pad_resolve("RUN", nil, "lt", "a") == nil and data.pad_resolve("RUN", nil, "rt", "a") == nil)
 SENT = {}
 pad.fire("lr", "a")
 assert(SENT[2] == "/p both", tostring(SENT[2]))
@@ -176,10 +178,10 @@ local both = data.save_entry("RUN", nil, { name = "Both", lines = { "/p both" } 
 local runes = data.save_entry("RUN", nil, { name = "Runes", group = {
   { name = "Ignis", action = { kind = "ja", name = "Ignis", target = "me" } },
   { name = "Tenebrae", action = { kind = "ja", name = "Tenebrae", target = "me" } } } })
-data.pad_assign("RUN", "lt", "b", fid)
-data.pad_assign("RUN", "lt", "x", other)
-data.pad_assign("RUN", "lr", "a", both)
-data.pad_assign("RUN", "rt", "up", runes)
+data.pad_assign("RUN", nil, "lt", "b", fid)
+data.pad_assign("RUN", nil, "lt", "x", other)
+data.pad_assign("RUN", nil, "lr", "a", both)
+data.pad_assign("RUN", nil, "rt", "up", runes)
 
 SENT = {}
 -- A trigger is taken on its press only (the host keeps it taken until it comes up); a slot's button likewise.
@@ -265,7 +267,7 @@ assert(press("down", true) == true)
 press("down", false)
 assert(press("a", true) == true and not chooser.is_open())
 press("a", false)
-assert(data.pad_resolve("RUN", "lt", "y").ref == other, "the second entry went on the slot")
+assert(data.pad_resolve("RUN", nil, "lt", "y").ref == other, "the second entry went on the slot")
 press("y", true)
 press("y", false)
 assert(press("up", true) == true)
@@ -274,7 +276,7 @@ press("up", true)
 press("up", false)
 press("a", true)
 press("a", false)
-assert(data.pad_resolve("RUN", "lt", "y") == nil, "the Clear row empties it")
+assert(data.pad_resolve("RUN", nil, "lt", "y") == nil, "the Clear row empties it")
 assert(press("b", true) == true and chooser.is_open(), "B with a trigger is a slot")
 press("b", false)
 assert(press("b", true) == true and not chooser.is_open() and pad.is_assigning(), "B closes the list")

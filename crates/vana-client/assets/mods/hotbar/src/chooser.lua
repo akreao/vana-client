@@ -15,6 +15,8 @@ local WIDTH = 240
 M.WIDTH = WIDTH
 local DIM = { 160, 152, 136, 255 }
 local SUGGESTED = { 255, 214, 120, 255 }
+-- Rows a group's list shows at once; more scroll.
+local SHOWN = 12
 
 local open_macro = nil -- the group shown
 local open_bar = nil   -- the bar that opened it
@@ -34,7 +36,9 @@ local function rows_of(macro, suggested)
   for k, m in ipairs(macro.group) do
     local a = actions.of(m)
     local left = a and actions.recast(a, recasts) or 0
-    rows[k] = { data.name_of(m), left > 0 and clock(left) or "", tostring(k), icon = a and { kind = a.kind, id = a.id } or nil,
+    local look = actions.look(m)
+    rows[k] = { data.name_of(m), left > 0 and clock(left) or "", tostring(k),
+      icon = look and { kind = look.kind, id = look.id } or nil,
       colour = suggested and suggested(m) and SUGGESTED or (a and not actions.usable(a, game.player()) and DIM) or nil }
   end
   return rows
@@ -96,7 +100,7 @@ function M.open(macro, at, suggested, bar)
     animate = true,
     help = "Up / Down, then Enter or A. Escape or B closes.",
     elements = {
-      { type = "list", id = "m", rows = rows, height = #rows, at = data.last_member(macro),
+      { type = "list", id = "m", rows = rows, height = math.min(#rows, SHOWN), at = data.last_member(macro),
         columns = { { title = "" }, { title = "", width = 46, align = "right" },
           { title = "", width = 20, align = "right" } } },
     },
