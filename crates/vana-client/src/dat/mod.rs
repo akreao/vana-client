@@ -36,9 +36,19 @@ pub fn ffxi_dir_in_use() -> PathBuf {
         .unwrap_or_else(|| crate::config::Config::load().ffxi_dir())
 }
 
+/// Bumped by dll_files_changed: the tables built before it are built again.
+static DLL_GENERATION: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The game files changed under the client (an update applied, a first start's install): DllTable builds its tables
+/// again from the new FFXiMain.
+pub fn dll_files_changed() {
+    DLL_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// A table built from the FFXiMain of the game folder in use, once for each folder (a server's own folder has its
-/// own DLL): a login into another folder gets that DLL's table. Each is kept for the whole run (a few folders at most).
-pub struct DllTable<T: 'static>(std::sync::Mutex<Vec<(PathBuf, &'static T)>>);
+/// own DLL) and update (dll_files_changed): a login into another folder gets that DLL's table. Each is kept for the
+/// whole run (a few folders and updates at most).
+pub struct DllTable<T: 'static>(std::sync::Mutex<Vec<(PathBuf, u32, &'static T)>>);
 
 impl<T: Sync + 'static> DllTable<T> {
     pub const fn new() -> Self {
@@ -51,12 +61,14 @@ impl<T: Sync + 'static> DllTable<T> {
     }
 
     fn get_in(&self, ffxi_dir: &Path, build: impl FnOnce(&[u8]) -> T) -> &'static T {
+        let g = DLL_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
         let mut t = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((_, v)) = t.iter().find(|(d, _)| d == ffxi_dir) {
+        if let Some((_, _, v)) = t.iter().find(|(d, k, _)| d == ffxi_dir && *k == g) {
             return v;
         }
         let v: &'static T = Box::leak(Box::new(build(&std::fs::read(ffximain(ffxi_dir)).unwrap_or_default())));
-        t.push((ffxi_dir.to_path_buf(), v));
+        t.retain(|(d, _, _)| d != ffxi_dir);
+        t.push((ffxi_dir.to_path_buf(), g, v));
         v
     }
 }
@@ -316,6 +328,10 @@ mod tests {
         assert_eq!(*T.get_in(&b, &mut len), 2);
         assert_eq!(*T.get_in(&a, &mut len), 4);
         assert_eq!(built, 2);
+        // An update: built again from the new DLL.
+        std::fs::write(a.join("FFXiMain.dll"), b"AAAAAA").unwrap();
+        dll_files_changed();
+        assert_eq!(*T.get_in(&a, |d| d.len()), 6);
         assert_eq!(*T.get_in(&base.join("none"), |d| d.len()), 0);
         let _ = std::fs::remove_dir_all(&base);
     }
