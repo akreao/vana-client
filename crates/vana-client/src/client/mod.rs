@@ -10675,9 +10675,10 @@ impl App {
         self.cfg.login_game_dir = None;
         // The game's own build before anything goes to PlayOnline; one this client does not know is played only once
         // the player has been warned (build_ask).
-        let dll = std::fs::read(crate::dat::ffximain(&self.cfg.ffxi_dir())).unwrap_or_default();
-        let applied = crate::patch::applied_version(&self.cfg.ffxi_dir());
-        let build = match crate::net::lobby::playonline_build(&dll, applied.as_deref(), &self.cfg.client_version) {
+        let (root, path) = (self.cfg.ffxi_dir(), crate::dat::ffximain(&self.cfg.ffxi_dir()));
+        let dll = std::fs::read(&path).unwrap_or_default();
+        let patched = crate::patch::ffximain_version(&root, &path, &dll);
+        let build = match crate::net::lobby::playonline_build(&dll, patched.as_deref()) {
             Ok(b) => b,
             Err(e) => {
                 self.login_error = Some(e.to_string());
@@ -17052,7 +17053,9 @@ impl App {
                     }
                     // Ours: a game build this client does not know, before a PlayOnline sign-in: Continue or Cancel
                     // (ptc6yesn's place; Left / Right move the cursor, Enter picks, Escape cancels).
+                    // The updater over it keeps the keys (one window answers a key press).
                     if self.login_error.is_none()
+                        && self.update_ui.is_none()
                         && let Some((sum, ..)) = self.build_ask.as_ref()
                     {
                         let text = format!(
@@ -17062,10 +17065,11 @@ impl App {
                         let (sw, sh) = (size[0] as f32, size[1] as f32);
                         let mut pick = None;
                         for ev in &input.events {
-                            if let egui::Event::Key { key, pressed: true, .. } = ev {
+                            // A held Enter (the form's) repeats into it: only a fresh press answers.
+                            if let egui::Event::Key { key, pressed: true, repeat, .. } = ev {
                                 match key {
                                     egui::Key::ArrowLeft | egui::Key::ArrowRight => self.build_yes = !self.build_yes,
-                                    egui::Key::Enter => pick = Some(self.build_yes),
+                                    egui::Key::Enter if !*repeat => pick = Some(self.build_yes),
                                     egui::Key::Escape => pick = Some(false),
                                     _ => {}
                                 }
@@ -17121,6 +17125,7 @@ impl App {
                         && !self.viewer_asked
                         && self.update_ui.is_none()
                         && self.login_error.is_none()
+                        && self.build_ask.is_none()
                         && is_playonline(&self.cfg.server)
                         && let Some(s) = self.updates.clone()
                     {

@@ -743,6 +743,20 @@ pub fn applied_version(root: &Path) -> Option<String> {
     [stamped, installed_version(root, GAME)].into_iter().flatten().max_by_key(|s| version_key(s))
 }
 
+/// The version the patch files record for these FFXiMain.dll bytes at `path` (dat::ffximain's pick under `root`):
+/// the stamped manifest's version whose FFXiMain.dll entry has these bytes' signature (our updater's copy, or a game
+/// folder it wrote), else for the game folder's own DLL its patch.ver (the Viewer patched it). None when neither
+/// names these bytes: the client's copy with no matching manifest entry, say, beside a game folder the Viewer moved on.
+pub fn ffximain_version(root: &Path, path: &Path, bytes: &[u8]) -> Option<String> {
+    let sig = Sig::of(bytes);
+    let stamped = std::fs::read_to_string(root.join(STAMP_FILE)).ok().and_then(|text| {
+        let entries = parse_manifest(&text).ok()?;
+        let e = entries.iter().find(|e| e.path.eq_ignore_ascii_case("FFXiMain.dll"))?;
+        e.versions.iter().rev().find(|v| v.sig == sig).map(|v| v.stamp.clone())
+    });
+    stamped.or_else(|| (path == root.join("FFXiMain.dll")).then(|| installed_version(root, GAME)).flatten())
+}
+
 /// A title's version as its patch.ver holds it: under the no-registry key (ours), else the installer's "0" (a folder
 /// the Viewer patched).
 pub fn installed_version(root: &Path, service: Service) -> Option<String> {
@@ -1150,6 +1164,29 @@ mod tests {
         server.join().unwrap();
         let e = s.fetch("x", MAX_FILE + 1).unwrap_err().to_string();
         assert!(e.contains("manifest gives it"), "{e}");
+    }
+
+    /// FFXiMain.dll's version from the patch files: the stamped manifest's entry whose signature matches these bytes,
+    /// else (the game folder's own DLL) patch.ver; the client's copy no entry names has none.
+    #[test]
+    fn ffximain_version_matches_the_bytes() {
+        let root = std::env::temp_dir().join(format!("vana-patch-ffximain-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let (old, new) = (b"MZ old".as_slice(), b"MZ new".as_slice());
+        let line = |stamp: &str, d: &[u8]| {
+            let g = Sig::of(d);
+            format!("{stamp} {} {} {} {stamp}/Direct/FFXiMain.dll.slc {}\n", g.len, g.sum, g.md5, d.len() + 1)
+        };
+        let text = format!("file FFXiMain.dll {{\n{}{}}}\n", line("30261102_0", old), line("30261201_0", new));
+        std::fs::write(root.join(STAMP_FILE), text).unwrap();
+        let own = crate::dat::own_ffximain(&root);
+        assert_eq!(ffximain_version(&root, &own, new).as_deref(), Some("30261201_0"));
+        assert_eq!(ffximain_version(&root, &own, old).as_deref(), Some("30261102_0"));
+        assert_eq!(ffximain_version(&root, &own, b"MZ other"), None);
+        // The game folder's DLL with no matching entry and no patch.ver: none either.
+        assert_eq!(ffximain_version(&root, &root.join("FFXiMain.dll"), b"MZ other"), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A Viewer update against a local patch server: version, manifest, files (code too; an absent option file left

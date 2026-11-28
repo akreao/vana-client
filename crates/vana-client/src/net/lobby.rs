@@ -58,24 +58,33 @@ pub const KNOWN_BUILDS: [(u32, &str); 2] = [(0x43FA_0718, "30261006_0"), (0x74F0
 pub struct GameBuild {
     /// The 0x26 checksum.
     pub checksum: u32,
-    /// The version to send: a known build's own, else the version the game's patch files record (`applied`, what was
-    /// patched in with that DLL), else `saved` (the config's). Never a stale config value for a known DLL, so the
-    /// version and the checksum agree.
+    /// The version to send: a known build's own, else the version the patch files record for these very bytes
+    /// (`patch::ffximain_version`). Never a stale config value, so the version and the checksum agree.
     pub version: String,
     /// One of KNOWN_BUILDS: the packet layouts are this client's. An unknown one (a retail update newer than the
     /// client) may still play, but the player is warned first.
     pub known: bool,
 }
 
-/// The installed game build for a PlayOnline login; an error with no FFXiMain.dll (no checksum to send).
-pub fn playonline_build(dll: &[u8], applied: Option<&str>, saved: &str) -> Result<GameBuild> {
+/// The installed game build for a PlayOnline login. An error with no FFXiMain.dll (no checksum to send), and for an
+/// unknown one whose version no patch file confirms (`patched`: what they record for these bytes), rather than pair it
+/// with a version from somewhere else.
+pub fn playonline_build(dll: &[u8], patched: Option<&str>) -> Result<GameBuild> {
+    build_among(&KNOWN_BUILDS, dll, patched)
+}
+
+fn build_among(known: &[(u32, &str)], dll: &[u8], patched: Option<&str>) -> Result<GameBuild> {
     if dll.is_empty() {
         bail!("FFXiMain.dll was not found in the game folder, so the game's version is unknown.");
     }
     let checksum = ffximain_checksum(dll);
-    Ok(match KNOWN_BUILDS.iter().find(|b| b.0 == checksum) {
-        Some(b) => GameBuild { checksum, version: b.1.into(), known: true },
-        None => GameBuild { checksum, version: applied.unwrap_or(saved).to_string(), known: false },
+    Ok(match (known.iter().find(|b| b.0 == checksum), patched) {
+        (Some(b), _) => GameBuild { checksum, version: b.1.into(), known: true },
+        (None, Some(v)) => GameBuild { checksum, version: v.to_string(), known: false },
+        (None, None) => bail!(
+            "This game's FFXiMain.dll ({checksum:08X}) is not a build this client knows, and its version can't be \
+             confirmed from the game's patch files. Run the game update, then sign in again."
+        ),
     })
 }
 
@@ -1902,11 +1911,16 @@ mod create_tests {
             s = s.wrapping_add(((b as i8 as i32) << (((i as u32 % 20) * 4) & 31)) as u32);
         }
         assert_eq!(ffximain_checksum(&d), s);
-        assert!(playonline_build(b"", None, "30261102_0").is_err());
-        // An unknown DLL: the patch files' version, else the config's; known stays false.
-        let b = playonline_build(b"dll", Some("30261201_0"), "30261102_0").unwrap();
+        assert!(playonline_build(b"", Some("30261102_0")).is_err());
+        // An unknown DLL: the version its patch files record, known false; none recorded is refused.
+        let b = playonline_build(b"dll", Some("30261201_0")).unwrap();
         assert_eq!((b.version.as_str(), b.known), ("30261201_0", false));
-        assert_eq!(playonline_build(b"dll", None, "30261102_0").unwrap().version, "30261102_0");
+        assert!(playonline_build(b"dll", None).is_err());
+        // A known one sends its own version whatever the patch files say (a table holding this test's bytes).
+        let table = [(ffximain_checksum(b"dll"), "30261102_0")];
+        let g = build_among(&table, b"dll", Some("1_0")).unwrap();
+        assert_eq!((g.version.as_str(), g.known), ("30261102_0", true));
+        assert_eq!(build_among(&table, b"dll", None).unwrap().version, "30261102_0");
         // The installed 30261006_0 (its value in MODLOG "PlayOnline sign-in"), when present.
         // Each research build (FFXI_RE_DIR's parent holds one folder per build), when present: its own version.
         if let Ok(re) = std::env::var("FFXI_RE_DIR")
@@ -1915,7 +1929,7 @@ mod create_tests {
             for (_, v) in KNOWN_BUILDS {
                 if let Ok(b) = std::fs::read(builds.join(v).join("FFXiMain.dll")) {
                     assert_eq!(
-                        playonline_build(&b, None, "").unwrap(),
+                        playonline_build(&b, None).unwrap(),
                         GameBuild { checksum: ffximain_checksum(&b), version: v.to_string(), known: true }
                     );
                 }
@@ -1927,7 +1941,7 @@ mod create_tests {
         {
             assert_eq!(ffximain_checksum(&b), 0x43FA_0718);
             // A known DLL sends its own version whatever the config or patch files say.
-            let g = playonline_build(&b, Some("30261102_0"), "1_0").unwrap();
+            let g = playonline_build(&b, Some("30261102_0")).unwrap();
             assert_eq!((g.version.as_str(), g.known), ("30261006_0", true));
         }
     }
