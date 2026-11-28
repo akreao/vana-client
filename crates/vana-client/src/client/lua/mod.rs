@@ -2391,6 +2391,97 @@ mod tests {
         lua.globals().set("TEST", t)
     }
 
+    /// A host with one mod "t" holding `wins`, on a 1000 x 800 screen.
+    fn classic_host(wins: Vec<window::Window>) -> Host {
+        let vm = Vm::new(
+            manifest::Manifest { id: "t".into(), ..Default::default() },
+            PathBuf::from("."),
+            vm::Source::Dir(PathBuf::from(".")),
+        )
+        .unwrap();
+        vm.st.borrow_mut().windows = wins;
+        let mut host = Host::default();
+        {
+            let mut f = host.info.borrow_mut();
+            (f.window, f.k) = ([1000.0, 800.0], (1.0, 1.0));
+        }
+        host.vms.push(vm);
+        host
+    }
+
+    fn classic_win(id: &str, hud: bool, place: Option<(f32, f32)>) -> window::Window {
+        let mut win = window::Window::new(id);
+        (win.open, win.hud, win.place) = (true, hud, place);
+        win
+    }
+
+    /// The classic UI draws and routes the HUD layer's windows first, then the other windows, modal and anchored
+    /// ones last, whatever order the mod opened them in.
+    #[test]
+    fn classic_places_hud_layer_first() {
+        let mut modal = classic_win("modal", false, None);
+        modal.modal = true;
+        let mut popup = classic_win("popup", false, None);
+        popup.anchor = Some((10.0, 10.0));
+        let mut hidden = classic_win("closed", true, Some((0.0, 0.0)));
+        hidden.open = false;
+        let host = classic_host(vec![
+            modal,
+            classic_win("manager", false, Some((50.0, 50.0))),
+            popup,
+            classic_win("edge", true, Some((0.0, 0.0))),
+            hidden,
+            classic_win("cascade", false, None),
+        ]);
+        let ids: Vec<_> = classic_places(&host).into_iter().map(|(_, id, _, _)| id).collect();
+        assert_eq!(ids, ["edge", "manager", "cascade", "modal", "popup"]);
+        host.all_hidden.set(true);
+        assert!(classic_places(&host).is_empty());
+    }
+
+    /// Under a rect of World::over_mod_hud a HUD-layer window takes no pointer, unless a press or a drag on it
+    /// already holds it; the other windows are drawn over the game's and keep it.
+    #[test]
+    fn pointer_places_under_game_windows() {
+        let host = classic_host(vec![
+            classic_win("edge", true, Some((0.0, 0.0))),
+            classic_win("manager", false, Some((0.0, 0.0))),
+        ]);
+        let ids = |over: &[[f32; 4]], p| -> Vec<String> {
+            pointer_places(&host, over, p).into_iter().map(|(_, id, _, _)| id).collect()
+        };
+        let over = [[0.0, 0.0, 100.0, 100.0]];
+        assert_eq!(ids(&over, (50.0, 50.0)), ["manager"]);
+        assert_eq!(ids(&over, (150.0, 150.0)), ["edge", "manager"]);
+        assert_eq!(ids(&[], (50.0, 50.0)), ["edge", "manager"]);
+        host.vms[0].st.borrow_mut().windows[0].press = Some((0, 1.0, 1.0));
+        assert_eq!(ids(&over, (50.0, 50.0)), ["edge", "manager"]);
+        host.vms[0].st.borrow_mut().windows[0].press = None;
+        host.vms[0].st.borrow_mut().windows[0].drag = Some((0, 1.0, 1.0));
+        assert_eq!(ids(&over, (50.0, 50.0)), ["edge", "manager"]);
+    }
+
+    /// A press or a drag holds the pointer only on a window pointer_classic reaches and so can end: not a suspended
+    /// mod's, nor a panel's (the Timers' dock), nor any while the mods' windows are hidden.
+    #[test]
+    fn holds_pointer_only_routed_windows() {
+        let mut win = classic_win("w", false, None);
+        win.drag = Some((0, 1.0, 1.0));
+        let mut host = classic_host(vec![win]);
+        assert!(holds_pointer(&host));
+        host.all_hidden.set(true);
+        assert!(!holds_pointer(&host));
+        host.all_hidden.set(false);
+        host.vms[0].st.borrow_mut().windows[0].panel = Some("p".into());
+        assert!(!holds_pointer(&host));
+        host.vms[0].st.borrow_mut().windows[0].panel = None;
+        host.vms[0].suspended = Some("errors".into());
+        assert!(!holds_pointer(&host));
+        host.vms[0].suspended = None;
+        host.vms[0].st.borrow_mut().windows[0].open = false;
+        assert!(!holds_pointer(&host));
+    }
+
     /// The stand-in parked in `World::lua` while the host runs the mods answers the World's queries from the mods'
     /// states as they are now (the macro gate read by game.info().macros from a pad filter). A throwaway mod: the
     /// host saves its storage when it drops.
@@ -4468,7 +4559,7 @@ fn hud_layer(win: &window::Window) -> bool {
 /// their rects.
 pub(super) fn draw_classic(gu: &mut super::game_ui::GameUi, w: &World, hud: bool) -> Vec<[f32; 4]> {
     let mut out = Vec::new();
-    for (v, id, x, y) in classic_places(w) {
+    for (v, id, x, y) in classic_places(&w.lua) {
         if let Some(win) = w.lua.vms[v].st.borrow().windows.iter().find(|x| x.id == id && hud_layer(x) == hud) {
             // Its opacity (per-window opacity), over the whole window.
             let o = w.lua.window_opacity(&w.window_opacity, &format!("mod:{}:{id}", w.lua.vms[v].manifest.id));
@@ -4635,18 +4726,18 @@ impl Host {
 
 /// The classic places of the open windows, in draw order (cascaded from the Config pages' place; the HUD layer's
 /// first, modal ones last, centred, or at their anchor kept on screen).
-fn classic_places(w: &World) -> Vec<(usize, String, f32, f32)> {
+fn classic_places(h: &Host) -> Vec<(usize, String, f32, f32)> {
     let (mut hud, mut out, mut modal) = (Vec::new(), Vec::new(), Vec::new());
-    if w.lua.all_hidden.get() {
+    if h.all_hidden.get() {
         return out;
     }
     let (screen, uk) = {
-        let f = w.lua.info.borrow();
+        let f = h.info.borrow();
         (f.window, f.k)
     };
     let (sw, sh) = (screen[0] * uk.0, screen[1] * uk.1);
     let mut k = 0.0;
-    for (v, vm) in w.lua.vms.iter().enumerate().filter(|(_, v)| v.suspended.is_none()) {
+    for (v, vm) in h.vms.iter().enumerate().filter(|(_, v)| v.suspended.is_none()) {
         // A panel's edge window is the Timers' dock's (regime.rs).
         for win in vm.st.borrow().windows.iter().filter(|w| w.open && w.panel.is_none()) {
             // The room below its top: a list shows fewer rows rather than run past the screen's bottom.
@@ -4685,13 +4776,13 @@ fn classic_places(w: &World) -> Vec<(usize, String, f32, f32)> {
 }
 
 /// The classic places the pointer at `p` can reach: the HUD layer's windows not where a game window or the HUD is over
-/// them (World::over_mod_hud), unless a press or a drag on one already holds the pointer.
-fn pointer_places(w: &World, p: (f32, f32)) -> Vec<(usize, String, f32, f32)> {
-    let mut places = classic_places(w);
+/// them (`over_mod_hud`: World::over_mod_hud), unless a press or a drag on one already holds the pointer.
+fn pointer_places(h: &Host, over_mod_hud: &[[f32; 4]], p: (f32, f32)) -> Vec<(usize, String, f32, f32)> {
+    let mut places = classic_places(h);
     let r = |r: &[f32; 4]| p.0 >= r[0] && p.1 >= r[1] && p.0 < r[0] + r[2] && p.1 < r[1] + r[3];
-    if w.over_mod_hud.iter().any(r) {
+    if over_mod_hud.iter().any(r) {
         places.retain(|(v, id, _, _)| {
-            w.lua.vms[*v]
+            h.vms[*v]
                 .st
                 .borrow()
                 .windows
@@ -4704,13 +4795,17 @@ fn pointer_places(w: &World, p: (f32, f32)) -> Vec<(usize, String, f32, f32)> {
 }
 
 /// A classic mod window holds the pointer: a press or a canvas drag on it goes on until the button comes up, wherever
-/// the pointer is. Not while the mods' windows are hidden (/lua hide): none is drawn or routed.
-pub(super) fn holds_pointer(w: &World) -> bool {
-    !w.lua.all_hidden.get()
-        && w.lua
-            .vms
-            .iter()
-            .any(|vm| vm.st.borrow().windows.iter().any(|win| win.open && (win.drag.is_some() || win.press.is_some())))
+/// the pointer is. Only the windows classic_places routes (pointer_classic clears the press or drag): not while the
+/// mods' windows are hidden (/lua hide), nor a suspended mod's or a panel's window, whose press or drag nothing ends.
+pub(super) fn holds_pointer(h: &Host) -> bool {
+    !h.all_hidden.get()
+        && h.vms.iter().filter(|vm| vm.suspended.is_none()).any(|vm| {
+            vm.st
+                .borrow()
+                .windows
+                .iter()
+                .any(|win| win.open && win.panel.is_none() && (win.drag.is_some() || win.press.is_some()))
+        })
 }
 
 /// The item of the classic mod list cell under the pointer, for the item window: (id, extdata).
@@ -4743,8 +4838,8 @@ pub(super) fn pointer_classic(
     right: bool,
     held: (bool, bool, bool),
 ) -> bool {
-    let all = classic_places(w);
-    let mut places = pointer_places(w, p);
+    let all = classic_places(&w.lua);
+    let mut places = pointer_places(&w.lua, &w.over_mod_hud, p);
     // A canvas the pointer has left (its window not under it now, or a window over it there): its 'leave'.
     let mut left = Vec::new();
     for (v, id, x, y) in &all {

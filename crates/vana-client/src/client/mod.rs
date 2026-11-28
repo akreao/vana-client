@@ -15078,7 +15078,7 @@ impl App {
         let drag = self
             .press_at
             .zip(self.last_cursor)
-            .filter(|_| self.left_down && !(!world.modern && lua::holds_pointer(world)))
+            .filter(|_| self.left_down && !(!world.modern && lua::holds_pointer(&world.lua)))
             .map(|(a, b)| ((b.0 - a.0) as f32 * k.0, (b.1 - a.1) as f32 * k.1));
         if world.cnq.is_some() && !region::update(world, &mut self.input, dt * 60.0) {
             world.cnq = None;
