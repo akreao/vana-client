@@ -1569,7 +1569,7 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
     }
     if w.lua.vms.iter().any(|v| !v.st.borrow().inject_out.is_empty()) {
         let out = packets_out(w, Vec::new());
-        let _ = w.net.commands.send(super::net::NetCommand::SendBatch(0, out));
+        let _ = w.net.commands.send(super::net::NetCommand::Inject(out));
     }
 }
 

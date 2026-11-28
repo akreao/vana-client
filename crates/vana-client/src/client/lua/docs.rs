@@ -802,7 +802,7 @@ pub const FUNCS: &[Func] = &[
     Func {
         ns: "packets",
         name: "inject_out",
-        doc: "Sends a packet to the server (it passes the hooks, injected = true). Needs packets.write.",
+        doc: "Sends a packet to the server with the next datagram, as the client's own sends go (it passes the hooks, injected = true, then the client's one-a-second gate for the ids it gates). Needs packets.write; refused on a PlayOnline login.",
         params: &[
             ("id_or_data", "integer|string", "an id, or a whole sub-packet"),
             ("body?", "string", "the body after the 4-byte header"),
