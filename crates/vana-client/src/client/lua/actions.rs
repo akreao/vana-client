@@ -325,7 +325,11 @@ pub(super) fn apply(w: &mut World, gu: Option<&GameUi>, a: Action) {
         Action::Talk(id) => {
             event::talk(w, id);
         }
-        Action::Target(t) => target::set(w, t),
+        Action::Target(t) => {
+            if t.is_none_or(|t| target::mod_may_target(w, t)) {
+                target::set(w, t)
+            }
+        }
         Action::BlueSlot(i, spell) => {
             if let Err(e) = super::super::bluset::set_slot(w, i, spell) {
                 w.chat.push_colour(

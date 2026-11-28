@@ -122,6 +122,28 @@ pub(super) const OPTIONS: [&str; 22] = [
     "synth_amount",
 ];
 
+/// The switches that change what the server sees from us (what we send, and when): a mod may not move them on a
+/// PlayOnline login, where they stay as the game has them. Commands while K.O., moving through the action locks,
+/// menus kept open past their reach, targets behind scenery, equip sets and cutscenes faster than the game allows,
+/// faster animations (their locks end sooner), no step held for other players, the datagram rate, the synthesis
+/// count (the unattended crafting run), and the hidden state retail keeps back (results before their wait, every
+/// map, monster dots for every job).
+const RETAIL_FIXED: [&str; 13] = [
+    "dead_commands",
+    "move_lock",
+    "menu_reach",
+    "occlusion",
+    "equipset_delay",
+    "cutscene_speed",
+    "animation_rate",
+    "player_collision",
+    "send_interval",
+    "synth_amount",
+    "ah_result_delay",
+    "all_maps",
+    "compass_monsters",
+];
+
 /// The switches retail has off.
 const OFF: [&str; 7] =
     ["all_maps", "dead_commands", "compass_monsters", "wireframe", "ttf_text", "stamp_all_lines", "synth_amount"];
@@ -350,6 +372,8 @@ pub struct Host {
     ipc: Option<ipc::Bus>,
     /// The behaviour switches mods set, by name: the mod that set it (put back when it unloads).
     opt_owners: std::collections::BTreeMap<String, String>,
+    /// Options refused on a PlayOnline login (RETAIL_FIXED), logged once each.
+    retail_fixed_told: std::collections::BTreeSet<String>,
     /// Requests for the app after the frame: the window, a screenshot, a clipboard read; and the text read.
     pub(in crate::client) win_reqs: Vec<WinReq>,
     pub(in crate::client) shot: Option<String>,
@@ -1754,6 +1778,12 @@ fn apply(w: &mut World, gu: Option<&super::game_ui::GameUi>, op: Op) {
         Op::Shot(name) => w.lua.shot = Some(name),
         Op::Paste => w.lua.paste_wanted = true,
         Op::Option(mod_id, name, v) => {
+            if w.playonline && RETAIL_FIXED.contains(&name.as_str()) {
+                if w.lua.retail_fixed_told.insert(name.clone()) {
+                    log::info!("{mod_id}: client option {name} stays as the game has it on a PlayOnline login");
+                }
+                return;
+            }
             // The minimap's zoom stays as the wheel's does, the maps' opacity as the player set it; the rest go back
             // when the mod unloads.
             if set_option(w, &name, &v) && !["minimap_span", "map_opacity"].contains(&name.as_str()) {
