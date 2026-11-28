@@ -238,6 +238,9 @@ fn mod_edges(p: &mut Panels, w: &mut World) {
             }
             w.sounds.push(crate::audio::Ui::Cursor as u32);
         }
+        // A right-click on it off its elements: its context.
+        let shown = p.this.get(&key).copied();
+        super::modwin::context_click(ctx, shown, &mut clicks);
         for c in clicks {
             super::super::lua::window_click(w, &mod_id, &win.id, c);
         }

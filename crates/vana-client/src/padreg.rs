@@ -56,7 +56,7 @@ pub fn find(game_dir: &Path) -> Option<Retail> {
 /// ~/.wine, Steam's Final Fantasy XI prefix (app 230330), then any other Steam prefix with PlayOnline installed (a
 /// non-Steam shortcut's).
 #[cfg(not(windows))]
-fn wine_files(game_dir: &Path) -> Vec<PathBuf> {
+pub(crate) fn wine_files(game_dir: &Path) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     let mut push = |p: PathBuf| {
         if p.is_file() && !out.contains(&p) {
@@ -155,7 +155,7 @@ fn product_of(key: &str) -> Option<usize> {
 }
 
 /// A `"name"="value"` line (string values only; Wine escapes `\\` and `\"`).
-fn reg_value(line: &str) -> Option<(String, String)> {
+pub(crate) fn reg_value(line: &str) -> Option<(String, String)> {
     let rest = line.strip_prefix('"')?;
     let (name, rest) = rest.split_once("\"=")?;
     let v = rest.strip_prefix('"')?.strip_suffix('"')?;
@@ -172,7 +172,7 @@ fn reg_value(line: &str) -> Option<(String, String)> {
 }
 
 #[cfg(windows)]
-mod windows {
+pub(crate) mod windows {
     use super::{NAMES, PRODUCTS, Retail};
     use windows_sys::Win32::System::Registry::{
         HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RRF_SUBKEY_WOW6432KEY, RegGetValueW,
@@ -182,7 +182,7 @@ mod windows {
         s.encode_utf16().chain(std::iter::once(0)).collect()
     }
 
-    fn value(key: &str, name: &str) -> Option<String> {
+    pub(crate) fn value(key: &str, name: &str) -> Option<String> {
         let (k, n) = (wide(key), wide(name));
         let mut buf = [0u16; 512];
         let mut len = (buf.len() * 2) as u32;

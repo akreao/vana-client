@@ -288,11 +288,33 @@ fn wrap_pi(a: f32) -> f32 {
 /// goes through its file's 'init' once: played when the model is not hidden then (+0xb2 == 0), passed over for good
 /// when it is (+0x77a is set either way).
 pub fn apply(w: &mut World, ticks: f32, hidden: &std::collections::HashSet<u32>) -> Vec<(u32, Mat4, bool)> {
+    // An event's placement of a bound model actor away from its server place (the Mog Garden's zone-in sets each
+    // planted furrow's PlantFurn there, sent at the origin): the model goes there and stays when the event ends.
+    let placed: HashMap<u32, (Vec3, f32)> = w
+        .ships
+        .actors
+        .keys()
+        .filter_map(|&id| {
+            let p = super::event::pose(w, id)?;
+            let e = w.entities.get(&id)?;
+            ((p.pos - e.pos).length() > 0.01).then_some((id, (p.pos, p.yaw)))
+        })
+        .collect();
     let poses = &w.effects.actor_poses;
     let mut out = Vec::new();
     let mut inits = Vec::new();
     for (id, a) in w.ships.actors.iter_mut() {
-        let visible = w.entities.get(id).is_some_and(|e| e.flags & 2 == 0) && !hidden.contains(id);
+        // `hidden` is the whole rule (event::hide, FUN_1008e4d0): the server's hide unless a running event has the
+        // actor bound, then the script's alone, so a model the server sent hidden draws once the script shows it (the
+        // Mog Garden's plants).
+        let visible = w.entities.contains_key(id) && !hidden.contains(id);
+        if let Some(&(at, yaw)) = placed.get(id) {
+            if (a.pos - at).length() > 0.01 {
+                log::debug!("ship {id:#x}: the event places it at {at} yaw {yaw:.3}");
+            }
+            let r = Vec3::new(a.rot.x, yaw, a.rot.z);
+            (a.pos, a.rot, a.target) = (at, r, r);
+        }
         if let Some(p) = poses.get(id) {
             if let Some(at) = p.pos {
                 a.pos = at;

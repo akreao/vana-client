@@ -1155,6 +1155,8 @@ The map record for where you stand, and how the map window shows it. Use it with
 | `owned` | `boolean` | `kind == "map"`. |
 | `zone` | `integer` | The zone the map belongs to. |
 | `number` | `integer` | The map's number within the zone. |
+| `key` | `integer` | The record's sub-map key: in a zone with several map pages, which page this record is. 0 in most zones. |
+| `sub_key` | `integer` | The sub-map key under the player. The map's points of interest (survival guides, home points and the like, in file 55504) each carry a key, and the map window shows those whose key is this one. Equal to `key`, except where the floor's sub-key has no map of its own and the zone's key-0 map is shown: then `key` is 0, and the map window shows no points unless some carry `sub_key`. |
 | `file` | `integer` | The map image's game file id (`res.dat(file)` reads it). |
 | `scale` | `integer` | The map's scale value. |
 | `origin` | `{x: integer, y: integer}` | The image's top left corner, in map pixels. |

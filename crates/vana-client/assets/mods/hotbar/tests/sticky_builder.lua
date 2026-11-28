@@ -1,4 +1,4 @@
--- Hotbars: the Builder's Sticky choice saves a macro to every job's library, shows it set when editing one, and
+-- Hotbars: the Builder's Shared choice saves a macro to every job's library, shows it set when editing one, and
 -- set back takes it to the job's library.
 
 res = { spell = function(id) if id == 1 then return { name = "Cure", mp = 8, kind = 1, targets = 0x1F } end end,
@@ -24,7 +24,7 @@ local manager = require("src.manager")
 manager.hooks = { changed = function() end, rebind = function() end }
 manager.open()
 
--- New, Cure, Sticky: On (bbar 1), Save (bbar 2).
+-- New, Cure, Shared: On (bbar 1), Save (bbar 2).
 H("manager", { kind = "press", id = "lbtn", index = 1 })
 H("manager", { kind = "select", id = "found", index = 1 })
 H("manager", { kind = "press", id = "bbar", index = 1 })
@@ -33,9 +33,9 @@ local lib = data.library("WHM")
 assert(#lib == 1 and lib[1].sticky and lib[1].entry.name == "Cure")
 local id = lib[1].id
 
--- Edit shows Sticky: On in the bar; Sticky: Off (bbar 1), Save.
+-- Edit shows Shared: On in the bar; Shared: Off (bbar 1), Save.
 manager.edit_entry(id)
-assert(BBAR and BBAR.items[1] == "Sticky: On", "edit shows Sticky: On on the builder bar")
+assert(BBAR and BBAR.items[1] == "Shared: On", "edit shows Shared: On on the builder bar")
 assert(data.is_sticky(id))
 H("manager", { kind = "press", id = "bbar", index = 1 })
 H("manager", { kind = "press", id = "bbar", index = 2 })

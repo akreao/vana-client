@@ -7,17 +7,23 @@ shows its label. Turn it on in Config → Extras, on its page (Hotbars), where i
 
 ## Sets
 
-Macros load by job. A **main set** (`WAR`) loads whenever that job is your main job; a **sub set** (`WAR` with sub
-`NIN`) loads on top of it when you play WAR/NIN, slot by slot. Slots the main set fills have a gold edge, those the
-sub set fills a blue one. Clearing a slot of a sub set the main set fills blanks it for that sub job only.
+Every main / sub job pair has its own bars and crossbars: THF/NIN's are not THF/DNC's (and THF with no sub job has
+its own). The first time you play a pair, its set starts from what Hotbars showed before sets went by sub job (the
+job's main set with that sub job's set over it) less another sub job's actions: Utsusemi stays on THF/NIN and goes
+from THF/DNC. A spell neither of your jobs learns is another job's; an ability is judged by the abilities the game
+lists for you once the list has settled after the job change, and only at main level 99 (below that it may be your
+main job's, not learned yet). Weapon skills, items, equipment, commands and typed macros always stay.
 
 ## On the bars
 
-- **Keys:** bar 1 takes `1`..`0`, `-`, `=`; bar 2 the same with Ctrl, bar 3 with Alt. The manager's Config page picks
-  each bar's modifier and the key row (number row, function keys or the numpad), and any slot's key. A slot shows
-  its key in its corner.
-- **Click** a slot to run it; **right-click** to clear it or open the manager; **drag** a slot onto another to swap
-  them (in the sub set when either comes from it).
+- **Keys:** bar 1 takes `1`..`0`, `-`, `=`; bar 2 the same with Ctrl, bar 3 with Alt. A slot shows its key in its
+  corner. **Assign Keys** (right-click the bars) changes them: the slots' edges turn teal, the slot under the pointer
+  (or clicked) is ringed in gold, and the next key combination pressed becomes its key. A combination something else
+  takes (another slot, one of the game's keys such as its Ctrl macros, another mod, the client) asks first. Clicks
+  and the bars' keys do nothing meanwhile; Escape, or Stop Assigning Keys in the right-click menu, ends it. The menu
+  then also clears a slot's key, gives it back its bar's, or resets every key.
+- **Click** a slot to run it; **right-click** anywhere on the bars for the menu (on a slot: clear it, too); **drag** a
+  slot onto another to swap them (in the sub set when either comes from it).
 - **Hover** a slot for its name and lines.
 - The jobs over the top bar open the manager.
 
@@ -29,17 +35,25 @@ macros unless a bar uses them.
 Each line runs as typed. `/wait 2` alone on a line waits two seconds; `<wait 2>` at the end of a line waits after it.
 A macro still running ignores a second press.
 
-## The library, the Builder and the palette
+## The library and the Builder
 
-Each main job has a **library** of macros (`//hb`, Library: New, Edit, Copy, Delete). The Library page shows them as
-tiles: click one to choose it, right-click to edit it, drag it onto a slot of the bars to put it there. A slot can
-name a library macro instead of holding its copy, so editing the macro changes every slot (main or sub set) that
-names it.
+Each main job has a **library** of macros (`//hb`). The Library page has two tabs: the current job's (**THF Macros** on
+THF; New, Edit, Delete, Copy From) and **Shared Macros** (New, Edit, Delete). Each shows its macros as tiles: click one to
+choose it, right-click to edit it, drag it onto a slot of the bars to put it there. A slot can name a library macro
+instead of holding its copy, so editing the macro changes every slot (main or sub set) that names it. **Copy From**
+picks another job that has macros and shows its macros as tiles under the job's: click one, or drag it onto the job's tiles
+(modern UI), to copy it to the current job's library, or **Copy All** for every one (a macro it already has is dimmed and skipped); **Close** puts them
+away.
 
 The **Builder** makes one. New or Edit opens it in the window's place; Save keeps the macro in the library and
-Cancel goes back to it. Pick a type (spell, job ability, weapon skill, pet command, item, equipment, a system
-command such as `/attack`, `/heal`, `/assist` or `/lockon`, or Macro for typed lines only), search, pick, choose
-the target, and add lines to run after it. System commands show a game icon standing in for them (a sword for
+Cancel goes back to it. Pick a type (spell, trust, job ability, weapon skill, pet command, item, equipment, a system
+command such as `/attack`, `/heal`, `/assist` or `/lockon`, or Macro for typed lines), search, pick and choose the
+target. The name follows what you pick until you type your own, and so does the **icon** beside it: click the icon to
+choose any spell, ability, weapon skill, pet command, status or held item's icon for the macro (a Macro of typed
+lines too); No Icon goes back to its action's. A slot of one action runs it as the game's menus do
+(the magic menu's checks for a spell, and so on), not as a typed line; **Macro** is for lines of your own
+(`/p Casting <t> | /wait 2 | /echo done`), run as typed commands. A macro saved before with lines after its action
+opens as a Macro of all its lines. System commands show a game icon standing in for them (a sword for
 `/attack`, Regen for `/heal`). Spells are the ones the magic list offers: learned, and castable by your main or
 support job at its level (blue magic only while set). The help line describes the spell, ability or item under the
 cursor or the pointer.
@@ -56,24 +70,15 @@ Escape or a click elsewhere closes it. While you edit a group, the list shows it
 out); search to add more, of any type. The Target menu sets every member's target. Groups are optional: one slot per
 rune still works as before.
 
-**Line it builds** shows the macro's first line (`/ja "Ignis" <me>`). Type your line there to run it instead,
-for anything the Builder gets wrong; the slot keeps the picked action's icon and recast when your line names none.
-Clear the field to go back to the built line.
-
-**Sticky macros:** set **Sticky** to *Every job and character* in the Builder and the macro shows in every job's
-library (a teal edge marks its tile), on every character and world, for a Warp Ring or a mount you want on any job.
-Edit or delete it from any job's library; a slot of any job can name it. Set it back to *This job only* and it goes
-to the job you are viewing, with a copy for each other job of this world that has it on a slot. Copy keeps the
-setting. Two clients open at once share the sticky macros: each change takes turns on `sticky.json` and starts from
-what the other saved, and the other client shows it after `//hb reload` or a relog.
-
-The **palette** (`//hb palette`, or Palette on the Library page) shows the main job's library as tiles on the screen;
-drag its background to move it. Drag a tile onto a slot of the bars to put that macro there; click one to edit it.
-
-The manager's **Config** page sets each bar's modifier and key row, and a slot's key.
+**Shared macros:** turn **Shared** on in the Builder (New on the Shared Macros tab starts with it on) and the macro is
+in every job's library, on the Shared Macros tab (a teal edge marks its tile), on every character and world, for a
+Warp Ring or a mount you want on any job. Edit or delete it from any job; a slot of any job can name it. Turn Shared
+off and it goes to your current job, with a copy for each other job of this world that has it on a slot. Two clients
+open at once share the shared macros: each change takes turns on `sticky.json` and starts from what the other saved,
+and the other client shows it after `//hb reload` or a relog.
 
 The macros are kept in `mod-data/hotbar/files/macros-<World>.json` (`macros.json` until the world is known), and
-sticky ones in `sticky.json` beside it, with ids `s1`, `s2`, ...; a slot names one as `{ "ref": "s1" }`:
+shared ones in `sticky.json` beside it, with ids `s1`, `s2`, ...; a slot names one as `{ "ref": "s1" }`:
 
 ```json
 {
@@ -88,11 +93,19 @@ sticky ones in `sticky.json` beside it, with ids `s1`, `s2`, ...; a slot names o
 }
 ```
 
+## Macros from other mods
+
+Another mod can add macros to a library with `mods.call("hotbar", "import_macros", job, entries, shared)`: `job` the
+three letters (`"WHM"`), `entries` a list of `{name, lines}`, `shared` true for the shared library. A macro the same as
+one already there is skipped, so a second import adds nothing new. `/lua` lines are left out (Hotbars would run them as
+your own lines), and a macro with nothing else is not added. It returns how many were added and skipped, why the file
+could not be saved (then none are kept), and how many `/lua` lines were left out. The Retail Macros mod uses it to turn
+a retail install's macro books into Hotbars macros.
+
 ## Commands
 
 - `//hb` opens or closes the manager.
 - `//hb show`, `//hb hide`: the bars for this session.
-- `//hb palette` shows or hides the palette.
 - `//hb run <bar> <slot>`: runs a slot (for a key bind).
 - `//hb reload`: reads the macro files again.
 - `//hb wipestock` empties the game's macro sets after keeping a copy; `//hb restorestock` puts it back.

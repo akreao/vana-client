@@ -1,4 +1,4 @@
--- Hotbars: the manager's tabs are Library, Keys and Help; Help explains the mode in use.
+-- Hotbars: the manager's tabs are Library and Help (keys are assigned on the bars); Help explains the mode in use.
 
 game = { player = function() return { main_job = 1, sub_job = 0 } end,
   spells = function() return {} end, abilities = function() return {} end, find_items = function() return {} end }
@@ -13,7 +13,12 @@ manager.hooks = { changed = function() end, rebind = function() end }
 mode.set("hotbars")
 manager.open()
 local tabs = ui.get("manager", "tabs")
-assert(tabs.items == nil or (tabs.items[2] == "Keys" and tabs.items[3] == "Help"))
+assert(tabs.items == nil or (#tabs.items == 2 and tabs.items[2] == "Help"))
+local assign = false
+for i = 1, 14 do
+  if ui.get("manager", "help" .. i).text:find("Assign Keys", 1, true) then assign = true end
+end
+assert(assign, "the hotbars' help tells how to assign keys")
 assert(ui.get("manager", "help1").text == "Keyboard hotbars", ui.get("manager", "help1").text)
 
 mode.set("gamepad")
@@ -26,4 +31,4 @@ end
 assert(found, "the gamepad's help tells how to assign")
 mode.set("hotbars")
 manager.refresh()
-assert(ui.get("manager", "help12").text == "", "the hotbars' help has fewer lines: the rest are blank")
+assert(ui.get("manager", "help13").text == "", "the hotbars' help has fewer lines: the rest are blank")

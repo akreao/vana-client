@@ -18,7 +18,7 @@ local overlay = require("src.overlay")
 
 local M = {}
 
--- Set by init.lua: changed(), open_manager(), palette(), editing() (manager or palette open).
+-- Set by init.lua: changed(), open_manager(), editing() (the manager open).
 M.hooks = {}
 
 local WIN = "pads"
@@ -28,7 +28,7 @@ local LABELS = { up = "Up", right = "Right", down = "Down", left = "Left", y = "
   lb = "L1", rb = "R1", l3 = "L3", r3 = "R3", menu = "Menu", mgr = "Mgr" }
 local FAKE = { menu = true, mgr = true }
 local FAKE_EDGE = { 118, 128, 148, 150 }
-local POCKET_SHORT = { menu = "Sel", mgr = "Start" }
+local POCKET_SHORT = { menu = "Back", mgr = "Start" }
 local SIDE_NAMES = { lt = "LT", rt = "RT", lr = "LT + RT" }
 local SLOT = {}
 for _, b in ipairs(BUTTONS) do SLOT[b] = true end
@@ -49,7 +49,7 @@ local geo = nil          -- current layout: size, slots ({x, y, side, button}), 
 local layouts = {}       -- "view:size" -> layout
 local cells = {}         -- "side:button" -> macro
 local shades = {}        -- "side:button" -> recast shade
-local main = nil
+local main, sub = nil, nil
 local built_sig = nil
 local built_view = nil   -- "all", "lt", "rt", "lr" or "none"
 local built_at = nil     -- os.clock() of the last window define
@@ -164,8 +164,8 @@ end
 
 -- Runs a slot; a group opens its list.
 function M.fire(side, button)
-  local mj = jobs.current()
-  local macro = mj and data.pad_resolve(mj, side, button)
+  local mj, sj = jobs.current()
+  local macro = mj and data.pad_resolve(mj, sj, side, button)
   if not macro then return end
   if macro.group then
     open_at(side, button, 0, function(place) chooser.open(macro, place, nil, nil) end)
@@ -176,14 +176,14 @@ end
 
 -- Opens the library over a slot; the row picked goes on it (a "Clear" row first when it is filled).
 function M.assign(side, button)
-  local mj = jobs.current()
+  local mj, sj = jobs.current()
   if not mj then return end
   local lib = data.library(mj)
   if #lib == 0 then
     chat.add("Hotbars: the library is empty. //hb opens the manager to build macros.")
     return
   end
-  local cur = data.pad_get_raw(mj, side, button)
+  local cur = data.pad_get_raw(mj, sj, side, button)
   local rows, ids, start = {}, {}, 1
   if cur then
     rows[1] = { "Clear this slot", "", "", colour = DIMMED }
@@ -192,15 +192,15 @@ function M.assign(side, button)
   for _, item in ipairs(lib) do
     local macro = data.macro_of(mj, item.id)
     if macro then
-      local act = actions.of(macro)
-      rows[#rows + 1] = { data.name_of(macro), "", "", icon = act and { kind = act.kind, id = act.id } or nil }
+      local look = actions.look(macro)
+      rows[#rows + 1] = { data.name_of(macro), "", "", icon = look and { kind = look.kind, id = look.id } or nil }
       ids[#rows] = item.id
       if cur and cur.ref == item.id then start = #rows end
     end
   end
   open_at(side, button, 0, function(place)
     chooser.pick_list(where(side, button), rows, place, function(k)
-      if ids[k] then data.pad_assign(mj, side, button, ids[k]) else data.pad_clear(mj, side, button) end
+      if ids[k] then data.pad_assign(mj, sj, side, button, ids[k]) else data.pad_clear(mj, sj, side, button) end
       changed()
     end, start)
   end)
@@ -217,16 +217,15 @@ function M.set_assigning(on)
 end
 
 local function open_menu(side, button)
-  local mj = jobs.current()
-  local macro = mj and data.pad_resolve(mj, side, button)
+  local mj, sj = jobs.current()
+  local macro = mj and data.pad_resolve(mj, sj, side, button)
   local items = {}
   if macro then
     items[#items + 1] = { "Clear the slot", function()
-      data.pad_clear(mj, side, button)
+      data.pad_clear(mj, sj, side, button)
       changed()
     end }
   end
-  items[#items + 1] = { "Open the palette", function() M.hooks.palette() end }
   items[#items + 1] = { "Open the manager", function() M.hooks.open_manager() end }
   menu.open("Crossbar slot", macro, where(side, button), items)
 end
@@ -309,7 +308,7 @@ local function draw_pocket(add, sl, lit, active_row, key)
   local fill = hover and KEY_HOVER or KEY
   local edge = slot_edge(sl, nil, lit, active_row)
   local short = POCKET_SHORT[sl.button]
-  local tip = sl.button == "mgr" and "Manager (Start)" or "Macro palette (Select)"
+  local tip = sl.button == "mgr" and "Manager (Start)" or "Assigning on / off (Back)"
   add({ type = "rect", x = sl.x, y = sl.y, w = ps, h = ps, round = ps / 2, colour = fill })
   add({ type = "rect", x = sl.x, y = sl.y, w = ps, h = ps, round = ps / 2, line = 1.5, colour = edge })
   add({ type = "text", x = sl.x + ps / 2, y = sl.y + ps / 2 - 5, text = short, size = 0.62, align = "center",
@@ -323,7 +322,7 @@ local function fire_slot(c)
   if c.button == "mgr" then
     if M.hooks.open_manager then M.hooks.open_manager() end
   elseif c.button == "menu" then
-    if M.hooks.palette then M.hooks.palette() end
+    M.set_assigning(not assigning)
   else
     M.fire(c.side, c.button)
   end
@@ -342,17 +341,18 @@ local function draw_overlay()
     slot_edge = slot_edge,
     fire = fire_slot,
     menu = function(c)
+      if not c then return end
       if FAKE[c.button] then fire_slot(c) else open_menu(c.side, c.button) end
     end,
     swap = function(from, to)
       if not main or FAKE[from.button] or FAKE[to.button] then return end
-      data.pad_swap(main, from.side, from.button, to.side, to.button)
+      data.pad_swap(main, sub, from.side, from.button, to.side, to.button)
       changed()
     end,
     drop = function(c, id)
       if FAKE[c.button] then draw(); return end
       if not main or not data.get_entry(main, id) then return end
-      data.pad_assign(main, c.side, c.button, id)
+      data.pad_assign(main, sub, c.side, c.button, id)
       slotview.flash(st, c.side .. ":" .. c.button, draw)
       changed()
     end,
@@ -407,7 +407,7 @@ end
 local function refresh_cells()
   cells = {}
   for _, sl in ipairs(geo.slots) do
-    if not FAKE[sl.button] then cells[key_of(sl)] = data.pad_resolve(main, sl.side, sl.button) end
+    if not FAKE[sl.button] then cells[key_of(sl)] = data.pad_resolve(main, sub, sl.side, sl.button) end
   end
 end
 
@@ -477,17 +477,18 @@ local function on_event(_, e)
         draw()
         return
       end
-      data.pad_assign(main, c.side, c.button, id)
+      data.pad_assign(main, sub, c.side, c.button, id)
       slotview.flash(st, key_of(c), draw)
       changed()
     end,
     fire = fire_slot,
     menu = function(c)
+      if not c then return end
       if FAKE[c.button] then fire_slot(c) else open_menu(c.side, c.button) end
     end,
     swap = function(from, to)
       if not main or FAKE[from.button] or FAKE[to.button] then return end
-      data.pad_swap(main, from.side, from.button, to.side, to.button)
+      data.pad_swap(main, sub, from.side, from.button, to.side, to.button)
       changed()
     end,
   })
@@ -498,7 +499,8 @@ local function shown_now()
 end
 
 local function signature()
-  return table.concat({ tostring(jobs.current()), settings.get("pad_size"), tostring(shown_now()), view(),
+  local mj, sj = jobs.current()
+  return table.concat({ tostring(mj) .. "/" .. tostring(sj), settings.get("pad_size"), tostring(shown_now()), view(),
     tostring(settings.get("display")) }, ":")
 end
 
@@ -584,7 +586,7 @@ function M.rebuild()
     overlay.clear("ovp")
     return
   end
-  main = jobs.current()
+  main, sub = jobs.current()
   if not main then
     built_sig, geo = nil, nil
     return

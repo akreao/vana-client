@@ -3135,6 +3135,20 @@ fn reserved_status(event: &HashMap<u32, u8>, doors: &HashMap<u32, u8>, id: u32) 
     doors.get(&id).or_else(|| event.get(&id)).copied()
 }
 
+/// FUN_1008ee30, the unbind at the event's end: an actor op 0xac 2 reserved (+0x138 bit 31) takes the script's hide
+/// (+0x120 bit 17) as its server one (bit 14: `bit14 = bit17`), so what the script hid stays hidden and what it
+/// showed stays shown until a 0x00E says otherwise. The other bound actors keep the server's bit: the script's
+/// counts only while the event runs (FUN_1008e4d0). A reserved actor's 0x00E does not write the bit (FUN_1009b550
+/// tests +0x138 first; `EntityUpdate::reserved`). Ours is the player's 0x037 / 0x00A bits, not this.
+fn left_hidden(
+    bound: &HashSet<u32>,
+    hidden: &HashSet<u32>,
+    me: u32,
+    reserved: impl Fn(u32) -> bool,
+) -> Vec<(u32, bool)> {
+    bound.iter().filter(|&&id| id != me && reserved(id)).map(|&id| (id, hidden.contains(&id))).collect()
+}
+
 fn finish(w: &mut World, live: Box<Live>) {
     w.screen.release_black();
     // FUN_100ae960: the credits roll closes with the event.
@@ -3170,6 +3184,22 @@ fn finish(w: &mut World, live: Box<Live>) {
     for (id, e) in w.entities.iter_mut().filter(|(_, e)| e.ev_reserved) {
         if let Some(s) = reserved_status(&live.st.event_status, &w.doors.event, *id) {
             e.motion.status = s;
+        }
+    }
+    // The Mog Garden's zone-in reserves its PlantFurn (sent hidden, at the origin), places and shows the planted
+    // ones, and hides what is not unlocked yet (Chacharoon, the spare veins).
+    let reserved = |id: u32| w.entities.get(&id).is_some_and(|e| e.ev_reserved);
+    for (id, hidden) in left_hidden(&live.st.bound, &live.st.hidden, w.my_id, reserved) {
+        if let Some(e) = w.entities.get_mut(&id) {
+            e.flags = e.flags & !super::Entity::HIDE | if hidden { super::Entity::HIDE } else { 0 };
+            // The same unbind: the script's place and rotation (its context's +0x140 / +0x150) become the actor's
+            // own and its server ones (+4 / +0x24, +0x14 / +0x34), so a plant stays at its furrow.
+            if let Some(p) = live.st.poses.get(&id) {
+                (e.pos, e.slide, e.last_pos, e.target, e.remain) = (p.pos, p.pos, p.pos, p.pos, 0.0);
+                e.drawn = None;
+                (e.server_y, e.raw_y) = (p.pos.y, p.pos.y);
+                e.dir = dir_of(p.yaw);
+            }
         }
     }
     let reseat = live.st.flags() & mode::GROUND_SNAP_ON_END != 0;
@@ -4822,6 +4852,20 @@ mod tests {
         assert!(!no_position_in(Some((true, 0x87))));
         assert!(!no_position_in(Some((false, 0))));
         assert!(!no_position_in(None));
+    }
+
+    /// FUN_1008ee30: at the event's end only the actors it reserved keep the script's hide.
+    #[test]
+    fn reserved_actors_keep_the_scripts_hide() {
+        // The Mog Garden's zone-in: it reserves the garden's actors and hides what is not unlocked (Chacharoon
+        // 0x1118087, a second vein 0x111802b); a plant it showed (0x111803b, sent hidden) stays shown. An actor it
+        // bound without reserving (0x1118021) keeps the server's bit, and our own hide is the server's (0x037).
+        let me = 0x46d0e;
+        let bound: HashSet<u32> = [0x1118087, 0x111802b, 0x111803b, 0x1118021, me].into();
+        let hidden: HashSet<u32> = [0x1118087, 0x111802b, 0x1118021, me].into();
+        let mut left = left_hidden(&bound, &hidden, me, |id| id != 0x1118021);
+        left.sort();
+        assert_eq!(left, [(0x111802b, true), (0x111803b, false), (0x1118087, true)]);
     }
 
     /// 0x100952e7: only a zone-in event with Mode bit 0x80 starts in cinema mode, at (0, 0).

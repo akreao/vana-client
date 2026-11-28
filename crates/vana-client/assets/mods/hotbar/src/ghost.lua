@@ -1,10 +1,15 @@
--- A see-through HUD copy of a dragged tile under the pointer. It has no handler, so the drop reaches what is under it.
+-- A see-through HUD copy of a dragged tile under the pointer, over every window (`top`; clients before that draw it
+-- under them, and the windows their own copy). It has no handler, so the drop reaches what is under it.
 
 local M = {}
 
 local LAYER = 20
-local BG = { 22, 26, 40, 170 }
-local EDGE = { 240, 220, 150, 220 }
+local BG = { 22, 26, 40, 130 }
+local EDGE = { 240, 220, 150, 170 }
+local FADED = { 255, 255, 255, 150 }
+
+-- Whether the client draws it over the windows: a canvas drag says `covered` there (the same release).
+M.top = false
 
 local size = 0
 local active = false
@@ -23,19 +28,19 @@ function M.start(x, y, s, act, label)
   size = s
   active = true
   local gx, gy = place(x, y)
-  hud.rect("ghost", { x = gx, y = gy, w = size, h = size, round = 6 * u, colour = BG, layer = LAYER })
+  hud.rect("ghost", { x = gx, y = gy, w = size, h = size, round = 6 * u, colour = BG, layer = LAYER, top = true })
   hud.rect("ghost_f", { x = gx - 1, y = gy - 1, w = size + 2, h = size + 2, round = 7 * u, colour = EDGE,
-    line = 1.5 * u, layer = LAYER })
+    line = 1.5 * u, layer = LAYER, top = true })
   if act then
     local isz = math.floor(size * 0.7)
     hud.icon("ghost_i", { x = gx + (size - isz) / 2, y = gy + (size - isz) / 2, size = isz, kind = act.kind,
-      id = act.id, layer = LAYER + 1 })
+      id = act.id, colour = FADED, layer = LAYER + 1, top = true })
   else
     pcall(hud.remove, "ghost_i")
   end
   hud.text("ghost_t", { x = gx + size / 2, y = gy + size / 2 - 7 * u, text = act and "" or (label or ""),
-    size = 0.75 * size / (52 * u), align = "center", colour = { 255, 255, 255 }, outline = { 0, 0, 0, 230 },
-    layer = LAYER + 2 })
+    size = 0.75 * size / (52 * u), align = "center", colour = FADED, outline = { 0, 0, 0, 150 },
+    layer = LAYER + 2, top = true })
 end
 
 function M.move(x, y)
@@ -63,8 +68,8 @@ function M.follow(e, id, colour, dim, look)
     M.start(e.x, e.y, s, act, label)
     set(id, { colour = dim })
   elseif e.kind == "drag" then
-    -- Over a window the window draws its own copy.
-    if e.window then
+    -- Over a window: over it (`top`), else the window draws its own copy.
+    if e.window and not M.top then
       M.move(-10000, -10000)
     else
       M.move(e.x, e.y)

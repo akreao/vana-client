@@ -28,7 +28,7 @@ assert(storage.character.hb_last["RDM:" .. warp] == 2)
 data.load()
 assert(data.resolve("RDM", nil, 1, 9).name == "Warp" and data.get_raw("RDM", nil, 1, 9).ref == warp)
 
--- An edit saved with Sticky ticked while sticky.json cannot be written: the edit stays in the job's file.
+-- An edit saved with Shared on while sticky.json cannot be written: the edit stays in the job's file.
 local id
 id, why = data.save_entry("RDM", warp, { name = "Warp 2", lines = { '/item "Warp Ring" <me>' } }, true)
 assert(id == warp and why)

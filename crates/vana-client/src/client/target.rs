@@ -1281,8 +1281,12 @@ fn pad_party_step(slots: &[Option<u32>], pick: Option<u32>, me: u32, inc: u32, d
     found.or_else(|| (inc & 0x200 != 0).then_some(me))
 }
 
-/// FUN_101514a0: while engaged with no target, the first attackable actor we claimed that is alive.
+/// FUN_101514a0: while engaged with no target, the first attackable actor we claimed that is alive. With the closest
+/// auto-target, the closest one fighting our side instead, and the attack switched to it.
 fn auto_target(w: &World) -> Option<u32> {
+    if closest_on(w) {
+        return closest(w, None, None);
+    }
     let alive = |e: &super::Entity| {
         e.flags & 1 != 0 && e.claim == w.my_id && !e.untargetable && !e.target_off && !matches!(e.motion.status, 2 | 3)
     };
@@ -1291,6 +1295,141 @@ fn auto_target(w: &World) -> Option<u32> {
         .filter(|(id, e)| alive(e) && w.actors.get(id).is_some_and(|a| a.gpu.is_some()))
         .min_by_key(|(_, e)| e.index)
         .map(|(id, _)| *id)
+}
+
+/// The closest auto-target (not retail; config closest_auto_target): when we last asked to attack, switch or let go.
+#[derive(Debug, Default)]
+pub struct Closest {
+    on: bool,
+    asked: Option<std::time::Instant>,
+}
+
+impl Closest {
+    pub fn new(on: bool) -> Self {
+        Self { on, ..Default::default() }
+    }
+}
+
+/// How long an attack or a disengage we sent explains the server's 0x058 or idle status.
+const ASKED_SECS: f32 = 2.0;
+const CLOSEST_RANGE: f32 = 30.0;
+
+/// We sent /attack (engage, switch or off) or /attackoff.
+pub fn asked(w: &mut World) {
+    w.closest.asked = Some(std::time::Instant::now());
+}
+
+fn asked_lately(w: &World) -> bool {
+    w.closest.asked.is_some_and(|t| t.elapsed().as_secs_f32() < ASKED_SECS)
+}
+
+/// On, and the server's auto-target too (/autotarget: 0x0B4 byte 1 bit 6 set is off).
+fn closest_on(w: &World) -> bool {
+    w.closest.on && w.conf_sys[1] & 0x40 == 0
+}
+
+fn fightable(w: &World, id: u32, e: &super::Entity) -> bool {
+    e.mob
+        && e.hpp > 0
+        && e.flags & 1 != 0
+        && e.flags & 6 == 0
+        && !e.untargetable
+        && !e.target_off
+        && !matches!(e.motion.status, 2 | 3)
+        && w.actors.get(&id).is_some_and(|a| a.gpu.is_some())
+}
+
+/// The closest monster within 30 that we may fight (`ours`), but `skip`: the closest within 90 degrees of our heading,
+/// else the closest behind.
+fn closest(w: &World, skip: Option<u32>, why: Option<&str>) -> Option<u32> {
+    let mut side: Vec<u32> = w.party.members().map(|m| m.id).collect();
+    side.push(w.my_id);
+    if w.my_pet != 0
+        && let Some((pet, _)) = w.entity_at(w.my_pet)
+    {
+        side.push(pet);
+    }
+    let faces_us = |i: u16| i == w.my_index || w.entity_at(i).is_some_and(|(k, _)| side.contains(&k));
+    let ours =
+        |e: &super::Entity| ours(e.claim, |c| side.contains(&c), e.face != 0 && faces_us(e.face), e.motion.status);
+    let dir = super::event::rad_of(w.net.me.lock().map_or(0, |m| m.dir));
+    let near = w.entities.iter().filter(|&(&id, e)| Some(id) != skip && ours(e) && fightable(w, id, e));
+    let pick = front_first(w.pos, dir, near.map(|(&id, e)| (id, e.pos)));
+    if let Some(why) = why {
+        // Every monster in range, with what the pick looked at.
+        let seen: Vec<String> = w
+            .entities
+            .iter()
+            .filter(|(_, e)| e.mob && e.pos.distance(w.pos) <= CLOSEST_RANGE)
+            .map(|(&id, e)| {
+                format!(
+                    "{id:#x} {:.1}y claim {:#x} face {} hpp {} flags {} st {} untgt {} off {} model {} skip {} ours {} ok {}",
+                    e.pos.distance(w.pos),
+                    e.claim,
+                    e.face,
+                    e.hpp,
+                    e.flags,
+                    e.motion.status,
+                    e.untargetable,
+                    e.target_off,
+                    w.actors.get(&id).is_some_and(|a| a.gpu.is_some()),
+                    Some(id) == skip,
+                    ours(e),
+                    fightable(w, id, e),
+                )
+            })
+            .collect();
+        log::info!(
+            "closest auto-target ({why}): pick {pick:x?}; me {:#x} dir {dir:.2} side {side:x?}; {}",
+            w.my_id,
+            seen.join("; ")
+        );
+    }
+    pick
+}
+
+/// A monster we may fight next: claimed by us, a party or alliance member or our pet; or unclaimed and either facing
+/// one of us or engaged (status 1). Where nothing is claimed (Dynamis), the claim and the face target were 0 on every
+/// monster of a pull, so an engaged one counts. Another's claim never does.
+fn ours(claim: u32, side: impl Fn(u32) -> bool, faces_us: bool, status: u8) -> bool {
+    if claim != 0 { side(claim) } else { faces_us || status == 1 }
+}
+
+/// The nearest within CLOSEST_RANGE and 90 degrees of heading `dir` (dir_from_forward's: 0 east, a quarter turn
+/// south), else the nearest.
+fn front_first(me: Vec3, dir: f32, near: impl Iterator<Item = (u32, Vec3)>) -> Option<u32> {
+    use std::f32::consts::{FRAC_PI_2, PI, TAU};
+    let (mut front, mut any): (Option<(u32, f32)>, Option<(u32, f32)>) = (None, None);
+    for (id, p) in near {
+        let d = p.distance(me);
+        if d > CLOSEST_RANGE {
+            continue;
+        }
+        let off = ((-(p.z - me.z)).atan2(p.x - me.x) - dir + PI).rem_euclid(TAU) - PI;
+        let nearer = |b: &Option<(u32, f32)>| b.is_none_or(|(_, bd)| d < bd);
+        if off.abs() <= FRAC_PI_2 && nearer(&front) {
+            front = Some((id, d));
+        }
+        if nearer(&any) {
+            any = Some((id, d));
+        }
+    }
+    front.or(any).map(|(id, _)| id)
+}
+
+/// Attacks `id`: a switch while engaged, else an engage; it becomes the target, locked as an 0x058 one would be.
+fn closest_attack(w: &mut World, id: u32, why: &str) {
+    let Some(e) = w.entities.get(&id) else { return };
+    let (index, monster) = (e.index, e.mob);
+    let engaged = w.my_motion.status == 1;
+    log::info!("closest auto-target: {} {id:#x} ({why})", if engaged { "switch to" } else { "engage" });
+    let cat = if engaged { super::textcmd::cat::CHANGE_TARGET } else { super::textcmd::cat::ATTACK };
+    super::textcmd::act(w, (id, index), cat, 0);
+    asked(w);
+    set(w, Some(id));
+    if monster && w.auto_lock {
+        lock(w, true, "closest auto-target");
+    }
 }
 
 /// FUN_10151100 -> FUN_101516d0 / FUN_10151910: Numpad * is /heal with no target or while healing
@@ -1320,12 +1459,53 @@ pub fn assist(w: &mut World, player: u32, target: u32) {
     let modelled = w.entities.contains_key(&target)
         && w.actors.get(&target).is_some_and(|a| a.gpu.is_some() || a.character.is_some());
     let monster = w.entities.get(&target).is_some_and(|e| e.mob);
+    if player == w.my_id
+        && target != 0
+        && w.my_motion.status == 1
+        && !asked_lately(w)
+        && w.target != Some(target)
+        && !closest_on(w)
+    {
+        log::info!(
+            "closest auto-target: 0x058 {target:#x}, off (config {}, 0x0B4 byte 1 {:#04x})",
+            w.closest.on,
+            w.conf_sys[1]
+        );
+    }
+    // Engaged and not asked for: the server's auto-target. The closest goes first when it is another.
+    if player == w.my_id
+        && target != 0
+        && closest_on(w)
+        && w.my_motion.status == 1
+        && !asked_lately(w)
+        && w.target != Some(target)
+        && let Some(c) = closest(w, w.target, Some("the server's 0x058")).filter(|&c| c != target)
+    {
+        log::info!("0x058 assist {target:#x}: the server's auto-target, overridden");
+        closest_attack(w, c, "over the server's pick");
+        return;
+    }
     let rule = assist_rule(player, w.my_id, target, modelled, monster, w.auto_lock);
     log::info!("0x058 assist {target:#x}: {rule:?} (monster {monster}, auto lock-on {})", w.auto_lock);
     let Some(locks) = rule else { return };
     set(w, Some(target));
     if locks {
         lock(w, true, "engaged, auto lock-on");
+    }
+}
+
+/// The server let us go without our asking (no monster in its front cone after a kill; the target may show
+/// dead up to 3 s later): engage the closest at once.
+fn closest_after_letgo(w: &mut World, st: u8) {
+    if w.last_status != 1 || st != 0 || asked_lately(w) {
+        return;
+    }
+    if !closest_on(w) {
+        log::info!("closest auto-target: let go, off (config {}, 0x0B4 byte 1 {:#04x})", w.closest.on, w.conf_sys[1]);
+        return;
+    }
+    if let Some(c) = closest(w, w.target, Some("the server let us go")) {
+        closest_attack(w, c, "the server let us go");
     }
 }
 
@@ -1337,6 +1517,7 @@ pub fn update(w: &mut World) {
     if w.locked && (w.dead() || (w.last_status == 1 && st != 1 && st != 3)) {
         lock(w, false, if w.dead() { "dead" } else { "disengaged" });
     }
+    closest_after_letgo(w, st);
     w.last_status = st;
     if let Some(attackoff) = w.target.and_then(|t| invalid(w, t)) {
         log::info!("target {:#x} dropped (attackoff {attackoff})", w.target.unwrap_or(0));
@@ -1349,7 +1530,9 @@ pub fn update(w: &mut World) {
     }
     if st == 1 && w.target.is_none() && !super::event::active(w) {
         let t = auto_target(w);
-        if t.is_some() {
+        if let Some(id) = t.filter(|_| closest_on(w)) {
+            closest_attack(w, id, "our target gone");
+        } else if t.is_some() {
             set(w, t);
         }
     }
@@ -1489,6 +1672,38 @@ pub fn locked_step(pos: Vec3, target: Vec3, fwd: f32, side: f32, dist: f32) -> V
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn closest_candidates() {
+        let side = |c: u32| c == 7;
+        assert!(super::ours(7, side, false, 0), "claimed by our side");
+        assert!(!super::ours(9, side, true, 1), "another's claim, even engaged and facing us");
+        assert!(super::ours(0, side, true, 0), "unclaimed, facing us");
+        assert!(super::ours(0, side, false, 1), "unclaimed and engaged (a pull where nothing is claimed)");
+        assert!(!super::ours(0, side, false, 0), "unclaimed and idle");
+    }
+
+    #[test]
+    fn closest_front_first() {
+        use glam::Vec3;
+        let me = Vec3::ZERO;
+        let east = 0.0;
+        let at = |x: f32, z: f32| Vec3::new(x, 0.0, z);
+        // a pack in front, a far one beyond it, a near one behind: the nearest of the pack
+        let mobs = [(1, at(3.0, 1.0)), (2, at(2.0, -0.5)), (3, at(15.0, 0.0)), (4, at(-1.0, 0.0))];
+        assert_eq!(super::front_first(me, east, mobs.into_iter()), Some(2));
+        // only behind: still one
+        assert_eq!(super::front_first(me, east, [(4, at(-1.0, 0.0)), (5, at(-6.0, 2.0))].into_iter()), Some(4));
+        // facing west, the west one is in front
+        let west = std::f32::consts::PI;
+        assert_eq!(super::front_first(me, west, [(1, at(1.0, 0.0)), (6, at(-5.0, 0.0))].into_iter()), Some(6));
+        // dir 64 (a quarter turn) faces -z, as dir_from_forward measures it
+        let quarter = std::f32::consts::FRAC_PI_2;
+        assert_eq!(super::front_first(me, quarter, [(7, at(0.0, 2.0)), (8, at(0.0, -4.0))].into_iter()), Some(8));
+        assert_eq!(super::super::dir_from_forward(Vec3::new(0.0, 0.0, -1.0)), 64);
+        // out of range: none
+        assert_eq!(super::front_first(me, east, [(9, at(31.0, 0.0))].into_iter()), None);
+    }
+
     use super::*;
 
     const BASE: u32 = 0xe040_40d0;

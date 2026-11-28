@@ -14,6 +14,8 @@ pub const RISE_RATE: f32 = 0.1066667;
 /// The eye rests 3..6 from the look; beyond 6 it is reeled in by D (d - 6) 0.012 a tick.
 const REST_NEAR: f32 = 3.0;
 const REST_FAR: f32 = 6.0;
+/// (A)'s gap: the eye 0.5 in front of what the look -> eye ray hits.
+const WALL_GAP: f32 = 0.5;
 /// Ticks of manual hold after camera input (DAT_1044445c).
 const MANUAL_HOLD: i32 = 10;
 /// Home: ticks of easing (8 retail frames of 2 ticks) toward 3 behind the player.
@@ -630,7 +632,7 @@ fn tick(w: &mut World, target: Vec3, player: Vec3, facing: Vec3, chase: bool, in
                 && h.length() > 1.0
                 && h.length() < REST_NEAR * k
                 && ground.is_some_and(|g| g.cam_ray(c.look, c.look + h.normalize() * 3.1 * k).is_some()));
-            if spring(c, d_vec, push, k) {
+            if spring(c, d_vec, push, k, ground) {
                 st.hold = MANUAL_HOLD;
             }
         }
@@ -655,7 +657,7 @@ fn tick(w: &mut World, target: Vec3, player: Vec3, facing: Vec3, chase: bool, in
         };
         match hit {
             Some(Some(_)) if st.hold == 0 && st.path_n >= 4 => (st.path_mode, st.hold) = (true, 0),
-            Some(Some(h)) => c.eye = h + (h - c.eye).normalize_or_zero() * 0.5,
+            Some(Some(h)) => c.eye = h + (h - c.eye).normalize_or_zero() * WALL_GAP,
             // FUN_1001e320: a point 0.1 or more from the newest.
             Some(None) if (c.look - st.path[0]).length() >= 0.1 => {
                 st.path = [c.look, st.path[0], st.path[1], st.path[2]];
@@ -772,7 +774,9 @@ fn side_bar(g: &Ground, eye: Vec3, look: Vec3) -> Vec3 {
 /// The distance spring, one tick, `d_vec` = look - eye before the chase: reeled in beyond 6 (past 100 by half the
 /// excess), pushed out below 3 and to 3 horizontally unless `push` is off; both rests scaled by `k` (the wheel's
 /// distance, ours). True when it pushed (that holds like manual input).
-fn spring(c: &mut LockCam, d_vec: Vec3, push: bool, k: f32) -> bool {
+/// Ours, not retail: a push stops 0.5 short of a wall behind the eye, where (A) puts an eye past it. Retail's eye crept
+/// into the wall over a few ticks and was snapped back by (A), so with a wall nearer than 3 the view bounced in and out.
+fn spring(c: &mut LockCam, d_vec: Vec3, push: bool, k: f32, ground: Option<&Ground>) -> bool {
     let (near, far) = (REST_NEAR * k, REST_FAR * k);
     let d = d_vec.length();
     if d > 100.0 {
@@ -784,6 +788,7 @@ fn spring(c: &mut LockCam, d_vec: Vec3, push: bool, k: f32) -> bool {
     if !push {
         return pushed;
     }
+    let before = c.eye;
     if d < near {
         c.eye -= d_vec * (near - d) * 0.125;
         pushed = true;
@@ -792,6 +797,14 @@ fn spring(c: &mut LockCam, d_vec: Vec3, push: bool, k: f32) -> bool {
     if h.length() < near {
         c.eye += h.normalize_or(Vec3::Z) * (near - h.length()) * 0.125;
         pushed = true;
+    }
+    if pushed && let Some(g) = ground {
+        let dir = (c.eye - c.look).normalize_or_zero();
+        if let Some(hit) = g.cam_ray(c.look, c.eye + dir * WALL_GAP) {
+            // Never in from where it was: pulling in is (A)'s.
+            let stop = hit - dir * WALL_GAP;
+            c.eye = if (stop - c.look).length() > (before - c.look).length() { stop } else { before };
+        }
     }
     pushed
 }
@@ -1018,11 +1031,45 @@ mod tests {
             let mut c = LockCam { eye: Vec3::new(0.0, 0.0, -start), look: Vec3::ZERO };
             for _ in 0..2000 {
                 let d = c.look - c.eye;
-                spring(&mut c, d, true, 1.0);
+                spring(&mut c, d, true, 1.0, None);
             }
             let d = (c.eye - c.look).length();
             assert!((d - rest).abs() < 0.02, "{start} -> {d}");
             assert!(c.eye.x.abs() < 1e-4 && c.eye.z < 0.0);
         }
+    }
+
+    /// A wall 2 behind the eye, nearer than the spring's 3: the eye settles 0.5 in front of it and stays. Without the
+    /// stop (retail's spring) it creeps into the wall and (A) snaps it back, over and over.
+    #[test]
+    fn spring_rests_in_front_of_a_wall() {
+        let wall = super::super::ground::tests::ground(&[(
+            [
+                Vec3::new(-10.0, -10.0, -2.0),
+                Vec3::new(10.0, -10.0, -2.0),
+                Vec3::new(10.0, 10.0, -2.0),
+                Vec3::new(-10.0, 10.0, -2.0),
+            ],
+            Vec3::Z,
+        )]);
+        let run = |stop: bool| {
+            let mut c = LockCam { eye: Vec3::new(0.0, 0.0, -1.0), look: Vec3::ZERO };
+            let mut ds = Vec::new();
+            for _ in 0..120 {
+                let d = c.look - c.eye;
+                spring(&mut c, d, true, 1.0, stop.then_some(&wall));
+                // (A), as tick does it.
+                if let Some(h) = wall.cam_ray(c.look, c.eye) {
+                    c.eye = h + (h - c.eye).normalize_or_zero() * WALL_GAP;
+                }
+                ds.push((c.eye - c.look).length());
+            }
+            ds
+        };
+        let ds = run(true);
+        assert!(ds[60..].iter().all(|d| (d - 1.5).abs() < 1e-3), "{:?}", &ds[60..70]);
+        let old = run(false);
+        let (lo, hi) = old[60..].iter().fold((f32::MAX, f32::MIN), |(a, b), &d| (a.min(d), b.max(d)));
+        assert!(hi - lo > 0.3, "retail's spring saws: {lo}..{hi}");
     }
 }

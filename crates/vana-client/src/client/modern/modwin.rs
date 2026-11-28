@@ -32,6 +32,8 @@ pub enum Click {
     /// A canvas drag: element, phase (0 start, 1 move, 2 release), where.
     /// A canvas drag: element, phase, where in it, and whether a window or panel is under the pointer.
     CanvasDrag(usize, u8, f32, f32, bool),
+    /// A right-click on the window off its elements, in window pixels from its top left.
+    Context(f32, f32),
     /// Where a canvas is on screen this frame, in window pixels: its origin, the part of it shown (min, max), the
     /// pixels per point, and whether it is on top under the pointer. The client keeps it so a HUD drag let go over it
     /// drops there (lua::window_click; it is no click on the window).
@@ -135,8 +137,20 @@ fn canvas(
                 }
                 p.text(at(*q), anchor, text, font, rgba(*colour));
             }
-            Cmd::Tip { r: q, title, text } => {
-                m.tip(ui, Rect::from_min_size(at([q[0], q[1]]), vec2(q[2], q[3])), title, text);
+            Cmd::Tip { r: q, title, text, icon } => {
+                let r = Rect::from_min_size(at([q[0], q[1]]), vec2(q[2], q[3]));
+                match icon {
+                    // With an icon: as a list row's tooltip (the icon beside the title).
+                    Some(i) => {
+                        if let Some(p) = ctx.input(|inp| inp.pointer.hover_pos())
+                            && r.contains(p)
+                            && ctx.layer_id_at(p) == Some(ui.layer_id())
+                        {
+                            icon_tip(m, ctx, gu, world, p, Some(*i), title, text);
+                        }
+                    }
+                    None => m.tip(ui, r, title, text),
+                }
             }
             Cmd::Icon { at: q, size, icon, tint } => {
                 if let Some((t, uv)) = icon_tex(m, ctx, gu, world, *icon) {
@@ -181,6 +195,7 @@ impl Click {
                 (ev, se)
             }
             Click::Fold(i, line) => win.fold(i, line),
+            Click::Context(x, y) => win.context(x, y),
             // The client takes these (lua::window_click).
             Click::Pick(_) | Click::CanvasAt(..) => (Vec::new(), Vec::new()),
         }
@@ -242,6 +257,8 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         {
             super::super::lua::close_popup_by(w, &mod_id, &win.id);
         }
+        let mut clicks = clicks;
+        context_click(p.ctx, shown, &mut clicks);
         for c in clicks {
             super::super::lua::window_click(w, &mod_id, &win.id, c);
         }
@@ -252,6 +269,52 @@ pub fn draw(p: &mut Panels, w: &mut World) {
         for c in clicks {
             super::super::voicechat::click(w, which, c);
         }
+    }
+}
+
+/// A tooltip by the pointer with an icon: the icon and the title on a line, the text under them (list rows, canvas
+/// and HUD tips that name an icon).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn icon_tip(
+    m: &super::Modern,
+    ctx: &egui::Context,
+    gu: Option<&super::super::game_ui::GameUi>,
+    world: Option<&super::super::World>,
+    at: egui::Pos2,
+    icon: Option<model::Icon>,
+    title: &str,
+    text: &str,
+) {
+    let tex = icon.and_then(|i| icon_tex(m, ctx, gu, world, i));
+    m.tip_framed(ctx, at, "window_tooltip", 320.0, |ui| {
+        ui.horizontal(|ui| {
+            if let Some((tex, uv)) = tex {
+                let (r, _) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::hover());
+                ui.painter().image(tex, r, uv, Color32::WHITE);
+            }
+            ui.label(
+                RichText::new(title)
+                    .size(m.theme.ui)
+                    .family(egui::FontFamily::Name(super::STRONG.into()))
+                    .color(m.theme.color("gold")),
+            );
+        });
+        if !text.is_empty() {
+            super::gametext::label(ui, m, text, m.theme.small, m.theme.color("text"));
+        }
+    });
+}
+
+/// A right-click on window `r` that none of its elements took (a canvas's right-click is its own): its 'context', in
+/// window pixels from its top left.
+pub(super) fn context_click(ctx: &egui::Context, r: Option<Rect>, clicks: &mut Vec<Click>) {
+    let Some(r) = r else { return };
+    let Some(q) = ctx.input(|i| if i.pointer.secondary_clicked() { i.pointer.interact_pos() } else { None }) else {
+        return;
+    };
+    if r.contains(q) && !clicks.iter().any(|c| matches!(c, Click::Canvas(_, _, _, true))) {
+        let ppp = ctx.pixels_per_point();
+        clicks.push(Click::Context((q.x - r.min.x) * ppp, (q.y - r.min.y) * ppp));
     }
 }
 
@@ -373,6 +436,8 @@ pub(super) fn body(
     let hidden = win.hidden();
     // The cursor's element scrolls into view when it comes there, not every frame: the wheel can leave it.
     let came = win.moved("element", win.focus.then_some(win.at));
+    // A floated canvas: its bottom and the width it takes from what stands beside it.
+    let mut float: Option<(f32, f32)> = None;
     for (i, e) in win.elems.iter().enumerate() {
         if hidden[i] {
             continue;
@@ -380,7 +445,7 @@ pub(super) fn body(
         let here = win.focus && i == win.at;
         let follow = here && came;
         let top = ui.cursor().min.y;
-        match e {
+        let mut draw = |ui: &mut egui::Ui| match e {
             // The Timers' panels draw their sections, the minimap's its map (extras.rs).
             Elem::Timers { .. } | Elem::Map { .. } => {}
             Elem::Lines { lines, .. } => {
@@ -535,6 +600,12 @@ pub(super) fn body(
                     (pointed_item, gu, world, ctx.input(|i| i.pointer.hover_pos()))
                 {
                     super::items::tip(ctx, m, gu, w, at, item.id, item.ext(w));
+                } else if let (Some(t), Some(at)) = (
+                    pointed.and_then(|k| rows.get(k)).and_then(|r| r.hover.as_ref()),
+                    ctx.input(|i| i.pointer.hover_pos()),
+                ) && ctx.layer_id_at(at) == Some(ui.layer_id())
+                {
+                    icon_tip(m, ctx, gu, world, at, t.icon, &t.title, &t.text);
                 }
                 ui.add_space(6.0);
             }
@@ -588,6 +659,15 @@ pub(super) fn body(
                     let x = r.min.x + if listening { 16.0 } else { 10.0 };
                     ui.painter().text(pos2(x, r.center().y), Align2::LEFT_CENTER, shown, small.clone(), c);
                     r
+                });
+                if ui.interact(field, ui.scope_id().with(("mod input", &win.id, i)), Sense::click()).clicked() {
+                    clicks.push(Click::Button(i, 0));
+                }
+            }
+            Elem::Input { label, text, lines, .. } if *lines > 1 => {
+                let caret = (here && win.edit).then_some(win.caret);
+                let (field, _) = kit::setting(ui, m, label, here, false, follow, |ui| {
+                    kit::field_lines(ui, m, text, caret, ui.available_width(), small.clone(), *lines)
                 });
                 if ui.interact(field, ui.scope_id().with(("mod input", &win.id, i)), Sense::click()).clicked() {
                     clicks.push(Click::Button(i, 0));
@@ -787,6 +867,20 @@ pub(super) fn body(
                 }
                 ui.add_space(4.0);
             }
+        };
+        if let Elem::Canvas { float: true, w: cw, h: ch, .. } = e {
+            // At the right edge, beside what follows: the elements after it narrow until they pass its bottom.
+            let r = Rect::from_min_size(pos2(ui.max_rect().max.x - cw, top), vec2(*cw, *ch));
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
+            draw(&mut child);
+            float = Some((r.max.y + 6.0, cw + 12.0));
+            continue;
+        } else if let Some((_, fw)) = float.filter(|f| top < f.0) {
+            let mut beside = ui.available_rect_before_wrap();
+            beside.max.x -= fw;
+            ui.scope_builder(egui::UiBuilder::new().max_rect(beside), |ui| draw(ui));
+        } else {
+            draw(ui);
         }
         // The tip of the element under the pointer.
         let span = Rect::from_min_max(pos2(ui.max_rect().min.x, top), pos2(ui.max_rect().max.x, ui.cursor().min.y));
@@ -795,6 +889,12 @@ pub(super) fn body(
         {
             hover_tip = Some(t);
         }
+    }
+    // A floated canvas taller than what stands beside it: the body reaches its bottom.
+    if let Some((bottom, _)) = float
+        && bottom > ui.cursor().min.y
+    {
+        ui.add_space(bottom - ui.cursor().min.y);
     }
     // The last input picks the help: after a key the cursor's, after the pointer moves what it rests on.
     let keys_id = egui::Id::unique(("mod help by keys", pid, &win.id));

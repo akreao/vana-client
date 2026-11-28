@@ -82,6 +82,13 @@ pub(super) fn read_file(path: &Path, version: u32) -> Option<Vec<u8>> {
 }
 
 pub(super) fn write_file(path: &Path, version: u32, payload: &[u8]) {
+    if let Err(e) = try_write_file(path, version, payload) {
+        log::warn!("macro file {}: {e}", path.display());
+    }
+}
+
+/// As write_file, the failure returned (the macro import reports it).
+fn try_write_file(path: &Path, version: u32, payload: &[u8]) -> std::io::Result<()> {
     let mut out = Vec::with_capacity(0x18 + payload.len());
     out.extend_from_slice(&version.to_le_bytes());
     out.extend_from_slice(&[0; 4]);
@@ -90,9 +97,18 @@ pub(super) fn write_file(path: &Path, version: u32, payload: &[u8]) {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    if let Err(e) = std::fs::write(path, out) {
-        log::warn!("macro file {}: {e}", path.display());
+    std::fs::write(path, out)
+}
+
+/// read_file for a file in `dir`, a folder a mod named: links resolved, and one leading out of the folder not read.
+fn read_within(dir: &Path, name: &str, version: u32) -> Option<Vec<u8>> {
+    let root = dir.canonicalize().ok()?;
+    let path = dir.join(name).canonicalize().ok()?;
+    if !path.starts_with(&root) {
+        log::warn!("macro import: {name} leads out of {}; not read", dir.display());
+        return None;
     }
+    read_file(&path, version)
 }
 
 /// FUN_101a2a10: "Book%02d" (group 10 0x6c), the names every book has before the ttl files are read.
@@ -211,6 +227,13 @@ impl Order {
         let id = self.list.remove(from);
         self.list.insert(to, id);
     }
+}
+
+/// What import_books did: sets written, /lua lines left out, and where the replaced files went.
+pub struct Imported {
+    pub sets: usize,
+    pub lua_lines: usize,
+    pub backup: Option<PathBuf>,
 }
 
 pub struct Macros {
@@ -520,10 +543,115 @@ impl Macros {
 
     /// FUN_101a27e0: mcr.ttl and mcr_2.ttl (0x140 bytes each).
     pub fn save_titles(&self) {
+        if let Err(e) = self.try_save_titles() {
+            log::warn!("macro titles: {e}");
+        }
+    }
+
+    /// Both title files written, the first failure returned (one failing still writes the other).
+    fn try_save_titles(&self) -> std::io::Result<()> {
+        let mut first = Ok(());
         for (k, name) in ["mcr.ttl", "mcr_2.ttl"].iter().enumerate() {
             let p: Vec<u8> = self.titles[k * 20..k * 20 + 20].iter().flatten().copied().collect();
-            write_file(&self.dir.join(name), 1, &p);
+            if let Err(e) = try_write_file(&self.dir.join(name), 1, &p)
+                && first.is_ok()
+            {
+                first = Err(e);
+            }
         }
+        first
+    }
+
+    /// Copies `books` (0-based) of another USER/<content id> folder over this character's: their ten sets and titles,
+    /// read as the game reads them (a bad record cleared), /lua lines left out. The files replaced go to
+    /// backup/<unix seconds>/ first.
+    pub fn import_books(&mut self, src: &Path, books: &[usize]) -> std::io::Result<Imported> {
+        // This character's own folder onto itself would only strip its /lua lines (links resolved, so another path to
+        // it is the same).
+        let same = |a: &Path, b: &Path| a.canonicalize().ok().zip(b.canonicalize().ok()).is_some_and(|(a, b)| a == b);
+        if same(src, &self.dir) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "that is this character's own macro folder",
+            ));
+        }
+        self.save_set();
+        let mut titles: Vec<[u8; 16]> = (0..BOOKS).map(default_name).collect();
+        for (k, name) in ["mcr.ttl", "mcr_2.ttl"].iter().enumerate() {
+            if let Some(p) = read_within(src, name, 1).filter(|p| p.len() == 0x140) {
+                for i in 0..20 {
+                    titles[k * 20 + i].copy_from_slice(&p[16 * i..16 * i + 16]);
+                }
+            }
+        }
+        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let backup = self.dir.join("backup").join(secs.to_string());
+        let names = |n: usize| if n == 0 { "mcr.dat".to_string() } else { format!("mcr{n}.dat") };
+        let mut out = Imported { sets: 0, lua_lines: 0, backup: None };
+        let books: Vec<usize> = books.iter().copied().filter(|&b| b < BOOKS).collect();
+        let replaced: Vec<String> = books
+            .iter()
+            .flat_map(|&b| (0..10).map(move |s| names(b * 10 + s)))
+            .chain(["mcr.ttl".into(), "mcr_2.ttl".into()])
+            .collect();
+        for name in &replaced {
+            let from = self.dir.join(name);
+            if from.is_file() {
+                std::fs::create_dir_all(&backup)?;
+                std::fs::copy(&from, backup.join(name))?;
+                out.backup = Some(backup.clone());
+            }
+        }
+        let written = self.write_books(src, &books, &titles, &mut out);
+        if books.contains(&self.book) {
+            self.load_set();
+        }
+        match written {
+            Ok(()) => Ok(out),
+            Err(e) => Err(std::io::Error::new(
+                e.kind(),
+                match &out.backup {
+                    Some(b) => format!("{e}: only part was copied; the books replaced are in {}", b.display()),
+                    None => format!("{e}: only part was copied"),
+                },
+            )),
+        }
+    }
+
+    /// import_books' writes: each set, then the titles; the first that fails stops it.
+    fn write_books(
+        &mut self,
+        src: &Path,
+        books: &[usize],
+        titles: &[[u8; 16]],
+        out: &mut Imported,
+    ) -> std::io::Result<()> {
+        let names = |n: usize| if n == 0 { "mcr.dat".to_string() } else { format!("mcr{n}.dat") };
+        for &b in books {
+            for s in 0..10 {
+                let name = names(b * 10 + s);
+                let mut recs: Vec<Macro> = match read_within(src, &name, 1) {
+                    Some(p) if p.len() == SET_PAYLOAD => p.chunks(RECORD).map(Macro::parse).collect(),
+                    _ => vec![Macro::default(); 20],
+                };
+                for m in &mut recs {
+                    for k in 0..6 {
+                        if super::lua::lua_line(&crate::dat::font::decode_sjis(m.line(k))) {
+                            m.set_line(k, b"");
+                            out.lua_lines += 1;
+                        }
+                    }
+                }
+                let mut p = Vec::with_capacity(SET_PAYLOAD);
+                for m in &recs {
+                    m.write(&mut p);
+                }
+                try_write_file(&self.dir.join(&name), 1, &p)?;
+                out.sets += 1;
+            }
+            self.titles[b] = if titles[b][0] == 0 { default_name(b) } else { titles[b] };
+        }
+        self.try_save_titles()
     }
 
     /// The book's title, "Book%02d" when empty (group 10 0x6c).
@@ -759,6 +887,90 @@ mod tests {
         assert!(held >= started + Duration::from_millis(5));
         m.hold_wait(false);
         assert_eq!(m.run.as_ref().unwrap().wait.unwrap().0, held);
+        let _ = std::fs::remove_dir_all(&game);
+    }
+
+    /// Retail's books over ours: the chosen ones only, titles too, /lua lines left out, the old files backed up.
+    #[test]
+    fn import_books_from_another_folder() {
+        let game = scratch("imp");
+        let src = game.join("retail/USER/1234");
+        let mut set = Vec::new();
+        let mut a = Macro::default();
+        a.title[..4].copy_from_slice(b"Cure");
+        a.set_line(0, b"/ma \"Cure\" <t>");
+        a.set_line(1, b"/lua r hotbar");
+        a.write(&mut set);
+        for _ in 1..20 {
+            Macro::default().write(&mut set);
+        }
+        write_file(&src.join("mcr10.dat"), 1, &set);
+        let mut t = vec![0u8; 0x140];
+        t[16..20].copy_from_slice(b"WHM!");
+        write_file(&src.join("mcr.ttl"), 1, &t);
+        let mut m = Macros::load(&game, 7, Box::new(|_| None));
+        m.set_title(0, b"Mine");
+        m.switch(2, 0);
+        m.save(false);
+        let r = m.import_books(&src, &[1]).unwrap();
+        assert_eq!((r.sets, r.lua_lines), (10, 1));
+        assert!(r.backup.as_ref().is_some_and(|b| b.join("mcr.ttl").is_file()));
+        assert_eq!(m.book_title(1), "WHM!");
+        assert_eq!(m.book_title(0), "Book01");
+        m.switch(1, 0);
+        assert_eq!(
+            (m.recs[0].title(), m.recs[0].line(0), m.recs[0].line(1)),
+            ("Cure".into(), &b"/ma \"Cure\" <t>"[..], &b""[..])
+        );
+        // Book 1 (ours, not imported) keeps its macros.
+        m.switch(0, 0);
+        assert_eq!(m.recs[0].title(), "Mine");
+        // Our own folder onto itself is refused, by its path or another one to it.
+        let own = m.dir().to_path_buf();
+        assert!(m.import_books(&own, &[0]).is_err());
+        assert!(m.import_books(&own.join("..").join(own.file_name().unwrap()), &[0]).is_err());
+        assert_eq!(m.recs[0].title(), "Mine");
+        let _ = std::fs::remove_dir_all(&game);
+    }
+
+    /// A set the import cannot write fails it (no "copied" for a half-done import), naming the backup; a source file
+    /// that is a link is not read.
+    #[test]
+    fn import_books_failures() {
+        let game = scratch("impfail");
+        let src = game.join("retail/USER/1234");
+        let mut set = Vec::new();
+        let mut a = Macro::default();
+        a.title[..4].copy_from_slice(b"Cure");
+        a.write(&mut set);
+        for _ in 1..20 {
+            Macro::default().write(&mut set);
+        }
+        write_file(&src.join("mcr10.dat"), 1, &set);
+        let mut m = Macros::load(&game, 7, Box::new(|_| None));
+        m.set_title(1, b"Mine");
+        m.save(false);
+        // mcr11.dat (book 2, set 2) a folder: that set cannot be written.
+        std::fs::create_dir_all(m.dir().join("mcr11.dat")).unwrap();
+        let Err(e) = m.import_books(&src, &[1]) else { panic!("a set that cannot be written was not reported") };
+        let e = e.to_string();
+        assert!(e.contains("only part was copied") && e.contains("backup"), "{e}");
+        std::fs::remove_dir_all(m.dir().join("mcr11.dat")).unwrap();
+        #[cfg(unix)]
+        {
+            let outside = game.join("outside.ttl");
+            let mut t = vec![0u8; 0x140];
+            t[16..20].copy_from_slice(b"LINK");
+            write_file(&outside, 1, &t);
+            std::os::unix::fs::symlink(&outside, src.join("mcr.ttl")).unwrap();
+            // A link inside the folder is read, as the preview reads it.
+            std::fs::rename(src.join("mcr10.dat"), src.join("set.bin")).unwrap();
+            std::os::unix::fs::symlink(src.join("set.bin"), src.join("mcr10.dat")).unwrap();
+            assert!(m.import_books(&src, &[1]).is_ok());
+            assert_eq!(m.book_title(1), "Book02", "a title file linked out of the folder was read");
+            m.switch(1, 0);
+            assert_eq!(m.recs[0].title(), "Cure", "a set linked inside the folder was not read");
+        }
         let _ = std::fs::remove_dir_all(&game);
     }
 }

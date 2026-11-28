@@ -46,6 +46,8 @@ pub(in crate::client) enum Action {
         line: Option<usize>,
         text: String,
     },
+    /// Books (0-based) of another USER/<content id> folder copied over this character's.
+    MacroImport(std::path::PathBuf, Vec<usize>),
     Talk(u32),
     Target(Option<u32>),
     Lock(bool),
@@ -321,6 +323,20 @@ pub(super) fn apply(w: &mut World, gu: Option<&GameUi>, a: Action) {
                 }
             }
         }
+        Action::MacroImport(from, books) => match w.macros.as_mut().map(|m| m.import_books(&from, &books)) {
+            Some(Ok(r)) => {
+                let mut line = format!("Macros: {} book(s) copied from {}.", books.len(), from.display());
+                if r.lua_lines > 0 {
+                    line.push_str(&format!(" {} /lua line(s) left out: those are yours to write.", r.lua_lines));
+                }
+                if let Some(b) = r.backup {
+                    line.push_str(&format!(" The books they replaced are in {}.", b.display()));
+                }
+                w.chat.push(line);
+            }
+            Some(Err(e)) => w.chat.push_colour(format!("actions.macro_import: {e}"), super::ERROR),
+            None => w.chat.push_colour("actions.macro_import: the macros are not loaded yet".into(), super::ERROR),
+        },
         Action::Choose(k) => w.lua.choose = Some((k, std::time::Instant::now())),
         Action::Talk(id) => {
             event::talk(w, id);
@@ -771,6 +787,20 @@ pub(super) fn install(lua: &Lua, g: &Table) -> mlua::Result<()> {
                 return Err(mlua::Error::runtime("actions.macro_edit: a /lua line is the player's to write"));
             }
             queue(lua, Action::MacroEdit { n: slot(&row, n)?, line, text })
+        })?,
+    )?;
+    t.set(
+        "macro_import",
+        lua.create_function(|lua, (folder, books): (String, Option<Vec<usize>>)| {
+            let from = super::runtime::outside(lua, &folder)?;
+            if !from.is_dir() {
+                return Err(mlua::Error::runtime(format!("{folder:?}: not a folder")));
+            }
+            let books = books.unwrap_or_else(|| (1..=40).collect());
+            if books.iter().any(|b| !(1..=40).contains(b)) {
+                return Err(mlua::Error::runtime("a macro book is 1..40"));
+            }
+            queue(lua, Action::MacroImport(from, books.into_iter().map(|b| b - 1).collect()))
         })?,
     )?;
     t.set("scan", lua.create_function(|lua, ()| queue(lua, Action::Scan))?)?;

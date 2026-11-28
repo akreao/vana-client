@@ -464,6 +464,7 @@ pub(super) fn install(
     ui.set(
         "window",
         lua.create_function(|lua, (id, spec): (String, Table)| {
+            not_client_ask(&id)?;
             let spec = unhooked(lua, &spec)?;
             let st = state(lua);
             let mut s = st.borrow_mut();
@@ -528,6 +529,7 @@ pub(super) fn install(
     ui.set(
         "update",
         lua.create_function(|lua, (id, eid, fields): (String, String, Table)| {
+            not_client_ask(&id)?;
             let fields = unhooked(lua, &fields)?;
             let st = state(lua);
             let mut s = st.borrow_mut();
@@ -696,20 +698,32 @@ pub(super) fn install(
     )?;
     ui.set(
         "prompt",
-        lua.create_function(|lua, (text, a, b): (String, Value, Value)| {
+        lua.create_function(|lua, (text, a, b, c): (String, Value, Value, Value)| {
             use super::window::{Elem, Meta};
-            // prompt(text, handler) or prompt(text, buttons, handler).
+            // prompt(text, handler), prompt(text, buttons, handler) or prompt(text, buttons, handler, at).
             let (items, handler) = match (a, b) {
                 (Value::Function(f), _) => (None, f),
                 (items, Value::Function(f)) => (lua.unpack::<Option<Vec<String>>>(items)?, f),
-                _ => return Err(mlua::Error::runtime("ui.prompt(text, [buttons], handler)")),
+                _ => return Err(mlua::Error::runtime("ui.prompt(text, [buttons], handler, [at])")),
+            };
+            // `at`: "pointer", or {x, y, above} in window pixels as ui.open takes; none: the centre.
+            let at = match c {
+                Value::Nil => None,
+                Value::String(s) if s.to_str()? == "pointer" => {
+                    let (x, y) = super::input::cursor(lua);
+                    Some((x, y, false))
+                }
+                Value::Table(t) => {
+                    Some((t.get::<f32>("x")?, t.get::<f32>("y")?, t.get::<Option<bool>>("above")?.unwrap_or(false)))
+                }
+                _ => return Err(mlua::Error::runtime("ui.prompt's at is \"pointer\" or {x, y, above}")),
             };
             let items = items.unwrap_or_else(|| vec!["Yes".into(), "No".into()]);
             let elems = vec![
                 Elem::Text { id: String::new(), text, dim: false, colour: None },
                 Elem::Buttons { id: "answer".into(), label: String::new(), items, marked: None },
             ];
-            popup(lua, "__prompt", elems.into_iter().map(|e| (e, Meta::default())).collect(), false, handler)
+            popup(lua, "__prompt", elems.into_iter().map(|e| (e, Meta::default())).collect(), false, at, handler)
         })?,
     )?;
     ui.set(
@@ -722,7 +736,7 @@ pub(super) fn install(
                 Elem::List { id: "item".into(), rows, columns: Vec::new(), at: 0, top: 0, height },
                 Meta::default(),
             )];
-            popup(lua, "__menu", elems, true, handler)
+            popup(lua, "__menu", elems, true, None, handler)
         })?,
     )?;
     ui.set(
@@ -732,6 +746,7 @@ pub(super) fn install(
     ui.set(
         "opacity",
         lua.create_function(|lua, (id, opacity): (String, Option<f32>)| {
+            not_client_ask(&id)?;
             set_opacity(lua, &format!("mod:{}:{id}", mod_id(lua)?), opacity);
             Ok(())
         })?,
@@ -739,6 +754,7 @@ pub(super) fn install(
     ui.set(
         "on",
         lua.create_function(|lua, (id, func): (String, Function)| {
+            not_client_ask(&id)?;
             let st = state(lua);
             let key = lua.create_registry_value(func)?;
             let mut s = st.borrow_mut();
@@ -2200,12 +2216,33 @@ fn player(lua: &Lua) -> mlua::Result<Table> {
     Ok(t)
 }
 
+/// The client's own question in a mod's window list (fs.open_folder): the mod cannot change it or take its answer.
+pub(super) const CLIENT_ASK: &str = "__client_ask";
+
+fn not_client_ask(id: &str) -> mlua::Result<()> {
+    if id == CLIENT_ASK {
+        return Err(mlua::Error::runtime(format!("{id:?} is the client's window")));
+    }
+    Ok(())
+}
+
+/// A modal question from the client (not the mod): `handler` gets the button (1-based) or nil when it is closed.
+pub(super) fn prompt_window(lua: &Lua, text: String, items: Vec<String>, handler: Function) -> mlua::Result<()> {
+    use super::window::{Elem, Meta};
+    let elems = vec![
+        Elem::Text { id: String::new(), text, dim: false, colour: None },
+        Elem::Buttons { id: "answer".into(), label: String::new(), items, marked: None },
+    ];
+    popup(lua, CLIENT_ASK, elems.into_iter().map(|e| (e, Meta::default())).collect(), false, None, handler)
+}
+
 /// ui.prompt / ui.menu: a modal window whose answer (1-based, or nil when it is closed) goes to `handler`.
 fn popup(
     lua: &Lua,
     id: &str,
     elems: Vec<(super::window::Elem, super::window::Meta)>,
     at_pointer: bool,
+    at: Option<(f32, f32, bool)>,
     handler: Function,
 ) -> mlua::Result<()> {
     let close = lua.create_function(|lua, id: String| {
@@ -2227,7 +2264,8 @@ fn popup(
     (w.modal, w.popup, w.open) = (true, at_pointer, true);
     // The window it was opened from gets the focus back when it closes.
     w.back = s.windows.iter().find(|x| x.focus && x.open).map(|x| x.id.clone());
-    w.anchor = at_pointer.then_some(cursor);
+    w.anchor = at_pointer.then_some(cursor).or(at.map(|a| (a.0, a.1)));
+    w.above = at.is_some_and(|a| a.2);
     w.settle();
     s.windows.push(w.into());
     s.focus_request = Some(id.to_string());
@@ -2280,6 +2318,13 @@ fn cmds(v: Option<Table>) -> mlua::Result<Vec<super::window::Cmd>> {
                     r: [n("x")?, n("y")?, n("w")?, n("h")?],
                     title: c.get::<Option<String>>("title")?.unwrap_or_default(),
                     text: c.get::<Option<String>>("text")?.unwrap_or_default(),
+                    icon: match c.get::<Option<Table>>("icon")? {
+                        Some(i) => Some(super::window::Icon::of(
+                            i.get::<Option<String>>("kind")?.as_deref(),
+                            i.get::<u16>("id")?,
+                        )),
+                        None => None,
+                    },
                 },
                 "icon" => Cmd::Icon {
                     at: [n("x")?, n("y")?],
@@ -2389,6 +2434,21 @@ fn rows(v: Option<Table>) -> mlua::Result<Vec<super::window::Row>> {
                         tip: t.get::<Option<String>>("tip")?.unwrap_or_default(),
                         cell_items,
                         cell_tags,
+                        // `hover`: {title, text, icon = {kind, id}}, the row's tooltip.
+                        hover: match t.get::<Option<Table>>("hover")? {
+                            Some(h) => Some(super::window::RowTip {
+                                title: h.get::<Option<String>>("title")?.unwrap_or_default(),
+                                text: h.get::<Option<String>>("text")?.unwrap_or_default(),
+                                icon: match h.get::<Option<Table>>("icon")? {
+                                    Some(i) => Some(super::window::Icon::of(
+                                        i.get::<Option<String>>("kind")?.as_deref(),
+                                        i.get::<u16>("id")?,
+                                    )),
+                                    None => None,
+                                },
+                            }),
+                            None => None,
+                        },
                     }
                 }
                 other => Row::text(&cell(other)),
@@ -2565,6 +2625,13 @@ fn elem_only(t: &Table) -> mlua::Result<super::window::Elem> {
             w: t.get::<Option<f32>>("w")?.unwrap_or(200.0).max(1.0),
             h: t.get::<Option<f32>>("h")?.unwrap_or(100.0).max(1.0),
             cmds: cmds(t.get("draw")?)?,
+            float: match t.get::<Option<String>>("float")?.as_deref() {
+                None => false,
+                Some("right") => true,
+                Some(other) => {
+                    return Err(mlua::Error::runtime(format!("a canvas floats \"right\" ({other:?} given)")));
+                }
+            },
         },
         "buttons" => Elem::Buttons {
             id: id()?,
@@ -2602,6 +2669,16 @@ fn elem_only(t: &Table) -> mlua::Result<super::window::Elem> {
             max: t.get::<Option<usize>>("max")?.unwrap_or(64).clamp(1, 1024),
             filter: t.get::<Option<bool>>("filter")?.unwrap_or(false),
             key: false,
+            lines: 1,
+        },
+        "textarea" => Elem::Input {
+            id: id()?,
+            label: t.get::<Option<String>>("label")?.unwrap_or_default(),
+            text: t.get::<Option<String>>("text")?.unwrap_or_default(),
+            max: t.get::<Option<usize>>("max")?.unwrap_or(1024).clamp(1, 4096),
+            filter: false,
+            key: false,
+            lines: t.get::<Option<usize>>("lines")?.unwrap_or(4).clamp(2, 12),
         },
         "key" => Elem::Input {
             id: id()?,
@@ -2610,6 +2687,7 @@ fn elem_only(t: &Table) -> mlua::Result<super::window::Elem> {
             max: 64,
             filter: false,
             key: true,
+            lines: 1,
         },
         "choice" | "dropdown" => Elem::Choice {
             id: id()?,

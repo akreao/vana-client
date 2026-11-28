@@ -40,10 +40,11 @@ pub(super) fn draw(
     }
     let (panels, win) = host.hud_frame();
     let painter = ctx.layer_painter(egui::LayerId::background());
+    let top = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("mod hud top")));
     let pt = |v: f32| v / ppp;
     let mut rects = Vec::new();
     for (mod_id, e) in host.hud_elements() {
-        if matches!(e.kind, Kind::Text { font: Some(HudFace::Game), .. }) {
+        if !e.top && matches!(e.kind, Kind::Text { font: Some(HudFace::Game), .. }) {
             continue;
         }
         let Some((px, py)) = super::super::lua::hud::place(&e, &panels, win) else { continue };
@@ -54,9 +55,13 @@ pub(super) fn draw(
         if fade <= 0.01 {
             continue;
         }
-        let mut painter = painter.clone();
+        // Over every window (a drag's ghost): the tooltips' layer, and no hit rect, so the pointer reaches what is under.
+        let mut painter = if e.top { top.clone() } else { painter.clone() };
         painter.multiply_opacity(host.window_opacity(&w.window_opacity, &key) * fade);
         let Some(r) = element(m, ctx, gu, w, &painter, &e, at, ppp) else { continue };
+        if e.top {
+            continue;
+        }
         rects.push((mod_id, e.id.clone(), [r.min.x * ppp, r.min.y * ppp, r.width() * ppp, r.height() * ppp]));
     }
     host.add_hud_rects(rects);
