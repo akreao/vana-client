@@ -24,6 +24,15 @@ logging in.
   lines), the window's from 97.5 % up. The modern layer: 60 * g over the system's scale (it follows that scale
   already), in steps of 5, never below 60 or above 150. Without an EDID size retail's menus follow the system's scale
   (f = 1 / scale) and the modern layer keeps 60.
+- 2026-11-27, the modern layer on scaled desktops (lenonk/vana-client#394): the rule above kept 60 as the floor after
+  dividing by the system's scale, and Interface Size stopped at 50, so a 200% desktop (a MacBook, a 4K screen at 300%)
+  drew the layer at two or three times the share of the window a 100% one gets, its Settings windows too big to move
+  apart, with no way down. Now the floor of 60 is applied before the scale: 60 * max(g, 1) / scale, in steps of 5,
+  within Interface Size's range, which is 20 .. 150 (config::MODERN_SCALE; 20 is 60 at 300%). Without an EDID size
+  it is 60 / scale. Nothing changes at 100%. The zoom is as before (height / 1080 * size, egui multiplying the
+  monitor's scale in: "Windows: monitors of different scale ..." in MODLOG.md), and a config that exists is still
+  never touched: its player picks a smaller size in Settings. Examples: a 14-inch 3024x1964 laptop at 200%, 40 %;
+  a 27-inch 4K at 150%, 40 %; at 300%, 20 %; the 13-inch 1080p laptop at 125% stays 65 %.
 - Examples: 24-inch 1080p 296 mm, unchanged; 32-inch 1440p 393 mm, menus 85 %, 60 %; 7-inch 1280x800 handheld, 75 %,
   105 %; 13-inch 1080p laptop, 75 %, 80 % (65 % at the system's 125 %); 27-inch 4K at 150 % in a 4K window, 55 %, 60 % (a first
   start's 1280x800 window stops at 65 %, its last step of 512 lines or more).

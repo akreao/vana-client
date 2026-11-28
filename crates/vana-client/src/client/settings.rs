@@ -386,7 +386,14 @@ fn sentence(s: &str) -> String {
     let s = s.trim();
     if s.ends_with(['.', '!', '?']) { s.to_string() } else { format!("{s}.") }
 }
+/// Interface Size: config::MODERN_SCALE in steps of 5.
 const MODERN_SCALES: &[(u32, &str)] = &[
+    (20, "20%"),
+    (25, "25%"),
+    (30, "30%"),
+    (35, "35%"),
+    (40, "40%"),
+    (45, "45%"),
     (50, "50%"),
     (55, "55%"),
     (60, "60%"),
@@ -2919,6 +2926,15 @@ mod tests {
             // Other rows never warn.
             assert!(ui.rows().iter().filter(|r| r.label != "Background").all(|r| !ui.warns(r)));
         }
+    }
+
+    /// Interface Size's steps are config::MODERN_SCALE by 5, so a first start's size (client/screen.rs) is one of them.
+    #[test]
+    fn interface_sizes_span_the_range() {
+        let (lo, hi) = crate::config::MODERN_SCALE;
+        let want: Vec<u32> = (lo..=hi).step_by(5).collect();
+        assert_eq!(MODERN_SCALES.iter().map(|c| c.0).collect::<Vec<_>>(), want);
+        assert!(MODERN_SCALES.iter().all(|c| c.1 == format!("{}%", c.0)));
     }
 
     #[test]

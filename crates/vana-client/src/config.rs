@@ -119,6 +119,10 @@ pub(crate) fn config_path() -> PathBuf {
         .unwrap_or_else(|| app_dir(dirs::config_dir()).join("config.json"))
 }
 
+/// Interface Size's range in percent (Settings steps it by 5). The low end is for scaled desktops: egui multiplies
+/// the monitor's scale into the layer's size, so 20% at 300% is what 60% is at 100%.
+pub const MODERN_SCALE: (u32, u32) = (20, 150);
+
 /// Menu Size's steps of a `window` after the window's, as (fraction, size): 95 %, 90 % ... while the height stays
 /// 512 or more (the v5 tool). Settings lists them; a first start (client/screen.rs) picks one.
 pub fn ui_steps(window: [u32; 2]) -> Vec<(f32, [u32; 2])> {

@@ -155,15 +155,18 @@ pub struct FirstSizes {
 /// The UI sizes for a screen `height_mm` tall (None: no EDID size) and `height_px` lines at the system's `scale`, with
 /// the window `window` big. A smaller screen is seen from nearer, so its UI grows by the root of how much smaller it is
 /// than the reference: retail's menus to UI pixels of that size (as the system's scale says without a size), the
-/// modern layer to that (over the system's scale, which it follows anyway), neither below its default.
+/// modern layer to that, neither below its default; the modern layer's is then put over the system's scale, which
+/// egui multiplies back in, so a scaled desktop gets the share of the window a 100% one does (Interface Size's range
+/// allowing).
 pub fn first_sizes(height_mm: Option<f32>, height_px: u32, scale: f32, window: [u32; 2]) -> FirstSizes {
     let grow = height_mm.map(|h| (REF_MM / h).sqrt());
     let f = match grow {
         Some(g) => REF_LINES / (height_px.max(1) as f32 * g),
         None => 1.0 / scale.max(1.0),
     };
-    let interface = grow.map_or(REF_SCALE, |g| (REF_SCALE * g / scale.max(0.5) / 5.0).round() * 5.0);
-    FirstSizes { menu: menu_step(f, window), interface: interface.clamp(REF_SCALE, 150.0) as u32 }
+    let interface = (REF_SCALE * grow.map_or(1.0, |g| g.max(1.0)) / scale.max(1.0) / 5.0).round() * 5.0;
+    let (lo, hi) = crate::config::MODERN_SCALE;
+    FirstSizes { menu: menu_step(f, window), interface: interface.clamp(lo as f32, hi as f32) as u32 }
 }
 
 /// Settings' Menu Size step nearest `f` of the window (config::ui_steps); None (the window's) from 97.5 % up.
@@ -221,7 +224,7 @@ mod tests {
     }
 
     /// The reference screen keeps the defaults; a small one grows both, a dense desktop retail's menus only; with no
-    /// size, retail's menus follow the system's scale.
+    /// size, retail's menus follow the system's scale. The modern layer's size is over the system's scale.
     #[test]
     fn sizes_by_screen() {
         let window = [1280, 800];
@@ -232,14 +235,25 @@ mod tests {
         assert_eq!(first_sizes(Some(165.0), 1080, 1.0, window).menu, Some([960, 600]));
         assert_eq!(first_sizes(Some(165.0), 1080, 1.0, window).interface, 80);
         assert_eq!(first_sizes(Some(165.0), 1080, 1.25, window).interface, 65);
-        // A 27-inch 4K screen at 150 % in a 4K window: retail's 1:1 menus are tiny there; the modern layer keeps 60.
-        // (A first start's 1280x800 window stops at 65 %, its last step of 512 lines or more.)
+        // A 27-inch 4K screen at 150 % in a 4K window: retail's 1:1 menus are tiny there; the modern layer keeps its
+        // 60, which is 40 at 150 %. (A first start's 1280x800 window stops at 65 %, its last step of 512 lines or more.)
         assert_eq!(
             first_sizes(Some(336.0), 2160, 1.5, [3840, 2160]),
-            FirstSizes { menu: Some([2112, 1188]), interface: 60 }
+            FirstSizes { menu: Some([2112, 1188]), interface: 40 }
         );
+        assert_eq!(first_sizes(Some(336.0), 2160, 1.0, [3840, 2160]).interface, 60);
         assert_eq!(first_sizes(None, 1600, 2.0, [2560, 1600]).menu, Some([1280, 800]));
         assert_eq!(first_sizes(None, 1080, 1.0, window), FirstSizes { menu: None, interface: 60 });
+        // The modern layer on scaled desktops: a 14-inch 3024x1964 laptop at 200 % (60 x 1.25 / 2), a 4K screen at
+        // 300 % with and without a size (the range's low end), and no size at 200 % and 125 %.
+        assert_eq!(first_sizes(Some(191.0), 1964, 2.0, window).interface, 40);
+        assert_eq!(first_sizes(Some(336.0), 2160, 3.0, window).interface, 20);
+        assert_eq!(first_sizes(None, 2160, 3.0, window).interface, 20);
+        assert_eq!(first_sizes(None, 1600, 2.0, [2560, 1600]).interface, 30);
+        assert_eq!(first_sizes(None, 1080, 1.25, window).interface, 50);
+        // Never past the range: a 4-inch screen, and a scale beyond 300 %.
+        assert_eq!(first_sizes(Some(40.0), 480, 1.0, window).interface, crate::config::MODERN_SCALE.1);
+        assert_eq!(first_sizes(None, 2160, 4.0, window).interface, crate::config::MODERN_SCALE.0);
         assert_eq!(first_sizes(Some(336.0), 2160, 1.5, window).menu, Some([832, 520]));
     }
 
