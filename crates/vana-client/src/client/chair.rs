@@ -125,7 +125,8 @@ fn axes(w: &World, id: u32) -> Option<Vec3> {
 }
 
 /// Per frame, before the motion files: seats for new sitters, each chair's model, `chi0` once the files are in, the
-/// chair's `init` and scale; a finished stand-up removes the chair (ours then sends one more "/sitchair off").
+/// chair's `init` and scale; a finished stand-up removes the chair (ours, on a private server, then sends one more
+/// "/sitchair off").
 pub fn update(w: &mut World) {
     let mut sitters: Vec<u32> = w
         .entities
@@ -151,7 +152,8 @@ pub fn update(w: &mut World) {
             // The hold over and the new status applied: the chair goes (FUN_10092870).
             Phase::Rising(t) if now >= t && !is_chair(status) => {
                 remove(w, id);
-                if id == w.my_id {
+                // Ours, for LSB only: a PlayOnline login sends nothing more, as retail.
+                if id == w.my_id && !w.playonline {
                     let mut b = vec![0u8; 8];
                     b[0..4].copy_from_slice(&2u32.to_le_bytes());
                     let _ = w.net.commands.send(super::net::NetCommand::Packet { id: 0x113, body: b });
@@ -231,8 +233,9 @@ fn remove(w: &mut World, id: u32) {
 
 /// /sitchair (FUN_1007c390): mode "on" 1 / "off" 2 / else 0 (toggle) with chair = the number, 0 outside 0..20 (on and
 /// off send 0). None: nothing is sent (sitting down; already seated for "on"; not seated for "off"; standing in
-/// another status). A toggle or "off" while seated starts our stand-up first (state 0x19) and is sent as "off"
-/// *(not retail: retail sends the toggle {0, n}, which LSB takes as a move to chair n, not a stand-up)*.
+/// another status). A toggle or "off" while seated starts our stand-up first (state 0x19); on a private server it is
+/// sent as "off" *(not retail: retail sends the toggle {0, n}, which LSB takes as a move to chair n, not a stand-up)*,
+/// on a PlayOnline login as typed, as retail.
 pub fn command(w: &mut World, arg: Option<&str>) -> Option<(u32, u32)> {
     let (mode, chair) = match arg {
         Some("on") => (1, 0),
@@ -249,7 +252,7 @@ pub fn command(w: &mut World, arg: Option<&str>) -> Option<(u32, u32)> {
         (1, true) | (2, false) => None,
         (0 | 2, true) if phase == Some(Phase::Seated) => {
             start_rise(w, me);
-            Some((2, 0))
+            Some(if w.playonline { (mode, chair) } else { (2, 0) })
         }
         (m, true) if m != 2 && matches!(phase, Some(Phase::Rising(_))) => None,
         _ => Some((mode, chair)),

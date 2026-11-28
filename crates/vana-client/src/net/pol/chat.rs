@@ -15,7 +15,11 @@ pub const PORT: u16 = 51240;
 const B64: &[u8; 64] = b"TSG8IncW3HFKokOg79qzeCmZs2yBYEQVAUxR5rbwi4P@jMDLtpvad0f_J1hlN6uX";
 const B32: &[u8; 32] = b"N43OVHBJ1Y2C0WSXED5QFILRZMUTAPGK";
 const ID_ALPHABET: &[u8; 36] = b"EFKAOYMJVNGTDSWBQLPCIRHZXU6328401795";
-/// The Viewer's area code (env.dat POL_UCS_AREA_KBN "01", the US Viewer).
+/// The Viewer's area code: env.dat's POL_UCS_AREA_KBN "01" in the US Viewer (checked 2026-11-28 in an installed US
+/// Viewer's data/utf/env.dat, decrypted as polcore FUN_100477d0 does: key 0x100ef560, byte table 0x100c5b7c, then
+/// "KEY,VALUE" lines). The Japanese env.dat (the one the Viewer patch title carries) says "00"; a European Viewer
+/// reads its own EU\env.dat instead (app.dll FUN_1029db8b), not seen yet. polcore turns the two digits into this byte
+/// (0x100140d0).
 const AREA: u8 = 1;
 
 /// polcore's base64 (0x10007a60): MSB-first 6-bit groups; a short last group sends only the characters with data.
@@ -122,7 +126,7 @@ fn identity_pad(id: &[u8; 8]) -> [u8; 8] {
 
 /// The NICK's third field (0x100198f0): {00 00 00 02 01, the area byte, 0, 0, session digest 0, MD5(host record)[..8]};
 /// the host record is a 0x40-byte name (none), the identity pad, and zeros. Viewer 1.18.15e's app.dll sets only the
-/// area (table 0x51d, 0x1001a1fb) from env.dat's POL_UCS_AREA_KBN, "01" in the US Viewer; nobody sets the others.
+/// area (table 0x51d, 0x1001a1fb) from env.dat's POL_UCS_AREA_KBN (`AREA`); nobody sets the others.
 pub fn nick_token(id: &str) -> String {
     let mut host = [0u8; 0x52];
     host[0x40..0x48].copy_from_slice(&identity_pad(id.as_bytes().try_into().unwrap_or(&[0; 8])));

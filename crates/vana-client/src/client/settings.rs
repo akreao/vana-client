@@ -24,6 +24,7 @@ pub struct Settings {
     pub neural: bool,
     pub draw_distance: u32,
     pub send_interval: u32,
+    pub playonline_automation: bool,
     pub move_rate: u32,
     pub party_tp: bool,
     pub lamp_lights: bool,
@@ -81,6 +82,7 @@ impl Settings {
             neural: c.neural,
             draw_distance: c.draw_distance,
             send_interval: c.send_interval,
+            playonline_automation: c.playonline_automation,
             move_rate: c.move_rate,
             party_tp: c.party_tp,
             lamp_lights: c.lamp_lights,
@@ -134,6 +136,7 @@ impl Settings {
         c.neural = self.neural;
         c.draw_distance = self.draw_distance;
         c.send_interval = self.send_interval;
+        c.playonline_automation = self.playonline_automation;
         c.move_rate = self.move_rate;
         c.party_tp = self.party_tp;
         c.lamp_lights = self.lamp_lights;
@@ -199,6 +202,7 @@ enum Val {
     Neural,
     DrawDistance,
     SendRate,
+    PlayOnlineAutomation,
     MoveRate,
     PartyTp,
     LampLights,
@@ -516,6 +520,13 @@ fn rows(kind: Kind, tab: usize, in_game: bool, modern: bool) -> &'static [SRow] 
             "Overall brightness. The Gameplay page's red, green and blue brightness sliders are added on top.",
             Gamma,
             &[],
+            Now,
+        ),
+        row(
+            "Mod Automation on PlayOnline",
+            "Lets the mods that play for you work while signed in through PlayOnline: Synthesis Amount, Event Rules, Loot Rules, Party Tools, Multibox and Auto Advance. Off, they only act on what you do yourself there. Gear swapping, hotbars and the other mods work either way. Add-ons that play for you are against the game's terms of service.",
+            PlayOnlineAutomation,
+            OFF_ON,
             Now,
         ),
     ];
@@ -1252,6 +1263,7 @@ impl SettingsUi {
             Val::Neural => self.s.neural as u32,
             Val::DrawDistance => self.s.draw_distance,
             Val::SendRate => self.s.send_interval,
+            Val::PlayOnlineAutomation => self.s.playonline_automation as u32,
             Val::MoveRate => self.s.move_rate,
             Val::PartyTp => self.s.party_tp as u32,
             Val::ModernUi => self.s.modern_ui as u32,
@@ -1343,6 +1355,7 @@ impl SettingsUi {
             Val::Neural => self.neural_do(x),
             Val::DrawDistance => self.s.draw_distance = x,
             Val::SendRate => self.s.send_interval = x,
+            Val::PlayOnlineAutomation => self.s.playonline_automation = x != 0,
             Val::MoveRate => self.s.move_rate = x,
             Val::PartyTp => self.s.party_tp = x != 0,
             Val::ModernUi => self.s.modern_ui = x != 0,

@@ -1,0 +1,77 @@
+# Every day: asks the PlayOnline patch server for the current FFXiMain.dll (`vana-client known-build`, nothing else
+# downloaded or kept) and, when its checksum is not in crates/vana-client/assets/known-builds.txt, opens a PR into
+# develop that adds it. A known build plays without the PlayOnline unknown-build warning, so check the new build's
+# packets against the client's (re-notes builds, the DLL index) before merging.
+# The PR needs "Allow GitHub Actions to create and approve pull requests" (Settings > Actions > General).
+name: Known builds
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: known-builds
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpipewire-0.3-dev libclang-dev libasound2-dev libudev-dev pkg-config
+      - uses: Swatinem/rust-cache@v2
+      - name: Current retail build
+        id: build
+        run: |
+          set -euo pipefail
+          out=$(cargo run --release --locked -q -p vana-client -- known-build \
+            --write crates/vana-client/assets/known-builds.txt)
+          echo "$out"
+          read -r sum version state _ <<< "$(head -1 <<< "$out")"
+          if [[ ! "$sum" =~ ^[0-9A-F]{8}$ || ! "$version" =~ ^[0-9]{8}_[0-9]+$ || ! "$state" =~ ^(known|new)$ ]]; then
+            echo "::error::unexpected known-build output"
+            exit 1
+          fi
+          echo "sum=$sum" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+      - name: Pull request for a new build
+        if: steps.build.outputs.state == 'new'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUM: ${{ steps.build.outputs.sum }}
+          VERSION: ${{ steps.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          branch="known-build/$VERSION-$SUM"
+          prs=$(gh pr list --head "$branch" --state all --json state -q '.[].state')
+          if grep -q OPEN <<< "$prs"; then
+            echo "$branch is already up for review"
+            exit 0
+          fi
+          if [ -n "$prs" ]; then
+            # a PR for it was closed or merged: that was a maintainer's call, and its branch is left as it is
+            echo "$branch had a PR ($prs); nothing opened again"
+            exit 0
+          fi
+          if ! git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git switch -c "$branch"
+            git commit -am "Known build $VERSION (FFXiMain.dll $SUM)"
+            git push -u origin "$branch"
+          fi
+          # a branch with no PR (an earlier run's PR step failed) gets its PR as it is, never rewritten
+          gh pr create --base develop --head "$branch" --title "Known build $VERSION (FFXiMain.dll $SUM)" --body \
+            "The patch server's FFXiMain.dll is a build the client doesn't know yet: checksum $SUM, version $VERSION.
+          Merging this adds it to assets/known-builds.txt, so PlayOnline sign-in stops showing the unknown-build warning for it.
+          The patch server is SE's plain PlayOnline protocol (no signature, as the retail updater has it), so this PR is the trust point: check the build's packets against the client's first (newbuild.py watch comments the packet diff here)."

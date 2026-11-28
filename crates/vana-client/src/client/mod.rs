@@ -9016,6 +9016,8 @@ struct World {
     ah_index: auction::AhIndex,
     /// Signed in through PlayOnline: our additions that send what the original client never would stay off.
     playonline: bool,
+    /// Config `playonline_automation`, each frame: mods keep automation and packets.write on a PlayOnline login.
+    playonline_automation: bool,
     /// FUN_100fc3c0's last c2s 0x102 (one a second, shared by BLU and PUP).
     ext_job_sent: Option<Instant>,
     /// Monstrosity Customization (client/moncustom.rs).
@@ -9308,6 +9310,11 @@ impl World {
             kept.push((configui::CONFIGWI_MENU, w.cursor));
         }
         self.cursor_mem.extend(kept);
+    }
+
+    /// A PlayOnline login with Mod Automation on PlayOnline off: the mods that play for the player lose automation and packets.write.
+    fn retail_locked(&self) -> bool {
+        self.playonline && !self.playonline_automation
     }
 
     fn dead(&self) -> bool {
@@ -9615,6 +9622,10 @@ pub struct App {
     mouse: mousecur::MouseCursor,
     /// A lobby or login error (or the new account's notice) waiting in the OK window on the login screen.
     login_error: Option<String>,
+    /// A PlayOnline sign-in held for the unknown-build warning (Continue / Cancel): the DLL's checksum, the passwords
+    /// and the one-time password; and the cursor (true on Continue).
+    build_ask: Option<(u32, String, String, String)>,
+    build_yes: bool,
     /// The backdrop behind a lobby run (lobbywin 85): ptcbgwin at the lobby entry, hnbackwi at the log-in.
     backdrop: Option<Backdrop>,
     /// A failed log-in run's popup over its backdrop; OK goes back to the title menu (FUN_10241200's -1).
@@ -9984,6 +9995,8 @@ impl App {
             cursor_in: false,
             cursor_hid_at: None,
             login_error: None,
+            build_ask: None,
+            build_yes: true,
             backdrop: None,
             lobby_popup: None,
             leave_lobby: false,
@@ -10194,7 +10207,11 @@ impl App {
 
     /// The lobby mods' phase, and what they asked for.
     fn lobby_mods_frame(&mut self) {
-        let busy = self.busy || self.netwait.is_some() || self.lobby_fade.busy() || self.login_error.is_some();
+        let busy = self.busy
+            || self.netwait.is_some()
+            || self.lobby_fade.busy()
+            || self.login_error.is_some()
+            || self.build_ask.is_some();
         let mut view = lua::lobby::View {
             server: self.cfg.server.clone(),
             account: self.cfg.username.clone(),
@@ -10656,6 +10673,23 @@ impl App {
         }
         // PlayOnline's game files are game_dir's.
         self.cfg.login_game_dir = None;
+        // The game's own build before anything goes to PlayOnline; one this client does not know is played only once
+        // the player has been warned (build_ask).
+        let (root, path) = (self.cfg.ffxi_dir(), crate::dat::ffximain(&self.cfg.ffxi_dir()));
+        let dll = std::fs::read(&path).unwrap_or_default();
+        let patched = crate::patch::ffximain_version(&root, &path, &dll);
+        let build = match crate::net::lobby::playonline_build(&dll, patched.as_deref()) {
+            Ok(b) => b,
+            Err(e) => {
+                self.login_error = Some(e.to_string());
+                return;
+            }
+        };
+        if !build.known && self.cfg.accepted_build != build.checksum {
+            log::warn!("PlayOnline: FFXiMain.dll {:08X} is not a known build; asking first", build.checksum);
+            (self.build_ask, self.build_yes) = (Some((build.checksum, pol_password, password, otp)), true);
+            return;
+        }
         let cfg = self.cfg.clone();
         if self.drive.login.is_none() {
             let _ = self.cfg.save();
@@ -10678,14 +10712,13 @@ impl App {
                     otp: (!otp.is_empty()).then_some(otp),
                 };
                 let (session, pol) = crate::net::pol::sign_in(&creds)?;
-                let dll = std::fs::read(crate::dat::ffximain(&cfg.ffxi_dir())).unwrap_or_default();
                 let mut lobby = Lobby::connect(
                     crate::net::pol::LOBBY_HOST,
                     crate::net::pol::LOBBY_PORT,
                     0,
                     session,
                     &dll,
-                    &cfg.client_version,
+                    &build.version,
                     5,
                     crate::dat::installed(&cfg.ffxi_dir()),
                     replies,
@@ -11646,6 +11679,7 @@ impl App {
                             maze: Default::default(),
                             ah_index: Default::default(),
                             playonline: is_playonline(&self.cfg.server),
+                            playonline_automation: false,
                             ext_job_sent: None,
                             moncustom: None,
                             treasure: Default::default(),
@@ -12443,6 +12477,7 @@ impl App {
         let Phase::World(world) = &mut self.phase else { return };
         world.net.stats.rate_ms.store(self.cfg.send_interval, std::sync::atomic::Ordering::Relaxed);
         world.net.stats.gm_window.store(self.cfg.gm_window, std::sync::atomic::Ordering::Relaxed);
+        world.playonline_automation = self.cfg.playonline_automation;
         let mut load = None;
         let mut looks: Vec<(u32, Source)> = Vec::new();
         // Lines that need the message tables wait for them (they load on a thread at world start), in order.
@@ -13376,11 +13411,12 @@ impl App {
                         world.inv_flags |= 0x0020_0000;
                     }
                     // A slot newly filled (or refilled with another item) in a container kept sorted sorts it once
-                    // the burst is over.
+                    // the burst is over. Ours, so private servers only: a PlayOnline login sends only retail's sorts.
                     let fresh = world.inv.set(container, index, id, count);
                     // Retail's Auto-sort (config 0x9a) already sorts the inventory on a new row, the login load too.
                     let retail = container == items::INVENTORY && world.game.get(0x9a) != 0;
-                    if fresh && container < 32 && world.auto_sort >> container & 1 != 0 && !retail {
+                    if fresh && container < 32 && world.auto_sort >> container & 1 != 0 && !retail && !world.playonline
+                    {
                         world.sort_due = (world.sort_due.0 | 1 << container, items::SORT_DELAY);
                     }
                     if id != 0 {
@@ -16656,7 +16692,11 @@ impl App {
                         page: false,
                         events: Vec::new(),
                     };
-                    let shown = if self.login_error.is_some() || self.twofa.is_some() || self.update_ui.is_some() {
+                    let shown = if self.login_error.is_some()
+                        || self.build_ask.is_some()
+                        || self.twofa.is_some()
+                        || self.update_ui.is_some()
+                    {
                         &none
                     } else {
                         &input
@@ -17011,6 +17051,71 @@ impl App {
                             }
                         }
                     }
+                    // Ours: a game build this client does not know, before a PlayOnline sign-in: Continue or Cancel
+                    // (ptc6yesn's place; Left / Right move the cursor, Enter picks, Escape cancels).
+                    // The updater over it keeps the keys (one window answers a key press).
+                    if self.login_error.is_none()
+                        && self.update_ui.is_none()
+                        && let Some((sum, ..)) = self.build_ask.as_ref()
+                    {
+                        let text = format!(
+                            "This game's FFXiMain.dll ({sum:08X}) is a newer build than\nthis vana-client was made \
+                             for. Some things may not work\nuntil a client update. Continue to PlayOnline?"
+                        );
+                        let (sw, sh) = (size[0] as f32, size[1] as f32);
+                        let mut pick = None;
+                        for ev in &input.events {
+                            // A held Enter (the form's) repeats into it: only a fresh press answers.
+                            if let egui::Event::Key { key, pressed: true, repeat, .. } = ev {
+                                match key {
+                                    egui::Key::ArrowLeft | egui::Key::ArrowRight => self.build_yes = !self.build_yes,
+                                    egui::Key::Enter if !*repeat => pick = Some(self.build_yes),
+                                    egui::Key::Escape => pick = Some(false),
+                                    _ => {}
+                                }
+                            }
+                        }
+                        if modern_ui {
+                            let r = lu.popup_rects("menu    ptc6yesn", sw, sh);
+                            let frame = r.as_ref().map_or([0.0; 4], |r| lift(r.frame));
+                            let row = r
+                                .as_ref()
+                                .and_then(|r| r.children.first().map(|c| place(r.frame, c.1)))
+                                .unwrap_or(frame);
+                            let m = self.modern.get_or_insert_with(|| modern::Modern::new(ctx));
+                            let (scale, k, yes) = (self.cfg.modern_scale, self.ui_k, self.build_yes);
+                            if let Some(p) =
+                                m.choice_popup(ctx, window, scale, k, frame, row, &text, ["Continue", "Cancel"], yes)
+                            {
+                                pick = Some(p);
+                            }
+                        } else if let Some(win) = lu.yes_no_win(&text, self.build_yes, true, sw, sh)
+                            && input.clicked
+                            && let Some(p) = input.pointer
+                        {
+                            for (id, r) in &win.children {
+                                if inside(r, p) && matches!(id, 1 | 2) {
+                                    pick = Some(*id == 1);
+                                }
+                            }
+                        }
+                        if let Some(yes) = pick
+                            && let Some((sum, pp, p, o)) = self.build_ask.take()
+                        {
+                            if let Some(a) = self.audio.as_mut() {
+                                a.ui(if yes { crate::audio::Ui::Select } else { crate::audio::Ui::Cancel });
+                            }
+                            if yes {
+                                self.cfg.accepted_build = sum;
+                                if self.drive.login.is_none() {
+                                    let _ = self.cfg.save();
+                                }
+                                action = Some(Box::new(move |app: &mut App| app.login_playonline(pp, p, o)));
+                            } else {
+                                self.status = "PlayOnline sign-in cancelled.".into();
+                            }
+                        }
+                    }
                     // As the Viewer asks for its update before its sign-in: the window opens by itself, once.
                     let viewer_behind = self
                         .updates
@@ -17020,6 +17125,7 @@ impl App {
                         && !self.viewer_asked
                         && self.update_ui.is_none()
                         && self.login_error.is_none()
+                        && self.build_ask.is_none()
                         && is_playonline(&self.cfg.server)
                         && let Some(s) = self.updates.clone()
                     {

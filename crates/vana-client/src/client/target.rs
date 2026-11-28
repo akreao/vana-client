@@ -887,6 +887,13 @@ pub fn lock(w: &mut World, on: bool, why: &str) {
     }
 }
 
+/// A mod's target (actions.target): only what the player's own targeting could hold, so the server never hears of a
+/// target (0x015 @0x16, the actions after it) the game would not have: not hidden, not one FUN_10152c70 drops at
+/// once, not TargetOffFlag.
+pub fn mod_may_target(w: &World, t: u32) -> bool {
+    invalid(w, t).is_none() && (t == w.my_id || w.entities.get(&t).is_some_and(|e| !e.target_off))
+}
+
 /// Why the target goes (FUN_10151bb0 -> FUN_10152c70), checked every frame; Some(true) also sends /attackoff
 /// (FUN_10151c40, +0x130 bit 7).
 fn invalid(w: &World, t: u32) -> Option<bool> {

@@ -150,6 +150,11 @@ pub(super) struct ModState {
     pub hooks_out: Vec<(u64, Option<u16>, RegistryKey)>,
     pub inject_in: Vec<Vec<u8>>,
     pub inject_out: Vec<Vec<u8>>,
+    /// One of the bundled mods that play for the player (RETAIL_LOCKED_MODS): automation and packets.write are off for
+    /// it on a PlayOnline login unless Settings' Mod Automation on PlayOnline is on.
+    pub retail_bot: bool,
+    /// The PlayOnline-policy notice was given (api::retail_denied).
+    pub retail_told: bool,
     /// The permissions the user granted this mod.
     pub granted: Vec<String>,
     /// The running coroutine began with the player's input (a typed command, a window event): `actions` suffices.

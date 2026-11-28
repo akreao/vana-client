@@ -552,8 +552,11 @@ pub(super) fn resolve(w: &World, text: Option<&str>, fallback: bool, wide: bool,
             let range =
                 (0x400..0x700).contains(&e.index) || (wide && (0x700..0x900).contains(&e.index) && ours(**id, e.index));
             let same = e.name == name || (wide && name_case(&e.name).is_some_and(|n| n == name));
-            // FUN_1007a4c0 also passes over a slot with the despawn mark no event holds (0x1007a561).
-            range && e.targetable() && !super::event::is_parked(w, **id) && same
+            // FUN_1007a4c0 also passes over a slot with the despawn mark no event holds (0x1007a561), an actor
+            // with no id (+0x78) and one bound to the event that runs (+0x120 bit 7), so a typed name never picks an
+            // actor the game would not (queue row 204; its +0x120 bit 8 and +0x124 bit 12 tests are not mapped yet).
+            let bound = w.event.as_ref().is_some_and(|l| l.is_bound(**id));
+            range && **id != 0 && !bound && e.targetable() && !super::event::is_parked(w, **id) && same
         });
         if let Some((id, e)) = hit {
             return Some((*id, e.index));

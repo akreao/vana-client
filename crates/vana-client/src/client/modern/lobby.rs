@@ -620,6 +620,49 @@ impl Modern {
         hover && ctx.input(|i| i.pointer.primary_clicked())
     }
 
+    /// Ours: a two-answer question in the OK popup's place (the unknown-build warning): the text, then the two
+    /// buttons side by side on the OK row, the cursor's (`first`: the first one) lit; Some(true) when the first was
+    /// clicked, Some(false) the second.
+    #[allow(clippy::too_many_arguments)]
+    pub fn choice_popup(
+        &mut self,
+        ctx: &Context,
+        window: [u32; 2],
+        scale: u32,
+        ui_k: (f32, f32),
+        frame: [f32; 4],
+        row: [f32; 4],
+        text: &str,
+        labels: [&str; 2],
+        first: bool,
+    ) -> Option<bool> {
+        let (p, size, r) = self.popup_frame(ctx, window, scale, ui_k, "choice", frame, text, 34.0);
+        let k = ctx.pixels_per_point();
+        let (bw, bh) = ((row[2] / (k * ui_k.0) * 1.2).max(size * 6.0), (row[3] / (k * ui_k.1) + 6.0).max(size * 1.45));
+        let cy = ((row[1] + row[3] / 2.0) / (k * ui_k.1)).min(r.max.y - bh / 2.0 - 5.0);
+        let mut out = None;
+        for (i, label) in labels.iter().enumerate() {
+            let cx = r.center().x + if i == 0 { -(bw / 2.0 + 6.0) } else { bw / 2.0 + 6.0 };
+            let b = egui::Rect::from_center_size(pos2(cx, cy), vec2(bw, bh));
+            let hover = ctx.input(|x| x.pointer.hover_pos()).is_some_and(|h| b.contains(h));
+            let lit = hover || (i == 0) == first;
+            if let Some(s) = self.art.sprite(if lit { "controls/button_hover" } else { "controls/button_selected" }) {
+                p.add(paint::nine_slice(&s, b, 0.5, Color32::WHITE));
+            }
+            p.text(
+                b.center(),
+                Align2::CENTER_CENTER,
+                *label,
+                FontId::new(size, FontFamily::Name(super::STRONG.into())),
+                self.theme.color("gold"),
+            );
+            if hover && ctx.input(|x| x.pointer.primary_clicked()) {
+                out = Some(i == 0);
+            }
+        }
+        out
+    }
+
     /// The select (or delete) screen: what the mouse did, for SelectUi::pointer.
     pub fn select_screen(&mut self, ctx: &Context, gu: &GameUi, window: [u32; 2], scale: u32, v: &View) -> Pointer {
         self.zoom_to(ctx, window, scale);

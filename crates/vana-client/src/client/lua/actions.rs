@@ -325,7 +325,11 @@ pub(super) fn apply(w: &mut World, gu: Option<&GameUi>, a: Action) {
         Action::Talk(id) => {
             event::talk(w, id);
         }
-        Action::Target(t) => target::set(w, t),
+        Action::Target(t) => {
+            if t.is_none_or(|t| target::mod_may_target(w, t)) {
+                target::set(w, t)
+            }
+        }
         Action::BlueSlot(i, spell) => {
             if let Err(e) = super::super::bluset::set_slot(w, i, spell) {
                 w.chat.push_colour(
@@ -461,7 +465,9 @@ fn piece_arg(v: &Value) -> mlua::Result<Piece> {
 }
 
 fn queue(lua: &Lua, a: Action) -> mlua::Result<()> {
-    super::api::need_action(lua)?;
+    if !super::api::need_action(lua)? {
+        return Ok(());
+    }
     super::api::push_op(lua, super::Op::Act(a))?;
     Ok(())
 }
@@ -492,7 +498,9 @@ pub(super) fn install(lua: &Lua, g: &Table) -> mlua::Result<()> {
     t.set(
         "use_item",
         lua.create_function(|lua, (item, to): (u16, Option<Value>)| {
-            super::api::need_action(lua)?;
+            if !super::api::need_action(lua)? {
+                return Ok(());
+            }
             let w = super::api::world(lua)?;
             let it = w
                 .item_info
@@ -601,7 +609,9 @@ pub(super) fn install(lua: &Lua, g: &Table) -> mlua::Result<()> {
     t.set(
         "trade",
         lua.create_function(|lua, (npc, items, gil): (u32, Option<Table>, Option<u32>)| {
-            super::api::need_action(lua)?;
+            if !super::api::need_action(lua)? {
+                return Ok(());
+            }
             let list: Vec<(u8, u32)> = match items {
                 Some(t) => t
                     .sequence_values::<Table>()
@@ -616,7 +626,9 @@ pub(super) fn install(lua: &Lua, g: &Table) -> mlua::Result<()> {
     t.set(
         "buy",
         lua.create_function(|lua, (index, qty): (usize, Option<u32>)| {
-            super::api::need_action(lua)?;
+            if !super::api::need_action(lua)? {
+                return Ok(());
+            }
             let index = index.checked_sub(1).ok_or_else(|| mlua::Error::runtime("rows count from 1"))?;
             super::super::shop::buy(super::api::world(lua)?, index, qty.unwrap_or(1))
                 .map_err(|e| mlua::Error::runtime(format!("actions.buy: {e}")))
@@ -625,7 +637,9 @@ pub(super) fn install(lua: &Lua, g: &Table) -> mlua::Result<()> {
     t.set(
         "sell",
         lua.create_function(|lua, (slot, qty): (u8, Option<u32>)| {
-            super::api::need_action(lua)?;
+            if !super::api::need_action(lua)? {
+                return Ok(());
+            }
             super::super::shop::sell(super::api::world(lua)?, slot, qty.unwrap_or(1))
                 .map_err(|e| mlua::Error::runtime(format!("actions.sell: {e}")))
         })?,

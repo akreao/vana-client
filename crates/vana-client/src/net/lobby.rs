@@ -49,6 +49,78 @@ pub fn ffximain_checksum(dll: &[u8]) -> u32 {
     dll.iter().enumerate().fold(0u32, |s, (i, &b)| s.wrapping_add(((b as i8 as i32) << (((i % 20) * 4) & 31)) as u32))
 }
 
+/// The retail builds this client knows, by the installed FFXiMain.dll's checksum (the 0x26 value), with the version
+/// each sends: assets/known-builds.txt. A build there plays without the unknown-build warning, so one is added only by
+/// a reviewed PR (the known-builds workflow opens it) once the build's packets are checked against the client's.
+pub fn known_builds() -> &'static [(u32, &'static str)] {
+    static LIST: std::sync::OnceLock<Vec<(u32, &'static str)>> = std::sync::OnceLock::new();
+    LIST.get_or_init(|| parse_known_builds(KNOWN_BUILDS).expect("assets/known-builds.txt"))
+}
+
+/// assets/known-builds.txt, kept in the binary.
+pub const KNOWN_BUILDS: &str = include_str!("../../assets/known-builds.txt");
+
+/// The known-builds file: "CHECKSUM VERSION" lines (hex checksum), `#` comments and blank lines skipped.
+pub fn parse_known_builds(text: &str) -> Result<Vec<(u32, &str)>> {
+    let mut out = Vec::new();
+    for (n, line) in text.lines().enumerate() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut it = line.split_whitespace();
+        let (Some(sum), Some(v), None) = (it.next(), it.next(), it.next()) else {
+            bail!("known builds line {}: \"CHECKSUM VERSION\" expected", n + 1);
+        };
+        let sum = u32::from_str_radix(sum, 16).with_context(|| format!("known builds line {}: checksum", n + 1))?;
+        if crate::patch::version_key(v).is_none() {
+            bail!("known builds line {}: version {v:?} is not DATE_N", n + 1);
+        }
+        out.push((sum, v));
+    }
+    Ok(out)
+}
+
+/// The installed FFXiMain.dll as a PlayOnline login sees it.
+#[derive(Debug, PartialEq)]
+pub struct GameBuild {
+    /// The 0x26 checksum.
+    pub checksum: u32,
+    /// The version to send: the release the patch files record for these very bytes (`patch::ffximain_version`), a
+    /// known build's own when they record none or an older one. Never a stale config value.
+    pub version: String,
+    /// One of known_builds(): the packet layouts are this client's. An unknown one (a retail update newer than the
+    /// client) may still play, but the player is warned first.
+    pub known: bool,
+}
+
+/// The installed game build for a PlayOnline login. An error with no FFXiMain.dll (no checksum to send), and for an
+/// unknown one whose version no patch file confirms (`patched`: what they record for these bytes), rather than pair it
+/// with a version from somewhere else.
+pub fn playonline_build(dll: &[u8], patched: Option<&str>) -> Result<GameBuild> {
+    build_among(known_builds(), dll, patched)
+}
+
+fn build_among(known: &[(u32, &str)], dll: &[u8], patched: Option<&str>) -> Result<GameBuild> {
+    if dll.is_empty() {
+        bail!("FFXiMain.dll was not found in the game folder, so the game's version is unknown.");
+    }
+    let checksum = ffximain_checksum(dll);
+    Ok(match (known.iter().find(|b| b.0 == checksum), patched) {
+        // A known DLL: its build, or the release the patch files put it in when that is newer (a DAT-only update keeps
+        // the DLL), so the lobby hears the release as retail's would.
+        (Some(b), p) => {
+            let newer = p.filter(|v| crate::patch::version_key(v) > crate::patch::version_key(b.1));
+            GameBuild { checksum, version: newer.unwrap_or(b.1).into(), known: true }
+        }
+        (None, Some(v)) => GameBuild { checksum, version: v.to_string(), known: false },
+        (None, None) => bail!(
+            "This game's FFXiMain.dll ({checksum:08X}) is not a build this client knows, and its version can't be \
+             confirmed from the game's patch files. Run the game update, then sign in again."
+        ),
+    })
+}
+
 #[derive(Clone, Debug)]
 pub struct Character {
     pub content_id: u32,
@@ -1863,6 +1935,20 @@ mod create_tests {
         assert!(crate::dat::character::file_ids(&look).is_ok());
     }
 
+    /// The committed list parses, has no checksum twice, and holds the builds the client was made against.
+    #[test]
+    fn known_builds_file() {
+        let list = known_builds();
+        let mut sums: Vec<u32> = list.iter().map(|b| b.0).collect();
+        sums.sort();
+        sums.dedup();
+        assert_eq!(sums.len(), list.len());
+        assert!(list.contains(&(0x74F0_058F, "30261102_0")));
+        assert!(parse_known_builds("XYZ 30261102_0").is_err());
+        assert!(parse_known_builds("74F0058F 1102").is_err());
+        assert_eq!(parse_known_builds("# c\n\n0000000A 30270101_0 # new").unwrap(), [(10, "30270101_0")]);
+    }
+
     #[test]
     fn checksum_matches_the_games() {
         // FUN_100185a0: signed bytes, the shift cycling 0, 4, .. 76 (masked to 31).
@@ -1872,12 +1958,40 @@ mod create_tests {
             s = s.wrapping_add(((b as i8 as i32) << (((i as u32 % 20) * 4) & 31)) as u32);
         }
         assert_eq!(ffximain_checksum(&d), s);
+        assert!(playonline_build(b"", Some("30261102_0")).is_err());
+        // An unknown DLL: the version its patch files record, known false; none recorded is refused.
+        let b = playonline_build(b"dll", Some("30261201_0")).unwrap();
+        assert_eq!((b.version.as_str(), b.known), ("30261201_0", false));
+        assert!(playonline_build(b"dll", None).is_err());
+        // A known one sends its own version whatever the patch files say (a table holding this test's bytes).
+        let table = [(ffximain_checksum(b"dll"), "30261102_0")];
+        let g = build_among(&table, b"dll", Some("1_0")).unwrap();
+        assert_eq!((g.version.as_str(), g.known), ("30261102_0", true));
+        // A later DAT-only release with that DLL: the release's version.
+        assert_eq!(build_among(&table, b"dll", Some("30261215_0")).unwrap().version, "30261215_0");
+        assert_eq!(build_among(&table, b"dll", None).unwrap().version, "30261102_0");
         // The installed 30261006_0 (its value in MODLOG "PlayOnline sign-in"), when present.
+        // Each research build (FFXI_RE_DIR's parent holds one folder per build), when present: its own version.
+        if let Ok(re) = std::env::var("FFXI_RE_DIR")
+            && let Some(builds) = std::path::Path::new(&re).parent()
+        {
+            for (_, v) in known_builds() {
+                if let Ok(b) = std::fs::read(builds.join(v).join("FFXiMain.dll")) {
+                    assert_eq!(
+                        playonline_build(&b, None).unwrap(),
+                        GameBuild { checksum: ffximain_checksum(&b), version: v.to_string(), known: true }
+                    );
+                }
+            }
+        }
         let dll = crate::dat::ffximain(&crate::config::Config::load().ffxi_dir());
         if let Ok(b) = std::fs::read(dll)
             && b.len() == 2_901_584
         {
             assert_eq!(ffximain_checksum(&b), 0x43FA_0718);
+            // A known DLL sends its own version over an older one the patch files give.
+            let g = playonline_build(&b, Some("30261001_0")).unwrap();
+            assert_eq!((g.version.as_str(), g.known), ("30261006_0", true));
         }
     }
 }

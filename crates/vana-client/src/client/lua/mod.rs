@@ -122,6 +122,28 @@ pub(super) const OPTIONS: [&str; 22] = [
     "synth_amount",
 ];
 
+/// The switches that change what the server sees from us (what we send, and when): a mod may not move them on a
+/// PlayOnline login, where they stay as the game has them. Commands while K.O., moving through the action locks,
+/// menus kept open past their reach, targets behind scenery, equip sets and cutscenes faster than the game allows,
+/// faster animations (their locks end sooner), no step held for other players, the datagram rate, the synthesis
+/// count (the unattended crafting run), and the hidden state retail keeps back (results before their wait, every
+/// map, monster dots for every job).
+const RETAIL_FIXED: [&str; 13] = [
+    "dead_commands",
+    "move_lock",
+    "menu_reach",
+    "occlusion",
+    "equipset_delay",
+    "cutscene_speed",
+    "animation_rate",
+    "player_collision",
+    "send_interval",
+    "synth_amount",
+    "ah_result_delay",
+    "all_maps",
+    "compass_monsters",
+];
+
 /// The switches retail has off.
 const OFF: [&str; 7] =
     ["all_maps", "dead_commands", "compass_monsters", "wireframe", "ttf_text", "stamp_all_lines", "synth_amount"];
@@ -350,6 +372,8 @@ pub struct Host {
     ipc: Option<ipc::Bus>,
     /// The behaviour switches mods set, by name: the mod that set it (put back when it unloads).
     opt_owners: std::collections::BTreeMap<String, String>,
+    /// Options refused on a PlayOnline login (RETAIL_FIXED), logged once each.
+    retail_fixed_told: std::collections::BTreeSet<String>,
     /// Requests for the app after the frame: the window, a screenshot, a clipboard read; and the text read.
     pub(in crate::client) win_reqs: Vec<WinReq>,
     pub(in crate::client) shot: Option<String>,
@@ -791,6 +815,7 @@ impl Host {
         vm.st.borrow_mut().char_file = Self::char_file(w);
         vm.st.borrow_mut().settings = settings;
         vm.st.borrow_mut().granted = granted;
+        vm.st.borrow_mut().retail_bot = api::RETAIL_LOCKED_MODS.contains(&vm.manifest.id.as_str());
         if !missing.is_empty() {
             let id = vm.manifest.id.clone();
             vm.st.borrow_mut().notices.push(format!(
@@ -1569,7 +1594,7 @@ pub(super) fn frame(w: &mut World, gu: Option<&super::game_ui::GameUi>) {
     }
     if w.lua.vms.iter().any(|v| !v.st.borrow().inject_out.is_empty()) {
         let out = packets_out(w, Vec::new());
-        let _ = w.net.commands.send(super::net::NetCommand::SendBatch(0, out));
+        let _ = w.net.commands.send(super::net::NetCommand::Inject(out));
     }
 }
 
@@ -1754,6 +1779,12 @@ fn apply(w: &mut World, gu: Option<&super::game_ui::GameUi>, op: Op) {
         Op::Shot(name) => w.lua.shot = Some(name),
         Op::Paste => w.lua.paste_wanted = true,
         Op::Option(mod_id, name, v) => {
+            if w.playonline && RETAIL_FIXED.contains(&name.as_str()) {
+                if w.lua.retail_fixed_told.insert(name.clone()) {
+                    log::info!("{mod_id}: client option {name} stays as the game has it on a PlayOnline login");
+                }
+                return;
+            }
             // The minimap's zoom stays as the wheel's does, the maps' opacity as the player set it; the rest go back
             // when the mod unloads.
             if set_option(w, &name, &v) && !["minimap_span", "map_opacity"].contains(&name.as_str()) {
@@ -5391,7 +5422,11 @@ fn chain(host: &Host, w: &World, data: Vec<u8>, injected: bool, outgoing: bool) 
         if funcs.is_empty() {
             continue;
         }
-        let write = vm.st.borrow().granted.iter().any(|g| g == "packets.write");
+        let (granted, locked) = {
+            let st = vm.st.borrow();
+            (st.granted.iter().any(|g| g == "packets.write"), st.retail_bot && w.retail_locked())
+        };
+        let write = granted && !locked;
         lend(vm, w, |vm| {
             for (want, f) in funcs {
                 if want.is_some_and(|i| i != id) {
@@ -5413,6 +5448,15 @@ fn chain(host: &Host, w: &World, data: Vec<u8>, injected: bool, outgoing: bool) 
                 vm.st.borrow_mut().deadline = None;
                 match r {
                     Err(e) => vm.error(&e),
+                    // The PlayOnline policy, not a fault: the packet goes as it was, once noted (api::retail_denied).
+                    Ok(mlua::Value::Boolean(false)) | Ok(mlua::Value::String(_)) if granted && locked => {
+                        let mut st = vm.st.borrow_mut();
+                        if !st.retail_told {
+                            st.retail_told = true;
+                            st.notices
+                                .push(format!("{}: changing packets is off on a PlayOnline login", vm.manifest.name));
+                        }
+                    }
                     Ok(mlua::Value::Boolean(false)) | Ok(mlua::Value::String(_)) if !write => {
                         vm.error(&mlua::Error::runtime(
                             "changing or blocking packets needs packets.write (/lua grant)",

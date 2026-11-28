@@ -743,6 +743,23 @@ pub fn applied_version(root: &Path) -> Option<String> {
     [stamped, installed_version(root, GAME)].into_iter().flatten().max_by_key(|s| version_key(s))
 }
 
+/// The version the patch files record for these FFXiMain.dll bytes at `path` (dat::ffximain's pick under `root`):
+/// the stamped manifest's version whose FFXiMain.dll entry has these bytes' signature (our updater's copy, or a game
+/// folder it wrote), else for the game folder's own DLL its patch.ver (the Viewer patched it). None when neither
+/// names these bytes: the client's copy with no matching manifest entry, say, beside a game folder the Viewer moved on.
+pub fn ffximain_version(root: &Path, path: &Path, bytes: &[u8]) -> Option<String> {
+    let sig = Sig::of(bytes);
+    let stamped = std::fs::read_to_string(root.join(STAMP_FILE)).ok().and_then(|text| {
+        let entries = parse_manifest(&text).ok()?;
+        let e = entries.iter().find(|e| e.path.eq_ignore_ascii_case("FFXiMain.dll"))?;
+        let k = e.versions.iter().rposition(|v| v.sig == sig)?;
+        // The current DLL of that manifest: the release it belongs to (its newest stamp over every file, as
+        // applied_version reads it), not the stamp the DLL last changed at. An older one: its own stamp.
+        if k + 1 == e.versions.len() { release_of(&entries) } else { Some(e.versions[k].stamp.clone()) }
+    });
+    stamped.or_else(|| (path == root.join("FFXiMain.dll")).then(|| installed_version(root, GAME)).flatten())
+}
+
 /// A title's version as its patch.ver holds it: under the no-registry key (ours), else the installer's "0" (a folder
 /// the Viewer patched).
 pub fn installed_version(root: &Path, service: Service) -> Option<String> {
@@ -996,18 +1013,42 @@ fn produce(s: &mut Session, root: &Path, e: &Entry, a: Action) -> Result<Vec<u8>
     Ok(data)
 }
 
-/// The current version of one manifest file, written under `dir` at its manifest path (the install untouched).
-pub fn fetch_one(path: &str, dir: &Path) -> Result<(PathBuf, String)> {
+/// A manifest's release: the newest stamp over every file (a DAT-only release leaves the DLL's own stamp older).
+pub fn release_of(entries: &[Entry]) -> Option<String> {
+    entries.iter().flat_map(|e| e.versions.iter().map(|v| v.stamp.clone())).max_by_key(|s| version_key(s))
+}
+
+/// The current version of one manifest file, kept in memory.
+pub struct Fetched {
+    /// The file's path as the manifest spells it.
+    pub path: String,
+    pub data: Vec<u8>,
+    /// The file's own newest stamp.
+    pub stamp: String,
+    /// The manifest's release (`release_of`).
+    pub release: String,
+}
+
+pub fn fetch_current(path: &str) -> Result<Fetched> {
     let manifest = Session::connect()?.manifest()?;
     let entries = parse_manifest(&String::from_utf8_lossy(&manifest))?;
     let e = entries
         .iter()
         .find(|e| e.path.eq_ignore_ascii_case(path))
         .ok_or_else(|| anyhow!("{path} is not in the manifest"))?;
-    let data = produce(&mut Session::connect()?, dir, e, Action::Direct)?;
-    let out = writable(dir, &e.path)?;
-    write_atomic(&out, &data)?;
-    Ok((out, e.versions.last().map(|v| v.stamp.clone()).unwrap_or_default()))
+    // A direct download reads no local file: the root is not used.
+    let data = produce(&mut Session::connect()?, Path::new("."), e, Action::Direct)?;
+    let stamp = e.versions.last().map(|v| v.stamp.clone()).unwrap_or_default();
+    let release = release_of(&entries).unwrap_or_else(|| stamp.clone());
+    Ok(Fetched { path: e.path.clone(), data, stamp, release })
+}
+
+/// The current version of one manifest file, written under `dir` at its manifest path (the install untouched).
+pub fn fetch_one(path: &str, dir: &Path) -> Result<(PathBuf, String)> {
+    let f = fetch_current(path)?;
+    let out = writable(dir, &f.path)?;
+    write_atomic(&out, &f.data)?;
+    Ok((out, f.stamp))
 }
 
 /// Fetches every planned file on `connections` sessions into its staged `.tmp2`, then moves them all into place
@@ -1150,6 +1191,35 @@ mod tests {
         server.join().unwrap();
         let e = s.fetch("x", MAX_FILE + 1).unwrap_err().to_string();
         assert!(e.contains("manifest gives it"), "{e}");
+    }
+
+    /// FFXiMain.dll's version from the patch files: the stamped manifest's entry whose signature matches these bytes,
+    /// else (the game folder's own DLL) patch.ver; the client's copy no entry names has none.
+    #[test]
+    fn ffximain_version_matches_the_bytes() {
+        let root = std::env::temp_dir().join(format!("vana-patch-ffximain-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let (old, new) = (b"MZ old".as_slice(), b"MZ new".as_slice());
+        let line = |stamp: &str, d: &[u8]| {
+            let g = Sig::of(d);
+            format!("{stamp} {} {} {} {stamp}/Direct/FFXiMain.dll.slc {}\n", g.len, g.sum, g.md5, d.len() + 1)
+        };
+        // A later release changed only a DAT: the current DLL belongs to it, the older DLL keeps its own stamp.
+        let dat =
+            format!("file ROM/1/1.DAT {{\n{}}}\n", line("30261215_0", b"dat").replace("FFXiMain.dll", "ROM/1/1.DAT"));
+        let text = format!("file FFXiMain.dll {{\n{}{}}}\n{dat}", line("30261102_0", old), line("30261201_0", new));
+        std::fs::write(root.join(STAMP_FILE), text).unwrap();
+        let own = crate::dat::own_ffximain(&root);
+        assert_eq!(ffximain_version(&root, &own, new).as_deref(), Some("30261215_0"));
+        assert_eq!(ffximain_version(&root, &own, old).as_deref(), Some("30261102_0"));
+        assert_eq!(ffximain_version(&root, &own, b"MZ other"), None);
+        // The game folder's DLL with no matching entry and no patch.ver: none either.
+        assert_eq!(ffximain_version(&root, &root.join("FFXiMain.dll"), b"MZ other"), None);
+        // `known-build`'s version for the server's current DLL: the release, not the DLL's own stamp.
+        let entries = parse_manifest(&std::fs::read_to_string(root.join(STAMP_FILE)).unwrap()).unwrap();
+        assert_eq!(release_of(&entries).as_deref(), Some("30261215_0"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A Viewer update against a local patch server: version, manifest, files (code too; an absent option file left
