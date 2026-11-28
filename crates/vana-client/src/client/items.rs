@@ -1177,7 +1177,7 @@ pub(super) fn free_slots(w: &World, c: u8) -> u32 {
 }
 
 /// LSB drops a 0x03A within 1 s of the last one and logs the player out at the 4th dropped (LIGHTLUGGAGE_BLOCK), so
-/// Auto-sort's sends wait out the second (ours: retail sends at once).
+/// on a private server Auto-sort's sends wait out the second (ours). A PlayOnline login sends at once, as retail.
 const SORT_GAP: f32 = 1.0;
 
 /// FUN_1021c5b0 / FUN_1021c680's reset of the view record's last free-slot count (+8).
@@ -1205,7 +1205,7 @@ pub(super) fn retail_auto_sort(w: &mut World, dt: f32) {
     }
     if w.game.get(0x9a) != 0 {
         if now < last && !w.sort_hold {
-            if w.sort_wait >= SORT_GAP {
+            if w.playonline || w.sort_wait >= SORT_GAP {
                 log::info!("items: Auto-sort, {last} -> {now} free");
                 auto_sort(w);
             } else {
@@ -1267,8 +1267,13 @@ const SORT_SPACING: std::time::Duration = std::time::Duration::from_millis(1500)
 
 /// c2s 0x03A {c} (the server merges the container's stacks). Held by the net thread for FUN_100fc3c0's gate (one
 /// 0x03A a second over every container), where retail drops it, so sorting several containers merges each; a
-/// container sorted again within SORT_SPACING sorts once that has passed (sort_due). Ours: retail sends every one.
+/// container sorted again within SORT_SPACING sorts once that has passed (sort_due). Ours: retail sends every one,
+/// and a PlayOnline login does as retail does (the gate drops one within the second).
 fn send_sort(w: &mut World, c: u8) {
+    if w.playonline {
+        let _ = w.net.commands.send(NetCommand::Packet { id: 0x03A, body: (c as u32).to_le_bytes().to_vec() });
+        return;
+    }
     let now = std::time::Instant::now();
     let Some(last) = w.sort_sent.get_mut(c as usize) else { return };
     if let Some(left) = last.and_then(|t| SORT_SPACING.checked_sub(now.duration_since(t))).filter(|d| !d.is_zero()) {
