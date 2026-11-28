@@ -24,7 +24,7 @@ Environment: FFXI_BUILDS, VANA_CLIENT (the client binary for --fetch; default: t
 checkout, else `cargo run --release -p vana-client`), GHIDRA_HOME (ri.sh). Everything written is generated from the
 DLL and stays local.
 """
-import sys, os, re, json, shutil, argparse, subprocess, fcntl, time
+import sys, os, re, json, shutil, argparse, subprocess, fcntl, time, hashlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 VERSION_RE = re.compile(r'^\d{8}_\d+$')
@@ -62,6 +62,20 @@ def work_dir(d):
     return d
 
 
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for b in iter(lambda: f.read(1 << 20), b''):
+            h.update(b)
+    return h.hexdigest()
+
+
+def sig_id(w):
+    """Which export a work dir's sig_insns.tsv is (size and time)."""
+    st = os.stat(os.path.join(w, 'sig_insns.tsv'))
+    return [st.st_size, int(st.st_mtime)]
+
+
 def ver_key(v):
     a, b = v.split('_')
     return int(a), int(b)
@@ -96,10 +110,13 @@ def build(a, builds):
     packed = os.path.join(nd, 'FFXiMain.dll')
     src = checkout()
 
-    # 1. the DLL
+    # 1. the DLL: staged next to the archived copy, which is replaced only once the staged one passes the checks
+    stage = packed + '.new'
+    if os.path.exists(stage):
+        os.remove(stage)     # left by a run that stopped
     if a.dll:
         if os.path.abspath(a.dll) != os.path.abspath(packed):
-            shutil.copyfile(a.dll, packed)
+            shutil.copyfile(a.dll, stage)
     elif a.fetch:
         tmp = os.path.join(nd, 'fetch')
         os.makedirs(tmp, exist_ok=True)
@@ -113,24 +130,51 @@ def build(a, builds):
         if not m:
             raise SystemExit('unexpected `vana-client update --file` output')
         if m.group(2) != ver:
+            shutil.rmtree(tmp, ignore_errors=True)
             raise SystemExit('the patch server is on %s now, not %s' % (m.group(2), ver))
-        os.replace(m.group(1), packed)
+        os.replace(m.group(1), stage)
         shutil.rmtree(tmp, ignore_errors=True)
-    if not os.path.exists(packed):
+    cand = stage if os.path.exists(stage) else packed
+    if not os.path.exists(cand):
         raise SystemExit('no %s: pass --dll FILE or --fetch' % packed)
-    sum_ = checksum(packed)
+    sum_ = checksum(cand)
     log('FFXiMain.dll %s checksum %08X' % (ver, sum_))
     if a.sum and int(a.sum, 16) != sum_:
-        raise SystemExit('checksum %08X, expected %s' % (sum_, a.sum.upper()))
+        if cand == stage:
+            os.remove(stage)
+        raise SystemExit('checksum %08X, expected %s (the folder\'s FFXiMain.dll is left as it was)' %
+                         (sum_, a.sum.upper()))
+    if cand == stage:
+        os.replace(stage, packed)
 
-    # 2. unpack and export
+    # 2. unpack and export. The Ghidra project keeps the program it imported: a different unpacked DLL (by sha256,
+    # ghidra/dll.sha256) gets a new project, the old one kept until the new import succeeds.
     unpacked = os.path.join(nd, 'FFXiMain.unpacked.dll')
     if a.force or not newer(unpacked, packed):
         run([sys.executable, os.path.join(HERE, 'unpack_pol1.py'), packed, unpacked])
+    digest = sha256(unpacked)
+    proj = os.path.join(nd, 'ghidra')
+    stamp = os.path.join(proj, 'dll.sha256')
+    had = os.path.exists(os.path.join(proj, 'ffxi.gpr'))
+    stale = had and (open(stamp).read().strip() != digest if os.path.exists(stamp) else
+                     not newer(os.path.join(proj, 'ffxi.gpr'), unpacked))
     nw = work_dir(nd)
-    if a.force or not newer(os.path.join(nw, 'sig_insns.tsv'), unpacked):
+    if stale or a.force or not newer(os.path.join(nw, 'sig_insns.tsv'), unpacked):
         nw = nd
-        run(['sh', os.path.join(HERE, 'ri.sh')], env=dict(os.environ, FFXI_RE_DIR=nd))
+        if stale:
+            log('the Ghidra project holds another DLL: importing again')
+            shutil.rmtree(proj + '.old', ignore_errors=True)
+            os.replace(proj, proj + '.old')
+        try:
+            run(['sh', os.path.join(HERE, 'ri.sh')], env=dict(os.environ, FFXI_RE_DIR=nd))
+        except subprocess.CalledProcessError:
+            if stale and not os.path.exists(os.path.join(proj, 'ffxi.gpr')):
+                shutil.rmtree(proj, ignore_errors=True)
+                os.replace(proj + '.old', proj)
+            raise
+        shutil.rmtree(proj + '.old', ignore_errors=True)
+        with open(stamp, 'w') as f:
+            f.write(digest + '\n')
 
     # 3. the build before, and the comparison
     old = a.old
@@ -147,9 +191,18 @@ def build(a, builds):
             raise SystemExit('%s: no index and no unpacked DLL' % ow)
         run(['sh', os.path.join(HERE, 'ri.sh')], env=dict(os.environ, FFXI_RE_DIR=ow))
     log('comparing %s with %s' % (ver, old))
-    if a.force or not newer(os.path.join(nw, 'remap', 'summary.txt'), os.path.join(nw, 'sig_insns.tsv'),
-                            os.path.join(ow, 'sig_insns.tsv')):
+    # the remap is of a pair: pair.json says which, so another --old redoes it
+    pair_f = os.path.join(nw, 'remap', 'pair.json')
+    pair = {'old': os.path.realpath(ow), 'old_sig': sig_id(ow), 'new_sig': sig_id(nw)}
+    try:
+        same_pair = json.load(open(pair_f)) == pair
+    except (OSError, ValueError):
+        same_pair = False
+    if a.force or not same_pair or not newer(os.path.join(nw, 'remap', 'summary.txt'),
+                                             os.path.join(nw, 'sig_insns.tsv'), os.path.join(ow, 'sig_insns.tsv')):
         run([sys.executable, os.path.join(HERE, 'remap.py'), ow, nw])
+        with open(pair_f, 'w') as f:
+            json.dump(pair, f)
 
     # 4. packets
     out = os.path.join(nd, 'packet-diff')
@@ -177,8 +230,9 @@ def watch(a, builds):
         if not m:
             continue
         ver, sum_ = m.groups()
-        mark = os.path.join(builds, ver, 'packet-diff', 'pr-%d-%s.done' % (pr['number'], sum_.upper()))
-        if os.path.exists(mark):
+        base = os.path.join(builds, ver, 'packet-diff', 'pr-%d-%s' % (pr['number'], sum_.upper()))
+        posted, reported = base + '.posted', base + '.reported'
+        if os.path.exists(posted) or (not a.post and os.path.exists(reported)):
             continue
         log('PR #%d: %s' % (pr['number'], pr['title']))
         args = argparse.Namespace(version=ver, old=None, dll=None, fetch=True, sum=sum_, queue=a.queue,
@@ -192,11 +246,13 @@ def watch(a, builds):
             log('PR #%d failed: %s' % (pr['number'], e))
             rc = 1
             continue
+        with open(reported, 'w') as f:
+            f.write(time.strftime('%Y-%m-%d %H:%M:%S\n'))
         if a.post:
             run(['gh', 'pr', 'comment', str(pr['number']), '--repo', repo, '--body-file',
                  os.path.join(out, 'summary.md')])
-        with open(mark, 'w') as f:
-            f.write(time.strftime('%Y-%m-%d %H:%M:%S\n'))
+            with open(posted, 'w') as f:
+                f.write(time.strftime('%Y-%m-%d %H:%M:%S\n'))
     return rc
 
 

@@ -537,8 +537,14 @@ def callee_changes(b, start, status, shifts, new, noise, depth=2, fanin=150):
     return out
 
 
+DIR_WORDS = {'c2s': re.compile(r'\bc2s\b|NetCommand|Packet \{ id:|C2S_', re.I),
+             's2c': re.compile(r'\bs2c\b|NetEvent|S2C_|=>', re.I)}
+
+
 def src_hits(src, ids_by_dir, addrs):
-    """Our Rust lines that name an id (as 0xNNN in packet context) or cite an address."""
+    """Our Rust lines that name an id or cite an address. An id line that names this direction (c2s / s2c, a
+    NetCommand / NetEvent, a match arm) is a hit, (dir, id); one that names only the other direction is left out;
+    one that names neither (in packet context) goes under ('maybe', dir, id)."""
     hits = collections.defaultdict(list)
     if not src:
         return hits
@@ -546,26 +552,31 @@ def src_hits(src, ids_by_dir, addrs):
     for root, dirs, fs in os.walk(os.path.join(src, 'crates')):
         dirs[:] = [x for x in dirs if x not in ('target', 'testdata', 'vendor')]
         files += [os.path.join(root, f) for f in fs if f.endswith('.rs')]
-    pats = []
-    for (dr, i) in ids_by_dir:
-        pats.append(((dr, i), re.compile(r'\b0x%03x\b' % i, re.I)))
+    pats = [((dr, i), re.compile(r'\b0x%03x\b' % i, re.I)) for (dr, i) in ids_by_dir]
     apats = [(a, re.compile(r'(?:FUN_|LAB_|0x)%08x\b' % a, re.I)) for a in addrs]
-    ctx = re.compile(r's2c|c2s|=>|packet|send|opcode|C2S|S2C', re.I)
+    ctx = re.compile(r'packet|opcode|send', re.I)
     for path in sorted(files):
         rel = os.path.relpath(path, src)
         try:
             lines = open(path, errors='replace').read().splitlines()
         except OSError:
             continue
+        net = '/net/' in rel or rel.endswith('net.rs')
         for ln, line in enumerate(lines, 1):
             if len(re.findall(r'0x[0-9a-fA-F]{6,}', line)) >= 4:
                 continue      # a hex table
-            for key, p in pats:
-                if p.search(line) and (ctx.search(line) or '/net' in rel or rel.endswith('net.rs')):
-                    hits[key].append('%s:%d' % (rel, ln))
+            at = '%s:%d' % (rel, ln)
+            for (dr, i), p in pats:
+                if not p.search(line):
+                    continue
+                other = 's2c' if dr == 'c2s' else 'c2s'
+                if DIR_WORDS[dr].search(line):
+                    hits[(dr, i)].append(at)
+                elif not DIR_WORDS[other].search(line) and (net or ctx.search(line)):
+                    hits[('maybe', dr, i)].append(at)
             for a, p in apats:
                 if p.search(line):
-                    hits[('addr', a)].append('%s:%d' % (rel, ln))
+                    hits[('addr', a)].append(at)
     return hits
 
 
@@ -684,7 +695,7 @@ def diff(old_dir, new_dir, src, out, queue):
     write_reports(out, to, tn, bo, bn, findings, hits, status, new)
     rows = queue_rows(tn['build'], findings, hits)
     with open(os.path.join(out, 'queue-rows.md'), 'w') as f:
-        f.write(''.join(r + '\n' for r in rows))
+        f.write(''.join('[%s] %s\n' % r for r in rows))
     if queue:
         append_queue(queue, tn['build'], rows)
     return findings
@@ -696,8 +707,11 @@ def sizes(rows):
     return '/'.join(('%#x' % int(x)) if x.isdigit() else x for x in s)
 
 
-REAL = ('new', 'removed', 'size', 'new sender', 'sender gone', 'sender changed', 'sender refs', 'sender consts',
-        'handler replaced', 'handler gone', 'handler changed', 'handler refs', 'handler consts')
+# Confirmed from the tables themselves: a queue row to build.
+REAL = ('new', 'removed', 'size', 'new sender', 'sender gone', 'handler replaced', 'handler gone')
+# The code changed by remap's reading (instructions, not behaviour: a struct shift the compiler folded another way
+# reads as "changed" too, as the 0x069 / 0x074 handlers did in 30261102_0): a queue row to read, not to build.
+CHECK = ('sender changed', 'sender refs', 'sender consts', 'handler changed', 'handler refs', 'handler consts')
 
 
 def group(findings):
@@ -736,8 +750,10 @@ def write_reports(out, to, tn, bo, bn, findings, hits, status, new):
         rep.append('No packet changes found.')
         summ.append('No packet changes found.')
     real = [(k, v) for k, v in g.items() if any(f['kind'] in REAL for f in v)]
-    rest = [(k, v) for k, v in g.items() if not any(f['kind'] in REAL for f in v)]
+    check = [(k, v) for k, v in g.items() if (k, v) not in real and any(f['kind'] in CHECK for f in v)]
+    rest = [(k, v) for k, v in g.items() if (k, v) not in real and (k, v) not in check]
     for title, part in (('Changed packets', real),
+                        ('Sender / handler code changed (read it: an offset move can read as a change)', check),
                         ('Packets whose sender / handler calls changed code, or whose registering function changed',
                          rest)):
         if not part:
@@ -751,6 +767,9 @@ def write_reports(out, to, tn, bo, bn, findings, hits, status, new):
             for f in fl:
                 rep.append('  - %s: %s' % (f['kind'], f['detail']))
             rep.append('  - ours: %s' % (', '.join(files) if files else 'nothing names it'))
+            maybe = sorted(set(hits.get(('maybe', dr, i), [])) - set(files))
+            if maybe:
+                rep.append('  - ours, direction not named on the line: %s' % ', '.join(maybe))
             kinds = sorted({f['kind'] for f in fl})
             where = sorted({'%08x' % a for f in fl for a in f['addrs']})
             fset = sorted({x.split(':')[0].replace('crates/vana-client/src/', '') for x in files})
@@ -777,14 +796,19 @@ def write_reports(out, to, tn, bo, bn, findings, hits, status, new):
 
 
 def queue_rows(build, findings, hits):
+    """(tier, kind, text) per packet: 'build' rows for confirmed changes, 'check' rows for changed code to read."""
     rows = []
     for (dr, i), fl in group(findings).items():
-        if not any(f['kind'] in REAL for f in fl):
+        kind = 'build' if any(f['kind'] in REAL for f in fl) else 'check' if any(
+            f['kind'] in CHECK for f in fl) else None
+        if not kind:
             continue
         files = our_files(hits, (dr, i), fl)
-        what = '; '.join('%s: %s' % (f['kind'], f['detail']) for f in fl if f['kind'] in REAL)
-        rows.append('%s 0x%03X (%s): %s. Ours: %s. Read the code and build what changed (packet-diff report of %s).'
-                    % (dr, i, build, what, ', '.join(files[:8]) or 'nothing names it', build))
+        what = '; '.join('%s: %s' % (f['kind'], f['detail']) for f in fl if f['kind'] in REAL + CHECK)
+        todo = 'Read the code and build what changed' if kind == 'build' else \
+            'Read the old and new code: build it if behaviour changed, else mark it checked'
+        rows.append((kind, '%s 0x%03X (%s): %s. Ours: %s. %s (packet-diff report of %s).' % (
+            dr, i, build, what, ', '.join(files[:8]) or 'nothing names it', todo, build)))
     return rows
 
 
@@ -797,9 +821,10 @@ def append_queue(path, build, rows):
     at = [k for k, l in enumerate(lines) if re.match(r'^\| \d+ \|', l)]
     n = max(int(lines[k].split('|')[1]) for k in at) if at else 0
     add = []
-    for r in rows:
+    for kind, r in rows:
         n += 1
-        add.append('| %d | medium | 15 | %s | New build · Not built (%s) | %s |' % (n, tag, tag, r.replace('|', '/')))
+        status = 'New build · Not built (%s)' % tag if kind == 'build' else 'New build · To check (%s)' % tag
+        add.append('| %d | medium | 15 | %s | %s | %s |' % (n, tag, status, r.replace('|', '/')))
     k = at[-1] + 1 if at else len(lines)
     lines[k:k] = add
     open(path, 'w').write('\n'.join(lines))

@@ -139,7 +139,7 @@ python3 newbuild.py 30261102_0 --fetch --sum 74F0058F   # or --dll FFXiMain.dll,
 
 It takes the DLL (`--fetch`: the patch server's current one through `vana-client update --file FFXiMain.dll`, which
 must be that version; `--sum`: the checksum `assets/known-builds.txt` lists), unpacks it, runs `ri.sh` (the first run
-imports and analyses it in Ghidra: the slow part), runs `remap.py` against the newest older folder (or `--old`), then
+imports and analyses it in Ghidra: the slow part; a different DLL later gets a new project), runs `remap.py` against the newest older folder (or `--old`), then
 `packets.py diff`. Done steps are skipped; `--force` redoes them. One run at a time (a lock in the builds folder).
 
 `packets.py table DIR` lists the build's packets (`packets.json`, `packets.tsv`): every call of the send gate (c2s id
@@ -153,7 +153,10 @@ the two read differently is listed as unverified. `packets.py diff OLD NEW` writ
   calls deep), and the lines of our Rust code that name the id or cite a changed function. Read every entry in the
   decompile, as in step 2.
 - `summary.md`: the same without code, for the PR: ids, sizes, addresses, statuses, our file names.
-- `queue-rows.md`: one queue row per changed packet (`--queue FILE` appends them to a queue, once per build).
+- `queue-rows.md`: one queue row per changed packet (`--queue FILE` appends them to a queue, once per build): "build"
+  rows for what the tables show (an id added or removed, a size, a new sender or handler), "check" rows for code
+  remap reads as changed (instructions, not behaviour: a struct shift folded another way reads as changed too). Our
+  code is matched by id and direction (a line naming the other direction is left out).
 
 The known-builds workflow (`.github/workflows/known-builds.yml`) opens a "Known build" PR when the patch server has a
 DLL the client doesn't know. `python3 newbuild.py watch --post --queue FILE` is the local half: for each such open PR
