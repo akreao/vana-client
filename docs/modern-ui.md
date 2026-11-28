@@ -185,7 +185,9 @@ Milestone 1:
   `combat.rs`, `mod.rs` (the layer, zoom, panels with saved places), `shot.rs` (`vana-client modern-shot
   [--backdrop PNG] --out PNG`: the panels with sample values and every frame, offscreen).
 - egui's zoom follows the window height against 1080, times Settings > Client > Interface Size (config modern_scale,
-  50 .. 150% in 5% steps, default 60%).
+  20 .. 150% in 5% steps, default 60%). egui multiplies the monitor's scale in, so the same size is twice as large
+  on a 200% desktop: the steps under 50% are for those (30% at 200% and 20% at 300% take the share of the window that
+  60% takes at 100%), and a first start picks its size over the system's scale (client/screen.rs).
 - Party: the members' rows, then retail's pet and fellow rows (by the classic party window: name, HP gauge, the
   pet's TP), a click targets them (2026-11-07).
 - Panels: Status, Party, Target, Location (zone, grid, time, day, weather, and the compass: retail's disk turned so
